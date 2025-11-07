@@ -28,12 +28,13 @@ MainWindow::MainWindow(QWidget *parent)
     m_plotContainer->setLayout(new QGridLayout()); // 初始为空网格
     setCentralWidget(m_plotContainer);
 
-    // 3. 创建动作和菜单
+    // 3. 创建动作和菜单 (顺序调整)
     createActions();
-    createMenus();
+    createDocks(); // <-- 必须在 createMenus 之前调用，以便菜单能引用 m_signalDock
+    createMenus(); // <-- 移到 Docks 之后
 
     // 4. 创建信号停靠栏 (Milestone 1 / 6)
-    createDocks();
+    // createDocks(); // <-- 移动到上面
 
     // 5. 设置窗口标题和大小
     setWindowTitle(tr("Data Inspector (Async)"));
@@ -49,7 +50,8 @@ MainWindow::MainWindow(QWidget *parent)
     m_progressDialog->setAutoReset(true);
     m_progressDialog->setMinimum(0);
     m_progressDialog->setMaximum(100);
-    m_progressDialog->setCancelButton(nullptr); // 不允许取消
+    m_progressDialog->setCancelButton(nullptr); // 修复: m_progressDialog_ -> m_progressDialog
+    m_progressDialog->hide();                   // <-- 新增：确保对话框初始时是隐藏的, 修复Bug
 }
 
 MainWindow::~MainWindow()
@@ -131,6 +133,14 @@ void MainWindow::createMenus()
     layoutMenu->addAction(m_layout1x1Action);
     layoutMenu->addAction(m_layout2x2Action);
     layoutMenu->addAction(m_layout3x2Action);
+
+    // 新增：视图菜单
+    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
+    if (m_signalDock)
+    {
+        // 添加一个动作来打开/关闭 "Signals" Dock
+        viewMenu->addAction(m_signalDock->toggleViewAction());
+    }
 }
 
 void MainWindow::createDocks()
@@ -143,6 +153,11 @@ void MainWindow::createDocks()
     m_signalTree->setHeaderHidden(true);
 
     m_signalDock->setWidget(m_signalTree);
+
+    // 新增：限制 Dock 功能，禁止其“浮动”成独立窗口
+    // 仅允许关闭和移动
+    m_signalDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
+
     addDockWidget(Qt::LeftDockWidgetArea, m_signalDock);
 
     // 连接双击信号 (5.1 节)
@@ -334,6 +349,14 @@ void MainWindow::onSignalDoubleClicked(const QModelIndex &index)
     if (!index.isValid())
         return;
 
+    // 修复: 在尝试添加信号之前，首先检查数据是否已加载
+    if (m_loadedTimeData.isEmpty())
+    {
+        QMessageBox::information(this, tr("No Data Loaded"),
+                                 tr("Please load a data file before adding signals."));
+        return;
+    }
+
     // 1. 检查是否有活动图表 (5.1 节)
     if (!m_activePlot)
     {
@@ -351,11 +374,13 @@ void MainWindow::onSignalDoubleClicked(const QModelIndex &index)
         return;
     }
 
-    if (m_loadedTimeData.isEmpty())
-    {
+    // 移除多余的检查，因为我们在函数顶部已经检查过了
+    /*
+    if (m_loadedTimeData.isEmpty()) {
         qWarning() << "No time data loaded.";
         return;
     }
+    */
 
     qDebug() << "Adding signal" << signalName << "(index" << signalIndex << ") to plot" << m_activePlot;
 
