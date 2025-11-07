@@ -19,6 +19,9 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QSignalBlocker>
+#include <QColorDialog> // <-- 新增：用于颜色选择
+#include <QFrame>       // <-- 新增
+#include <QVBoxLayout>  // <-- 新增
 
 // 定义一个自定义角色 (Qt::UserRole + 1) 来存储 QPen
 const int PenDataRole = Qt::UserRole + 1;
@@ -179,6 +182,8 @@ void MainWindow::createDocks()
 
     // 连接 itemChanged 信号 (替换双击) (5.1 节)
     connect(m_signalTreeModel, &QStandardItemModel::itemChanged, this, &MainWindow::onSignalItemChanged);
+    // 新增：连接 doubleClicked 信号用于编辑 (需求 3)
+    connect(m_signalTree, &QTreeView::doubleClicked, this, &MainWindow::onSignalItemDoubleClicked);
 }
 
 void MainWindow::setupPlotInteractions(QCustomPlot *plot)
@@ -212,6 +217,7 @@ void MainWindow::clearPlotLayout()
     }
     m_plotWidgets.clear();
     m_activePlot = nullptr;
+    m_plotFrameMap.clear(); // <-- 新增：清理 frame 映射
     // 注意：m_plotGraphMap 在 onDataLoadFinished 中清理
 }
 
@@ -230,11 +236,30 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     {
         for (int c = 0; c < cols; ++c)
         {
-            QCustomPlot *plot = new QCustomPlot(m_plotContainer);
+            // --- 修复高亮 (需求 1) ---
+            // 1. 创建一个用于高亮的 Frame
+            QFrame *plotFrame = new QFrame(m_plotContainer);
+            plotFrame->setFrameShape(QFrame::NoFrame);
+            plotFrame->setLineWidth(2);
+            // 默认边框 (透明)
+            plotFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
+
+            // 2. 将 plot 放入 Frame
+            QVBoxLayout *frameLayout = new QVBoxLayout(plotFrame);
+            frameLayout->setContentsMargins(0, 0, 0, 0);
+
+            QCustomPlot *plot = new QCustomPlot(plotFrame); // <-- 父对象设为 frame
             setupPlotInteractions(plot);
 
-            grid->addWidget(plot, r, c);
+            frameLayout->addWidget(plot); // <-- 将 plot 添加到 frame 的布局
+
+            // 3. 将 Frame 添加到网格
+            grid->addWidget(plotFrame, r, c); // <-- 添加 frame，而不是 plot
             m_plotWidgets.append(plot);
+
+            // 4. 存储 plot 和 frame 的映射
+            m_plotFrameMap.insert(plot, plotFrame);
+            // -------------------------
         }
     }
 
@@ -242,14 +267,25 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     if (!m_plotWidgets.isEmpty())
     {
         m_activePlot = m_plotWidgets.first();
-        // 立即应用视觉反馈
-        m_activePlot->setStyleSheet("border: 2px solid #0078d4;");
+
+        // --- 修复高亮 (需求 1) ---
+        // 立即应用视觉反馈 (到 Frame)
+        QFrame *frame = m_plotFrameMap.value(m_activePlot);
+        if (frame)
+        {
+            frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
+        }
+
+        // --- 修复 Bug (需求 2) ---
+        // 初始设置 plot 时，也需要同步一次勾选状态
+        updateSignalTreeChecks();
+        m_signalTree->viewport()->update(); // <-- 新增: 强制重绘
+        // -------------------------
     }
 }
 
 void MainWindow::on_actionLayout1x1_triggered()
 {
-    // ... (现有代码) ...
     setupPlotLayout(1, 1);
 }
 
@@ -311,6 +347,12 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
 
     // 3. 填充信号树
     populateSignalTree(data);
+
+    // --- 修复 Bug (需求 2) ---
+    // 加载新数据后，需要立即同步勾选状态
+    updateSignalTreeChecks();
+    m_signalTree->viewport()->update(); // <-- 新增: 强制重绘
+    // -------------------------
 
     QMessageBox::information(this, tr("Success"), tr("Successfully loaded %1 data points.").arg(data.timeData.count()));
 }
@@ -374,22 +416,29 @@ void MainWindow::onPlotClicked()
     // 3. (可选) 添加视觉反馈
     for (QCustomPlot *plot : m_plotWidgets)
     {
+        // --- 修复高亮 (需求 1) ---
+        QFrame *frame = m_plotFrameMap.value(plot);
+        if (!frame)
+            continue;
+
         if (plot == m_activePlot)
         {
             // 设置活动边框 (例如，蓝色)
-            plot->setStyleSheet("border: 2px solid #0078d4;");
+            frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
         }
         else
         {
             // 恢复默认边框
-            plot->setStyleSheet("");
+            frame->setStyleSheet("QFrame { border: 2px solid transparent; }");
         }
+        // -------------------------
     }
     qDebug() << "Active plot set to:" << m_activePlot;
 
     // 4. --- [核心需求2] ---
     //    更新信号树的勾选状态以反映这个新激活的 plot
     updateSignalTreeChecks();
+    m_signalTree->viewport()->update(); // <-- 新增: 强制重绘
 }
 
 /**
@@ -512,7 +561,7 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
 
         QCPGraph *graph = m_plotGraphMap.value(m_activePlot).value(signalIndex);
 
-        // 从它所在的 plot 移除
+        // ... (现有代码) ...
         if (graph) // graph 应该总是有效的
         {
             qDebug() << "Removing signal" << signalName << "from plot" << m_activePlot;
@@ -522,6 +571,58 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
 
             // 只有在移除图表后才重绘
             m_activePlot->replot();
+        }
+    }
+}
+
+/**
+ * @brief [新增] 响应双击信号，弹出颜色选择器 (需求 3)
+ */
+void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
+{
+    if (!index.isValid())
+        return;
+
+    QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
+    if (!item)
+        return;
+
+    int signalIndex = item->data(Qt::UserRole).toInt();
+    if (signalIndex < 0 || signalIndex >= m_signalPens.count())
+        return;
+
+    QPen currentPen = item->data(PenDataRole).value<QPen>();
+
+    // 1. 弹出颜色对话框
+    QColor newColor = QColorDialog::getColor(currentPen.color(), this, tr("Select Signal Color"));
+
+    if (!newColor.isValid())
+    {
+        return; // 用户取消
+    }
+
+    // 2. 创建新 Pen
+    QPen newPen = currentPen;
+    newPen.setColor(newColor);
+
+    // 3. 更新模型 (这将触发 delegate 重绘预览)
+    item->setData(QVariant::fromValue(newPen), PenDataRole);
+    // 更新我们的样式缓存
+    m_signalPens[signalIndex] = newPen;
+
+    // 4. 更新所有图表上*已经存在*的这个信号
+    // 遍历所有 plot (因为一个信号可能在多个 plot 上)
+    for (auto it = m_plotGraphMap.begin(); it != m_plotGraphMap.end(); ++it)
+    {
+        // 检查该 plot 是否有这个信号
+        if (it.value().contains(signalIndex))
+        {
+            QCPGraph *graph = it.value().value(signalIndex);
+            if (graph)
+            {
+                graph->setPen(newPen);
+                graph->parentPlot()->replot(); // 重绘
+            }
         }
     }
 }

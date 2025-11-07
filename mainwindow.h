@@ -20,6 +20,7 @@ class QWidget;
 class QProgressDialog;
 class QModelIndex;
 class QCPGraph;
+class QFrame; // <-- 新增：用于高亮边框
 
 /**
  * @brief 主窗口类，实现 data flow.md 中的核心架构
@@ -55,6 +56,7 @@ private slots:
     // 交互槽
     void onPlotClicked();
     void onSignalItemChanged(QStandardItem *item);
+    void onSignalItemDoubleClicked(const QModelIndex &index); // <-- 新增：用于编辑样式
 
 private:
     // UI 创建
@@ -110,6 +112,7 @@ private:
     // (Plot -> (SignalIndex -> Graph)) 映射
     // 用于跟踪*哪个plot上*有*哪些graph*
     QMap<QCustomPlot *, QMap<int, QCPGraph *>> m_plotGraphMap; // <-- 重构
+    QMap<QCustomPlot *, QFrame *> m_plotFrameMap;              // <-- 新增: 跟踪 plot 和它的高亮 frame
 
     // --- 菜单动作 ---
     QAction *m_loadFileAction;
