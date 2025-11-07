@@ -1,73 +1,233 @@
 #include "mainwindow.h"
-#include "qcustomplot.h" // 包含 QCustomPlot 头文件
-#include "csvloader.h"   // 包含我们简易的CSV加载器
+#include "qcustomplot.h"
+// #include "csvloader.h" // <-- 已删除
 
 #include <QMenuBar>
 #include <QMenu>
 #include <QAction>
 #include <QFileDialog>
-#include <QVector>
-#include <QStringList>
 #include <QMessageBox>
 #include <QColor>
 #include <QDebug>
+#include <QThread>
+#include <QProgressDialog>
+#include <QDockWidget>
+#include <QTreeView>
+#include <QStandardItemModel>
+#include <QWidget>
+#include <QGridLayout>
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), m_customPlot(nullptr), m_loadCsvAction(nullptr)
+    : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr), m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr), m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr)
 {
-    // 1. 创建 UI 骨架 (Milestone 1)
-    m_customPlot = new QCustomPlot(this);
-    setCentralWidget(m_customPlot);
+    // 1. 设置数据管理线程 (Milestone 2)
+    setupDataManagerThread();
 
-    // 2. 设置绘图控件
-    setupPlot();
+    // 2. 创建中央绘图区 (Milestone 1 / 2.2)
+    m_plotContainer = new QWidget(this);
+    m_plotContainer->setLayout(new QGridLayout()); // 初始为空网格
+    setCentralWidget(m_plotContainer);
 
-    // 3. 创建菜单和动作
+    // 3. 创建动作和菜单
     createActions();
     createMenus();
 
-    // 4. 设置窗口标题
-    setWindowTitle(tr("Data Inspector (Milestone 1)"));
+    // 4. 创建信号停靠栏 (Milestone 1 / 6)
+    createDocks();
+
+    // 5. 设置窗口标题和大小
+    setWindowTitle(tr("Data Inspector (Async)"));
+    resize(1280, 800); // 增大默认大小
+
+    // 6. 设置初始布局 (2.2)
+    setupPlotLayout(1, 1);
+
+    // 7. 创建进度对话框
+    m_progressDialog = new QProgressDialog(this);
+    m_progressDialog->setWindowModality(Qt::WindowModal);
+    m_progressDialog->setAutoClose(true);
+    m_progressDialog->setAutoReset(true);
+    m_progressDialog->setMinimum(0);
+    m_progressDialog->setMaximum(100);
+    m_progressDialog->setCancelButton(nullptr); // 不允许取消
 }
 
 MainWindow::~MainWindow()
 {
-    // m_customPlot 作为 centralWidget 会被 Qt 自动删除
+    // 正确停止工作线程
+    if (m_dataThread)
+    {
+        m_dataThread->quit();
+        m_dataThread->wait();
+    }
+    // m_dataManager 会随线程自动删除
+}
+
+void MainWindow::setupDataManagerThread()
+{
+    m_dataThread = new QThread(this);
+    m_dataManager = new DataManager(); // 没有父对象
+
+    // 1. 将 dataManager 移动到工作线程
+    m_dataManager->moveToThread(m_dataThread);
+
+    // 2. 连接信号槽
+    //    [GUI] -> [Worker] (请求加载)
+    connect(this, &MainWindow::requestLoadCsv,
+            m_dataManager, &DataManager::loadCsvFile,
+            Qt::QueuedConnection);
+
+    //    [Worker] -> [GUI] (报告进度)
+    connect(m_dataManager, &DataManager::loadProgress,
+            this, &MainWindow::showLoadProgress,
+            Qt::QueuedConnection);
+
+    //    [Worker] -> [GUI] (报告成功)
+    connect(m_dataManager, &DataManager::loadFinished,
+            this, &MainWindow::onDataLoadFinished,
+            Qt::QueuedConnection);
+
+    //    [Worker] -> [GUI] (报告失败)
+    connect(m_dataManager, &DataManager::loadFailed,
+            this, &MainWindow::onDataLoadFailed,
+            Qt::QueuedConnection);
+
+    // 3. 线程退出时自动删除 dataManager
+    connect(m_dataThread, &QThread::finished, m_dataManager, &QObject::deleteLater);
+
+    // 4. 启动线程的事件循环
+    m_dataThread->start();
+
+    qDebug() << "Main Thread ID:" << QThread::currentThreadId();
+    qDebug() << "DataManager thread started.";
 }
 
 void MainWindow::createActions()
 {
-    // 创建“加载CSV”动作
-    m_loadCsvAction = new QAction(tr("&Load CSV..."), this);
-    m_loadCsvAction->setShortcut(QKeySequence::Open);
+    // 文件菜单
+    m_loadFileAction = new QAction(tr("&Load CSV..."), this);
+    m_loadFileAction->setShortcut(QKeySequence::Open);
+    connect(m_loadFileAction, &QAction::triggered, this, &MainWindow::on_actionLoadFile_triggered);
 
-    // 连接信号槽
-    connect(m_loadCsvAction, &QAction::triggered, this, &MainWindow::on_actionLoadCsv_triggered);
+    // 布局菜单
+    m_layout1x1Action = new QAction(tr("1x1 Layout"), this);
+    connect(m_layout1x1Action, &QAction::triggered, this, &MainWindow::on_actionLayout1x1_triggered);
+
+    m_layout2x2Action = new QAction(tr("2x2 Layout"), this);
+    connect(m_layout2x2Action, &QAction::triggered, this, &MainWindow::on_actionLayout2x2_triggered);
+
+    m_layout3x2Action = new QAction(tr("3x2 Layout"), this);
+    connect(m_layout3x2Action, &QAction::triggered, this, &MainWindow::on_actionLayout3x2_triggered);
 }
 
 void MainWindow::createMenus()
 {
-    // 创建“文件”菜单
+    // 文件菜单
     QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
-    fileMenu->addAction(m_loadCsvAction);
+    fileMenu->addAction(m_loadFileAction);
+
+    // 布局菜单
+    QMenu *layoutMenu = menuBar()->addMenu(tr("&Layout"));
+    layoutMenu->addAction(m_layout1x1Action);
+    layoutMenu->addAction(m_layout2x2Action);
+    layoutMenu->addAction(m_layout3x2Action);
 }
 
-void MainWindow::setupPlot()
+void MainWindow::createDocks()
 {
-    // 基本的绘图设置
-    m_customPlot->xAxis->setLabel(tr("Time (s)"));
-    m_customPlot->yAxis->setLabel(tr("Value"));
+    m_signalDock = new QDockWidget(tr("Signals"), this);
 
-    // 启用交互：拖动、缩放
-    m_customPlot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom);
+    m_signalTree = new QTreeView(m_signalDock);
+    m_signalTreeModel = new QStandardItemModel(m_signalDock);
+    m_signalTree->setModel(m_signalTreeModel);
+    m_signalTree->setHeaderHidden(true);
 
-    // 显示图例
-    m_customPlot->legend->setVisible(true);
+    m_signalDock->setWidget(m_signalTree);
+    addDockWidget(Qt::LeftDockWidgetArea, m_signalDock);
+
+    // 连接双击信号 (5.1 节)
+    connect(m_signalTree, &QTreeView::doubleClicked, this, &MainWindow::onSignalDoubleClicked);
 }
 
-void MainWindow::on_actionLoadCsv_triggered()
+void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 {
-    // 1. 打开文件对话框
+    plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
+    plot->legend->setVisible(true);
+
+    // 连接点击信号，用于设置 "active" plot (5.1 节)
+    connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
+}
+
+// --- 绘图布局 ---
+
+void MainWindow::clearPlotLayout()
+{
+    // 从布局中移除所有 widget
+    QLayout *layout = m_plotContainer->layout();
+    if (layout)
+    {
+        QLayoutItem *item;
+        while ((item = layout->takeAt(0)) != nullptr)
+        {
+            if (item->widget())
+            {
+                item->widget()->deleteLater();
+            }
+            delete item;
+        }
+    }
+    m_plotWidgets.clear();
+    m_activePlot = nullptr;
+}
+
+void MainWindow::setupPlotLayout(int rows, int cols)
+{
+    clearPlotLayout(); // 清理旧布局
+
+    QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotContainer->layout());
+    if (!grid)
+    {
+        grid = new QGridLayout(m_plotContainer);
+    }
+
+    for (int r = 0; r < rows; ++r)
+    {
+        for (int c = 0; c < cols; ++c)
+        {
+            QCustomPlot *plot = new QCustomPlot(m_plotContainer);
+            setupPlotInteractions(plot);
+
+            grid->addWidget(plot, r, c);
+            m_plotWidgets.append(plot);
+        }
+    }
+
+    // 默认激活第一个 plot
+    if (!m_plotWidgets.isEmpty())
+    {
+        m_activePlot = m_plotWidgets.first();
+    }
+}
+
+void MainWindow::on_actionLayout1x1_triggered()
+{
+    setupPlotLayout(1, 1);
+}
+
+void MainWindow::on_actionLayout2x2_triggered()
+{
+    setupPlotLayout(2, 2);
+}
+
+void MainWindow::on_actionLayout3x2_triggered()
+{
+    setupPlotLayout(3, 2);
+}
+
+// --- 槽函数 ---
+
+void MainWindow::on_actionLoadFile_triggered()
+{
     QString filePath = QFileDialog::getOpenFileName(this,
                                                     tr("Open CSV File"), "", tr("CSV Files (*.csv *.txt)"));
 
@@ -76,58 +236,141 @@ void MainWindow::on_actionLoadCsv_triggered()
         return; // 用户取消
     }
 
-    // 2. 准备数据容器
-    QVector<double> timeVector;            // X 轴数据 (第一列)
-    QVector<QVector<double>> valueVectors; // Y 轴数据 (所有其他列)
-    QStringList headers;                   // 列标题
+    // 重置进度条并显示
+    m_progressDialog->setValue(0);
+    m_progressDialog->setLabelText(tr("Loading %1...").arg(filePath));
+    m_progressDialog->show();
 
-    // 3. 调用 CSV 加载器
-    bool success = CsvLoader::loadCsv(filePath, timeVector, valueVectors, headers);
+    // 发送异步加载请求
+    emit requestLoadCsv(filePath);
+}
 
-    if (!success)
+void MainWindow::showLoadProgress(int percentage)
+{
+    m_progressDialog->setValue(percentage);
+}
+
+void MainWindow::onDataLoadFinished(const CsvData &data)
+{
+    m_progressDialog->hide();
+    qDebug() << "Main Thread: Load finished. Received" << data.timeData.count() << "data points.";
+
+    // 1. 缓存数据
+    m_loadedTimeData = data.timeData;
+    m_loadedValueData = data.valueData;
+
+    // 2. 清理所有图表
+    for (QCustomPlot *plot : m_plotWidgets)
     {
-        QMessageBox::warning(this, tr("Error"), tr("Failed to load or parse the CSV file."));
-        return;
+        plot->clearGraphs();
+        plot->replot();
     }
 
-    if (timeVector.isEmpty() || valueVectors.isEmpty())
+    // 3. 填充信号树
+    populateSignalTree(data);
+
+    QMessageBox::information(this, tr("Success"), tr("Successfully loaded %1 data points.").arg(data.timeData.count()));
+}
+
+void MainWindow::populateSignalTree(const CsvData &data)
+{
+    m_signalTreeModel->clear();
+
+    // headers[0] 是 Time, 我们跳过它
+    for (int i = 1; i < data.headers.count(); ++i)
     {
-        QMessageBox::information(this, tr("Empty File"), tr("The CSV file is empty or has no data columns."));
-        return;
-    }
-
-    // 4. 加载数据到 QCustomPlot
-    m_customPlot->clearGraphs(); // 清除旧数据
-
-    // 假设 headers[0] 是 time, headers[1...] 是 value
-    int numValueColumns = valueVectors.count();
-
-    for (int i = 0; i < numValueColumns; ++i)
-    {
-        QCPGraph *graph = m_customPlot->addGraph();
-
-        // 设置数据
-        graph->setData(timeVector, valueVectors[i]);
-
-        // 从 header 设置图例名称
-        if (i + 1 < headers.count())
+        QString signalName = data.headers[i].trimmed();
+        if (signalName.isEmpty())
         {
-            graph->setName(headers[i + 1]);
+            signalName = tr("Signal %1").arg(i);
+        }
+
+        QStandardItem *item = new QStandardItem(signalName);
+        item->setEditable(false);
+
+        // 关键：将此信号在 m_loadedValueData 中的索引存储在 UserRole 中
+        // (i-1) 是因为它在 valueData 向量中的索引
+        item->setData(i - 1, Qt::UserRole);
+
+        m_signalTreeModel->appendRow(item);
+    }
+}
+
+void MainWindow::onDataLoadFailed(const QString &errorString)
+{
+    m_progressDialog->hide();
+    QMessageBox::warning(this, tr("Load Error"), errorString);
+}
+
+void MainWindow::onPlotClicked()
+{
+    // 1. 获取发送信号的 plot
+    QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
+    if (!clickedPlot)
+        return;
+
+    // 2. 将其设为 "active"
+    m_activePlot = clickedPlot;
+
+    // 3. (可选) 添加视觉反馈
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (plot == m_activePlot)
+        {
+            // 设置活动边框 (例如，蓝色)
+            plot->setStyleSheet("border: 2px solid #0078d4;");
         }
         else
         {
-            graph->setName(QString("Column %1").arg(i + 1));
+            // 恢复默认边框
+            plot->setStyleSheet("");
         }
+    }
+    qDebug() << "Active plot set to:" << m_activePlot;
+}
 
-        // 设置一个唯一的颜色 (简单的颜色循环)
-        // 7-16 是一些比较清晰的 Qt::GlobalColor
-        QColor color(Qt::GlobalColor(7 + (i % 10)));
-        graph->setPen(QPen(color));
+void MainWindow::onSignalDoubleClicked(const QModelIndex &index)
+{
+    if (!index.isValid())
+        return;
+
+    // 1. 检查是否有活动图表 (5.1 节)
+    if (!m_activePlot)
+    {
+        QMessageBox::information(this, tr("No Plot Selected"), tr("Please click on a plot to activate it before adding a signal."));
+        return;
     }
 
-    // 5. 自动缩放轴并重绘
-    m_customPlot->rescaleAxes();
-    m_customPlot->replot();
+    // 2. 获取信号信息
+    int signalIndex = index.data(Qt::UserRole).toInt();
+    QString signalName = index.data(Qt::DisplayRole).toString();
 
-    qDebug() << "Successfully loaded and plotted" << filePath;
+    if (signalIndex < 0 || signalIndex >= m_loadedValueData.count())
+    {
+        qWarning() << "Invalid signal index" << signalIndex;
+        return;
+    }
+
+    if (m_loadedTimeData.isEmpty())
+    {
+        qWarning() << "No time data loaded.";
+        return;
+    }
+
+    qDebug() << "Adding signal" << signalName << "(index" << signalIndex << ") to plot" << m_activePlot;
+
+    // 3. 添加图表到活动 plot
+    QCPGraph *graph = m_activePlot->addGraph();
+    graph->setName(signalName);
+
+    // 4. 设置数据
+    graph->setData(m_loadedTimeData, m_loadedValueData[signalIndex]);
+
+    // 随机一种清晰的颜色
+    QColor color(10 + (qrand() % 245), 10 + (qrand() % 245), 10 + (qrand() % 245));
+    graph->setPen(QPen(color));
+
+    // 5. 缩放并重绘
+    m_activePlot->rescaleAxes();
+    m_activePlot->replot();
 }

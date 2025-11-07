@@ -24,7 +24,7 @@ find_package(Qt5 REQUIRED COMPONENTS
 add_executable(DataInspector
     main.cpp
     mainwindow.cpp
-    csvloader.cpp
+    datamanager.cpp # <-- 修改：替换 csvloader
     qcustomplot.cpp # 依赖您手动下载的 QCustomPlot
 )
 
