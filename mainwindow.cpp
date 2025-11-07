@@ -19,18 +19,18 @@
 #include <QPainter>
 #include <QPixmap>
 #include <QSignalBlocker>
-#include <QColorDialog> // <-- 用于颜色选择
+#include <QColorDialog>
 #include <QFrame>
 #include <QVBoxLayout>
-#include <QToolBar>       // <-- 新增
-#include <QActionGroup>   // <-- 新增
-#include <QTimer>         // <-- 新增
-#include <QPushButton>    // <-- 新增
-#include <QSlider>        // <-- 新增
-#include <QLabel>         // <-- 新增
-#include <QDoubleSpinBox> // <-- 新增
-#include <QHBoxLayout>    // <-- 新增
-#include <QStyle>         // <-- 新增 (用于标准图标)
+#include <QToolBar>
+#include <QActionGroup>
+#include <QTimer>
+#include <QPushButton>
+#include <QSlider>
+#include <QLabel>
+#include <QDoubleSpinBox>
+#include <QHBoxLayout>
+#include <QStyle>
 
 // 定义一个自定义角色 (Qt::UserRole + 1) 来存储 QPen
 const int PenDataRole = Qt::UserRole + 1;
@@ -38,20 +38,17 @@ const int PenDataRole = Qt::UserRole + 1;
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr), m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr), m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr), m_lastMousePlot(nullptr), m_cursorMode(NoCursor), m_cursorKey1(0), m_cursorKey2(0)
 {
-    // 1. 设置数据管理线程
     setupDataManagerThread();
 
-    // 2. 创建中央绘图区
     m_plotContainer = new QWidget(this);
-    m_plotContainer->setLayout(new QGridLayout()); // 初始为空网格
+    m_plotContainer->setLayout(new QGridLayout());
     setCentralWidget(m_plotContainer);
 
-    // 3. 创建动作和菜单 (顺序调整)
     createActions();
     createDocks();
-    createToolBars();   // <-- 新增
-    createReplayDock(); // <-- 新增
-    createMenus();      // <-- 移到 Docks 之后
+    createToolBars();
+    createReplayDock();
+    createMenus();
 
     // 4. 设置窗口标题和大小
     setWindowTitle(tr("Data Inspector (Async)"));
@@ -90,9 +87,8 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupDataManagerThread()
 {
-    // ... (现有代码) ...
     m_dataThread = new QThread(this);
-    m_dataManager = new DataManager(); // 没有父对象
+    m_dataManager = new DataManager();
     m_dataManager->moveToThread(m_dataThread);
 
     connect(this, &MainWindow::requestLoadCsv, m_dataManager, &DataManager::loadCsvFile, Qt::QueuedConnection);
@@ -109,7 +105,6 @@ void MainWindow::setupDataManagerThread()
 
 void MainWindow::createActions()
 {
-    // ... (现有代码) ...
     // 文件菜单
     m_loadFileAction = new QAction(tr("&Load CSV..."), this);
     m_loadFileAction->setShortcut(QKeySequence::Open);
@@ -123,7 +118,7 @@ void MainWindow::createActions()
     m_layout3x2Action = new QAction(tr("3x2 Layout"), this);
     connect(m_layout3x2Action, &QAction::triggered, this, &MainWindow::on_actionLayout3x2_triggered);
 
-    // --- 新增：视图/游标动作 ---
+    // 视图/游标动作
     m_cursorNoneAction = new QAction(tr("No Cursor"), this);
     m_cursorNoneAction->setCheckable(true);
     m_cursorNoneAction->setChecked(true);
@@ -147,7 +142,6 @@ void MainWindow::createActions()
 
 void MainWindow::createMenus()
 {
-    // ... (现有代码) ...
     QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
     fileMenu->addAction(m_loadFileAction);
 
@@ -161,7 +155,7 @@ void MainWindow::createMenus()
     {
         viewMenu->addAction(m_signalDock->toggleViewAction());
     }
-    // --- 新增：重放面板菜单项 ---
+    // 重放面板菜单项
     if (m_replayDock)
     {
         viewMenu->addAction(m_replayDock->toggleViewAction());
@@ -169,7 +163,7 @@ void MainWindow::createMenus()
 }
 
 /**
- * @brief [新增] 创建视图工具栏 (用于游标和重放)
+ * @brief 创建视图工具栏 (用于游标和重放)
  */
 void MainWindow::createToolBars()
 {
@@ -192,7 +186,6 @@ void MainWindow::createToolBars()
 
 void MainWindow::createDocks()
 {
-    // ... (现有代码) ...
     m_signalDock = new QDockWidget(tr("Signals"), this);
     m_signalTree = new QTreeView(m_signalDock);
     m_signalTreeModel = new QStandardItemModel(m_signalDock);
@@ -208,7 +201,7 @@ void MainWindow::createDocks()
 }
 
 /**
- * @brief [新增] 创建底部重放停靠栏
+ * @brief 创建底部重放停靠栏
  */
 void MainWindow::createReplayDock()
 {
@@ -257,16 +250,13 @@ void MainWindow::createReplayDock()
 
 void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 {
-    // ... (现有代码) ...
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
     plot->legend->setVisible(true);
 
     connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
-    // --- 新增：连接鼠标移动信号 ---
+    // 连接鼠标移动信号
     connect(plot, &QCustomPlot::mouseMove, this, &MainWindow::onPlotMouseMove);
 }
-
-// --- 绘图布局 ---
 
 void MainWindow::clearPlotLayout()
 {
@@ -274,8 +264,6 @@ void MainWindow::clearPlotLayout()
     // 否则游标项 (QCPItemLine 等) 会持有悬空指针
     clearCursors();
     // ------------------------------------
-
-    // ... (现有代码) ...
     QLayout *layout = m_plotContainer->layout();
     if (layout)
     {
@@ -301,7 +289,6 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     clearPlotLayout(); // 清理旧布局
 
     QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotContainer->layout());
-    // ... (现有代码) ...
     if (!grid)
     {
         grid = new QGridLayout(m_plotContainer);
@@ -342,9 +329,8 @@ void MainWindow::setupPlotLayout(int rows, int cols)
         m_signalTree->viewport()->update();
     }
 
-    // --- 新增：布局更改后，重建游标 ---
+    // 布局更改后，重建游标 ---
     setupCursors();
-    // --------------------------------
 }
 
 void MainWindow::on_actionLayout1x1_triggered()
@@ -362,11 +348,8 @@ void MainWindow::on_actionLayout3x2_triggered()
     setupPlotLayout(3, 2);
 }
 
-// --- 槽函数 ---
-
 void MainWindow::on_actionLoadFile_triggered()
 {
-    // ... (现有代码) ...
     QString filePath = QFileDialog::getOpenFileName(this,
                                                     tr("Open CSV File"), "", tr("CSV Files (*.csv *.txt)"));
     if (filePath.isEmpty())
@@ -381,7 +364,6 @@ void MainWindow::on_actionLoadFile_triggered()
 
 void MainWindow::showLoadProgress(int percentage)
 {
-    // ... (现有代码) ...
     m_progressDialog->setValue(percentage);
 }
 
@@ -402,19 +384,19 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
     }
     m_plotGraphMap.clear();
 
-    // 3. 填充信号树
+    // 填充信号树
     {
         QSignalBlocker blocker(m_signalTreeModel);
         populateSignalTree(data);
     }
-    m_signalTree->reset(); // (Bug 1 修复)
+    m_signalTree->reset();
 
     // 4. 更新勾选状态
     updateSignalTreeChecks();
 
     QMessageBox::information(this, tr("Success"), tr("Successfully loaded %1 data points.").arg(data.timeData.count()));
 
-    // --- 新增：数据加载后，更新重放控件和游标 ---
+    // 更新重放控件和游标
     if (!m_loadedTimeData.isEmpty())
     {
         // 将游标 1 移动到数据起点
@@ -424,12 +406,10 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
         updateCursors(m_cursorKey2, 2);
     }
     updateReplayControls(); // 设置滑块范围
-    // -----------------------------------------
 }
 
 void MainWindow::populateSignalTree(const CsvData &data)
 {
-    // ... (现有代码) ...
     m_signalTreeModel->clear();
     m_signalPens.clear();
 
@@ -445,7 +425,9 @@ void MainWindow::populateSignalTree(const CsvData &data)
         item->setCheckState(Qt::Unchecked);
         item->setData(i - 1, Qt::UserRole);
 
-        QColor color(10 + (qrand() % 245), 10 + (qrand() % 245), 10 + (qrand() % 245));
+        QColor color(10 + QRandomGenerator::global()->bounded(245), 
+                     10 + QRandomGenerator::global()->bounded(245), 
+                     10 + QRandomGenerator::global()->bounded(245));
         QPen pen(color, 1);
         m_signalPens.append(pen);
         item->setData(QVariant::fromValue(pen), PenDataRole);
@@ -456,21 +438,18 @@ void MainWindow::populateSignalTree(const CsvData &data)
 
 void MainWindow::onDataLoadFailed(const QString &errorString)
 {
-    // ... (现有代码) ...
     m_progressDialog->hide();
     QMessageBox::warning(this, tr("Load Error"), errorString);
 }
 
 void MainWindow::onPlotClicked()
 {
-    // ... (现有代码) ...
     QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
     if (!clickedPlot || clickedPlot == m_activePlot)
         return;
 
     m_activePlot = clickedPlot;
-    m_lastMousePlot = clickedPlot; // <-- 新增
-
+    m_lastMousePlot = clickedPlot;
     for (QCustomPlot *plot : m_plotWidgets)
     {
         QFrame *frame = m_plotFrameMap.value(plot);
@@ -488,7 +467,6 @@ void MainWindow::onPlotClicked()
 
 void MainWindow::updateSignalTreeChecks()
 {
-    // ... (现有代码) ...
     QSignalBlocker blocker(m_signalTreeModel);
     const auto &activeGraphs = m_plotGraphMap.value(m_activePlot);
     for (int i = 0; i < m_signalTreeModel->rowCount(); ++i)
@@ -509,7 +487,7 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
     if (!item)
         return;
     if (m_loadedTimeData.isEmpty())
-    { /* ... (现有代码) ... */
+    {
         if (item->checkState() == Qt::Checked)
         {
             QSignalBlocker blocker(m_signalTreeModel);
@@ -518,7 +496,7 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         return;
     }
     if (!m_activePlot)
-    { /* ... (现有代码) ... */
+    {
         if (item->checkState() == Qt::Checked)
         {
             QSignalBlocker blocker(m_signalTreeModel);
@@ -531,7 +509,7 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
     int signalIndex = item->data(Qt::UserRole).toInt();
     QString signalName = item->text();
     if (signalIndex < 0 || signalIndex >= m_loadedValueData.count())
-    { /* ... (现有代码) ... */
+    {
         qWarning() << "Invalid signal index" << signalIndex;
         return;
     }
@@ -540,7 +518,7 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
     if (item->checkState() == Qt::Checked)
     {
         if (m_plotGraphMap.value(m_activePlot).contains(signalIndex))
-        { /* ... (现有代码) ... */
+        {
             qWarning() << "Graph already exists on this plot.";
             return;
         }
@@ -557,12 +535,12 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
     else // Qt::Unchecked
     {
         if (!m_plotGraphMap.value(m_activePlot).contains(signalIndex))
-        { /* ... (现有代码) ... */
+        {
             return;
         }
         QCPGraph *graph = m_plotGraphMap.value(m_activePlot).value(signalIndex);
         if (graph)
-        { /* ... (现有代码) ... */
+        {
             qDebug() << "Removing signal" << signalName << "from plot" << m_activePlot;
             m_activePlot->removeGraph(graph);
             m_plotGraphMap[m_activePlot].remove(signalIndex);
@@ -570,16 +548,14 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         }
     }
 
-    // --- 新增：添加/删除 graph 后，重建游标以包含/排除它 ---
+    // 添加/删除 graph 后，重建游标以包含/排除它
     setupCursors();
     updateCursors(m_cursorKey1, 1);
     updateCursors(m_cursorKey2, 2);
-    // ---------------------------------------------------
 }
 
 void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
 {
-    // ... (现有代码) ...
     if (!index.isValid())
         return;
     QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
@@ -613,12 +589,8 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
     }
 }
 
-// ===============================================
-// === 新增：游标和重放功能实现 ===
-// ===============================================
-
 /**
- * @brief [新增] 响应游标模式切换
+ * @brief 响应游标模式切换
  */
 void MainWindow::onCursorModeChanged(QAction *action)
 {
@@ -652,7 +624,7 @@ void MainWindow::onCursorModeChanged(QAction *action)
 }
 
 /**
- * @brief [新增] 响应重放按钮切换
+ * @brief 响应重放按钮切换
  */
 void MainWindow::onReplayActionToggled(bool checked)
 {
@@ -667,7 +639,7 @@ void MainWindow::onReplayActionToggled(bool checked)
 }
 
 /**
- * @brief [新增] 响应 Plot 上的鼠标移动
+ * @brief 响应 Plot 上的鼠标移动
  */
 void MainWindow::onPlotMouseMove(QMouseEvent *event)
 {
@@ -694,7 +666,7 @@ void MainWindow::onPlotMouseMove(QMouseEvent *event)
 }
 
 /**
- * @brief [新增] 清除所有游标图元
+ * @brief 清除所有游标图元
  */
 void MainWindow::clearCursors()
 {
@@ -716,7 +688,7 @@ void MainWindow::clearCursors()
 }
 
 /**
- * @brief [新增] 根据 m_cursorMode 设置游标
+ * @brief 根据 m_cursorMode 设置游标
  */
 void MainWindow::setupCursors()
 {
@@ -938,7 +910,7 @@ void MainWindow::updateReplayControls()
 }
 
 /**
- * @brief [新增] 获取全局时间范围
+ * @brief  获取全局时间范围
  */
 QCPRange MainWindow::getGlobalTimeRange() const
 {
@@ -949,7 +921,7 @@ QCPRange MainWindow::getGlobalTimeRange() const
 }
 
 /**
- * @brief [新增] 估算数据时间步
+ * @brief 估算数据时间步
  */
 double MainWindow::findDataTimeStep() const
 {
@@ -961,7 +933,7 @@ double MainWindow::findDataTimeStep() const
 }
 
 /**
- * @brief [新增] 播放/暂停按钮点击
+ * @brief 播放/暂停按钮点击
  */
 void MainWindow::onPlayPauseClicked()
 {
@@ -986,7 +958,7 @@ void MainWindow::onPlayPauseClicked()
 }
 
 /**
- * @brief [新增] 重放定时器触发
+ * @brief  重放定时器触发
  */
 void MainWindow::onReplayTimerTimeout()
 {
@@ -1012,7 +984,7 @@ void MainWindow::onReplayTimerTimeout()
 }
 
 /**
- * @brief [新增] 步进按钮
+ * @brief 步进按钮
  */
 void MainWindow::onStepForwardClicked()
 {
@@ -1025,7 +997,7 @@ void MainWindow::onStepForwardClicked()
 }
 
 /**
- * @brief [新增] 步退按钮
+ * @brief 步退按钮
  */
 void MainWindow::onStepBackwardClicked()
 {
@@ -1038,7 +1010,7 @@ void MainWindow::onStepBackwardClicked()
 }
 
 /**
- * @brief [新增] 时间滑块被用户拖动
+ * @brief 时间滑块被用户拖动
  */
 void MainWindow::onTimeSliderChanged(int value)
 {

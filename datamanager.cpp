@@ -66,8 +66,6 @@ void DataManager::loadCsvFile(const QString &filePath)
         {
             emit loadProgress(percentage);
             lastReportedProgress = percentage;
-            // 模拟较慢的加载，以便看到进度条
-            // QThread::msleep(1);
         }
 
         QStringList parts = line.split(',');
