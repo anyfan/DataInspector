@@ -1,6 +1,6 @@
 #include "mainwindow.h"
 #include "qcustomplot.h"
-// #include "csvloader.h" // <-- 已删除
+#include "signaltreedelegate.h" // <-- 新增：包含自定义委托
 
 #include <QMenuBar>
 #include <QMenu>
@@ -16,6 +16,12 @@
 #include <QStandardItemModel>
 #include <QWidget>
 #include <QGridLayout>
+#include <QPainter>
+#include <QPixmap>
+#include <QSignalBlocker>
+
+// 定义一个自定义角色 (Qt::UserRole + 1) 来存储 QPen
+const int PenDataRole = Qt::UserRole + 1;
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr), m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr), m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr)
@@ -52,10 +58,14 @@ MainWindow::MainWindow(QWidget *parent)
     m_progressDialog->setMaximum(100);
     m_progressDialog->setCancelButton(nullptr); // 修复: m_progressDialog_ -> m_progressDialog
     m_progressDialog->hide();                   // <-- 新增：确保对话框初始时是隐藏的, 修复Bug
+
+    // 注册 QPen 类型，以便在 QVariant 中使用
+    qRegisterMetaType<QPen>("QPen");
 }
 
 MainWindow::~MainWindow()
 {
+    // ... (现有代码) ...
     // 正确停止工作线程
     if (m_dataThread)
     {
@@ -67,6 +77,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::setupDataManagerThread()
 {
+    // ... (现有代码) ...
     m_dataThread = new QThread(this);
     m_dataManager = new DataManager(); // 没有父对象
 
@@ -87,7 +98,7 @@ void MainWindow::setupDataManagerThread()
     //    [Worker] -> [GUI] (报告成功)
     connect(m_dataManager, &DataManager::loadFinished,
             this, &MainWindow::onDataLoadFinished,
-            Qt::QueuedConnection);
+            Qt::QueuedConnection); // <-- 修正：QueledConnection -> QueuedConnection
 
     //    [Worker] -> [GUI] (报告失败)
     connect(m_dataManager, &DataManager::loadFailed,
@@ -106,6 +117,7 @@ void MainWindow::setupDataManagerThread()
 
 void MainWindow::createActions()
 {
+    // ... (现有代码) ...
     // 文件菜单
     m_loadFileAction = new QAction(tr("&Load CSV..."), this);
     m_loadFileAction->setShortcut(QKeySequence::Open);
@@ -124,6 +136,7 @@ void MainWindow::createActions()
 
 void MainWindow::createMenus()
 {
+    // ... (现有代码) ...
     // 文件菜单
     QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
     fileMenu->addAction(m_loadFileAction);
@@ -152,20 +165,25 @@ void MainWindow::createDocks()
     m_signalTree->setModel(m_signalTreeModel);
     m_signalTree->setHeaderHidden(true);
 
+    // --- 新增：设置自定义委托 ---
+    // 这将接管 QTreeView 中条目的绘制
+    m_signalTree->setItemDelegate(new SignalTreeDelegate(m_signalTree));
+    // ----------------------------
+
     m_signalDock->setWidget(m_signalTree);
 
-    // 新增：限制 Dock 功能，禁止其“浮动”成独立窗口
-    // 仅允许关闭和移动
+    // ... (现有代码) ...
     m_signalDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
 
     addDockWidget(Qt::LeftDockWidgetArea, m_signalDock);
 
-    // 连接双击信号 (5.1 节)
-    connect(m_signalTree, &QTreeView::doubleClicked, this, &MainWindow::onSignalDoubleClicked);
+    // 连接 itemChanged 信号 (替换双击) (5.1 节)
+    connect(m_signalTreeModel, &QStandardItemModel::itemChanged, this, &MainWindow::onSignalItemChanged);
 }
 
 void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 {
+    // ... (现有代码) ...
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
     plot->legend->setVisible(true);
 
@@ -177,6 +195,7 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 
 void MainWindow::clearPlotLayout()
 {
+    // ... (现有代码) ...
     // 从布局中移除所有 widget
     QLayout *layout = m_plotContainer->layout();
     if (layout)
@@ -193,6 +212,7 @@ void MainWindow::clearPlotLayout()
     }
     m_plotWidgets.clear();
     m_activePlot = nullptr;
+    // 注意：m_plotGraphMap 在 onDataLoadFinished 中清理
 }
 
 void MainWindow::setupPlotLayout(int rows, int cols)
@@ -200,6 +220,7 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     clearPlotLayout(); // 清理旧布局
 
     QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotContainer->layout());
+    // ... (现有代码) ...
     if (!grid)
     {
         grid = new QGridLayout(m_plotContainer);
@@ -221,11 +242,14 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     if (!m_plotWidgets.isEmpty())
     {
         m_activePlot = m_plotWidgets.first();
+        // 立即应用视觉反馈
+        m_activePlot->setStyleSheet("border: 2px solid #0078d4;");
     }
 }
 
 void MainWindow::on_actionLayout1x1_triggered()
 {
+    // ... (现有代码) ...
     setupPlotLayout(1, 1);
 }
 
@@ -243,6 +267,7 @@ void MainWindow::on_actionLayout3x2_triggered()
 
 void MainWindow::on_actionLoadFile_triggered()
 {
+    // ... (现有代码) ...
     QString filePath = QFileDialog::getOpenFileName(this,
                                                     tr("Open CSV File"), "", tr("CSV Files (*.csv *.txt)"));
 
@@ -262,6 +287,7 @@ void MainWindow::on_actionLoadFile_triggered()
 
 void MainWindow::showLoadProgress(int percentage)
 {
+    // ... (现有代码) ...
     m_progressDialog->setValue(percentage);
 }
 
@@ -280,6 +306,8 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
         plot->clearGraphs();
         plot->replot();
     }
+    // 清理 graph 映射 (重构)
+    m_plotGraphMap.clear();
 
     // 3. 填充信号树
     populateSignalTree(data);
@@ -289,7 +317,10 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
 
 void MainWindow::populateSignalTree(const CsvData &data)
 {
+    // 在清空模型时阻止信号，避免触发 onSignalItemChanged
+    QSignalBlocker blocker(m_signalTreeModel);
     m_signalTreeModel->clear();
+    m_signalPens.clear(); // <-- 新增：清空旧的样式
 
     // headers[0] 是 Time, 我们跳过它
     for (int i = 1; i < data.headers.count(); ++i)
@@ -302,10 +333,22 @@ void MainWindow::populateSignalTree(const CsvData &data)
 
         QStandardItem *item = new QStandardItem(signalName);
         item->setEditable(false);
+        item->setCheckable(true);
+        item->setCheckState(Qt::Unchecked);
 
         // 关键：将此信号在 m_loadedValueData 中的索引存储在 UserRole 中
         // (i-1) 是因为它在 valueData 向量中的索引
         item->setData(i - 1, Qt::UserRole);
+
+        // --- 新增：预定义样式 (需求1) ---
+        // 随机颜色
+        QColor color(10 + (qrand() % 245), 10 + (qrand() % 245), 10 + (qrand() % 245));
+        QPen pen(color, 1); // 1px 宽度
+
+        m_signalPens.append(pen); // 存储
+        // 将 QPen 存储在自定义角色中，供委托使用
+        item->setData(QVariant::fromValue(pen), PenDataRole);
+        // ---------------------------------
 
         m_signalTreeModel->appendRow(item);
     }
@@ -313,6 +356,7 @@ void MainWindow::populateSignalTree(const CsvData &data)
 
 void MainWindow::onDataLoadFailed(const QString &errorString)
 {
+    // ... (现有代码) ...
     m_progressDialog->hide();
     QMessageBox::warning(this, tr("Load Error"), errorString);
 }
@@ -321,7 +365,7 @@ void MainWindow::onPlotClicked()
 {
     // 1. 获取发送信号的 plot
     QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
-    if (!clickedPlot)
+    if (!clickedPlot || clickedPlot == m_activePlot) // <-- 优化：如果点击的还是当前 plot，则不执行任何操作
         return;
 
     // 2. 将其设为 "active"
@@ -342,31 +386,78 @@ void MainWindow::onPlotClicked()
         }
     }
     qDebug() << "Active plot set to:" << m_activePlot;
+
+    // 4. --- [核心需求2] ---
+    //    更新信号树的勾选状态以反映这个新激活的 plot
+    updateSignalTreeChecks();
 }
 
-void MainWindow::onSignalDoubleClicked(const QModelIndex &index)
+/**
+ * @brief [新增] 根据 m_activePlot 更新信号树的勾选状态
+ */
+void MainWindow::updateSignalTreeChecks()
 {
-    if (!index.isValid())
+    // 在我们批量修改勾选状态时，阻止 onSignalItemChanged 信号被触发
+    QSignalBlocker blocker(m_signalTreeModel);
+
+    // 获取当前活动 plot 上的图形 map
+    // 如果 m_activePlot 在 m_plotGraphMap 中还没有条目 (例如，一个空 plot)，
+    // .value() 会返回一个默认构造的 (空) QMap。
+    const auto &activeGraphs = m_plotGraphMap.value(m_activePlot);
+
+    for (int i = 0; i < m_signalTreeModel->rowCount(); ++i)
+    {
+        QStandardItem *item = m_signalTreeModel->item(i);
+        if (!item)
+            continue;
+
+        int signalIndex = item->data(Qt::UserRole).toInt();
+
+        // 检查这个信号是否存在于当前活动 plot 的 map 中
+        if (activeGraphs.contains(signalIndex))
+        {
+            item->setCheckState(Qt::Checked);
+        }
+        else
+        {
+            item->setCheckState(Qt::Unchecked);
+        }
+    }
+}
+
+// <-- 槽函数 (替换 onSignalDoubleClicked) -->
+void MainWindow::onSignalItemChanged(QStandardItem *item)
+{
+    if (!item)
         return;
 
-    // 修复: 在尝试添加信号之前，首先检查数据是否已加载
+    // 1. 检查数据和活动图表
     if (m_loadedTimeData.isEmpty())
     {
-        QMessageBox::information(this, tr("No Data Loaded"),
-                                 tr("Please load a data file before adding signals."));
+        if (item->checkState() == Qt::Checked)
+        {
+            // 使用 QSignalBlocker 防止在 setData 时递归调用
+            QSignalBlocker blocker(m_signalTreeModel);
+            item->setCheckState(Qt::Unchecked);
+        }
+        // 在数据加载前不显示消息，避免干扰
         return;
     }
 
-    // 1. 检查是否有活动图表 (5.1 节)
     if (!m_activePlot)
     {
-        QMessageBox::information(this, tr("No Plot Selected"), tr("Please click on a plot to activate it before adding a signal."));
+        if (item->checkState() == Qt::Checked)
+        {
+            QSignalBlocker blocker(m_signalTreeModel);
+            item->setCheckState(Qt::Unchecked);
+            QMessageBox::information(this, tr("No Plot Selected"), tr("Please click on a plot to activate it before adding a signal."));
+        }
         return;
     }
 
     // 2. 获取信号信息
-    int signalIndex = index.data(Qt::UserRole).toInt();
-    QString signalName = index.data(Qt::DisplayRole).toString();
+    int signalIndex = item->data(Qt::UserRole).toInt();
+    QString signalName = item->text();
 
     if (signalIndex < 0 || signalIndex >= m_loadedValueData.count())
     {
@@ -374,28 +465,63 @@ void MainWindow::onSignalDoubleClicked(const QModelIndex &index)
         return;
     }
 
-    // 移除多余的检查，因为我们在函数顶部已经检查过了
-    /*
-    if (m_loadedTimeData.isEmpty()) {
-        qWarning() << "No time data loaded.";
-        return;
+    // --- 信号槽阻断器 ---
+    // 在我们修改 item (例如 setIcon) 时，不希望再次触发此槽
+    // (虽然我们不再修改 item，但保留它作为好习惯)
+    QSignalBlocker blocker(m_signalTreeModel);
+
+    // 3. 根据勾选状态添加或移除图表 (只针对 m_activePlot)
+    if (item->checkState() == Qt::Checked)
+    {
+        // --- 添加图表 ---
+
+        // 检查是否已存在 (理论上 updateSignalTreeChecks 应该阻止这种情况，但作为安全检查)
+        if (m_plotGraphMap.value(m_activePlot).contains(signalIndex))
+        {
+            qWarning() << "Graph already exists on this plot.";
+            return;
+        }
+
+        qDebug() << "Adding signal" << signalName << "(index" << signalIndex << ") to plot" << m_activePlot;
+
+        QCPGraph *graph = m_activePlot->addGraph();
+        graph->setName(signalName);
+        graph->setData(m_loadedTimeData, m_loadedValueData[signalIndex]);
+
+        // --- 使用预定义的样式 (需求1) ---
+        QPen pen = item->data(PenDataRole).value<QPen>();
+        graph->setPen(pen);
+        // ---------------------------------
+
+        // 存储引用 (重构)
+        m_plotGraphMap[m_activePlot].insert(signalIndex, graph);
+
+        m_activePlot->rescaleAxes();
+        m_activePlot->replot();
     }
-    */
+    else // Qt::Unchecked
+    {
+        // --- 移除图表 ---
 
-    qDebug() << "Adding signal" << signalName << "(index" << signalIndex << ") to plot" << m_activePlot;
+        // (重构)
+        // 检查图表是否在 m_activePlot 的 map 中
+        if (!m_plotGraphMap.value(m_activePlot).contains(signalIndex))
+        {
+            return; // 不在 Map 中，无需操作
+        }
 
-    // 3. 添加图表到活动 plot
-    QCPGraph *graph = m_activePlot->addGraph();
-    graph->setName(signalName);
+        QCPGraph *graph = m_plotGraphMap.value(m_activePlot).value(signalIndex);
 
-    // 4. 设置数据
-    graph->setData(m_loadedTimeData, m_loadedValueData[signalIndex]);
+        // 从它所在的 plot 移除
+        if (graph) // graph 应该总是有效的
+        {
+            qDebug() << "Removing signal" << signalName << "from plot" << m_activePlot;
 
-    // 随机一种清晰的颜色
-    QColor color(10 + (qrand() % 245), 10 + (qrand() % 245), 10 + (qrand() % 245));
-    graph->setPen(QPen(color));
+            m_activePlot->removeGraph(graph);                 // removeGraph 会自动 delete graph
+            m_plotGraphMap[m_activePlot].remove(signalIndex); // 从 map 中移除
 
-    // 5. 缩放并重绘
-    m_activePlot->rescaleAxes();
-    m_activePlot->replot();
+            // 只有在移除图表后才重绘
+            m_activePlot->replot();
+        }
+    }
 }
