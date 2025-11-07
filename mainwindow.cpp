@@ -218,7 +218,12 @@ void MainWindow::clearPlotLayout()
     m_plotWidgets.clear();
     m_activePlot = nullptr;
     m_plotFrameMap.clear(); // <-- 新增：清理 frame 映射
-    // 注意：m_plotGraphMap 在 onDataLoadFinished 中清理
+
+    // --- 修复 Bug 2 ---
+    // QCustomPlot 窗口 (及其 graphs) 即将被删除。
+    // 我们必须清除持有它们指针的 map，否则会导致悬空指针崩溃。
+    m_plotGraphMap.clear();
+    // -------------------
 }
 
 void MainWindow::setupPlotLayout(int rows, int cols)
@@ -346,12 +351,25 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
     m_plotGraphMap.clear();
 
     // 3. 填充信号树
-    populateSignalTree(data);
+    {
+        // --- 修复 Bug 1: QSignalBlocker 移到这里 ---
+        // 在 populateSignalTree 外部使用 blocker,
+        // 这样 clear() 和 appendRow() 的信号都被阻塞
+        QSignalBlocker blocker(m_signalTreeModel);
+        populateSignalTree(data);
+    } // Blocker 在此析构
+
+    // --- 修复 Bug 1: 手动重置视图 ---
+    // QSignalBlocker 阻止了视图更新。
+    // 我们调用 reset() 来强制 QTreeView
+    // 抛弃旧信息并从模型重新获取所有数据。
+    m_signalTree->reset();
+    // ---------------------------------
 
     // --- 修复 Bug (需求 2) ---
     // 加载新数据后，需要立即同步勾选状态
     updateSignalTreeChecks();
-    m_signalTree->viewport()->update(); // <-- 新增: 强制重绘
+    // m_signalTree->viewport()->update(); // <-- 不再需要, reset() 已经处理了
     // -------------------------
 
     QMessageBox::information(this, tr("Success"), tr("Successfully loaded %1 data points.").arg(data.timeData.count()));
@@ -359,8 +377,10 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
 
 void MainWindow::populateSignalTree(const CsvData &data)
 {
+    // --- 修复 Bug 1: QSignalBlocker 已移至 onDataLoadFinished ---
     // 在清空模型时阻止信号，避免触发 onSignalItemChanged
-    QSignalBlocker blocker(m_signalTreeModel);
+    // QSignalBlocker blocker(m_signalTreeModel); // <-- 已移除
+
     m_signalTreeModel->clear();
     m_signalPens.clear(); // <-- 新增：清空旧的样式
 
@@ -612,6 +632,7 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
 
     // 4. 更新所有图表上*已经存在*的这个信号
     // 遍历所有 plot (因为一个信号可能在多个 plot 上)
+    // 这里的迭代是安全的，因为 m_plotGraphMap 现在是干净的 (Bug 2 已修复)
     for (auto it = m_plotGraphMap.begin(); it != m_plotGraphMap.end(); ++it)
     {
         // 检查该 plot 是否有这个信号
