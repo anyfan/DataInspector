@@ -31,6 +31,7 @@
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QStyle>
+#include <QIcon>
 
 // 定义一个自定义角色 (Qt::UserRole + 1) 来存储 QPen
 const int PenDataRole = Qt::UserRole + 1;
@@ -118,6 +119,23 @@ void MainWindow::createActions()
     m_layout3x2Action = new QAction(tr("3x2 Layout"), this);
     connect(m_layout3x2Action, &QAction::triggered, this, &MainWindow::on_actionLayout3x2_triggered);
 
+    // --- 修正：视图缩放动作 ---
+    m_fitViewAction = new QAction(tr("Fit View"), this);
+    m_fitViewAction->setIcon(style()->standardIcon(QStyle::SP_DesktopIcon)); // 使用标准图标
+    m_fitViewAction->setToolTip(tr("Fit all axes to data"));
+    connect(m_fitViewAction, &QAction::triggered, this, &MainWindow::on_actionFitView_triggered);
+
+    m_fitViewTimeAction = new QAction(tr("Fit View (Time)"), this);
+    m_fitViewTimeAction->setIcon(QIcon::fromTheme("zoom-fit-width", style()->standardIcon(QStyle::SP_ArrowRight))); // 尝试主题图标
+    m_fitViewTimeAction->setToolTip(tr("Fit time (X) axis to data"));
+    connect(m_fitViewTimeAction, &QAction::triggered, this, &MainWindow::on_actionFitViewTime_triggered);
+
+    m_fitViewYAction = new QAction(tr("Fit View (Y-Axis)"), this);
+    m_fitViewYAction->setIcon(QIcon::fromTheme("zoom-fit-height", style()->standardIcon(QStyle::SP_ArrowDown))); // 尝试主题图标
+    m_fitViewYAction->setToolTip(tr("Fit Y axis of active plot to data"));
+    connect(m_fitViewYAction, &QAction::triggered, this, &MainWindow::on_actionFitViewY_triggered);
+    // --- -------------------- ---
+
     // 视图/游标动作
     m_cursorNoneAction = new QAction(tr("No Cursor"), this);
     m_cursorNoneAction->setCheckable(true);
@@ -160,6 +178,12 @@ void MainWindow::createMenus()
     {
         viewMenu->addAction(m_replayDock->toggleViewAction());
     }
+    // --- 新增：添加视图菜单项 ---
+    viewMenu->addSeparator();
+    viewMenu->addAction(m_fitViewAction);
+    viewMenu->addAction(m_fitViewTimeAction);
+    viewMenu->addAction(m_fitViewYAction);
+    // --- -------------------- ---
 }
 
 /**
@@ -173,6 +197,13 @@ void MainWindow::createToolBars()
     QWidget *spacer = new QWidget();
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_viewToolBar->addWidget(spacer);
+
+    // --- 新增：添加视图缩放按钮 ---
+    m_viewToolBar->addAction(m_fitViewAction);
+    m_viewToolBar->addAction(m_fitViewTimeAction);
+    m_viewToolBar->addAction(m_fitViewYAction);
+    m_viewToolBar->addSeparator();
+    // --- -------------------- ---
 
     // 添加游标动作
     m_viewToolBar->addAction(m_cursorNoneAction);
@@ -236,6 +267,8 @@ void MainWindow::createReplayDock()
 
     m_replayDock->setWidget(m_replayWidget);
     m_replayDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
+
+    // 错误 2 修正：QDockWidget 必须添加到 DockWidgetArea
     addDockWidget(Qt::BottomDockWidgetArea, m_replayDock);
 
     // 默认隐藏
@@ -256,6 +289,12 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
     // 连接鼠标移动信号
     connect(plot, &QCustomPlot::mouseMove, this, &MainWindow::onPlotMouseMove);
+
+    // --- 修正：X轴同步 ---
+    // 必须使用 static_cast 来解析重载的 rangeChanged 信号
+    connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
+            this, &MainWindow::onXAxisRangeChanged);
+    // --- ----------------- ---
 }
 
 void MainWindow::clearPlotLayout()
@@ -406,6 +445,10 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
         updateCursors(m_cursorKey2, 2);
     }
     updateReplayControls(); // 设置滑块范围
+
+    // --- 新增：数据加载完成后自动缩放视图 ---
+    on_actionFitView_triggered();
+    // ---------------------------------
 }
 
 void MainWindow::populateSignalTree(const CsvData &data)
@@ -425,8 +468,8 @@ void MainWindow::populateSignalTree(const CsvData &data)
         item->setCheckState(Qt::Unchecked);
         item->setData(i - 1, Qt::UserRole);
 
-        QColor color(10 + QRandomGenerator::global()->bounded(245), 
-                     10 + QRandomGenerator::global()->bounded(245), 
+        QColor color(10 + QRandomGenerator::global()->bounded(245),
+                     10 + QRandomGenerator::global()->bounded(245),
                      10 + QRandomGenerator::global()->bounded(245));
         QPen pen(color, 1);
         m_signalPens.append(pen);
@@ -777,6 +820,9 @@ void MainWindow::updateCursors(double key, int cursorIndex)
 
     // 1. 钳制 key 在数据范围内
     QCPRange range = getGlobalTimeRange();
+    if (range.size() <= 0) // 如果没有数据，不要更新
+        return;
+
     if (key < range.lower)
         key = range.lower;
     if (key > range.upper)
@@ -819,6 +865,7 @@ void MainWindow::updateCursors(double key, int cursorIndex)
         // A. 更新垂直线
         QCPItemLine *line = lines->at(i);
         line->start->setCoords(key, plot->yAxis->range().lower);
+        // !! 修正：使用 maxRange 确保线充满整个轴矩形，即使缩放后也是如此
         line->end->setCoords(key, plot->yAxis->range().maxRange);
 
         // B. 更新文本标签
@@ -846,6 +893,7 @@ void MainWindow::updateCursors(double key, int cursorIndex)
 
         QCPItemText *label = labels->at(i);
         label->setText(labelText);
+        // !! 修正：锚定到轴的顶部，而不是范围的 maxRange
         label->position->setCoords(key, plot->yAxis->range().upper);
 
         // C. 如果有双光标，计算差值
@@ -1026,3 +1074,116 @@ void MainWindow::onTimeSliderChanged(int value)
 
     updateCursors(newKey, 1);
 }
+
+// --- 新增：视图缩放槽函数实现 ---
+
+/**
+ * @brief [槽] 适应视图大小 (所有子图, X 和 Y 轴)
+ */
+void MainWindow::on_actionFitView_triggered()
+{
+    if (m_plotWidgets.isEmpty())
+        return;
+
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (plot && plot->graphCount() > 0)
+        {
+            plot->rescaleAxes();
+            plot->replot();
+        }
+    }
+}
+
+/**
+ * @brief [槽] 适应视图大小 (所有子图, 仅 X 轴)
+ */
+void MainWindow::on_actionFitViewTime_triggered()
+{
+    if (m_plotWidgets.isEmpty())
+        return;
+
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (plot && plot->graphCount() > 0)
+        {
+            plot->xAxis->rescale();
+            plot->replot();
+        }
+    }
+}
+
+/**
+ * @brief [槽] 适应视图大小 (仅活动子图, 仅 Y 轴)
+ */
+void MainWindow::on_actionFitViewY_triggered()
+{
+    // --- 修正：仅缩放当前X轴范围内的Y轴 ---
+    if (m_activePlot && m_activePlot->graphCount() > 0)
+    {
+        QCPRange keyRange = m_activePlot->xAxis->range();
+        QCPRange valueRange;
+        bool foundRange = false;
+
+        // 遍历活动子图上的所有图表
+        const auto &graphs = m_plotGraphMap.value(m_activePlot);
+        for (QCPGraph *graph : graphs)
+        {
+            bool currentFound = false;
+            // 获取该图表在当前X轴范围内的Y值范围
+            QCPRange graphValueRange = graph->getValueRange(currentFound, QCP::sdBoth, keyRange);
+            if (currentFound)
+            {
+                if (!foundRange)
+                    valueRange = graphValueRange;
+                else
+                    valueRange.expand(graphValueRange);
+                foundRange = true;
+            }
+        }
+
+        // 设置Y轴范围并重绘
+        if (foundRange)
+        {
+            m_activePlot->yAxis->setRange(valueRange);
+            m_activePlot->replot();
+        }
+    }
+}
+// --- ------------------------- ---
+
+// --- 新增：X轴同步槽函数实现 ---
+/**
+ * @brief [槽] 当一个X轴范围改变时，同步所有其他的X轴
+ */
+void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
+{
+    QObject *senderAxis = sender();
+    if (!senderAxis)
+        return;
+
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        // 仅更新 *其他* 图表, 避免信号循环
+        if (plot->xAxis != senderAxis)
+        {
+            // 阻止此 setRange 再次发出 rangeChanged 信号
+            QSignalBlocker blocker(plot->xAxis);
+            plot->xAxis->setRange(newRange);
+
+            // 如果Y轴也需要同步（例如，如果它们是链接的），
+            // 在这里添加逻辑。目前，我们只重绘以更新游标。
+            plot->replot();
+        }
+    }
+
+    // X轴变化时，游标也需要更新
+    // （因为Y轴范围可能已改变，标签需要重新定位）
+    if (m_cursorMode != NoCursor)
+    {
+        updateCursors(m_cursorKey1, 1);
+        if (m_cursorMode == DoubleCursor)
+            updateCursors(m_cursorKey2, 2);
+    }
+}
+// --- ----------------------- ---

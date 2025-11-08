@@ -21,17 +21,17 @@ class QProgressDialog;
 class QModelIndex;
 class QCPGraph;
 class QFrame;
-class QToolBar;       // <-- 新增
-class QActionGroup;   // <-- 新增
-class QTimer;         // <-- 新增
-class QPushButton;    // <-- 新增
-class QSlider;        // <-- 新增
-class QLabel;         // <-- 新增
-class QDoubleSpinBox; // <-- 新增
-class QCPItemLine;    // <-- 新增
-class QCPItemTracer;  // <-- 新增
-class QCPItemText;    // <-- 新增
-class QCPRange;       // <-- 修复：添加 QCPRange 的向前声明
+class QToolBar;
+class QActionGroup;
+class QTimer;
+class QPushButton;
+class QSlider;
+class QLabel;
+class QDoubleSpinBox;
+class QCPItemLine;
+class QCPItemTracer;
+class QCPItemText;
+class QCPRange;
 
 /**
  * @brief 主窗口类，实现 data flow.md 中的核心架构
@@ -77,7 +77,7 @@ private slots:
     void onSignalItemChanged(QStandardItem *item);
     void onSignalItemDoubleClicked(const QModelIndex &index);
 
-    // --- 新增：游标和重放槽函数 ---
+    // 游标和重放槽函数
     void onCursorModeChanged(QAction *action);
     void onReplayActionToggled(bool checked);
     void onPlotMouseMove(QMouseEvent *event);
@@ -88,6 +88,27 @@ private slots:
     void onStepBackwardClicked();
     void onReplayTimerTimeout();
     void onTimeSliderChanged(int value);
+
+    // 视图缩放槽函数
+    /**
+     * @brief [槽] 适应视图大小 (所有子图, X 和 Y 轴)
+     */
+    void on_actionFitView_triggered();
+    /**
+     * @brief [槽] 适应视图大小 (所有子图, 仅 X 轴)
+     */
+    void on_actionFitViewTime_triggered();
+    /**
+     * @brief [槽] 适应视图大小 (仅活动子图, 仅 Y 轴)
+     */
+    void on_actionFitViewY_triggered();
+
+    // --- 新增：X轴同步槽 ---
+    /**
+     * @brief [槽] 当一个X轴范围改变时，同步所有其他的X轴
+     * @param newRange 新的X轴范围
+     */
+    void onXAxisRangeChanged(const QCPRange &newRange);
     // --- -------------------- ---
 
 private:
@@ -95,8 +116,8 @@ private:
     void createActions();
     void createMenus();
     void createDocks();
-    void createToolBars();   // <-- 新增
-    void createReplayDock(); // <-- 新增
+    void createToolBars();
+    void createReplayDock();
 
     /**
      * @brief 设置数据管理工作线程
@@ -179,9 +200,9 @@ private:
 
     // (Plot -> (SignalIndex -> Graph)) 映射
     // 用于跟踪*哪个plot上*有*哪些graph*
-    QMap<QCustomPlot *, QMap<int, QCPGraph *>> m_plotGraphMap; // <-- 重构
-    QMap<QCustomPlot *, QFrame *> m_plotFrameMap;              // <-- 新增: 跟踪 plot 和它的高亮 frame
-    QCustomPlot *m_lastMousePlot;                              // <-- 新增: 跟踪最后一次鼠标事件的 plot
+    QMap<QCustomPlot *, QMap<int, QCPGraph *>> m_plotGraphMap;
+    QMap<QCustomPlot *, QFrame *> m_plotFrameMap; // 跟踪 plot 和它的高亮 frame
+    QCustomPlot *m_lastMousePlot;                 // 跟踪最后一次鼠标事件的 plot
 
     // --- 菜单和工具栏动作 ---
     QAction *m_loadFileAction;
@@ -189,40 +210,46 @@ private:
     QAction *m_layout2x2Action;
     QAction *m_layout3x2Action;
 
-    QToolBar *m_viewToolBar;       // <-- 新增
-    QAction *m_cursorNoneAction;   // <-- 新增
-    QAction *m_cursorSingleAction; // <-- 新增
-    QAction *m_cursorDoubleAction; // <-- 新增
-    QAction *m_replayAction;       // <-- 新增
-    QActionGroup *m_cursorGroup;   // <-- 新增
+    QToolBar *m_viewToolBar;
+    QAction *m_cursorNoneAction;
+    QAction *m_cursorSingleAction;
+    QAction *m_cursorDoubleAction;
+    QAction *m_replayAction;
+    QActionGroup *m_cursorGroup;
+
+    // --- 新增：视图缩放动作 ---
+    QAction *m_fitViewAction;
+    QAction *m_fitViewTimeAction;
+    QAction *m_fitViewYAction;
+    // --- -------------------- ---
 
     // --- 游标状态 ---
-    CursorMode m_cursorMode;              // <-- 新增
-    double m_cursorKey1;                  // <-- 新增: 游标 1 的 X 坐标
-    double m_cursorKey2;                  // <-- 新增: 游标 2 的 X 坐标
-    QList<QCPItemLine *> m_cursorLines1;  // <-- 新增: 存储所有 plot 上的游标线 1
-    QList<QCPItemLine *> m_cursorLines2;  // <-- 新增: 存储所有 plot 上的游标线 2
-    QList<QCPItemText *> m_cursorLabels1; // <-- 新增: 存储游标 1 的文本标签
-    QList<QCPItemText *> m_cursorLabels2; // <-- 新增: 存储游标 2 的文本标签
+    CursorMode m_cursorMode;
+    double m_cursorKey1;
+    double m_cursorKey2;
+    QList<QCPItemLine *> m_cursorLines1;
+    QList<QCPItemLine *> m_cursorLines2;
+    QList<QCPItemText *> m_cursorLabels1;
+    QList<QCPItemText *> m_cursorLabels2;
     // (Graph -> Tracer) 映射
-    QMap<QCPGraph *, QCPItemTracer *> m_graphTracers1; // <-- 新增: 存储游标 1 的跟踪器
-    QMap<QCPGraph *, QCPItemTracer *> m_graphTracers2; // <-- 新增: 存储游标 2 的跟踪器
+    QMap<QCPGraph *, QCPItemTracer *> m_graphTracers1;
+    QMap<QCPGraph *, QCPItemTracer *> m_graphTracers2;
 
     // --- 重放控制 ---
-    QDockWidget *m_replayDock;         // <-- 新增
-    QWidget *m_replayWidget;           // <-- 新增
-    QPushButton *m_playPauseButton;    // <-- 新增
-    QPushButton *m_stepForwardButton;  // <-- 新增
-    QPushButton *m_stepBackwardButton; // <-- 新增
-    QDoubleSpinBox *m_speedSpinBox;    // <-- 新增
-    QSlider *m_timeSlider;             // <-- 新增
-    QLabel *m_currentTimeLabel;        // <-- 新增
-    QTimer *m_replayTimer;             // <-- 新增
+    QDockWidget *m_replayDock;
+    QWidget *m_replayWidget;
+    QPushButton *m_playPauseButton;
+    QPushButton *m_stepForwardButton;
+    QPushButton *m_stepBackwardButton;
+    QDoubleSpinBox *m_speedSpinBox;
+    QSlider *m_timeSlider;
+    QLabel *m_currentTimeLabel;
+    QTimer *m_replayTimer;
 
     // --- 加载的数据缓存 ---
     QVector<double> m_loadedTimeData;
     QVector<QVector<double>> m_loadedValueData;
-    QVector<QPen> m_signalPens; // <-- 新增: 存储每个信号的预定义样式
+    QVector<QPen> m_signalPens;
 };
 
 #endif // MAINWINDOW_H
