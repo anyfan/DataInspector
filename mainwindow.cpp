@@ -1139,8 +1139,14 @@ void MainWindow::setupCursors()
             // --- 游标 1 Y标签 ---
             QCPItemTracer *tracer1 = new QCPItemTracer(plot);
             tracer1->setGraph(graph);
-            tracer1->setInterpolating(true);
-            tracer1->setVisible(false); // 跟踪器本身不可见
+            tracer1->setInterpolating(false); // <-- 不插值，吸附到最近的点
+
+            // tracer1->setVisible(false); // 跟踪器本身不可见
+            tracer1->setVisible(true);
+            tracer1->setStyle(QCPItemTracer::tsCircle);      // 设置为圆形
+            tracer1->setSize(3);                             // "加粗" (10像素)
+            tracer1->setPen(graph->pen());                   // 轮廓颜色与图表线相同
+            tracer1->setBrush(QBrush(graph->pen().color())); // 填充颜色与图表线相同
             m_graphTracers1.insert(graph, tracer1);
 
             QCPItemText *yLabel1 = new QCPItemText(plot);
@@ -1160,8 +1166,13 @@ void MainWindow::setupCursors()
                 // --- 游标 2 Y标签 ---
                 QCPItemTracer *tracer2 = new QCPItemTracer(plot);
                 tracer2->setGraph(graph);
-                tracer2->setInterpolating(true);
-                tracer2->setVisible(false);
+                tracer2->setInterpolating(false); // <-- 不插值，吸附到最近的点
+                // tracer2->setVisible(false);
+                tracer2->setVisible(true);
+                tracer2->setStyle(QCPItemTracer::tsCircle);      // 设置为圆形
+                tracer2->setSize(3);                             // "加粗" (10像素)
+                tracer2->setPen(graph->pen());                   // 轮廓颜色与图表线相同
+                tracer2->setBrush(QBrush(graph->pen().color())); // 填充颜色与图表线相同
                 m_graphTracers2.insert(graph, tracer2);
 
                 QCPItemText *yLabel2 = new QCPItemText(plot);
