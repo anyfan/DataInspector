@@ -6,7 +6,7 @@
 #include <QMap>
 #include <QVector>
 #include <QPen>
-#include <QSet> // --- 新增 ---
+#include <QSet>
 #include "datamanager.h"
 
 // 向前声明
@@ -81,7 +81,12 @@ private slots:
     // 游标和重放槽函数
     void onCursorModeChanged(QAction *action);
     void onReplayActionToggled(bool checked);
+
+    // --- 修改：游标鼠标事件 ---
+    void onPlotMousePress(QMouseEvent *event);
     void onPlotMouseMove(QMouseEvent *event);
+    void onPlotMouseRelease(QMouseEvent *event);
+    // --- -------------------- ---
 
     // 重放控制槽
     void onPlayPauseClicked();
@@ -91,24 +96,11 @@ private slots:
     void onTimeSliderChanged(int value);
 
     // 视图缩放槽函数
-    /**
-     * @brief [槽] 适应视图大小 (所有子图, X 和 Y 轴)
-     */
     void on_actionFitView_triggered();
-    /**
-     * @brief [槽] 适应视图大小 (所有子图, 仅 X 轴)
-     */
     void on_actionFitViewTime_triggered();
-    /**
-     * @brief [槽] 适应视图大小 (仅活动子图, 仅 Y 轴)
-     */
     void on_actionFitViewY_triggered();
 
     // X轴同步槽
-    /**
-     * @brief [槽] 当一个X轴范围改变时，同步所有其他的X轴
-     * @param newRange 新的X轴范围
-     */
     void onXAxisRangeChanged(const QCPRange &newRange);
 
 private:
@@ -149,7 +141,7 @@ private:
      */
     void updateSignalTreeChecks();
 
-    // --- 新增：游标和重放辅助函数 ---
+    // --- 游标和重放辅助函数 ---
     /**
      * @brief 销毁所有游标项
      */
@@ -182,7 +174,7 @@ private:
      */
     double findDataTimeStep() const;
 
-    // --- 新增：辅助函数 ---
+    // --- 辅助函数 ---
     /**
      * @brief 从 m_plotGraphMap 中安全地获取一个 QCPGraph*
      */
@@ -242,13 +234,20 @@ private:
     CursorMode m_cursorMode;
     double m_cursorKey1;
     double m_cursorKey2;
+    bool m_isDraggingCursor1; // --- 新增：拖拽状态
+    bool m_isDraggingCursor2; // --- 新增：拖拽状态
+
     QList<QCPItemLine *> m_cursorLines1;
     QList<QCPItemLine *> m_cursorLines2;
-    QList<QCPItemText *> m_cursorLabels1;
-    QList<QCPItemText *> m_cursorLabels2;
+    QList<QCPItemText *> m_cursorXLabels1; // --- 修改：用于 X 轴标签
+    QList<QCPItemText *> m_cursorXLabels2; // --- 修改：用于 X 轴标签
+
     // (Graph -> Tracer) 映射
     QMap<QCPGraph *, QCPItemTracer *> m_graphTracers1;
     QMap<QCPGraph *, QCPItemTracer *> m_graphTracers2;
+    // (Tracer -> Label) 映射
+    QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels1; // --- 新增：用于 Y 轴标签
+    QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels2; // --- 新增：用于 Y 轴标签
 
     // --- 重放控制 ---
     QDockWidget *m_replayDock;

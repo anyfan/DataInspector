@@ -37,7 +37,11 @@
 const int PenDataRole = Qt::UserRole + 1;
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr), m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr), m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr), m_lastMousePlot(nullptr), m_cursorMode(NoCursor), m_cursorKey1(0), m_cursorKey2(0)
+    : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr), m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr), m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr), m_lastMousePlot(nullptr), m_cursorMode(NoCursor), m_cursorKey1(0), m_cursorKey2(0),
+      // --- 新增：初始化拖拽标志 ---
+      m_isDraggingCursor1(false),
+      m_isDraggingCursor2(false)
+// --- -------------------- ---
 {
     setupDataManagerThread();
 
@@ -287,14 +291,16 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     plot->legend->setVisible(true);
 
     connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
-    // 连接鼠标移动信号
-    connect(plot, &QCustomPlot::mouseMove, this, &MainWindow::onPlotMouseMove);
 
-    // --- 修正：X轴同步 ---
-    // 必须使用 static_cast 来解析重载的 rangeChanged 信号
+    // --- 修改：连接新的鼠标事件处理器 ---
+    connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotMousePress);
+    connect(plot, &QCustomPlot::mouseMove, this, &MainWindow::onPlotMouseMove);
+    connect(plot, &QCustomPlot::mouseRelease, this, &MainWindow::onPlotMouseRelease);
+    // --- -------------------------- ---
+
+    // X轴同步
     connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
             this, &MainWindow::onXAxisRangeChanged);
-    // --- ----------------- ---
 }
 
 void MainWindow::clearPlotLayout()
@@ -330,7 +336,9 @@ void MainWindow::clearPlotLayout()
 
 void MainWindow::setupPlotLayout(int rows, int cols)
 {
-    clearPlotLayout(); // 清理旧布局
+    // --- 持久化逻辑开始 ---
+    // (在 clearPlotLayout 之前不需要保存，因为 m_plotSignalMap 已经是持久的)
+    clearPlotLayout(); // 清理旧布局 (这会清空 m_plotWidgets, m_plotGraphMap 等)
 
     QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotContainer->layout());
     if (!grid)
@@ -341,7 +349,6 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     QCPRange sharedXRange;
     bool hasSharedXRange = false;
 
-    // --- 重点修改：恢复信号 ---
     // 1. 恢复图表
     if (m_signalTreeModel && !m_loadedTimeData.isEmpty())
     {
@@ -355,10 +362,6 @@ void MainWindow::setupPlotLayout(int rows, int cols)
             // 如果此索引在新布局中仍然可见
             if (r < rows && c < cols)
             {
-                // （这部分逻辑与下面的 else 块重复，但必须先执行
-                //  以确保在创建新 plot 时 m_plotGraphMap 是最新的，
-                //  以便 setupPlotInteractions (X轴同步) 能正常工作）
-
                 // --- 创建 Plot ---
                 QFrame *plotFrame = new QFrame(m_plotContainer);
                 plotFrame->setFrameShape(QFrame::NoFrame);
@@ -414,7 +417,7 @@ void MainWindow::setupPlotLayout(int rows, int cols)
         for (int c = 0; c < cols; ++c)
         {
             int plotIndex = r * cols + c;
-            if (m_plotSignalMap.contains(plotIndex)) // 这个 plot 已经创建过了
+            if (m_plotWidgetMap.key(plotIndex)) // 这个 plot 已经创建过了
                 continue;
 
             // --- 创建 Plot ---
@@ -455,14 +458,8 @@ void MainWindow::setupPlotLayout(int rows, int cols)
         // 尝试重新激活之前活动的子图，如果它仍然存在的话
         int activePlotIndex = m_activePlot ? m_plotWidgetMap.value(m_activePlot, 0) : 0;
 
-        if (activePlotIndex < m_plotWidgets.size())
-        {
-            m_activePlot = m_plotWidgets.at(activePlotIndex);
-        }
-        else
-        {
-            m_activePlot = m_plotWidgets.first();
-        }
+        QCustomPlot *newActivePlot = m_plotWidgetMap.key(activePlotIndex, m_plotWidgets.first());
+        m_activePlot = newActivePlot;
 
         m_lastMousePlot = m_activePlot;
         QFrame *frame = m_plotFrameMap.value(m_activePlot);
@@ -789,14 +786,15 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
  */
 void MainWindow::onCursorModeChanged(QAction *action)
 {
+    // --- 修正：在启用/禁用游标时，始终保持平移开启 ---
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        plot->setInteraction(QCP::iRangeDrag, true);
+    }
+
     if (action == m_cursorNoneAction)
     {
         m_cursorMode = NoCursor;
-        // 恢复平移
-        for (QCustomPlot *plot : m_plotWidgets)
-        {
-            plot->setInteraction(QCP::iRangeDrag, true);
-        }
     }
     else
     {
@@ -804,13 +802,8 @@ void MainWindow::onCursorModeChanged(QAction *action)
             m_cursorMode = SingleCursor;
         else if (action == m_cursorDoubleAction)
             m_cursorMode = DoubleCursor;
-
-        // 禁用平移，避免与游标拖动冲突
-        for (QCustomPlot *plot : m_plotWidgets)
-        {
-            plot->setInteraction(QCP::iRangeDrag, false);
-        }
     }
+    // --- ----------------------------------------- ---
 
     // 重建游标 UI
     setupCursors();
@@ -833,32 +826,159 @@ void MainWindow::onReplayActionToggled(bool checked)
     }
 }
 
+// ---
+// ---
+// --- 游标拖拽逻辑开始
+// ---
+// ---
+
 /**
- * @brief 响应 Plot 上的鼠标移动
+ * @brief 响应 Plot 上的鼠标按下
  */
-void MainWindow::onPlotMouseMove(QMouseEvent *event)
+void MainWindow::onPlotMousePress(QMouseEvent *event)
 {
     if (m_cursorMode == NoCursor)
         return; // 游标未激活
 
     QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
+    if (!plot)
+        return;
+
+    // 检查是否点击了游标 1
+    if (m_cursorMode == SingleCursor || m_cursorMode == DoubleCursor)
+    {
+        int plotIndex = m_plotWidgets.indexOf(plot);
+        if (plotIndex != -1 && plotIndex < m_cursorLines1.size())
+        {
+            // 检查与线的距离
+            double dist1 = m_cursorLines1.at(plotIndex)->selectTest(event->pos(), false);
+            if (dist1 >= 0 && dist1 < plot->selectionTolerance())
+            {
+                m_isDraggingCursor1 = true;
+                // --- 修正：暂时禁用平移 ---
+                plot->setInteraction(QCP::iRangeDrag, false);
+                event->accept(); // 接受事件，阻止 QCustomPlot 的 iRangeDrag
+                return;          // 优先拖动游标 1
+            }
+        }
+    }
+
+    // 检查是否点击了游标 2
+    if (m_cursorMode == DoubleCursor)
+    {
+        int plotIndex = m_plotWidgets.indexOf(plot);
+        if (plotIndex != -1 && plotIndex < m_cursorLines2.size())
+        {
+            double dist2 = m_cursorLines2.at(plotIndex)->selectTest(event->pos(), false);
+            if (dist2 >= 0 && dist2 < plot->selectionTolerance())
+            {
+                m_isDraggingCursor2 = true;
+                // --- 修正：暂时禁用平移 ---
+                plot->setInteraction(QCP::iRangeDrag, false);
+                event->accept(); // 接受事件，阻止 QCustomPlot 的 iRangeDrag
+                return;
+            }
+        }
+    }
+
+    // 如果没有点击游标，则不处理事件 (event->ignore() 是默认的)
+    // 这将允许 QCustomPlot 的 iRangeDrag (平移) 生效
+}
+
+/**
+ * @brief 响应 Plot 上的鼠标移动
+ */
+void MainWindow::onPlotMouseMove(QMouseEvent *event)
+{
+    QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
     if (plot)
         m_lastMousePlot = plot; // 记录最后交互的 plot
+    else if (m_lastMousePlot)
+        plot = m_lastMousePlot; // 后备
+    else if (!m_plotWidgets.isEmpty())
+        plot = m_plotWidgets.first(); // 最终后备
+    else
+        return; // 没有 plot
 
     // 从 plot 获取 x 坐标
     double key = plot->xAxis->pixelToCoord(event->pos().x());
 
-    // 左键拖动 -> 移动游标 1
-    if (event->buttons() & Qt::LeftButton)
+    // --- 拖拽逻辑 ---
+    if (m_isDraggingCursor1)
     {
         updateCursors(key, 1);
+        event->accept();
     }
-    // 右键拖动 (仅在双游标模式) -> 移动游标 2
-    else if ((event->buttons() & Qt::RightButton) && m_cursorMode == DoubleCursor)
+    else if (m_isDraggingCursor2)
     {
         updateCursors(key, 2);
+        event->accept();
+    }
+    // --- 悬停逻辑 ---
+    else if (m_cursorMode != NoCursor)
+    {
+        int plotIndex = m_plotWidgets.indexOf(plot);
+        if (plotIndex == -1)
+        {
+            plot->setCursor(Qt::ArrowCursor);
+            return;
+        }
+
+        bool nearCursor = false;
+        if (plotIndex < m_cursorLines1.size())
+        {
+            double dist1 = m_cursorLines1.at(plotIndex)->selectTest(event->pos(), false);
+            if (dist1 >= 0 && dist1 < plot->selectionTolerance())
+                nearCursor = true;
+        }
+
+        if (!nearCursor && m_cursorMode == DoubleCursor && plotIndex < m_cursorLines2.size())
+        {
+            double dist2 = m_cursorLines2.at(plotIndex)->selectTest(event->pos(), false);
+            if (dist2 >= 0 && dist2 < plot->selectionTolerance())
+                nearCursor = true;
+        }
+
+        if (nearCursor)
+            plot->setCursor(Qt::SizeHorCursor);
+        else
+            plot->setCursor(Qt::ArrowCursor);
+    }
+    else
+    {
+        plot->setCursor(Qt::ArrowCursor);
     }
 }
+
+/**
+ * @brief 响应 Plot 上的鼠标释放
+ */
+void MainWindow::onPlotMouseRelease(QMouseEvent *event)
+{
+    Q_UNUSED(event);
+
+    // --- 修正：重新启用平移 ---
+    if (m_isDraggingCursor1 || m_isDraggingCursor2)
+    {
+        // 必须找到正确的 plot 指针，sender() 可能不可靠
+        QCustomPlot *plot = m_lastMousePlot;
+        if (plot && m_cursorMode != NoCursor)
+        {
+            // 拖动游标后，重新启用平移
+            plot->setInteraction(QCP::iRangeDrag, true);
+        }
+    }
+    // --- ----------------------- ---
+
+    m_isDraggingCursor1 = false;
+    m_isDraggingCursor2 = false;
+}
+
+// ---
+// ---
+// --- 游标拖拽逻辑结束
+// ---
+// ---
 
 /**
  * @brief 清除所有游标图元
@@ -870,12 +990,18 @@ void MainWindow::clearCursors()
     qDeleteAll(m_cursorLines2);
     m_cursorLines2.clear();
 
-    qDeleteAll(m_cursorLabels1);
-    m_cursorLabels1.clear();
-    qDeleteAll(m_cursorLabels2);
-    m_cursorLabels2.clear();
+    // --- 修改：清理新的标签 ---
+    qDeleteAll(m_cursorXLabels1);
+    m_cursorXLabels1.clear();
+    qDeleteAll(m_cursorXLabels2);
+    m_cursorXLabels2.clear();
 
-    // QMap 的 value 是指针，需要特殊删除
+    qDeleteAll(m_cursorYLabels1);
+    m_cursorYLabels1.clear();
+    qDeleteAll(m_cursorYLabels2);
+    m_cursorYLabels2.clear();
+    // --- -------------------- ---
+
     qDeleteAll(m_graphTracers1);
     m_graphTracers1.clear();
     qDeleteAll(m_graphTracers2);
@@ -902,68 +1028,114 @@ void MainWindow::setupCursors()
     QPen pen1(Qt::red, 0, Qt::DashLine);
     QPen pen2(Qt::blue, 0, Qt::DashLine);
 
-    // 1. 为每个 Plot 创建垂直线
+    // ---
+    // --- 重点修改：创建新的游标和标签
+    // ---
+    QColor xLabelBgColor(255, 255, 255, 200);
+    QBrush xLabelBrush(xLabelBgColor);
+    QPen xLabelPen(Qt::black);
+
+    // 1. 为每个 Plot 创建垂直线 和 X轴标签
     for (QCustomPlot *plot : m_plotWidgets)
     {
-        // 创建游标 1
+        // --- 创建游标 1 ---
         QCPItemLine *line1 = new QCPItemLine(plot);
         line1->setPen(pen1);
+        line1->setSelectable(true); // 使其可被 selectTest 命中
+        // --- 修正：使用绝对像素坐标 ---
+        line1->start->setType(QCPItemPosition::ptAbsolute);
+        line1->end->setType(QCPItemPosition::ptAbsolute);
+        line1->setClipToAxisRect(true); // 裁剪到轴矩形
         m_cursorLines1.append(line1);
 
-        QCPItemText *label1 = new QCPItemText(plot);
-        label1->setLayer("overlay");
-        label1->setClipToAxisRect(false);
-        label1->setPadding(QMargins(5, 5, 5, 5));
-        label1->setBrush(QBrush(QColor(255, 255, 255, 200)));
-        label1->setPen(QPen(Qt::black));
-        label1->setPositionAlignment(Qt::AlignTop | Qt::AlignLeft);
-        m_cursorLabels1.append(label1);
+        QCPItemText *xLabel1 = new QCPItemText(plot);
+        xLabel1->setLayer("overlay");
+        xLabel1->setClipToAxisRect(false);
+        xLabel1->setPadding(QMargins(5, 2, 5, 2));
+        xLabel1->setBrush(xLabelBrush);
+        xLabel1->setPen(xLabelPen);
+        xLabel1->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter); // 顶部中心锚定
+        xLabel1->position->setParentAnchor(line1->start);               // 锚定到线的底部
+        xLabel1->position->setCoords(0, 5);                             // 偏移量 (0, 5)
+        m_cursorXLabels1.append(xLabel1);
 
         if (m_cursorMode == DoubleCursor)
         {
-            // 创建游标 2
+            // --- 创建游标 2 ---
             QCPItemLine *line2 = new QCPItemLine(plot);
             line2->setPen(pen2);
+            line2->setSelectable(true);
+            // --- 修正：使用绝对像素坐标 ---
+            line2->start->setType(QCPItemPosition::ptAbsolute);
+            line2->end->setType(QCPItemPosition::ptAbsolute);
+            line2->setClipToAxisRect(true);
             m_cursorLines2.append(line2);
 
-            QCPItemText *label2 = new QCPItemText(plot);
-            label2->setLayer("overlay");
-            label2->setClipToAxisRect(false);
-            label2->setPadding(QMargins(5, 5, 5, 5));
-            label2->setBrush(QBrush(QColor(255, 255, 255, 200)));
-            label2->setPen(QPen(Qt::black));
-            label2->setPositionAlignment(Qt::AlignTop | Qt::AlignRight);
-            m_cursorLabels2.append(label2);
+            QCPItemText *xLabel2 = new QCPItemText(plot);
+            xLabel2->setLayer("overlay");
+            xLabel2->setClipToAxisRect(false);
+            xLabel2->setPadding(QMargins(5, 2, 5, 2));
+            xLabel2->setBrush(xLabelBrush);
+            xLabel2->setPen(xLabelPen);
+            xLabel2->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter);
+            xLabel2->position->setParentAnchor(line2->start);
+            xLabel2->position->setCoords(0, 5);
+            m_cursorXLabels2.append(xLabel2);
         }
     }
 
-    // 2. 为每个 Graph 创建跟踪器
-    // --- 修正：使用 m_plotGraphMap 迭代 ---
+    // 2. 为每个 Graph 创建跟踪器 和 Y轴标签
     for (auto it = m_plotGraphMap.begin(); it != m_plotGraphMap.end(); ++it)
     {
-        for (QCPGraph *graph : it.value()) // it.value() 是 QMap<int, QCPGraph*>
-                                           // --- ------------------------- ---
+        QCustomPlot *plot = it.key(); // 获取 QCustomPlot
+        for (QCPGraph *graph : it.value())
         {
-            // 创建游标 1 的跟踪器
-            QCPItemTracer *tracer1 = new QCPItemTracer(graph->parentPlot());
+            // --- 游标 1 Y标签 ---
+            QCPItemTracer *tracer1 = new QCPItemTracer(plot);
             tracer1->setGraph(graph);
             tracer1->setInterpolating(true);
-            tracer1->setVisible(true);
+            tracer1->setVisible(false); // 跟踪器本身不可见
             m_graphTracers1.insert(graph, tracer1);
+
+            QCPItemText *yLabel1 = new QCPItemText(plot);
+            yLabel1->setLayer("overlay");
+            yLabel1->setClipToAxisRect(false);
+            yLabel1->setPadding(QMargins(5, 2, 5, 2));
+            yLabel1->setBrush(QBrush(QColor(255, 255, 255, 180)));
+            yLabel1->setPen(QPen(graph->pen().color())); // 标签边框颜色
+            yLabel1->setColor(graph->pen().color());     // 文本颜色
+            yLabel1->setPositionAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+            yLabel1->position->setParentAnchor(tracer1->position); // 锚定到跟踪器
+            yLabel1->position->setCoords(5, 0);                    // 偏移量 (5, 0)
+            m_cursorYLabels1.insert(tracer1, yLabel1);
 
             if (m_cursorMode == DoubleCursor)
             {
-                // 创建游标 2 的跟踪器
-                QCPItemTracer *tracer2 = new QCPItemTracer(graph->parentPlot());
+                // --- 游标 2 Y标签 ---
+                QCPItemTracer *tracer2 = new QCPItemTracer(plot);
                 tracer2->setGraph(graph);
                 tracer2->setInterpolating(true);
-                tracer2->setVisible(true);
+                tracer2->setVisible(false);
                 m_graphTracers2.insert(graph, tracer2);
+
+                QCPItemText *yLabel2 = new QCPItemText(plot);
+                yLabel2->setLayer("overlay");
+                yLabel2->setClipToAxisRect(false);
+                yLabel2->setPadding(QMargins(5, 2, 5, 2));
+                yLabel2->setBrush(QBrush(QColor(255, 255, 255, 180)));
+                yLabel2->setPen(QPen(graph->pen().color()));
+                yLabel2->setColor(graph->pen().color());
+                yLabel2->setPositionAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+                yLabel2->position->setParentAnchor(tracer2->position);
+                yLabel2->position->setCoords(5, 0);
+                m_cursorYLabels2.insert(tracer2, yLabel2);
             }
         }
     }
 
-    // --- 新增：确保所有子图都重绘 ---
+    // --- -------------------------- ---
+
+    // 确保所有子图都重绘
     for (QCustomPlot *plot : m_plotWidgets)
     {
         plot->replot();
@@ -991,29 +1163,33 @@ void MainWindow::updateCursors(double key, int cursorIndex)
     // 2. 存储 key
     QList<QCPItemLine *> *lines;
     QMap<QCPGraph *, QCPItemTracer *> *tracers;
-    QList<QCPItemText *> *labels;
-    QColor penColor;
+    QList<QCPItemText *> *xLabels;
+    QMap<QCPItemTracer *, QCPItemText *> *yLabels;
 
     if (cursorIndex == 1)
     {
         m_cursorKey1 = key;
         lines = &m_cursorLines1;
         tracers = &m_graphTracers1;
-        labels = &m_cursorLabels1;
-        penColor = Qt::red;
+        xLabels = &m_cursorXLabels1;
+        yLabels = &m_cursorYLabels1;
     }
     else if (cursorIndex == 2 && m_cursorMode == DoubleCursor)
     {
         m_cursorKey2 = key;
         lines = &m_cursorLines2;
         tracers = &m_graphTracers2;
-        labels = &m_cursorLabels2;
-        penColor = Qt::blue;
+        xLabels = &m_cursorXLabels2;
+        yLabels = &m_cursorYLabels2;
     }
     else
     {
         return; // 无效
     }
+
+    // ---
+    // --- 重点修改：更新新的标签
+    // ---
 
     // 3. 遍历所有 plot，更新它们的游标
     for (int i = 0; i < m_plotWidgets.size(); ++i)
@@ -1022,71 +1198,52 @@ void MainWindow::updateCursors(double key, int cursorIndex)
         if (i >= lines->size())
             continue; // 安全检查
 
-        // A. 更新垂直线
+        // A. 更新垂直线 (使用绝对像素坐标)
+        double xPixel = plot->xAxis->coordToPixel(key);
         QCPItemLine *line = lines->at(i);
-        line->start->setCoords(key, plot->yAxis->range().lower);
-        // !! 修正：使用 maxRange 确保线充满整个轴矩形，即使缩放后也是如此
-        line->end->setCoords(key, plot->yAxis->range().maxRange);
+        // --- 修正：确保线横跨整个轴矩形 ---
+        line->start->setCoords(xPixel, plot->axisRect()->bottom());
+        line->end->setCoords(xPixel, plot->axisRect()->top());
+        // --- ------------------------- ---
 
-        // B. 更新文本标签
-        QString labelText = QString("<font color='%1'><b>T: %2</b></font><br>").arg(penColor.name()).arg(key, 0, 'f', 4);
-        int graphCount = 0;
+        // B. 更新 X 轴文本标签
+        QCPItemText *xLabel = xLabels->at(i);
+        xLabel->setText(QString::number(key, 'f', 4));
+        // (位置会自动更新，因为它锚定在 line->start 上)
 
-        // 遍历此 plot 上的所有 graph
-        // --- 修正：使用 m_plotGraphMap ---
+        // C. 遍历此 plot 上的所有 graph，更新 Y 轴标签
         if (m_plotGraphMap.contains(plot))
         {
             for (QCPGraph *graph : m_plotGraphMap.value(plot))
-            // --- ------------------------- ---
             {
                 if (tracers->contains(graph))
                 {
                     QCPItemTracer *tracer = tracers->value(graph);
-                    tracer->setGraphKey(key); // 自动插值
-                    double value = tracer->position->value();
+                    tracer->setGraphKey(key);
 
-                    labelText += QString("%1: %2<br>")
-                                     .arg(graph->name())
-                                     .arg(value, 0, 'f', 3);
-                    graphCount++;
-                }
-            }
-        }
+                    // --- 修正：手动调用 updatePosition ---
+                    tracer->updatePosition();
+                    // --- ------------------------- ---
 
-        QCPItemText *label = labels->at(i);
-        label->setText(labelText);
-        // !! 修正：锚定到轴的顶部，而不是范围的 maxRange
-        label->position->setCoords(key, plot->yAxis->range().upper);
-
-        // C. 如果有双光标，计算差值
-        if (m_cursorMode == DoubleCursor && graphCount > 0)
-        {
-            QString deltaText = QString("<font color='purple'><b>ΔT: %1</b></font><br>").arg(qAbs(m_cursorKey1 - m_cursorKey2), 0, 'f', 4);
-            QMap<QCPGraph *, QCPItemTracer *> *tracers1 = &m_graphTracers1;
-            QMap<QCPGraph *, QCPItemTracer *> *tracers2 = &m_graphTracers2;
-
-            // --- 修正：使用 m_plotGraphMap ---
-            if (m_plotGraphMap.contains(plot))
-            {
-                for (QCPGraph *graph : m_plotGraphMap.value(plot))
-                // --- ------------------------- ---
-                {
-                    if (tracers1->contains(graph) && tracers2->contains(graph))
+                    QCPItemText *yLabel = yLabels->value(tracer, nullptr);
+                    if (yLabel)
                     {
-                        double val1 = tracers1->value(graph)->position->value();
-                        double val2 = tracers2->value(graph)->position->value();
-                        deltaText += QString("Δ%1: %2<br>")
-                                         .arg(graph->name())
-                                         .arg(qAbs(val1 - val2), 0, 'f', 3);
+                        double value = tracer->position->value(); // 现在获取的是新值
+                        yLabel->setText(QString::number(value, 'f', 3));
+                        yLabel->setVisible(true);
                     }
                 }
             }
-            // 将 delta 信息附加到活动 plot 的标签 1 上
-            if (plot == m_activePlot)
-            {
-                labels->at(i)->setText(labels->at(i)->text() + "<br>" + deltaText);
-            }
         }
+
+        // D. 如果有双光标，计算差值 (只在活动 plot 上显示)
+        // (省略，因为这会使标签变得混乱。可以添加一个单独的 QCPItemText 来显示差值)
+        /*
+        if (m_cursorMode == DoubleCursor && plot == m_activePlot)
+        {
+            ...
+        }
+        */
 
         plot->replot();
     }
