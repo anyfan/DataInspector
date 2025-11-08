@@ -473,6 +473,16 @@ void MainWindow::setupPlotLayout(int rows, int cols)
 
     // 布局更改后，重建游标
     setupCursors();
+
+    // 我们不能立即调用 updateCursors()，因为 plot 的几何形状
+    // (例如 axisRect) 可能还没有被 Qt 的布局系统更新。
+    // 我们使用 QTimer::singleShot(0, ...) 将游标更新推迟到
+    // 事件循环的下一个周期，此时所有几何形状都将是正确的。
+    if (m_cursorMode != NoCursor)
+    {
+        // 使用 singleShot 连接到新槽
+        QTimer::singleShot(0, this, &MainWindow::updateCursorsForLayoutChange);
+    }
 }
 
 void MainWindow::on_actionLayout1x1_triggered()
@@ -981,33 +991,69 @@ void MainWindow::onPlotMouseRelease(QMouseEvent *event)
 // ---
 
 /**
- * @brief 清除所有游标图元
+ * @brief 销毁所有游标项
  */
 void MainWindow::clearCursors()
 {
-    qDeleteAll(m_cursorLines1);
-    m_cursorLines1.clear();
-    qDeleteAll(m_cursorLines2);
-    m_cursorLines2.clear();
+    // 辅助lambda函数，用于安全地移除 item
+    // QCustomPlot::removeItem 会处理 delete 和从内部 mItems 列表的移除
+    auto safeRemoveItem = [](QCPAbstractItem *item)
+    {
+        if (item && item->parentPlot())
+        {
+            // 这是正确的方法：让 QCustomPlot 移除并删除它拥有的 item
+            item->parentPlot()->removeItem(item);
+        }
+        else if (item)
+        {
+            // 作为后备，如果 item 没有父 plot（理论上不应发生），
+            // 我们仍然需要 delete 它以避免内存泄漏。
+            qWarning() << "clearCursors: Item has no parent plot, deleting directly.";
+            delete item;
+        }
+    };
 
-    // --- 修改：清理新的标签 ---
-    qDeleteAll(m_cursorXLabels1);
+    // --- 重点修改：用 safeRemoveItem 替换 qDeleteAll ---
+
+    // 遍历所有 QMap 的 values() 并移除 item
+    // 注意：Y 标签（QCPItemText）依赖于 Tracers (QCPItemTracer) 作为父锚点
+    // 我们应该先移除子项（Y标签），再移除父项（Tracers）。
+    // QCustomPlot::removeItem 会处理 item 的析构，
+    // 而 QCPItemPosition 的析构函数会通知其子项它正在被删除，
+    // 所以移除顺序可能不重要，但先移除子项更安全。
+
+    for (QCPItemText *item : m_cursorYLabels1.values())
+        safeRemoveItem(item);
+    m_cursorYLabels1.clear();
+    for (QCPItemText *item : m_cursorYLabels2.values())
+        safeRemoveItem(item);
+    m_cursorYLabels2.clear();
+
+    // 移除 Tracers
+    for (QCPItemTracer *item : m_graphTracers1.values())
+        safeRemoveItem(item);
+    m_graphTracers1.clear();
+    for (QCPItemTracer *item : m_graphTracers2.values())
+        safeRemoveItem(item);
+    m_graphTracers2.clear();
+
+    // 遍历所有 QList 并移除 item
+    for (QCPItemLine *item : m_cursorLines1)
+        safeRemoveItem(item);
+    m_cursorLines1.clear();
+    for (QCPItemLine *item : m_cursorLines2)
+        safeRemoveItem(item);
+    m_cursorLines2.clear();
+    for (QCPItemText *item : m_cursorXLabels1)
+        safeRemoveItem(item);
     m_cursorXLabels1.clear();
-    qDeleteAll(m_cursorXLabels2);
+    for (QCPItemText *item : m_cursorXLabels2)
+        safeRemoveItem(item);
     m_cursorXLabels2.clear();
 
-    qDeleteAll(m_cursorYLabels1);
-    m_cursorYLabels1.clear();
-    qDeleteAll(m_cursorYLabels2);
-    m_cursorYLabels2.clear();
-    // --- -------------------- ---
-
-    qDeleteAll(m_graphTracers1);
-    m_graphTracers1.clear();
-    qDeleteAll(m_graphTracers2);
-    m_graphTracers2.clear();
+    // 此时，所有 item 都已通过 QCustomPlot::removeItem 安全删除。
+    // 我们的指针列表也已清空。
 }
-
 /**
  * @brief 根据 m_cursorMode 设置游标
  */
@@ -1527,3 +1573,18 @@ QCPGraph *MainWindow::getGraph(QCustomPlot *plot, int signalIndex) const
     return nullptr;
 }
 // --- ---------------- ---
+
+/**
+ * @brief [槽] 在布局更改和重绘完成后更新游标位置
+ */
+void MainWindow::updateCursorsForLayoutChange()
+{
+    if (m_cursorMode != NoCursor)
+    {
+        updateCursors(m_cursorKey1, 1);
+        if (m_cursorMode == DoubleCursor)
+        {
+            updateCursors(m_cursorKey2, 2);
+        }
+    }
+}

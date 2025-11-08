@@ -102,6 +102,8 @@ private slots:
 
     // X轴同步槽
     void onXAxisRangeChanged(const QCPRange &newRange);
+    // --- 新增：用于在布局更改后更新游标的槽 ---
+    void updateCursorsForLayoutChange();
 
 private:
     // UI 创建
