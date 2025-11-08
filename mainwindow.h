@@ -6,6 +6,7 @@
 #include <QMap>
 #include <QVector>
 #include <QPen>
+#include <QSet> // --- 新增 ---
 #include "datamanager.h"
 
 // 向前声明
@@ -103,13 +104,12 @@ private slots:
      */
     void on_actionFitViewY_triggered();
 
-    // --- 新增：X轴同步槽 ---
+    // X轴同步槽
     /**
      * @brief [槽] 当一个X轴范围改变时，同步所有其他的X轴
      * @param newRange 新的X轴范围
      */
     void onXAxisRangeChanged(const QCPRange &newRange);
-    // --- -------------------- ---
 
 private:
     // UI 创建
@@ -181,6 +181,12 @@ private:
      * @brief 估算数据的时间步长 (用于步进)
      */
     double findDataTimeStep() const;
+
+    // --- 新增：辅助函数 ---
+    /**
+     * @brief 从 m_plotGraphMap 中安全地获取一个 QCPGraph*
+     */
+    QCPGraph *getGraph(QCustomPlot *plot, int signalIndex) const;
     // --- ---------------------- ---
 
     // --- 工作线程 ---
@@ -199,8 +205,17 @@ private:
     QCustomPlot *m_activePlot;          // 当前选中的 plot
 
     // (Plot -> (SignalIndex -> Graph)) 映射
-    // 用于跟踪*哪个plot上*有*哪些graph*
+    // 用于*运行时*快速访问 QCPGraph*
     QMap<QCustomPlot *, QMap<int, QCPGraph *>> m_plotGraphMap;
+
+    // (PlotIndex -> QSet<SignalIndex>) 映射
+    // 用于*持久化*存储布局状态
+    QMap<int, QSet<int>> m_plotSignalMap;
+
+    // (Plot -> PlotIndex) 映射
+    // 用于*运行时*快速查找 plot 的索引
+    QMap<QCustomPlot *, int> m_plotWidgetMap;
+
     QMap<QCustomPlot *, QFrame *> m_plotFrameMap; // 跟踪 plot 和它的高亮 frame
     QCustomPlot *m_lastMousePlot;                 // 跟踪最后一次鼠标事件的 plot
 
@@ -217,7 +232,7 @@ private:
     QAction *m_replayAction;
     QActionGroup *m_cursorGroup;
 
-    // --- 新增：视图缩放动作 ---
+    // --- 视图缩放动作 ---
     QAction *m_fitViewAction;
     QAction *m_fitViewTimeAction;
     QAction *m_fitViewYAction;

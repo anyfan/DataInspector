@@ -299,10 +299,11 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 
 void MainWindow::clearPlotLayout()
 {
-    // --- 新增：在删除 plot 之前必须清除游标 ---
-    // 否则游标项 (QCPItemLine 等) 会持有悬空指针
+    // --- 重点修改 ---
+    // 清除游标
     clearCursors();
-    // ------------------------------------
+
+    // 清理布局中的所有 QFrame (及其 QCustomPlot 子控件)
     QLayout *layout = m_plotContainer->layout();
     if (layout)
     {
@@ -316,11 +317,15 @@ void MainWindow::clearPlotLayout()
             delete item;
         }
     }
+
+    // 清除所有运行时查找表和指针
+    // *不要* 清除 m_plotSignalMap，因为它存储持久状态
     m_plotWidgets.clear();
     m_activePlot = nullptr;
     m_plotFrameMap.clear();
-    m_plotGraphMap.clear();    // (Bug 2 修复)
-    m_lastMousePlot = nullptr; // <-- 新增
+    m_plotGraphMap.clear();  // 必须清除，因为 QCustomPlot* 键已失效
+    m_plotWidgetMap.clear(); // 必须清除，因为 QCustomPlot* 键已失效
+    m_lastMousePlot = nullptr;
 }
 
 void MainWindow::setupPlotLayout(int rows, int cols)
@@ -333,10 +338,86 @@ void MainWindow::setupPlotLayout(int rows, int cols)
         grid = new QGridLayout(m_plotContainer);
     }
 
+    QCPRange sharedXRange;
+    bool hasSharedXRange = false;
+
+    // --- 重点修改：恢复信号 ---
+    // 1. 恢复图表
+    if (m_signalTreeModel && !m_loadedTimeData.isEmpty())
+    {
+        // 遍历所有持久化存储的子图索引
+        for (int plotIndex : m_plotSignalMap.keys())
+        {
+            // 计算此索引在新布局中的行/列
+            int r = plotIndex / cols;
+            int c = plotIndex % cols;
+
+            // 如果此索引在新布局中仍然可见
+            if (r < rows && c < cols)
+            {
+                // （这部分逻辑与下面的 else 块重复，但必须先执行
+                //  以确保在创建新 plot 时 m_plotGraphMap 是最新的，
+                //  以便 setupPlotInteractions (X轴同步) 能正常工作）
+
+                // --- 创建 Plot ---
+                QFrame *plotFrame = new QFrame(m_plotContainer);
+                plotFrame->setFrameShape(QFrame::NoFrame);
+                plotFrame->setLineWidth(2);
+                plotFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
+
+                QVBoxLayout *frameLayout = new QVBoxLayout(plotFrame);
+                frameLayout->setContentsMargins(0, 0, 0, 0);
+
+                QCustomPlot *plot = new QCustomPlot(plotFrame);
+                // setupPlotInteractions 将在下面统一调用
+
+                frameLayout->addWidget(plot);
+                grid->addWidget(plotFrame, r, c);
+                m_plotWidgets.append(plot); // m_plotWidgets 被重新填充
+                m_plotFrameMap.insert(plot, plotFrame);
+                m_plotWidgetMap.insert(plot, plotIndex);
+                // --- ---------------- ---
+
+                // --- 恢复信号 ---
+                const QSet<int> &signalIndices = m_plotSignalMap.value(plotIndex);
+                for (int signalIndex : signalIndices)
+                {
+                    QStandardItem *item = m_signalTreeModel->item(signalIndex);
+                    if (item)
+                    {
+                        QCPGraph *graph = plot->addGraph();
+                        graph->setName(item->text());
+                        graph->setData(m_loadedTimeData, m_loadedValueData[signalIndex]);
+                        graph->setPen(item->data(PenDataRole).value<QPen>());
+                        // 重新填充 m_plotGraphMap
+                        m_plotGraphMap[plot].insert(signalIndex, graph);
+                    }
+                }
+                plot->rescaleAxes();
+                if (!hasSharedXRange)
+                {
+                    sharedXRange = plot->xAxis->range();
+                    hasSharedXRange = true;
+                }
+                else
+                {
+                    plot->xAxis->setRange(sharedXRange);
+                }
+                plot->replot();
+            }
+        }
+    }
+
+    // 2. 创建剩余的空 plot
     for (int r = 0; r < rows; ++r)
     {
         for (int c = 0; c < cols; ++c)
         {
+            int plotIndex = r * cols + c;
+            if (m_plotSignalMap.contains(plotIndex)) // 这个 plot 已经创建过了
+                continue;
+
+            // --- 创建 Plot ---
             QFrame *plotFrame = new QFrame(m_plotContainer);
             plotFrame->setFrameShape(QFrame::NoFrame);
             plotFrame->setLineWidth(2);
@@ -346,29 +427,54 @@ void MainWindow::setupPlotLayout(int rows, int cols)
             frameLayout->setContentsMargins(0, 0, 0, 0);
 
             QCustomPlot *plot = new QCustomPlot(plotFrame);
-            setupPlotInteractions(plot); // <-- setupPlotInteractions 在此调用
+            // setupPlotInteractions 将在下面统一调用
 
             frameLayout->addWidget(plot);
             grid->addWidget(plotFrame, r, c);
-            m_plotWidgets.append(plot);
+            m_plotWidgets.append(plot); // m_plotWidgets 被重新填充
             m_plotFrameMap.insert(plot, plotFrame);
+            m_plotWidgetMap.insert(plot, plotIndex);
+
+            if (hasSharedXRange)
+            {
+                plot->xAxis->setRange(sharedXRange);
+            }
+            // --- ---------------- ---
         }
     }
 
+    // 3. 为所有新创建的 plot 设置交互
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        setupPlotInteractions(plot);
+    }
+    // --- -------------------------- ---
+
     if (!m_plotWidgets.isEmpty())
     {
-        m_activePlot = m_plotWidgets.first();
-        m_lastMousePlot = m_activePlot; // <-- 新增
+        // 尝试重新激活之前活动的子图，如果它仍然存在的话
+        int activePlotIndex = m_activePlot ? m_plotWidgetMap.value(m_activePlot, 0) : 0;
+
+        if (activePlotIndex < m_plotWidgets.size())
+        {
+            m_activePlot = m_plotWidgets.at(activePlotIndex);
+        }
+        else
+        {
+            m_activePlot = m_plotWidgets.first();
+        }
+
+        m_lastMousePlot = m_activePlot;
         QFrame *frame = m_plotFrameMap.value(m_activePlot);
         if (frame)
         {
             frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
         }
-        updateSignalTreeChecks();
+        updateSignalTreeChecks(); // <-- 这将更新新 m_activePlot 的复选框
         m_signalTree->viewport()->update();
     }
 
-    // 布局更改后，重建游标 ---
+    // 布局更改后，重建游标
     setupCursors();
 }
 
@@ -415,13 +521,20 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
     m_loadedTimeData = data.timeData;
     m_loadedValueData = data.valueData;
 
-    // 2. 清理所有图表
+    // --- 重点修改：加载新数据时，清空所有状态 ---
+    // 2. 清理所有图表和持久化状态
+    m_plotSignalMap.clear(); // 清除持久化状态
     for (QCustomPlot *plot : m_plotWidgets)
     {
         plot->clearGraphs();
-        plot->replot();
+        // plot->replot(); // 将在 setupPlotLayout 中重绘
     }
-    m_plotGraphMap.clear();
+    m_plotGraphMap.clear(); // 清除运行时 map
+
+    // 强制重新设置布局（例如 1x1），这将清除所有旧控件
+    // 并根据（现在为空的）m_plotSignalMap 创建新控件
+    setupPlotLayout(1, 1);
+    // --- ---------------------------------- ---
 
     // 填充信号树
     {
@@ -466,7 +579,7 @@ void MainWindow::populateSignalTree(const CsvData &data)
         item->setEditable(false);
         item->setCheckable(true);
         item->setCheckState(Qt::Unchecked);
-        item->setData(i - 1, Qt::UserRole);
+        item->setData(i - 1, Qt::UserRole); // <-- 信号索引 (i-1) 存储在 UserRole 中
 
         QColor color(10 + QRandomGenerator::global()->bounded(245),
                      10 + QRandomGenerator::global()->bounded(245),
@@ -475,7 +588,7 @@ void MainWindow::populateSignalTree(const CsvData &data)
         m_signalPens.append(pen);
         item->setData(QVariant::fromValue(pen), PenDataRole);
 
-        m_signalTreeModel->appendRow(item);
+        m_signalTreeModel->appendRow(item); // <-- 行号 (row) 恰好等于信号索引 (i-1)
     }
 }
 
@@ -491,19 +604,30 @@ void MainWindow::onPlotClicked()
     if (!clickedPlot || clickedPlot == m_activePlot)
         return;
 
+    // --- 修正：使用 m_plotWidgetMap 查找索引 ---
+    int plotIndex = m_plotWidgetMap.value(clickedPlot, -1);
+    if (plotIndex == -1)
+        return;
+
+    // 取消高亮旧的 active plot
+    if (m_activePlot)
+    {
+        QFrame *oldFrame = m_plotFrameMap.value(m_activePlot);
+        if (oldFrame)
+            oldFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
+    }
+
     m_activePlot = clickedPlot;
     m_lastMousePlot = clickedPlot;
-    for (QCustomPlot *plot : m_plotWidgets)
+
+    // 高亮新的 active plot
+    QFrame *frame = m_plotFrameMap.value(m_activePlot);
+    if (frame)
     {
-        QFrame *frame = m_plotFrameMap.value(plot);
-        if (!frame)
-            continue;
-        if (plot == m_activePlot)
-            frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
-        else
-            frame->setStyleSheet("QFrame { border: 2px solid transparent; }");
+        frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
     }
-    qDebug() << "Active plot set to:" << m_activePlot;
+
+    qDebug() << "Active plot set to:" << m_activePlot << "(Index: " << plotIndex << ")";
     updateSignalTreeChecks();
     m_signalTree->viewport()->update();
 }
@@ -511,14 +635,20 @@ void MainWindow::onPlotClicked()
 void MainWindow::updateSignalTreeChecks()
 {
     QSignalBlocker blocker(m_signalTreeModel);
-    const auto &activeGraphs = m_plotGraphMap.value(m_activePlot);
+
+    // --- 修正：使用 m_plotSignalMap 和 m_plotWidgetMap ---
+    int activePlotIndex = m_plotWidgetMap.value(m_activePlot, -1);
+    const auto &activeSignals = m_plotSignalMap.value(activePlotIndex); // 获取 QSet<int>
+
     for (int i = 0; i < m_signalTreeModel->rowCount(); ++i)
     {
         QStandardItem *item = m_signalTreeModel->item(i);
         if (!item)
             continue;
         int signalIndex = item->data(Qt::UserRole).toInt();
-        if (activeGraphs.contains(signalIndex))
+
+        // 使用 QSet::contains()
+        if (activeSignals.contains(signalIndex))
             item->setCheckState(Qt::Checked);
         else
             item->setCheckState(Qt::Unchecked);
@@ -538,7 +668,11 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         }
         return;
     }
-    if (!m_activePlot)
+
+    // --- 修正：使用 m_plotWidgetMap ---
+    int plotIndex = m_plotWidgetMap.value(m_activePlot, -1);
+    if (!m_activePlot || plotIndex == -1) // 检查 m_activePlot 是否为 null 并且索引有效
+    // --- ------------------------- ---
     {
         if (item->checkState() == Qt::Checked)
         {
@@ -560,7 +694,9 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
     QSignalBlocker blocker(m_signalTreeModel);
     if (item->checkState() == Qt::Checked)
     {
-        if (m_plotGraphMap.value(m_activePlot).contains(signalIndex))
+        // --- 修正：使用 m_plotSignalMap ---
+        if (m_plotSignalMap.value(plotIndex).contains(signalIndex))
+        // --- ------------------------- ---
         {
             qWarning() << "Graph already exists on this plot.";
             return;
@@ -571,22 +707,36 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         graph->setData(m_loadedTimeData, m_loadedValueData[signalIndex]);
         QPen pen = item->data(PenDataRole).value<QPen>();
         graph->setPen(pen);
+
+        // --- 修正：同时更新两个 Map ---
         m_plotGraphMap[m_activePlot].insert(signalIndex, graph);
+        m_plotSignalMap[plotIndex].insert(signalIndex);
+        // --- ------------------------- ---
+
         m_activePlot->rescaleAxes();
         m_activePlot->replot();
     }
     else // Qt::Unchecked
     {
-        if (!m_plotGraphMap.value(m_activePlot).contains(signalIndex))
+        // --- 修正：使用 m_plotSignalMap 和辅助函数 ---
+        if (!m_plotSignalMap.value(plotIndex).contains(signalIndex))
+        // --- ------------------------- ---
         {
             return;
         }
-        QCPGraph *graph = m_plotGraphMap.value(m_activePlot).value(signalIndex);
+        // --- 修正：使用辅助函数 ---
+        QCPGraph *graph = getGraph(m_activePlot, signalIndex);
+        // --- ------------------------- ---
         if (graph)
         {
             qDebug() << "Removing signal" << signalName << "from plot" << m_activePlot;
-            m_activePlot->removeGraph(graph);
+            m_activePlot->removeGraph(graph); // removeGraph 会 delete graph
+
+            // --- 修正：同时更新两个 Map ---
             m_plotGraphMap[m_activePlot].remove(signalIndex);
+            m_plotSignalMap[plotIndex].remove(signalIndex);
+            // --- ------------------------- ---
+
             m_activePlot->replot();
         }
     }
@@ -618,6 +768,7 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
     item->setData(QVariant::fromValue(newPen), PenDataRole);
     m_signalPens[signalIndex] = newPen;
 
+    // --- 修正：遍历 m_plotGraphMap ---
     for (auto it = m_plotGraphMap.begin(); it != m_plotGraphMap.end(); ++it)
     {
         if (it.value().contains(signalIndex))
@@ -630,6 +781,7 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
             }
         }
     }
+    // --- ------------------------- ---
 }
 
 /**
@@ -786,9 +938,11 @@ void MainWindow::setupCursors()
     }
 
     // 2. 为每个 Graph 创建跟踪器
+    // --- 修正：使用 m_plotGraphMap 迭代 ---
     for (auto it = m_plotGraphMap.begin(); it != m_plotGraphMap.end(); ++it)
     {
-        for (QCPGraph *graph : it.value())
+        for (QCPGraph *graph : it.value()) // it.value() 是 QMap<int, QCPGraph*>
+                                           // --- ------------------------- ---
         {
             // 创建游标 1 的跟踪器
             QCPItemTracer *tracer1 = new QCPItemTracer(graph->parentPlot());
@@ -807,6 +961,12 @@ void MainWindow::setupCursors()
                 m_graphTracers2.insert(graph, tracer2);
             }
         }
+    }
+
+    // --- 新增：确保所有子图都重绘 ---
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        plot->replot();
     }
 }
 
@@ -873,9 +1033,11 @@ void MainWindow::updateCursors(double key, int cursorIndex)
         int graphCount = 0;
 
         // 遍历此 plot 上的所有 graph
+        // --- 修正：使用 m_plotGraphMap ---
         if (m_plotGraphMap.contains(plot))
         {
             for (QCPGraph *graph : m_plotGraphMap.value(plot))
+            // --- ------------------------- ---
             {
                 if (tracers->contains(graph))
                 {
@@ -903,9 +1065,11 @@ void MainWindow::updateCursors(double key, int cursorIndex)
             QMap<QCPGraph *, QCPItemTracer *> *tracers1 = &m_graphTracers1;
             QMap<QCPGraph *, QCPItemTracer *> *tracers2 = &m_graphTracers2;
 
+            // --- 修正：使用 m_plotGraphMap ---
             if (m_plotGraphMap.contains(plot))
             {
                 for (QCPGraph *graph : m_plotGraphMap.value(plot))
+                // --- ------------------------- ---
                 {
                     if (tracers1->contains(graph) && tracers2->contains(graph))
                     {
@@ -1126,8 +1290,10 @@ void MainWindow::on_actionFitViewY_triggered()
         bool foundRange = false;
 
         // 遍历活动子图上的所有图表
+        // --- 修正：使用 m_plotGraphMap ---
         const auto &graphs = m_plotGraphMap.value(m_activePlot);
         for (QCPGraph *graph : graphs)
+        // --- ------------------------- ---
         {
             bool currentFound = false;
             // 获取该图表在当前X轴范围内的Y值范围
@@ -1187,3 +1353,20 @@ void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
     }
 }
 // --- ----------------------- ---
+
+// --- 新增：辅助函数 ---
+/**
+ * @brief 从 m_plotGraphMap 中安全地获取一个 QCPGraph*
+ * @param plot QCustomPlot 控件
+ * @param signalIndex 信号索引
+ * @return 如果找到则返回 QCPGraph*，否则返回 nullptr
+ */
+QCPGraph *MainWindow::getGraph(QCustomPlot *plot, int signalIndex) const
+{
+    if (plot && m_plotGraphMap.contains(plot))
+    {
+        return m_plotGraphMap.value(plot).value(signalIndex, nullptr);
+    }
+    return nullptr;
+}
+// --- ---------------- ---
