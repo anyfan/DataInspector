@@ -26,20 +26,22 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
 
-    // --- 修改：检查是否为信号条目 ---
+    // --- 检查是否为信号条目 ---
     bool isSignalItem = index.data(IsSignalItemRole).toBool();
     // --- -------------------------------- ---
 
     // 预留右侧 40 像素用于绘制预览
     const int previewWidth = 40;
-    const int margin = 5;
+    // --- 修复：减小边距，使线条更宽，空白更少 ---
+    const int margin = 2; // <-- 从 5 修改为 2
+    // --- ---------------------------------- ---
 
     // 保存原始矩形，用于绘制预览线
     QRect fullRect = opt.rect;
 
     // 告诉基类 paint() 不要绘制在我们的预览区域
-    if (isSignalItem) // <-- 只对信号条目执行此操作
-        opt.rect.setWidth(opt.rect.width() - previewWidth - margin);
+    if (isSignalItem)                                                // <-- 只对信号条目执行此操作
+        opt.rect.setWidth(opt.rect.width() - previewWidth - margin); // <-- margin 也在这里更新
 
     // 获取 QStyle 对象
     QStyle *style = opt.widget ? opt.widget->style() : QApplication::style();
@@ -51,6 +53,10 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     // 绘制复选框 (如果存在)
     if (opt.features & QStyleOptionViewItem::HasCheckIndicator)
     {
+        // --- 修复：使用 style() 来获取 margin，而不是硬编码 ---
+        int internalMargin = style->pixelMetric(QStyle::PM_FocusFrameVMargin, &opt, opt.widget);
+        // --- ----------------------------------------- ---
+
         QRect checkRect = style->subElementRect(QStyle::SE_ItemViewItemCheckIndicator, &opt, opt.widget);
         QStyleOptionButton checkOpt;
         checkOpt.rect = checkRect;
@@ -70,14 +76,27 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
         style->drawControl(QStyle::CE_CheckBox, &checkOpt, painter, opt.widget);
 
         // 调整文本矩形，使其不与复选框重叠
-        opt.rect.setLeft(checkRect.right() + margin);
+        // --- 修复：使用 style() 的 margin ---
+        opt.rect.setLeft(checkRect.right() + internalMargin);
+        // --- --------------------------- ---
     }
 
     // 绘制文本
     QString text = opt.text;
     QRect textRect = style->subElementRect(QStyle::SE_ItemViewItemText, &opt, opt.widget);
-    textRect.setWidth(opt.rect.width() - textRect.left()); // 限制文本宽度
-    style->drawItemText(painter, textRect, opt.displayAlignment, opt.palette, opt.state & QStyle::State_Enabled, text);
+
+    // --- 修复：移除错误的宽度计算 ---
+    // 下面这行代码的计算是错误的，导致文本被截断
+    // textRect.setWidth(opt.rect.width() - textRect.left()); // 限制文本宽度 (已移除)
+    // `subElementRect` 返回的 `textRect` 已经考虑了 `opt.rect` 的宽度，无需修改。
+    // --- -------------------------- ---
+
+    // --- 新增：确保文本在我们的预览区域之前被正确 elide (截断) ---
+    // `opt.rect` 是已经为预览区缩短的矩形
+    textRect.setWidth(opt.rect.right() - textRect.left());
+    // --- ------------------------------------------------- ---
+
+    style->drawItemText(painter, textRect, opt.displayAlignment, opt.palette, opt.state & QStyle::State_Enabled, text, QPalette::NoRole); // <-- 确保使用 NoRole
 
     // 2. 绘制我们的自定义预览线
     // --- 修改：只为信号条目绘制 ---
@@ -104,7 +123,9 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
 
             // 在矩形中间绘制一条水平线
             int y = previewRect.center().y();
+            // --- 修复：使用更新后的 margin ---
             painter->drawLine(previewRect.left() + margin, y, previewRect.right() - margin, y);
+            // --- --------------------------- ---
 
             painter->restore();
         }
