@@ -203,28 +203,28 @@ void MainWindow::createActions()
     // 视图缩放动作
     m_fitViewAction = new QAction(tr("Fit View"), this);
     m_fitViewAction->setIcon(style()->standardIcon(QStyle::SP_DesktopIcon)); // 使用标准图标
-    m_fitViewAction->setToolTip(tr("Fit all axes to data"));
+    m_fitViewAction->setToolTip(tr("适应视图"));
     connect(m_fitViewAction, &QAction::triggered, this, &MainWindow::on_actionFitView_triggered);
 
     m_fitViewTimeAction = new QAction(tr("Fit View (Time)"), this);
     m_fitViewTimeAction->setIcon(QIcon::fromTheme("zoom-fit-width", style()->standardIcon(QStyle::SP_ArrowRight))); // 尝试主题图标
-    m_fitViewTimeAction->setToolTip(tr("Fit time (X) axis to data"));
+    m_fitViewTimeAction->setToolTip(tr("适应视图（时间轴）"));
     connect(m_fitViewTimeAction, &QAction::triggered, this, &MainWindow::on_actionFitViewTime_triggered);
 
     m_fitViewYAction = new QAction(tr("Fit View (Y-Axis)"), this);
     m_fitViewYAction->setIcon(QIcon::fromTheme("zoom-fit-height", style()->standardIcon(QStyle::SP_ArrowDown))); // 尝试主题图标
-    m_fitViewYAction->setToolTip(tr("Fit Y axis of active plot to data"));
+    m_fitViewYAction->setToolTip(tr("适应视图（Y轴）"));
     connect(m_fitViewYAction, &QAction::triggered, this, &MainWindow::on_actionFitViewY_triggered);
 
     // 视图/游标动作
-    m_cursorNoneAction = new QAction(tr("No Cursor"), this);
+    m_cursorNoneAction = new QAction(tr("关闭游标"), this);
     m_cursorNoneAction->setCheckable(true);
     m_cursorNoneAction->setChecked(true);
 
-    m_cursorSingleAction = new QAction(tr("Single Cursor"), this);
+    m_cursorSingleAction = new QAction(tr("单游标"), this);
     m_cursorSingleAction->setCheckable(true);
 
-    m_cursorDoubleAction = new QAction(tr("Double Cursor"), this);
+    m_cursorDoubleAction = new QAction(tr("双游标"), this);
     m_cursorDoubleAction->setCheckable(true);
 
     m_cursorGroup = new QActionGroup(this);
@@ -233,17 +233,17 @@ void MainWindow::createActions()
     m_cursorGroup->addAction(m_cursorDoubleAction);
     connect(m_cursorGroup, &QActionGroup::triggered, this, &MainWindow::onCursorModeChanged);
 
-    m_replayAction = new QAction(tr("Replay"), this);
+    m_replayAction = new QAction(tr("重放"), this);
     m_replayAction->setCheckable(true);
     connect(m_replayAction, &QAction::toggled, this, &MainWindow::onReplayActionToggled);
 }
 
 void MainWindow::createMenus()
 {
-    QMenu *fileMenu = menuBar()->addMenu(tr("&File"));
+    QMenu *fileMenu = menuBar()->addMenu(tr("&文件"));
     fileMenu->addAction(m_loadFileAction);
 
-    QMenu *layoutMenu = menuBar()->addMenu(tr("&Layout"));
+    QMenu *layoutMenu = menuBar()->addMenu(tr("&布局"));
     layoutMenu->addAction(m_layout1x1Action);
     layoutMenu->addSeparator();
     layoutMenu->addAction(m_layout1x2Action);
@@ -257,7 +257,7 @@ void MainWindow::createMenus()
     layoutMenu->addSeparator();
     layoutMenu->addAction(m_layoutCustomAction);
 
-    QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
+    QMenu *viewMenu = menuBar()->addMenu(tr("&显示"));
     if (m_signalDock)
     {
         viewMenu->addAction(m_signalDock->toggleViewAction());
@@ -304,7 +304,7 @@ void MainWindow::createToolBars()
 
 void MainWindow::createDocks()
 {
-    m_signalDock = new QDockWidget(tr("Signals"), this);
+    m_signalDock = new QDockWidget(tr("信号"), this);
     m_signalTree = new QTreeView(m_signalDock);
     m_signalTreeModel = new QStandardItemModel(m_signalDock);
     m_signalTree->setModel(m_signalTreeModel);
@@ -327,7 +327,7 @@ void MainWindow::createDocks()
  */
 void MainWindow::createReplayDock()
 {
-    m_replayDock = new QDockWidget(tr("Replay Controls"), this);
+    m_replayDock = new QDockWidget(tr("重放控制"), this);
     m_replayWidget = new QWidget(m_replayDock);
 
     QHBoxLayout *layout = new QHBoxLayout(m_replayWidget);
