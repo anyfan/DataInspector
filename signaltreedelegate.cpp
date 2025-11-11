@@ -19,7 +19,7 @@ SignalTreeDelegate::SignalTreeDelegate(QObject *parent)
 }
 
 void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
-                               const QModelIndex &index) const
+                               const QModelIndex &index) const // <-- 替换此函数
 {
     // 1. 先调用基类 paint() 来绘制标准内容 (复选框、文本、图标等)
     // 我们会修改矩形，为右侧的预览腾出空间
@@ -107,7 +107,11 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
         if (penData.canConvert<QPen>())
         {
             QPen linePen = penData.value<QPen>();
-            linePen.setWidth(2); // 在预览中加粗线条
+
+            // --- 修复：移除硬编码的宽度 ---
+            // linePen.setWidth(2); // <-- 移除此行
+            // 现在预览线条将使用 QPen 中存储的实际宽度
+            // --- ----------------------- ---
 
             painter->save();
             painter->setPen(linePen);

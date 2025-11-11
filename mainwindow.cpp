@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "qcustomplot.h"
 #include "signaltreedelegate.h" // <-- 包含自定义委托
+#include "signalpropertiesdialog.h" // <-- 新增：包含新对话框的头文件
 
 #include <QMenuBar>
 #include <QMenu>
@@ -34,6 +35,7 @@
 #include <QStyle>
 #include <QIcon>
 #include <QFileInfo> // <-- 新增：用于获取文件名
+#include <QCursor>   // <-- 新增：用于获取鼠标位置
 
 // --- 修改：在 mainwindow.h 中定义角色 ---
 // const int UniqueIdRole = Qt::UserRole + 1;
@@ -651,8 +653,7 @@ void MainWindow::onDataLoadFinished(const FileData &data) // <-- 修改
     updateReplayControls(); // 设置滑块范围
     // --- --------------------------------- ---
 }
-
-void MainWindow::populateSignalTree(const FileData &data) // <-- 修改
+void MainWindow::populateSignalTree(const FileData &data) // <-- 替换此函数
 {
     QString filename = QFileInfo(data.filePath).fileName();
 
@@ -710,7 +711,11 @@ void MainWindow::populateSignalTree(const FileData &data) // <-- 修改
             QColor color(10 + QRandomGenerator::global()->bounded(245),
                          10 + QRandomGenerator::global()->bounded(245),
                          10 + QRandomGenerator::global()->bounded(245));
-            QPen pen(color, 1);
+
+            // --- 修复：将默认宽度从 1 改为 2 ---
+            QPen pen(color, 2); // <-- 修改了这里
+            // --- ---------------------------- ---
+
             item->setData(QVariant::fromValue(pen), PenDataRole);
 
             parentItem->appendRow(item); // <-- 添加到父条目 (文件或表)
@@ -950,33 +955,56 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
     updateCursors(m_cursorKey2, 2);
 }
 
-void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
+void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index) // <-- 替换此函数
 {
     if (!index.isValid())
         return;
     QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
-    // --- 修改：只允许在信号项上操作 ---
+    // --- 1. 检查是否为信号条目 ---
     if (!item || !item->data(IsSignalItemRole).toBool())
         return;
-    // --- ---------------------------- ---
 
-    // --- 修改：使用 UniqueID ---
+    // --- 2. 检查点击位置 ---
+    QPoint localPos = m_signalTree->viewport()->mapFromGlobal(QCursor::pos());
+    QRect itemRect = m_signalTree->visualRect(index);
+
+    // 这些值必须与 SignalTreeDelegate::paint 中的值匹配
+    const int previewWidth = 40;
+    const int margin = 2;
+
+    // 计算预览线本身的可点击区域
+    QRect previewClickRect(
+        itemRect.right() - previewWidth + margin, // 预览区域的左边缘 + 边距
+        itemRect.top(),
+        previewWidth - (2 * margin), // 只在两个边距之间
+        itemRect.height());
+
+    // 如果点击不在预览线区域，则忽略
+    if (!previewClickRect.contains(localPos))
+    {
+        return; // 用户点击了文本，不是预览线
+    }
+
+    // --- 3. (修改) 如果点击在预览线上，则打开新对话框 ---
     QString uniqueID = item->data(UniqueIdRole).toString();
-    // --- ----------------------- ---
-
     QPen currentPen = item->data(PenDataRole).value<QPen>();
-    QColor newColor = QColorDialog::getColor(currentPen.color(), this, tr("Select Signal Color"));
-    if (!newColor.isValid())
-        return;
 
-    QPen newPen = currentPen;
-    newPen.setColor(newColor);
+    // --- 使用新的自定义对话框 ---
+    SignalPropertiesDialog dialog(currentPen, this);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return; // 用户点击了 "Cancel"
+    }
+
+    QPen newPen = dialog.getSelectedPen(); // 获取包含所有属性的新 QPen
+    // --- ------------------------- ---
+
     item->setData(QVariant::fromValue(newPen), PenDataRole);
 
-    // --- 修正：遍历 m_plotGraphMap ---
+    // 更新所有图表中该信号的画笔
     for (auto it = m_plotGraphMap.begin(); it != m_plotGraphMap.end(); ++it)
     {
-        if (it.value().contains(uniqueID)) // <-- 按 uniqueID 检查
+        if (it.value().contains(uniqueID))
         {
             QCPGraph *graph = it.value().value(uniqueID);
             if (graph)
@@ -986,7 +1014,6 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
             }
         }
     }
-    // --- ------------------------- ---
 }
 
 // --- 新增：信号树的右键菜单槽 ---
