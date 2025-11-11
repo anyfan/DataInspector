@@ -1,6 +1,6 @@
 #include "mainwindow.h"
 #include "qcustomplot.h"
-#include "signaltreedelegate.h" // <-- 包含自定义委托
+#include "signaltreedelegate.h"     // <-- 包含自定义委托
 #include "signalpropertiesdialog.h" // <-- 新增：包含新对话框的头文件
 
 #include <QMenuBar>
@@ -34,23 +34,13 @@
 #include <QHBoxLayout>
 #include <QStyle>
 #include <QIcon>
-#include <QFileInfo> // <-- 新增：用于获取文件名
-#include <QCursor>   // <-- 新增：用于获取鼠标位置
-
-// --- 修改：在 mainwindow.h 中定义角色 ---
-// const int UniqueIdRole = Qt::UserRole + 1;
-// const int IsFileItemRole = Qt::UserRole + 2;
-// const int PenDataRole = Qt::UserRole + 3;
-// const int FileNameRole = Qt::UserRole + 4;
-// const int IsSignalItemRole = Qt::UserRole + 5;
-// --- -------------------------------- ---
+#include <QFileInfo> // 用于获取文件名
+#include <QCursor>   // 用于获取鼠标位置
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr), m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr), m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr), m_lastMousePlot(nullptr), m_cursorMode(NoCursor), m_cursorKey1(0), m_cursorKey2(0),
-      // --- 新增：初始化拖拽标志 ---
       m_isDraggingCursor1(false),
       m_isDraggingCursor2(false)
-// --- -------------------- ---
 {
     setupDataManagerThread();
 
@@ -91,7 +81,6 @@ MainWindow::MainWindow(QWidget *parent)
 
 MainWindow::~MainWindow()
 {
-    // 正确停止工作线程
     if (m_dataThread)
     {
         m_dataThread->quit();
@@ -106,11 +95,10 @@ void MainWindow::setupDataManagerThread()
     m_dataManager->moveToThread(m_dataThread);
 
     connect(this, &MainWindow::requestLoadCsv, m_dataManager, &DataManager::loadCsvFile, Qt::QueuedConnection);
-    // --- 新增：连接 MAT 加载 ---
     connect(this, &MainWindow::requestLoadMat, m_dataManager, &DataManager::loadMatFile, Qt::QueuedConnection);
     // --- --------------------- ---
     connect(m_dataManager, &DataManager::loadProgress, this, &MainWindow::showLoadProgress, Qt::QueuedConnection);
-    connect(m_dataManager, &DataManager::loadFinished, this, &MainWindow::onDataLoadFinished, Qt::QueuedConnection); // <-- 修改
+    connect(m_dataManager, &DataManager::loadFinished, this, &MainWindow::onDataLoadFinished, Qt::QueuedConnection);
     connect(m_dataManager, &DataManager::loadFailed, this, &MainWindow::onDataLoadFailed, Qt::QueuedConnection);
     connect(m_dataThread, &QThread::finished, m_dataManager, &QObject::deleteLater);
 
@@ -123,7 +111,6 @@ void MainWindow::setupDataManagerThread()
 void MainWindow::createActions()
 {
     // 文件菜单
-    // --- 修改：更新文本以包含 MAT ---
     m_loadFileAction = new QAction(tr("&Load File..."), this);
     m_loadFileAction->setShortcut(QKeySequence::Open);
     connect(m_loadFileAction, &QAction::triggered, this, &MainWindow::on_actionLoadFile_triggered);
@@ -136,7 +123,7 @@ void MainWindow::createActions()
     m_layout3x2Action = new QAction(tr("3x2 Layout"), this);
     connect(m_layout3x2Action, &QAction::triggered, this, &MainWindow::on_actionLayout3x2_triggered);
 
-    // --- 修正：视图缩放动作 ---
+    // 视图缩放动作
     m_fitViewAction = new QAction(tr("Fit View"), this);
     m_fitViewAction->setIcon(style()->standardIcon(QStyle::SP_DesktopIcon)); // 使用标准图标
     m_fitViewAction->setToolTip(tr("Fit all axes to data"));
@@ -151,7 +138,6 @@ void MainWindow::createActions()
     m_fitViewYAction->setIcon(QIcon::fromTheme("zoom-fit-height", style()->standardIcon(QStyle::SP_ArrowDown))); // 尝试主题图标
     m_fitViewYAction->setToolTip(tr("Fit Y axis of active plot to data"));
     connect(m_fitViewYAction, &QAction::triggered, this, &MainWindow::on_actionFitViewY_triggered);
-    // --- -------------------- ---
 
     // 视图/游标动作
     m_cursorNoneAction = new QAction(tr("No Cursor"), this);
@@ -195,12 +181,11 @@ void MainWindow::createMenus()
     {
         viewMenu->addAction(m_replayDock->toggleViewAction());
     }
-    // --- 新增：添加视图菜单项 ---
+    // 添加视图菜单项
     viewMenu->addSeparator();
     viewMenu->addAction(m_fitViewAction);
     viewMenu->addAction(m_fitViewTimeAction);
     viewMenu->addAction(m_fitViewYAction);
-    // --- -------------------- ---
 }
 
 /**
@@ -215,12 +200,11 @@ void MainWindow::createToolBars()
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_viewToolBar->addWidget(spacer);
 
-    // --- 新增：添加视图缩放按钮 ---
+    // 添加视图缩放按钮 ---
     m_viewToolBar->addAction(m_fitViewAction);
     m_viewToolBar->addAction(m_fitViewTimeAction);
     m_viewToolBar->addAction(m_fitViewYAction);
     m_viewToolBar->addSeparator();
-    // --- -------------------- ---
 
     // 添加游标动作
     m_viewToolBar->addAction(m_cursorNoneAction);
@@ -250,7 +234,6 @@ void MainWindow::createDocks()
     // --- 新增：连接右键菜单 ---
     m_signalTree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_signalTree, &QTreeView::customContextMenuRequested, this, &MainWindow::onSignalTreeContextMenu);
-    // --- -------------------- ---
 }
 
 /**
@@ -290,7 +273,6 @@ void MainWindow::createReplayDock()
     m_replayDock->setWidget(m_replayWidget);
     m_replayDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
 
-    // 错误 2 修正：QDockWidget 必须添加到 DockWidgetArea
     addDockWidget(Qt::BottomDockWidgetArea, m_replayDock); // 使用 BottomDockWidgetArea 替代错误的 BottomToolBarArea
 
     // 默认隐藏
@@ -314,7 +296,6 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotMousePress);
     connect(plot, &QCustomPlot::mouseMove, this, &MainWindow::onPlotMouseMove);
     connect(plot, &QCustomPlot::mouseRelease, this, &MainWindow::onPlotMouseRelease);
-    // --- -------------------------- ---
 
     // X轴同步
     connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
@@ -323,7 +304,7 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 
 void MainWindow::clearPlotLayout()
 {
-    // --- 重点修改 ---
+
     // 清除游标
     clearCursors();
 
@@ -343,19 +324,16 @@ void MainWindow::clearPlotLayout()
     }
 
     // 清除所有运行时查找表和指针
-    // *不要* 清除 m_plotSignalMap，因为它存储持久状态
     m_plotWidgets.clear();
     m_activePlot = nullptr;
     m_plotFrameMap.clear();
-    m_plotGraphMap.clear();  // 必须清除，因为 QCustomPlot* 键已失效
-    m_plotWidgetMap.clear(); // 必须清除，因为 QCustomPlot* 键已失效
+    m_plotGraphMap.clear();
+    m_plotWidgetMap.clear();
     m_lastMousePlot = nullptr;
 }
 
 void MainWindow::setupPlotLayout(int rows, int cols)
 {
-    // --- 持久化逻辑开始 ---
-    // (在 clearPlotLayout 之前不需要保存，因为 m_plotSignalMap 已经是持久的)
     clearPlotLayout(); // 清理旧布局 (这会清空 m_plotWidgets, m_plotGraphMap 等)
 
     QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotContainer->layout());
@@ -367,7 +345,7 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     QCPRange sharedXRange;
     bool hasSharedXRange = false;
 
-    // --- 修改：从 m_plotSignalMap 恢复 ---
+    // 从 m_plotSignalMap 恢复
     // 1. 恢复图表
     if (m_signalTreeModel && !m_fileDataMap.isEmpty()) // <-- 修改
     {
@@ -381,7 +359,7 @@ void MainWindow::setupPlotLayout(int rows, int cols)
             // 如果此索引在新布局中仍然可见
             if (r < rows && c < cols)
             {
-                // --- 创建 Plot ---
+                // 创建 Plot
                 QFrame *plotFrame = new QFrame(m_plotContainer);
                 plotFrame->setFrameShape(QFrame::NoFrame);
                 plotFrame->setLineWidth(2);
@@ -391,34 +369,31 @@ void MainWindow::setupPlotLayout(int rows, int cols)
                 frameLayout->setContentsMargins(0, 0, 0, 0);
 
                 QCustomPlot *plot = new QCustomPlot(plotFrame);
-                // setupPlotInteractions 将在下面统一调用
 
                 frameLayout->addWidget(plot);
                 grid->addWidget(plotFrame, r, c);
                 m_plotWidgets.append(plot); // m_plotWidgets 被重新填充
                 m_plotFrameMap.insert(plot, plotFrame);
                 m_plotWidgetMap.insert(plot, plotIndex);
-                // --- ---------------- ---
 
-                // --- 恢复信号 (使用 UniqueID) ---
+                // 恢复信号
                 const QSet<QString> &signalIDs = m_plotSignalMap.value(plotIndex);
                 for (const QString &uniqueID : signalIDs)
                 {
-                    // --- 修改：解析新的 3 部分 uniqueID ---
+
                     QStringList parts = uniqueID.split('/');
                     if (parts.size() != 3)
                         continue;
                     QString filename = parts[0];
                     QString tablename = parts[1];
                     int signalIndex = parts[2].toInt();
-                    // --- ----------------------------- ---
 
                     // 查找 QStandardItem
                     QList<QStandardItem *> fileItems = m_signalTreeModel->findItems(filename, Qt::MatchExactly);
                     if (fileItems.isEmpty())
                         continue;
 
-                    // --- 新增：在树中查找表和信号 ---
+                    // 树中查找表和信号
                     QStandardItem *tableItem = nullptr;
                     for (int t_idx = 0; t_idx < fileItems.first()->rowCount(); ++t_idx)
                     {
@@ -431,14 +406,13 @@ void MainWindow::setupPlotLayout(int rows, int cols)
                     if (!tableItem || tableItem->rowCount() <= signalIndex)
                         continue;
                     QStandardItem *item = tableItem->child(signalIndex);
-                    // --- --------------------------------- ---
 
                     // 查找 FileData
                     if (item && m_fileDataMap.contains(filename))
                     {
                         const FileData &fileData = m_fileDataMap.value(filename);
 
-                        // --- 新增：查找 SignalTable ---
+                        // 查找 SignalTable
                         const SignalTable *tableData = nullptr;
                         for (const auto &table : fileData.tables)
                         {
@@ -450,7 +424,6 @@ void MainWindow::setupPlotLayout(int rows, int cols)
                         }
                         if (!tableData || signalIndex >= tableData->valueData.size())
                             continue;
-                        // --- ----------------------- ---
 
                         QCPGraph *graph = plot->addGraph();
                         graph->setName(item->text());
@@ -461,10 +434,9 @@ void MainWindow::setupPlotLayout(int rows, int cols)
                         m_plotGraphMap[plot].insert(uniqueID, graph);
                     }
                 }
-                // --- -------------------------- ---
 
                 plot->rescaleAxes();
-                if (!hasSharedXRange && plot->graphCount() > 0) // <-- 确保有图表再设置
+                if (!hasSharedXRange && plot->graphCount() > 0) // 确保有图表再设置
                 {
                     sharedXRange = plot->xAxis->range();
                     hasSharedXRange = true;
@@ -498,7 +470,6 @@ void MainWindow::setupPlotLayout(int rows, int cols)
             frameLayout->setContentsMargins(0, 0, 0, 0);
 
             QCustomPlot *plot = new QCustomPlot(plotFrame);
-            // setupPlotInteractions 将在下面统一调用
 
             frameLayout->addWidget(plot);
             grid->addWidget(plotFrame, r, c);
@@ -510,7 +481,6 @@ void MainWindow::setupPlotLayout(int rows, int cols)
             {
                 plot->xAxis->setRange(sharedXRange);
             }
-            // --- ---------------- ---
         }
     }
 
@@ -519,7 +489,6 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     {
         setupPlotInteractions(plot);
     }
-    // --- -------------------------- ---
 
     if (!m_plotWidgets.isEmpty())
     {
@@ -542,10 +511,6 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     // 布局更改后，重建游标
     setupCursors();
 
-    // 我们不能立即调用 updateCursors()，因为 plot 的几何形状
-    // (例如 axisRect) 可能还没有被 Qt 的布局系统更新。
-    // 我们使用 QTimer::singleShot(0, ...) 将游标更新推迟到
-    // 事件循环的下一个周期，此时所有几何形状都将是正确的。
     if (m_cursorMode != NoCursor)
     {
         // 使用 singleShot 连接到新槽
@@ -570,7 +535,6 @@ void MainWindow::on_actionLayout3x2_triggered()
 
 void MainWindow::on_actionLoadFile_triggered()
 {
-    // --- 修改：添加 *.mat ---
     QString filePath = QFileDialog::getOpenFileName(this,
                                                     tr("Open File"), "", tr("Data Files (*.csv *.txt *.mat)"));
     if (filePath.isEmpty())
@@ -589,7 +553,6 @@ void MainWindow::on_actionLoadFile_triggered()
     {
         emit requestLoadCsv(filePath);
     }
-    // --- --------------------- ---
 }
 
 void MainWindow::showLoadProgress(int percentage)
@@ -597,14 +560,13 @@ void MainWindow::showLoadProgress(int percentage)
     m_progressDialog->setValue(percentage);
 }
 
-void MainWindow::onDataLoadFinished(const FileData &data) // <-- 修改
+void MainWindow::onDataLoadFinished(const FileData &data)
 {
     m_progressDialog->hide();
     qDebug() << "Main Thread: Load finished for" << data.filePath;
 
-    QString filename = QFileInfo(data.filePath).fileName(); // <-- 获取文件名
-
-    // --- 新增：检查文件是否已加载 ---
+    QString filename = QFileInfo(data.filePath).fileName();
+    // 检查文件是否已加载
     if (m_fileDataMap.contains(filename))
     {
         QMessageBox::StandardButton reply;
@@ -618,10 +580,9 @@ void MainWindow::onDataLoadFinished(const FileData &data) // <-- 修改
         // 如果用户选择 "Yes"，则移除旧文件
         removeFile(filename);
     }
-    // --- ------------------------- ---
 
     // 1. 缓存数据
-    m_fileDataMap.insert(filename, data); // <-- 存入 Map
+    m_fileDataMap.insert(filename, data);
 
     // 2. 填充信号树
     {
@@ -640,7 +601,7 @@ void MainWindow::onDataLoadFinished(const FileData &data) // <-- 修改
         updateCursors(m_cursorKey1, 1);
         updateCursors(m_cursorKey2, 2);
 
-        // --- 新增：数据加载完成后自动缩放视图 ---
+        // 数据加载完成后自动缩放视图
         on_actionFitView_triggered();
     }
     else
@@ -651,9 +612,9 @@ void MainWindow::onDataLoadFinished(const FileData &data) // <-- 修改
         updateCursors(m_cursorKey2, 2);
     }
     updateReplayControls(); // 设置滑块范围
-    // --- --------------------------------- ---
 }
-void MainWindow::populateSignalTree(const FileData &data) // <-- 替换此函数
+
+void MainWindow::populateSignalTree(const FileData &data)
 {
     QString filename = QFileInfo(data.filePath).fileName();
 
@@ -662,10 +623,10 @@ void MainWindow::populateSignalTree(const FileData &data) // <-- 替换此函数
     fileItem->setCheckable(false); // 文件条目本身不可勾选
     fileItem->setData(filename, FileNameRole);
     fileItem->setData(true, IsFileItemRole);
-    fileItem->setData(false, IsSignalItemRole); // <-- 新增
+    fileItem->setData(false, IsSignalItemRole);
     m_signalTreeModel->appendRow(fileItem);
 
-    // --- 新增：遍历所有表 (对于 CSV，只有一个表) ---
+    // 遍历所有表 (对于 CSV，只有一个表)
     for (int t_idx = 0; t_idx < data.tables.size(); ++t_idx)
     {
         const SignalTable &table = data.tables.at(t_idx);
@@ -686,7 +647,7 @@ void MainWindow::populateSignalTree(const FileData &data) // <-- 替换此函数
             parentItem = tableItem; // 信号将附加到表条目
         }
 
-        // --- 修改：使用表中的 headers ---
+        // 使用表中的 headers
         for (int i = 0; i < table.headers.count(); ++i)
         {
             QString signalName = table.headers[i].trimmed();
@@ -698,22 +659,21 @@ void MainWindow::populateSignalTree(const FileData &data) // <-- 替换此函数
             item->setCheckable(true);
             item->setCheckState(Qt::Unchecked);
 
-            // --- 修改：新的 UniqueID 格式 ---
-            // "filename/tablename/signalindex"
+            // 新的 UniqueID 格式 "filename/tablename/signalindex"
             QString uniqueID = QString("%1/%2/%3").arg(filename).arg(table.name).arg(i);
-            // --- ------------------------- ---
 
             item->setData(uniqueID, UniqueIdRole);
             item->setData(false, IsFileItemRole);
-            item->setData(true, IsSignalItemRole); // <-- 新增
+            item->setData(true, IsSignalItemRole);
             item->setData(filename, FileNameRole);
 
             QColor color(10 + QRandomGenerator::global()->bounded(245),
                          10 + QRandomGenerator::global()->bounded(245),
                          10 + QRandomGenerator::global()->bounded(245));
 
-            // --- 修复：将默认宽度从 1 改为 2 ---
-            QPen pen(color, 2); // <-- 修改了这里
+            // 将默认宽度为 2
+            // QPen pen(color, 2); //宽度2绘制密集线段会卡
+            QPen pen(color, 1);
             // --- ---------------------------- ---
 
             item->setData(QVariant::fromValue(pen), PenDataRole);

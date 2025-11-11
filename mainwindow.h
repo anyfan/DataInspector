@@ -7,7 +7,7 @@
 #include <QVector>
 #include <QPen>
 #include <QSet>
-#include "datamanager.h" // 包含 FileData, SignalTable 定义
+#include "datamanager.h"
 
 // 向前声明
 class QCustomPlot;
@@ -34,7 +34,7 @@ class QCPItemTracer;
 class QCPItemText;
 class QCPRange;
 
-// --- 修改：为信号树条目定义自定义数据角色 ---
+// 为信号树条目定义自定义数据角色
 // 存储唯一的 "filename/tablename/signalindex" 字符串 ID
 const int UniqueIdRole = Qt::UserRole + 1;
 // 存储布尔值，是否为顶层文件条目
@@ -43,9 +43,8 @@ const int IsFileItemRole = Qt::UserRole + 2;
 const int PenDataRole = Qt::UserRole + 3;
 // 存储 QString 文件名 (用于文件、表和信号条目)
 const int FileNameRole = Qt::UserRole + 4;
-// [新增] 存储布尔值，是否为信号条目 (用于委托)
+// 存储布尔值，是否为信号条目 (用于委托)
 const int IsSignalItemRole = Qt::UserRole + 5;
-// --- ---------------------------------- ---
 
 /**
  * @brief 主窗口类，实现 data flow.md 中的核心架构
@@ -82,8 +81,8 @@ private slots:
     void on_actionLoadFile_triggered();
 
     // DataManager 信号槽
-    void onDataLoadFinished(const FileData &data);                              // <-- 修改：接收 FileData
-    void onDataLoadFailed(const QString &filePath, const QString &errorString); // <-- 修改
+    void onDataLoadFinished(const FileData &data);
+    void onDataLoadFailed(const QString &filePath, const QString &errorString);
     void showLoadProgress(int percentage);
 
     // 布局菜单动作
@@ -234,7 +233,7 @@ private:
 
     // (PlotIndex -> QSet<UniqueID>) 映射
     // UniqueID 是 "filename/tablename/signalindex" 格式的字符串
-    QMap<int, QSet<QString>> m_plotSignalMap; // <-- 修改
+    QMap<int, QSet<QString>> m_plotSignalMap;
 
     // (Plot -> PlotIndex) 映射
     // 用于*运行时*快速查找 plot 的索引
@@ -266,20 +265,20 @@ private:
     CursorMode m_cursorMode;
     double m_cursorKey1;
     double m_cursorKey2;
-    bool m_isDraggingCursor1; // --- 新增：拖拽状态
-    bool m_isDraggingCursor2; // --- 新增：拖拽状态
+    bool m_isDraggingCursor1; // 拖拽状态
+    bool m_isDraggingCursor2; // 拖拽状态
 
     QList<QCPItemLine *> m_cursorLines1;
     QList<QCPItemLine *> m_cursorLines2;
-    QList<QCPItemText *> m_cursorXLabels1; // --- 修改：用于 X 轴标签
-    QList<QCPItemText *> m_cursorXLabels2; // --- 修改：用于 X 轴标签
+    QList<QCPItemText *> m_cursorXLabels1; // 用于 X 轴标签
+    QList<QCPItemText *> m_cursorXLabels2; // 用于 X 轴标签
 
     // (Graph -> Tracer) 映射
     QMap<QCPGraph *, QCPItemTracer *> m_graphTracers1;
     QMap<QCPGraph *, QCPItemTracer *> m_graphTracers2;
     // (Tracer -> Label) 映射
-    QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels1; // --- 新增：用于 Y 轴标签
-    QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels2; // --- 新增：用于 Y 轴标签
+    QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels1; // 用于 Y 轴标签
+    QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels2; // 用于 Y 轴标签
 
     // --- 重放控制 ---
     QDockWidget *m_replayDock;
@@ -292,10 +291,8 @@ private:
     QLabel *m_currentTimeLabel;
     QTimer *m_replayTimer;
 
-    // --- 加载的数据缓存 ---
-    // --- 修改：使用 QMap 存储多个文件数据 ---
-    QMap<QString, FileData> m_fileDataMap; // <-- 修改
-    // --- --------------------------------- ---
+    // --- 加载的数据缓存 使用 QMap 存储多个文件数据 ---
+    QMap<QString, FileData> m_fileDataMap;
 };
 
 #endif // MAINWINDOW_H

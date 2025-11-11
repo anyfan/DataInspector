@@ -52,6 +52,7 @@ add_executable(DataInspector
     datamanager.cpp
     qcustomplot.cpp 
     signaltreedelegate.cpp
+    signalpropertiesdialog.cpp
 )
 
 # 链接 Qt5 库
