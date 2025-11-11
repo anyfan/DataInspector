@@ -37,6 +37,52 @@
 #include <QFileInfo> // 用于获取文件名
 #include <QCursor>   // 用于获取鼠标位置
 
+/**
+ * @brief [辅助函数] 通过 UniqueIdRole 在模型中迭代查找 QStandardItem (广度优先)
+ * @param model 要搜索的 QStandardItemModel
+ * @param uniqueID 要查找的 ID
+ * @return 找到的 QStandardItem，如果未找到则返回 nullptr
+ */
+static QStandardItem *findItemByUniqueID_BFS(QStandardItemModel *model, const QString &uniqueID)
+{
+    if (!model)
+        return nullptr;
+
+    QList<QStandardItem *> itemsToSearch;
+    // 从根项开始
+    QStandardItem *root = model->invisibleRootItem();
+    for (int i = 0; i < root->rowCount(); ++i)
+    {
+        itemsToSearch.append(root->child(i));
+    }
+
+    int head = 0;
+    while (head < itemsToSearch.size())
+    {
+        QStandardItem *currentItem = itemsToSearch.at(head++); // 获取并移除队列头部
+        if (!currentItem)
+            continue;
+
+        // 检查此项
+        if (currentItem->data(UniqueIdRole).toString() == uniqueID)
+        {
+            return currentItem;
+        }
+
+        // 将子项添加到队列尾部
+        if (currentItem->hasChildren())
+        {
+            for (int i = 0; i < currentItem->rowCount(); ++i)
+            {
+                itemsToSearch.append(currentItem->child(i));
+            }
+        }
+    }
+
+    return nullptr; // 未找到
+}
+// --- ---------------- ---
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr), m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr), m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr), m_lastMousePlot(nullptr), m_cursorMode(NoCursor), m_cursorKey1(0), m_cursorKey2(0),
       m_isDraggingCursor1(false),
@@ -300,6 +346,17 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     // X轴同步
     connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
             this, &MainWindow::onXAxisRangeChanged);
+
+    // --- 新增：连接图例交互信号 ---
+
+    // 1. (修正) 连接图例的左键点击信号，用于切换可见性
+    //    这个信号在 QCustomPlot *plot* 上，而不是在 plot->legend 上
+    connect(plot, &QCustomPlot::legendClick, this, &MainWindow::onLegendClick);
+
+    // 2. 启用并连接图表的上下文菜单（用于图例的右键点击）
+    plot->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(plot, &QCustomPlot::customContextMenuRequested, this, &MainWindow::onLegendContextMenu);
+    // --- -------------------------- ---
 }
 
 void MainWindow::clearPlotLayout()
@@ -1148,12 +1205,52 @@ void MainWindow::onReplayActionToggled(bool checked)
  */
 void MainWindow::onPlotMousePress(QMouseEvent *event)
 {
-    if (m_cursorMode == NoCursor)
-        return; // 游标未激活
 
     QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
     if (!plot)
         return;
+
+    if (event->button() == Qt::LeftButton)
+    {
+        // 检查用户是否按下了多选键 (例如 Ctrl)
+        // 我们从 plot 实例中获取多选修饰键的设置
+        bool multiSelect = (event->modifiers() & plot->multiSelectModifier());
+
+        // 如果没有按下多选键，则执行“点击取消所有选中”
+        if (!multiSelect)
+        {
+            bool selectionChanged = false;
+            // 遍历所有图表，取消它们的选中状态
+            for (QCustomPlot *p : m_plotWidgets)
+            {
+                // 检查是否有任何内容被选中
+                if (!p->selectedPlottables().isEmpty() || !p->selectedGraphs().isEmpty() || !p->selectedItems().isEmpty() || !p->selectedAxes().isEmpty() || !p->selectedLegends().isEmpty())
+                {
+                    selectionChanged = true;
+                }
+                p->deselectAll(); // 取消此 QCustomPlot 实例上的所有选中
+            }
+
+            // 如果确实有选中状态被改变，我们需要重绘所有图表
+            // (deselectAll 不会自动触发重绘)
+            if (selectionChanged)
+            {
+                for (QCustomPlot *p : m_plotWidgets)
+                {
+                    // 使用排队重绘，以防万一
+                    p->replot(QCustomPlot::rpQueuedReplot);
+                }
+            }
+        }
+    }
+    // --- 新增代码结束 ---
+
+    if (m_cursorMode == NoCursor)
+        return; // 游标未激活
+
+    // QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender()); // <-- 这行已移到新增代码的开头
+    // if (!plot)
+    //     return;
 
     // 检查是否点击了游标 1
     if (m_cursorMode == SingleCursor || m_cursorMode == DoubleCursor)
@@ -1194,6 +1291,7 @@ void MainWindow::onPlotMousePress(QMouseEvent *event)
 
     // 如果没有点击游标，则不处理事件 (event->ignore() 是默认的)
     // 这将允许 QCustomPlot 的 iRangeDrag (平移) 生效
+    // (我们新增的取消选中逻辑已经在此之前运行了)
 }
 
 /**
@@ -2010,4 +2108,171 @@ void MainWindow::updateCursorsForLayoutChange()
             updateCursors(m_cursorKey2, 2);
         }
     }
+}
+
+// ---
+// ---
+// --- 新增：图例交互槽函数
+// ---
+// ---
+
+/**
+ * @brief [槽] 响应图例左键点击，切换信号的可见性
+ */
+void MainWindow::onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, QMouseEvent *event)
+{
+    Q_UNUSED(legend);
+    if (event->button() != Qt::LeftButton) // 仅响应左键点击
+        return;
+
+    // 确保我们点击的是一个与 plottable 关联的图例条目
+    if (QCPPlottableLegendItem *plottableItem = qobject_cast<QCPPlottableLegendItem *>(item))
+    {
+        QCPAbstractPlottable *plottable = plottableItem->plottable();
+        if (plottable)
+        {
+            // 切换可见性
+            plottable->setVisible(!plottable->visible());
+
+            // QCustomPlot 会自动更新图例条目的外观（例如，变灰）
+            // 我们只需要重绘图表
+            plottable->parentPlot()->replot();
+        }
+    }
+}
+
+/**
+ * @brief [槽] 响应图表区域的右键点击，检查是在图例上还是在图表背景上
+ */
+void MainWindow::onLegendContextMenu(const QPoint &pos)
+{
+    QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
+    if (!plot)
+        return;
+
+    // 检查点击位置的顶层可布局元素
+    QCPLayoutElement *el = plot->layoutElementAt(pos);
+
+    // 尝试将元素转换为图例条目
+    QCPAbstractLegendItem *legendItem = qobject_cast<QCPAbstractLegendItem *>(el);
+
+    if (QCPPlottableLegendItem *plottableItem = qobject_cast<QCPPlottableLegendItem *>(legendItem))
+    {
+        // --- 1. 用户右键点击了 *图例条目* ---
+        QCPGraph *graph = qobject_cast<QCPGraph *>(plottableItem->plottable());
+        if (!graph)
+            return;
+
+        // 找到此 graph 对应的 uniqueID
+        QString uniqueID = m_plotGraphMap.value(plot).key(graph, QString());
+
+        if (uniqueID.isEmpty())
+            return;
+
+        // 创建上下文菜单
+        QMenu contextMenu(this);
+        QAction *deleteAction = contextMenu.addAction(tr("Delete '%1'").arg(graph->name()));
+        deleteAction->setData(uniqueID); // 将 uniqueID 存储在 action 中
+
+        connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSignalAction);
+
+        // 在全局坐标位置显示菜单
+        contextMenu.exec(plot->mapToGlobal(pos));
+    }
+    else if (qobject_cast<QCPAxisRect *>(el) || qobject_cast<QCPLegend *>(el))
+    {
+        // --- 2. (新增) 用户右键点击了 *图表背景* (QCPAxisRect) 或 *图例背景* (QCPLegend) ---
+
+        // 找到此 plot 对应的 plotIndex
+        int plotIndex = m_plotWidgetMap.value(plot, -1);
+        if (plotIndex == -1)
+            return;
+
+        QMenu contextMenu(this);
+        QAction *deleteSubplotAction = contextMenu.addAction(tr("Delete Subplot"));
+        deleteSubplotAction->setData(plotIndex); // 将 plotIndex 存储在 action 中
+
+        connect(deleteSubplotAction, &QAction::triggered, this, &MainWindow::onDeleteSubplotAction);
+
+        // 在全局坐标位置显示菜单
+        contextMenu.exec(plot->mapToGlobal(pos));
+    }
+}
+
+/**
+ * @brief [槽] 响应图例上下文菜单中的“删除”动作
+ */
+void MainWindow::onDeleteSignalAction()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+
+    QString uniqueID = action->data().toString();
+    if (uniqueID.isEmpty())
+        return;
+
+    // --- 修正：使用更可靠的 BFS 搜索替换 findItems 循环 ---
+    QStandardItem *itemToUncheck = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+    // --- ------------------------------------------- ---
+
+    if (itemToUncheck)
+    {
+        itemToUncheck->setCheckState(Qt::Unchecked);
+    }
+    else
+    {
+        qWarning() << "onDeleteSignalAction: Could not find item in tree model for ID" << uniqueID;
+    }
+}
+
+/**
+ * @brief [槽] 响应子图上下文菜单中的“删除子图”动作
+ * * 此函数通过取消勾选树中的所有相关条目来移除子图上的所有信号。
+ */
+void MainWindow::onDeleteSubplotAction()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+
+    int plotIndex = action->data().toInt();
+    if (!m_plotSignalMap.contains(plotIndex))
+        return;
+
+    // 重点：我们必须迭代一个 *副本*，
+    // 因为取消勾选会触发 onSignalItemChanged，
+    // 这将 *修改* 原始的 m_plotSignalMap[plotIndex]，
+    // 从而使迭代器失效。
+    const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
+
+    if (signalIDsCopy.isEmpty())
+        return; // 子图上没有信号
+
+    // 我们不在这里阻塞信号，因为我们 *希望* onSignalItemChanged
+    // 为每个被取消勾选的条目触发，以正确执行所有清理逻辑。
+    // QSignalBlocker blocker(m_signalTreeModel); // <-- 不要这样做
+
+    qDebug() << "Clearing subplot index" << plotIndex << "- removing" << signalIDsCopy.size() << "signals.";
+
+    for (const QString &uniqueID : signalIDsCopy)
+    {
+        // 查找树中的条目
+        QStandardItem *itemToUncheck = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+
+        // 如果找到了，并且它当前被选中，则取消勾选它
+        if (itemToUncheck && itemToUncheck->checkState() == Qt::Checked)
+        {
+            itemToUncheck->setCheckState(Qt::Unchecked);
+            // 这将自动调用 onSignalItemChanged(itemToUncheck)，
+            // 该函数会移除图表、更新 map 并重绘。
+        }
+    }
+
+    // 第一次重绘可能已经由最后一个 onSignalItemChanged 调用触发，
+    // 但为保险起见，我们可以再次调用 replot (如果需要的话)。
+    // 不过，onSignalItemChanged 已经处理了重绘，所以这里通常是多余的。
+    // QCustomPlot *plot = m_plotWidgetMap.key(plotIndex, nullptr);
+    // if (plot)
+    //     plot->replot();
 }

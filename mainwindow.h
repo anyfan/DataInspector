@@ -33,6 +33,8 @@ class QCPItemLine;
 class QCPItemTracer;
 class QCPItemText;
 class QCPRange;
+class QCPLegend;
+class QCPAbstractLegendItem;
 
 // 为信号树条目定义自定义数据角色
 // 存储唯一的 "filename/tablename/signalindex" 字符串 ID
@@ -94,6 +96,11 @@ private slots:
     void onPlotClicked();
     void onSignalItemChanged(QStandardItem *item);
     void onSignalItemDoubleClicked(const QModelIndex &index);
+    // 图例交互槽
+    void onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, QMouseEvent *event);
+    void onLegendContextMenu(const QPoint &pos);
+    void onDeleteSignalAction();
+    void onDeleteSubplotAction();
     // --- 新增：信号树的右键菜单槽 ---
     void onSignalTreeContextMenu(const QPoint &pos);
     void onDeleteFileAction();
