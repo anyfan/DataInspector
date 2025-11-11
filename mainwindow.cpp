@@ -380,6 +380,11 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
             this, &MainWindow::onXAxisRangeChanged);
 
+    // --- 新增：设置Y轴的数字格式 ---
+    // (使用 'g' 格式并设置精度，以便大数字自动切换到科学计数法)
+    plot->yAxis->setNumberFormat("g");  // 'g' = 通用格式
+    plot->yAxis->setNumberPrecision(4); // 精度为 4 (例如 90000 -> 9e+4)
+
     // --- 新增：连接图例交互信号 ---
 
     // 1. (修正) 连接图例的左键点击信号，用于切换可见性
@@ -455,6 +460,12 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
         frameLayout->setContentsMargins(0, 0, 0, 0);
 
         QCustomPlot *plot = new QCustomPlot(plotFrame);
+
+        // 强制设置固定的左边距以实现游标对齐
+        plot->axisRect()->setAutoMargins(QCP::MarginSides(QCP::msAll & ~QCP::msLeft));
+        QMargins newMargins = plot->axisRect()->margins();
+        newMargins.setLeft(50); // <-- 你可以在这里调整这个固定值
+        plot->axisRect()->setMargins(newMargins);
 
         frameLayout->addWidget(plot);
         // --- 使用网格跨度添加 ---
