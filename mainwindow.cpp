@@ -39,6 +39,10 @@
 #include <QFormLayout>
 #include <QSpinBox>
 #include <QDialogButtonBox>
+// --- 新增：包含拖放和MIME数据的头文件 ---
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
 
 /**
  * @brief [辅助函数] 通过 UniqueIdRole 在模型中迭代查找 QStandardItem (广度优先)
@@ -107,8 +111,11 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle(tr("Data Inspector (Async)"));
     resize(1280, 800);
 
+    // --- 新增：在构造函数中启用拖放 ---
+    setAcceptDrops(true);
+
     // 5. 设置初始布局
-    setupPlotLayout(1, 1);
+    setupPlotLayout(2, 1);
 
     // 6. 创建进度对话框
     m_progressDialog = new QProgressDialog(this);
@@ -716,13 +723,30 @@ void MainWindow::on_actionLayoutCustom_triggered()
     }
 }
 
+/**
+ * @brief [槽] "Load File..." 菜单动作被触发
+ * * 此函数现在只负责打开文件对话框，然后调用辅助函数 loadFile()
+ */
 void MainWindow::on_actionLoadFile_triggered()
 {
     QString filePath = QFileDialog::getOpenFileName(this,
                                                     tr("Open File"), "", tr("Data Files (*.csv *.txt *.mat)"));
+
+    // 只需调用新的辅助函数
+    loadFile(filePath);
+}
+
+/**
+ * @brief [新增] 启动加载单个文件的辅助函数
+ * * 无论是通过菜单打开还是拖放，都会调用此函数
+ * @param filePath 要加载的文件的路径
+ */
+void MainWindow::loadFile(const QString &filePath)
+{
     if (filePath.isEmpty())
         return;
 
+    // 注意：当拖放多个文件时，这将为每个文件显示和隐藏进度对话框
     m_progressDialog->setValue(0);
     m_progressDialog->setLabelText(tr("Loading %1...").arg(QFileInfo(filePath).fileName()));
     m_progressDialog->show();
@@ -737,6 +761,60 @@ void MainWindow::on_actionLoadFile_triggered()
         emit requestLoadCsv(filePath);
     }
 }
+
+// --- 新增：拖放事件实现 ---
+
+/**
+ * @brief [重写] 当文件被拖入窗口时调用
+ */
+void MainWindow::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (event->mimeData()->hasUrls())
+    {
+        // 检查是否至少有一个文件是我们支持的类型
+        for (const QUrl &url : event->mimeData()->urls())
+        {
+            QString filePath = url.toLocalFile();
+            if (filePath.endsWith(".csv", Qt::CaseInsensitive) ||
+                filePath.endsWith(".txt", Qt::CaseInsensitive) ||
+                filePath.endsWith(".mat", Qt::CaseInsensitive))
+            {
+                event->acceptProposedAction(); // 接受拖动
+                return;
+            }
+        }
+    }
+
+    event->ignore(); // 否则, 拒绝拖动
+}
+
+/**
+ * @brief [重写] 当文件在窗口上被放下时调用
+ */
+void MainWindow::dropEvent(QDropEvent *event)
+{
+    const QMimeData *mimeData = event->mimeData();
+    if (mimeData->hasUrls())
+    {
+        QList<QUrl> urlList = mimeData->urls();
+        for (const QUrl &url : urlList)
+        {
+            QString filePath = url.toLocalFile();
+            if (!filePath.isEmpty())
+            {
+                // 检查文件扩展名
+                if (filePath.endsWith(".csv", Qt::CaseInsensitive) ||
+                    filePath.endsWith(".txt", Qt::CaseInsensitive) ||
+                    filePath.endsWith(".mat", Qt::CaseInsensitive))
+                {
+                    loadFile(filePath); // 调用我们的辅助函数
+                }
+            }
+        }
+        event->acceptProposedAction();
+    }
+}
+// --- ---------------------- ---
 
 void MainWindow::showLoadProgress(int percentage)
 {

@@ -8,6 +8,8 @@
 #include <QPen>
 #include <QSet>
 #include "datamanager.h"
+#include <QDragEnterEvent>
+#include <QDropEvent>
 
 // 向前声明
 class QCustomPlot;
@@ -141,6 +143,11 @@ private slots:
     // --- 新增：用于在布局更改后更新游标的槽 ---
     void updateCursorsForLayoutChange();
 
+    // --- 新增：重写拖放事件处理函数 ---
+protected:
+    void dragEnterEvent(QDragEnterEvent *event) override;
+    void dropEvent(QDropEvent *event) override;
+
 private:
     // UI 创建
     void createActions();
@@ -230,6 +237,12 @@ private:
      * @brief [新增] 移除一个文件的所有相关数据和图表
      */
     void removeFile(const QString &filename);
+
+    /**
+     * @brief [新增] 启动加载单个文件的辅助函数
+     * @param filePath 要加载的文件的路径
+     */
+    void loadFile(const QString &filePath);
     // --- ---------------------- ---
 
     // --- 工作线程 ---
