@@ -7,7 +7,7 @@
 #include <QVector>
 #include <QPen>
 #include <QSet>
-#include "datamanager.h" // 包含 CsvData 定义
+#include "datamanager.h" // 包含 FileData, SignalTable 定义
 
 // 向前声明
 class QCustomPlot;
@@ -34,15 +34,17 @@ class QCPItemTracer;
 class QCPItemText;
 class QCPRange;
 
-// --- 新增：为信号树条目定义自定义数据角色 ---
-// 存储唯一的 "filename_signalIndex" 字符串 ID (用于信号条目)
+// --- 修改：为信号树条目定义自定义数据角色 ---
+// 存储唯一的 "filename/tablename/signalindex" 字符串 ID
 const int UniqueIdRole = Qt::UserRole + 1;
 // 存储布尔值，是否为顶层文件条目
 const int IsFileItemRole = Qt::UserRole + 2;
 // 存储画笔 (用于信号条目)
 const int PenDataRole = Qt::UserRole + 3;
-// 存储 QString 文件名 (用于文件条目和信号条目)
-const int FileNameRole = Qt::UserRole + 4; // <-- 新增
+// 存储 QString 文件名 (用于文件、表和信号条目)
+const int FileNameRole = Qt::UserRole + 4;
+// [新增] 存储布尔值，是否为信号条目 (用于委托)
+const int IsSignalItemRole = Qt::UserRole + 5;
 // --- ---------------------------------- ---
 
 /**
@@ -70,13 +72,18 @@ signals:
      */
     void requestLoadCsv(const QString &filePath);
 
+    /**
+     * @brief [新增][信号] 请求工作线程加载一个 MAT 文件
+     */
+    void requestLoadMat(const QString &filePath);
+
 private slots:
     // 文件菜单动作
     void on_actionLoadFile_triggered();
 
     // DataManager 信号槽
-    void onDataLoadFinished(const CsvData &data); // <-- 修改：接收 CsvData
-    void onDataLoadFailed(const QString &errorString);
+    void onDataLoadFinished(const FileData &data);                              // <-- 修改：接收 FileData
+    void onDataLoadFailed(const QString &filePath, const QString &errorString); // <-- 修改
     void showLoadProgress(int percentage);
 
     // 布局菜单动作
@@ -146,7 +153,7 @@ private:
     /**
      * @brief 使用加载的数据填充信号树
      */
-    void populateSignalTree(const CsvData &data); // <-- 修改：接收 CsvData
+    void populateSignalTree(const FileData &data); // <-- 修改：接收 FileData
 
     /**
      * @brief 为新创建的 plot 设置标准交互
@@ -197,7 +204,7 @@ private:
      */
     QCPGraph *getGraph(QCustomPlot *plot, const QString &uniqueID) const;
     /**
-     * @brief [新增] 从 item 构建 uniqueID
+     * @brief [修改] 从 item 构建 uniqueID
      */
     QString getUniqueID(QStandardItem *item) const;
     /**
@@ -222,11 +229,11 @@ private:
     QCustomPlot *m_activePlot;          // 当前选中的 plot
 
     // (Plot -> (UniqueID -> Graph)) 映射
-    // UniqueID 是 "filename_signalIndex" 格式的字符串
+    // UniqueID 是 "filename/tablename/signalindex" 格式的字符串
     QMap<QCustomPlot *, QMap<QString, QCPGraph *>> m_plotGraphMap; // <-- 修改
 
     // (PlotIndex -> QSet<UniqueID>) 映射
-    // UniqueID 是 "filename_signalIndex" 格式的字符串
+    // UniqueID 是 "filename/tablename/signalindex" 格式的字符串
     QMap<int, QSet<QString>> m_plotSignalMap; // <-- 修改
 
     // (Plot -> PlotIndex) 映射
@@ -287,7 +294,7 @@ private:
 
     // --- 加载的数据缓存 ---
     // --- 修改：使用 QMap 存储多个文件数据 ---
-    QMap<QString, CsvData> m_fileDataMap;
+    QMap<QString, FileData> m_fileDataMap; // <-- 修改
     // --- --------------------------------- ---
 };
 

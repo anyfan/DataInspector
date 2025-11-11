@@ -4,11 +4,13 @@
 #include <QVariant>
 #include <QApplication>
 
-// --- 修改：更新了 PenDataRole 的值 ---
+// --- 修改：更新了角色定义 ---
 // 在 mainwindow.h 中定义
 const int UniqueIdRole = Qt::UserRole + 1;
 const int IsFileItemRole = Qt::UserRole + 2;
 const int PenDataRole = Qt::UserRole + 3;
+const int FileNameRole = Qt::UserRole + 4;
+const int IsSignalItemRole = Qt::UserRole + 5; // <-- 新增
 // --- ---------------------------- ---
 
 SignalTreeDelegate::SignalTreeDelegate(QObject *parent)
@@ -24,8 +26,8 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
 
-    // --- 新增：如果是文件条目，则不绘制预览 ---
-    bool isFileItem = index.data(IsFileItemRole).toBool();
+    // --- 修改：检查是否为信号条目 ---
+    bool isSignalItem = index.data(IsSignalItemRole).toBool();
     // --- -------------------------------- ---
 
     // 预留右侧 40 像素用于绘制预览
@@ -36,7 +38,7 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     QRect fullRect = opt.rect;
 
     // 告诉基类 paint() 不要绘制在我们的预览区域
-    if (!isFileItem) // <-- 只对信号条目执行此操作
+    if (isSignalItem) // <-- 只对信号条目执行此操作
         opt.rect.setWidth(opt.rect.width() - previewWidth - margin);
 
     // 获取 QStyle 对象
@@ -79,9 +81,9 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
 
     // 2. 绘制我们的自定义预览线
     // --- 修改：只为信号条目绘制 ---
-    if (!isFileItem)
+    if (isSignalItem)
     {
-        // 从模型的 UserRole + 1 中获取 QPen
+        // 从模型的 PenDataRole 中获取 QPen
         QVariant penData = index.data(PenDataRole);
         if (penData.canConvert<QPen>())
         {

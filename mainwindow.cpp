@@ -14,6 +14,7 @@
 #include <QDockWidget>
 #include <QTreeView>
 #include <QStandardItemModel>
+#include <QStandardItem>
 #include <QWidget>
 #include <QGridLayout>
 #include <QPainter>
@@ -35,7 +36,11 @@
 #include <QFileInfo> // <-- 新增：用于获取文件名
 
 // --- 修改：在 mainwindow.h 中定义角色 ---
-// const int PenDataRole = Qt::UserRole + 1;
+// const int UniqueIdRole = Qt::UserRole + 1;
+// const int IsFileItemRole = Qt::UserRole + 2;
+// const int PenDataRole = Qt::UserRole + 3;
+// const int FileNameRole = Qt::UserRole + 4;
+// const int IsSignalItemRole = Qt::UserRole + 5;
 // --- -------------------------------- ---
 
 MainWindow::MainWindow(QWidget *parent)
@@ -99,6 +104,9 @@ void MainWindow::setupDataManagerThread()
     m_dataManager->moveToThread(m_dataThread);
 
     connect(this, &MainWindow::requestLoadCsv, m_dataManager, &DataManager::loadCsvFile, Qt::QueuedConnection);
+    // --- 新增：连接 MAT 加载 ---
+    connect(this, &MainWindow::requestLoadMat, m_dataManager, &DataManager::loadMatFile, Qt::QueuedConnection);
+    // --- --------------------- ---
     connect(m_dataManager, &DataManager::loadProgress, this, &MainWindow::showLoadProgress, Qt::QueuedConnection);
     connect(m_dataManager, &DataManager::loadFinished, this, &MainWindow::onDataLoadFinished, Qt::QueuedConnection); // <-- 修改
     connect(m_dataManager, &DataManager::loadFailed, this, &MainWindow::onDataLoadFailed, Qt::QueuedConnection);
@@ -113,7 +121,8 @@ void MainWindow::setupDataManagerThread()
 void MainWindow::createActions()
 {
     // 文件菜单
-    m_loadFileAction = new QAction(tr("&Load CSV..."), this);
+    // --- 修改：更新文本以包含 MAT ---
+    m_loadFileAction = new QAction(tr("&Load File..."), this);
     m_loadFileAction->setShortcut(QKeySequence::Open);
     connect(m_loadFileAction, &QAction::triggered, this, &MainWindow::on_actionLoadFile_triggered);
 
@@ -280,7 +289,7 @@ void MainWindow::createReplayDock()
     m_replayDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
 
     // 错误 2 修正：QDockWidget 必须添加到 DockWidgetArea
-    addDockWidget(Qt::BottomDockWidgetArea, m_replayDock);
+    addDockWidget(Qt::BottomDockWidgetArea, m_replayDock); // 使用 BottomDockWidgetArea 替代错误的 BottomToolBarArea
 
     // 默认隐藏
     m_replayDock->hide();
@@ -393,30 +402,58 @@ void MainWindow::setupPlotLayout(int rows, int cols)
                 const QSet<QString> &signalIDs = m_plotSignalMap.value(plotIndex);
                 for (const QString &uniqueID : signalIDs)
                 {
-                    // 从 uniqueID 解析文件名和索引
-                    QStringList parts = uniqueID.split('_');
-                    if (parts.size() != 2)
+                    // --- 修改：解析新的 3 部分 uniqueID ---
+                    QStringList parts = uniqueID.split('/');
+                    if (parts.size() != 3)
                         continue;
                     QString filename = parts[0];
-                    int signalIndex = parts[1].toInt();
+                    QString tablename = parts[1];
+                    int signalIndex = parts[2].toInt();
+                    // --- ----------------------------- ---
 
                     // 查找 QStandardItem
                     QList<QStandardItem *> fileItems = m_signalTreeModel->findItems(filename, Qt::MatchExactly);
-                    if (fileItems.isEmpty() || fileItems.first()->rowCount() <= signalIndex)
+                    if (fileItems.isEmpty())
                         continue;
-                    QStandardItem *item = fileItems.first()->child(signalIndex);
 
-                    // 查找 CsvData
+                    // --- 新增：在树中查找表和信号 ---
+                    QStandardItem *tableItem = nullptr;
+                    for (int t_idx = 0; t_idx < fileItems.first()->rowCount(); ++t_idx)
+                    {
+                        if (fileItems.first()->child(t_idx)->text() == tablename) // 假设表名是唯一的
+                        {
+                            tableItem = fileItems.first()->child(t_idx);
+                            break;
+                        }
+                    }
+                    if (!tableItem || tableItem->rowCount() <= signalIndex)
+                        continue;
+                    QStandardItem *item = tableItem->child(signalIndex);
+                    // --- --------------------------------- ---
+
+                    // 查找 FileData
                     if (item && m_fileDataMap.contains(filename))
                     {
-                        const CsvData &csvData = m_fileDataMap.value(filename);
-                        if (signalIndex >= csvData.valueData.size())
+                        const FileData &fileData = m_fileDataMap.value(filename);
+
+                        // --- 新增：查找 SignalTable ---
+                        const SignalTable *tableData = nullptr;
+                        for (const auto &table : fileData.tables)
+                        {
+                            if (table.name == tablename)
+                            {
+                                tableData = &table;
+                                break;
+                            }
+                        }
+                        if (!tableData || signalIndex >= tableData->valueData.size())
                             continue;
+                        // --- ----------------------- ---
 
                         QCPGraph *graph = plot->addGraph();
                         graph->setName(item->text());
-                        // <-- 重点：使用特定文件的数据 -->
-                        graph->setData(csvData.timeData, csvData.valueData[signalIndex]);
+                        // <-- 重点：使用特定文件和表的数据 -->
+                        graph->setData(tableData->timeData, tableData->valueData[signalIndex]);
                         graph->setPen(item->data(PenDataRole).value<QPen>());
                         // 重新填充 m_plotGraphMap
                         m_plotGraphMap[plot].insert(uniqueID, graph);
@@ -531,16 +568,26 @@ void MainWindow::on_actionLayout3x2_triggered()
 
 void MainWindow::on_actionLoadFile_triggered()
 {
+    // --- 修改：添加 *.mat ---
     QString filePath = QFileDialog::getOpenFileName(this,
-                                                    tr("Open CSV File"), "", tr("CSV Files (*.csv *.txt)"));
+                                                    tr("Open File"), "", tr("Data Files (*.csv *.txt *.mat)"));
     if (filePath.isEmpty())
         return;
 
     m_progressDialog->setValue(0);
-    m_progressDialog->setLabelText(tr("Loading %1...").arg(filePath));
+    m_progressDialog->setLabelText(tr("Loading %1...").arg(QFileInfo(filePath).fileName()));
     m_progressDialog->show();
 
-    emit requestLoadCsv(filePath);
+    // --- 新增：检查文件类型 ---
+    if (filePath.endsWith(".mat", Qt::CaseInsensitive))
+    {
+        emit requestLoadMat(filePath);
+    }
+    else
+    {
+        emit requestLoadCsv(filePath);
+    }
+    // --- --------------------- ---
 }
 
 void MainWindow::showLoadProgress(int percentage)
@@ -548,10 +595,10 @@ void MainWindow::showLoadProgress(int percentage)
     m_progressDialog->setValue(percentage);
 }
 
-void MainWindow::onDataLoadFinished(const CsvData &data)
+void MainWindow::onDataLoadFinished(const FileData &data) // <-- 修改
 {
     m_progressDialog->hide();
-    qDebug() << "Main Thread: Load finished. Received" << data.timeData.count() << "data points.";
+    qDebug() << "Main Thread: Load finished for" << data.filePath;
 
     QString filename = QFileInfo(data.filePath).fileName(); // <-- 获取文件名
 
@@ -574,31 +621,23 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
     // 1. 缓存数据
     m_fileDataMap.insert(filename, data); // <-- 存入 Map
 
-    // --- 重点修改：不再清理所有图表 ---
-    // (清理工作已在 removeFile 中完成，如果需要的话)
-    // ---------------------------------
-
-    // 填充信号树
+    // 2. 填充信号树
     {
         QSignalBlocker blocker(m_signalTreeModel);
         populateSignalTree(data); // <-- 传入新数据
     }
-    m_signalTree->reset();
+    m_signalTree->reset(); // <-- CSV 和 MAT 都需要
 
-    // 4. 更新勾选状态 (不需要，因为新文件没有勾选的信号)
-    // updateSignalTreeChecks(); // 在 onPlotClicked 中处理
-
-    // 更新重放控件和游标
-    if (m_fileDataMap.size() == 1) // 如果这是加载的第一个文件
+    // 3. 更新重放控件和游标
+    if (m_fileDataMap.size() == 1 && !data.tables.isEmpty() && !data.tables.first().timeData.isEmpty()) // 如果这是加载的第一个文件
     {
-        if (!data.timeData.isEmpty())
-        {
-            // 将游标 1 移动到数据起点
-            m_cursorKey1 = data.timeData.first();
-            m_cursorKey2 = data.timeData.first() + getGlobalTimeRange().size() * 0.1; // 游标 2 在 10% 处
-            updateCursors(m_cursorKey1, 1);
-            updateCursors(m_cursorKey2, 2);
-        }
+        const SignalTable &firstTable = data.tables.first();
+        // 将游标 1 移动到数据起点
+        m_cursorKey1 = firstTable.timeData.first();
+        m_cursorKey2 = firstTable.timeData.first() + getGlobalTimeRange().size() * 0.1; // 游标 2 在 10% 处
+        updateCursors(m_cursorKey1, 1);
+        updateCursors(m_cursorKey2, 2);
+
         // --- 新增：数据加载完成后自动缩放视图 ---
         on_actionFitView_triggered();
     }
@@ -610,12 +649,11 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
         updateCursors(m_cursorKey2, 2);
     }
     updateReplayControls(); // 设置滑块范围
-    // ---------------------------------
+    // --- --------------------------------- ---
 }
 
-void MainWindow::populateSignalTree(const CsvData &data)
+void MainWindow::populateSignalTree(const FileData &data) // <-- 修改
 {
-    // --- 修改：不再清除模型，而是添加条目 ---
     QString filename = QFileInfo(data.filePath).fileName();
 
     QStandardItem *fileItem = new QStandardItem(filename);
@@ -623,45 +661,68 @@ void MainWindow::populateSignalTree(const CsvData &data)
     fileItem->setCheckable(false); // 文件条目本身不可勾选
     fileItem->setData(filename, FileNameRole);
     fileItem->setData(true, IsFileItemRole);
+    fileItem->setData(false, IsSignalItemRole); // <-- 新增
+    m_signalTreeModel->appendRow(fileItem);
 
-    QVector<QPen> pens;
-    for (int i = 1; i < data.headers.count(); ++i)
+    // --- 新增：遍历所有表 (对于 CSV，只有一个表) ---
+    for (int t_idx = 0; t_idx < data.tables.size(); ++t_idx)
     {
-        QString signalName = data.headers[i].trimmed();
-        if (signalName.isEmpty())
-            signalName = tr("Signal %1").arg(i);
+        const SignalTable &table = data.tables.at(t_idx);
 
-        QStandardItem *item = new QStandardItem(signalName);
-        item->setEditable(false);
-        item->setCheckable(true);
-        item->setCheckState(Qt::Unchecked);
+        // 如果只有一个表，并且其名称与文件名相同，则跳过创建表节点
+        bool skipTableNode = (data.tables.size() == 1 && table.name == QFileInfo(filename).completeBaseName());
 
-        int signalIndex = i - 1; // 信号索引 (0-based)
-        QString uniqueID = QString("%1_%2").arg(filename).arg(signalIndex);
+        QStandardItem *parentItem = fileItem;
+        if (!skipTableNode)
+        {
+            QStandardItem *tableItem = new QStandardItem(table.name);
+            tableItem->setEditable(false);
+            tableItem->setCheckable(false);
+            tableItem->setData(filename, FileNameRole);
+            tableItem->setData(false, IsFileItemRole);
+            tableItem->setData(false, IsSignalItemRole); // <-- 新增
+            fileItem->appendRow(tableItem);
+            parentItem = tableItem; // 信号将附加到表条目
+        }
 
-        item->setData(uniqueID, UniqueIdRole); // <-- 存储 UniqueID
-        item->setData(false, IsFileItemRole);  // <-- 不是文件条目
-        item->setData(filename, FileNameRole); // <-- 存储所属文件名
-        // item->setData(signalIndex, SignalIndexRole); // <-- 存储信号索引 (在 UniqueIdRole 中已包含)
+        // --- 修改：使用表中的 headers ---
+        for (int i = 0; i < table.headers.count(); ++i)
+        {
+            QString signalName = table.headers[i].trimmed();
+            if (signalName.isEmpty())
+                signalName = tr("Signal %1").arg(i + 1);
 
-        QColor color(10 + QRandomGenerator::global()->bounded(245),
-                     10 + QRandomGenerator::global()->bounded(245),
-                     10 + QRandomGenerator::global()->bounded(245));
-        QPen pen(color, 1);
-        pens.append(pen);
-        item->setData(QVariant::fromValue(pen), PenDataRole);
+            QStandardItem *item = new QStandardItem(signalName);
+            item->setEditable(false);
+            item->setCheckable(true);
+            item->setCheckState(Qt::Unchecked);
 
-        fileItem->appendRow(item); // <-- 添加为子条目
+            // --- 修改：新的 UniqueID 格式 ---
+            // "filename/tablename/signalindex"
+            QString uniqueID = QString("%1/%2/%3").arg(filename).arg(table.name).arg(i);
+            // --- ------------------------- ---
+
+            item->setData(uniqueID, UniqueIdRole);
+            item->setData(false, IsFileItemRole);
+            item->setData(true, IsSignalItemRole); // <-- 新增
+            item->setData(filename, FileNameRole);
+
+            QColor color(10 + QRandomGenerator::global()->bounded(245),
+                         10 + QRandomGenerator::global()->bounded(245),
+                         10 + QRandomGenerator::global()->bounded(245));
+            QPen pen(color, 1);
+            item->setData(QVariant::fromValue(pen), PenDataRole);
+
+            parentItem->appendRow(item); // <-- 添加到父条目 (文件或表)
+        }
     }
-    m_signalTreeModel->appendRow(fileItem); // <-- 添加顶层文件条目
-    // m_fileSignalPens.insert(filename, pens); // <-- 存储画笔 (双击变色时需要)
-    // --- --------------------------------- ---
+    // --- ------------------------------- ---
 }
 
-void MainWindow::onDataLoadFailed(const QString &errorString)
+void MainWindow::onDataLoadFailed(const QString &filePath, const QString &errorString) // <-- 修改
 {
     m_progressDialog->hide();
-    QMessageBox::warning(this, tr("Load Error"), errorString);
+    QMessageBox::warning(this, tr("Load Error"), tr("Failed to load %1:\n%2").arg(filePath).arg(errorString));
 }
 
 void MainWindow::onPlotClicked()
@@ -706,7 +767,7 @@ void MainWindow::updateSignalTreeChecks()
     int activePlotIndex = m_plotWidgetMap.value(m_activePlot, -1);
     const auto &activeSignals = m_plotSignalMap.value(activePlotIndex); // 获取 QSet<QString>
 
-    // --- 修改：遍历树形结构 ---
+    // --- 修改：遍历树形结构 (文件 -> 表 -> 信号) ---
     for (int i = 0; i < m_signalTreeModel->rowCount(); ++i)
     {
         QStandardItem *fileItem = m_signalTreeModel->item(i);
@@ -714,18 +775,36 @@ void MainWindow::updateSignalTreeChecks()
             continue;
         for (int j = 0; j < fileItem->rowCount(); ++j)
         {
-            QStandardItem *item = fileItem->child(j);
-            if (!item)
+            QStandardItem *tableItem = fileItem->child(j);
+            if (!tableItem)
                 continue;
 
-            QString uniqueID = item->data(UniqueIdRole).toString();
-            // --- ------------------------- ---
-
-            // 使用 QSet::contains()
-            if (activeSignals.contains(uniqueID))
-                item->setCheckState(Qt::Checked);
+            // 检查是表节点还是直接的信号节点
+            if (tableItem->data(IsSignalItemRole).toBool())
+            {
+                // 这是 (CSV) 信号项
+                QString uniqueID = tableItem->data(UniqueIdRole).toString();
+                if (activeSignals.contains(uniqueID))
+                    tableItem->setCheckState(Qt::Checked);
+                else
+                    tableItem->setCheckState(Qt::Unchecked);
+            }
             else
-                item->setCheckState(Qt::Unchecked);
+            {
+                // 这是 (MAT) 表项，遍历其子信号项
+                for (int k = 0; k < tableItem->rowCount(); ++k)
+                {
+                    QStandardItem *signalItem = tableItem->child(k);
+                    if (signalItem)
+                    {
+                        QString uniqueID = signalItem->data(UniqueIdRole).toString();
+                        if (activeSignals.contains(uniqueID))
+                            signalItem->setCheckState(Qt::Checked);
+                        else
+                            signalItem->setCheckState(Qt::Unchecked);
+                    }
+                }
+            }
         }
     }
 }
@@ -735,8 +814,8 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
     if (!item)
         return;
 
-    // --- 修改：如果是文件条目，则忽略 ---
-    if (item->data(IsFileItemRole).toBool())
+    // --- 修改：如果是文件或表条目，则忽略 ---
+    if (!item->data(IsSignalItemRole).toBool())
     {
         return;
     }
@@ -789,21 +868,46 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         qDebug() << "Adding signal" << signalName << "(id" << uniqueID << ") to plot" << m_activePlot;
 
         // --- 修改：从 uniqueID 获取数据 ---
-        QStringList parts = uniqueID.split('_');
-        if (parts.size() != 2)
+        QStringList parts = uniqueID.split('/');
+        if (parts.size() < 2) // 至少 "filename/signalindex" 或 "filename/tablename/signalindex"
             return;
+
         QString filename = parts[0];
-        int signalIndex = parts[1].toInt();
         if (!m_fileDataMap.contains(filename))
             return;
-        const CsvData &csvData = m_fileDataMap.value(filename);
-        if (signalIndex >= csvData.valueData.size())
+        const FileData &fileData = m_fileDataMap.value(filename);
+
+        const SignalTable *tableData = nullptr;
+        int signalIndex = -1;
+
+        if (parts.size() == 2) // CSV 格式: "filename/signalindex" (表名被跳过)
+        {
+            if (fileData.tables.isEmpty())
+                return;
+            tableData = &fileData.tables.first();
+            signalIndex = parts[1].toInt();
+        }
+        else if (parts.size() == 3) // MAT 格式: "filename/tablename/signalindex"
+        {
+            QString tablename = parts[1];
+            signalIndex = parts[2].toInt();
+            for (const auto &table : fileData.tables)
+            {
+                if (table.name == tablename)
+                {
+                    tableData = &table;
+                    break;
+                }
+            }
+        }
+
+        if (!tableData || signalIndex < 0 || signalIndex >= tableData->valueData.size())
             return;
         // --- ------------------------- ---
 
         QCPGraph *graph = m_activePlot->addGraph();
         graph->setName(signalName);
-        graph->setData(csvData.timeData, csvData.valueData[signalIndex]); // <-- 使用特定文件的数据
+        graph->setData(tableData->timeData, tableData->valueData[signalIndex]); // <-- 使用特定文件和表的数据
         QPen pen = item->data(PenDataRole).value<QPen>();
         graph->setPen(pen);
 
@@ -851,17 +955,13 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
     if (!index.isValid())
         return;
     QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
-    if (!item || !item->data(IsFileItemRole).toBool()) // <-- 如果是文件条目则返回
+    // --- 修改：只允许在信号项上操作 ---
+    if (!item || !item->data(IsSignalItemRole).toBool())
         return;
+    // --- ---------------------------- ---
 
     // --- 修改：使用 UniqueID ---
     QString uniqueID = item->data(UniqueIdRole).toString();
-    QStringList parts = uniqueID.split('_');
-    if (parts.size() != 2)
-        return;
-    // QString filename = parts[0];
-    // int signalIndex = parts[1].toInt();
-    // (我们不需要单独的 m_fileSignalPens，画笔存储在条目本身)
     // --- ----------------------- ---
 
     QPen currentPen = item->data(PenDataRole).value<QPen>();
@@ -872,7 +972,6 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
     QPen newPen = currentPen;
     newPen.setColor(newColor);
     item->setData(QVariant::fromValue(newPen), PenDataRole);
-    // m_signalPens[signalIndex] = newPen; // <-- 不再需要
 
     // --- 修正：遍历 m_plotGraphMap ---
     for (auto it = m_plotGraphMap.begin(); it != m_plotGraphMap.end(); ++it)
@@ -898,8 +997,10 @@ void MainWindow::onSignalTreeContextMenu(const QPoint &pos)
         return;
 
     QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
+    // --- 修改：只在文件条目上显示菜单 ---
     if (!item || !item->data(IsFileItemRole).toBool())
         return; // 只在文件条目上显示菜单
+    // --- ---------------------------- ---
 
     QString filename = item->data(FileNameRole).toString(); // <-- 修改：使用 FileNameRole
 
@@ -955,7 +1056,9 @@ void MainWindow::removeFile(const QString &filename)
         QSet<QString> &signalSet = m_plotSignalMap[plotIndex];
 
         // 查找所有属于此文件的 unique IDs
-        QString prefix = filename + "_";
+        // --- 修改：新的 ID 格式 ---
+        QString prefix = filename + "/";
+        // --- ------------------ ---
         QList<QString> idsToRemove;
         for (const QString &uniqueID : graphMap.keys())
         {
@@ -983,7 +1086,9 @@ void MainWindow::removeFile(const QString &filename)
     QList<QStandardItem *> items = m_signalTreeModel->findItems(filename);
     for (QStandardItem *item : items)
     {
-        if (item->data(IsFileItemRole).toBool())
+        // --- 修改：确保我们得到的是顶层文件条目 ---
+        if (item->data(IsFileItemRole).toBool() && item->parent() == nullptr)
+        // --- --------------------------------- ---
         {
             m_signalTreeModel->removeRow(item->row());
             break; // 假设文件名是唯一的
@@ -1555,24 +1660,29 @@ QCPRange MainWindow::getGlobalTimeRange() const
 
     bool first = true;
     QCPRange totalRange;
-    for (const CsvData &data : m_fileDataMap.values())
+    for (const FileData &data : m_fileDataMap.values())
     {
-        if (!data.timeData.isEmpty())
+        // --- 新增：遍历所有表 ---
+        for (const SignalTable &table : data.tables)
         {
-            if (first)
+            if (!table.timeData.isEmpty())
             {
-                totalRange.lower = data.timeData.first();
-                totalRange.upper = data.timeData.last();
-                first = false;
-            }
-            else
-            {
-                if (data.timeData.first() < totalRange.lower)
-                    totalRange.lower = data.timeData.first();
-                if (data.timeData.last() > totalRange.upper)
-                    totalRange.upper = data.timeData.last();
+                if (first)
+                {
+                    totalRange.lower = table.timeData.first();
+                    totalRange.upper = table.timeData.last();
+                    first = false;
+                }
+                else
+                {
+                    if (table.timeData.first() < totalRange.lower)
+                        totalRange.lower = table.timeData.first();
+                    if (table.timeData.last() > totalRange.upper)
+                        totalRange.upper = table.timeData.last();
+                }
             }
         }
+        // --- ----------------- ---
     }
 
     if (first) // 意味着没有文件有数据
@@ -1590,16 +1700,21 @@ double MainWindow::getSmallestTimeStep() const
     // --- 修改：查找所有文件中的最小步长 ---
     double minStep = -1.0;
 
-    for (const CsvData &data : m_fileDataMap.values())
+    for (const FileData &data : m_fileDataMap.values())
     {
-        if (data.timeData.size() >= 2)
+        // --- 新增：遍历所有表 ---
+        for (const SignalTable &table : data.tables)
         {
-            double step = data.timeData.at(1) - data.timeData.at(0);
-            if (step > 0 && (minStep == -1.0 || step < minStep))
+            if (table.timeData.size() >= 2)
             {
-                minStep = step;
+                double step = table.timeData.at(1) - table.timeData.at(0);
+                if (step > 0 && (minStep == -1.0 || step < minStep))
+                {
+                    minStep = step;
+                }
             }
         }
+        // --- ----------------- ---
     }
 
     return (minStep > 0) ? minStep : 0.01; // 默认步长
@@ -1869,7 +1984,7 @@ void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
 /**
  * @brief [修改] 从 m_plotGraphMap 中安全地获取一个 QCPGraph*
  * @param plot QCustomPlot 控件
- * @param uniqueID 信号的唯一ID ("filename_signalIndex")
+ * @param uniqueID 信号的唯一ID ("filename/tablename/signalindex")
  * @return 如果找到则返回 QCPGraph*，否则返回 nullptr
  */
 QCPGraph *MainWindow::getGraph(QCustomPlot *plot, const QString &uniqueID) const
@@ -1882,11 +1997,11 @@ QCPGraph *MainWindow::getGraph(QCustomPlot *plot, const QString &uniqueID) const
 }
 
 /**
- * @brief [新增] 从 QStandardItem 构建 UniqueID
+ * @brief [修改] 从 QStandardItem 构建 UniqueID
  */
 QString MainWindow::getUniqueID(QStandardItem *item) const
 {
-    if (!item || item->data(IsFileItemRole).toBool())
+    if (!item || !item->data(IsSignalItemRole).toBool()) // <-- 修改
         return QString();
 
     // --- 修改：UniqueID 现在直接存储在条目中 ---
