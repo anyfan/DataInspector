@@ -36,6 +36,9 @@
 #include <QIcon>
 #include <QFileInfo> // 用于获取文件名
 #include <QCursor>   // 用于获取鼠标位置
+#include <QFormLayout>
+#include <QSpinBox>
+#include <QDialogButtonBox>
 
 /**
  * @brief [辅助函数] 通过 UniqueIdRole 在模型中迭代查找 QStandardItem (广度优先)
@@ -161,13 +164,34 @@ void MainWindow::createActions()
     m_loadFileAction->setShortcut(QKeySequence::Open);
     connect(m_loadFileAction, &QAction::triggered, this, &MainWindow::on_actionLoadFile_triggered);
 
-    // 布局菜单
+    // --- 替换布局菜单 ---
     m_layout1x1Action = new QAction(tr("1x1 Layout"), this);
     connect(m_layout1x1Action, &QAction::triggered, this, &MainWindow::on_actionLayout1x1_triggered);
+
+    m_layout1x2Action = new QAction(tr("1x2 Layout (Side by Side)"), this);
+    connect(m_layout1x2Action, &QAction::triggered, this, &MainWindow::on_actionLayout1x2_triggered);
+
+    m_layout2x1Action = new QAction(tr("2x1 Layout (Stacked)"), this);
+    connect(m_layout2x1Action, &QAction::triggered, this, &MainWindow::on_actionLayout2x1_triggered);
+
     m_layout2x2Action = new QAction(tr("2x2 Layout"), this);
     connect(m_layout2x2Action, &QAction::triggered, this, &MainWindow::on_actionLayout2x2_triggered);
-    m_layout3x2Action = new QAction(tr("3x2 Layout"), this);
-    connect(m_layout3x2Action, &QAction::triggered, this, &MainWindow::on_actionLayout3x2_triggered);
+
+    m_layoutSplitBottomAction = new QAction(tr("Bottom Split"), this);
+    connect(m_layoutSplitBottomAction, &QAction::triggered, this, &MainWindow::on_actionLayoutSplitBottom_triggered);
+
+    m_layoutSplitTopAction = new QAction(tr("Top Split"), this);
+    connect(m_layoutSplitTopAction, &QAction::triggered, this, &MainWindow::on_actionLayoutSplitTop_triggered);
+
+    m_layoutSplitLeftAction = new QAction(tr("Left Split"), this);
+    connect(m_layoutSplitLeftAction, &QAction::triggered, this, &MainWindow::on_actionLayoutSplitLeft_triggered);
+
+    m_layoutSplitRightAction = new QAction(tr("Right Split"), this);
+    connect(m_layoutSplitRightAction, &QAction::triggered, this, &MainWindow::on_actionLayoutSplitRight_triggered);
+
+    m_layoutCustomAction = new QAction(tr("Custom Grid..."), this);
+    connect(m_layoutCustomAction, &QAction::triggered, this, &MainWindow::on_actionLayoutCustom_triggered);
+    // --- ---------------- ---
 
     // 视图缩放动作
     m_fitViewAction = new QAction(tr("Fit View"), this);
@@ -214,8 +238,17 @@ void MainWindow::createMenus()
 
     QMenu *layoutMenu = menuBar()->addMenu(tr("&Layout"));
     layoutMenu->addAction(m_layout1x1Action);
+    layoutMenu->addSeparator();
+    layoutMenu->addAction(m_layout1x2Action);
+    layoutMenu->addAction(m_layout2x1Action);
     layoutMenu->addAction(m_layout2x2Action);
-    layoutMenu->addAction(m_layout3x2Action);
+    layoutMenu->addSeparator();
+    layoutMenu->addAction(m_layoutSplitTopAction);
+    layoutMenu->addAction(m_layoutSplitBottomAction);
+    layoutMenu->addAction(m_layoutSplitLeftAction);
+    layoutMenu->addAction(m_layoutSplitRightAction);
+    layoutMenu->addSeparator();
+    layoutMenu->addAction(m_layoutCustomAction);
 
     QMenu *viewMenu = menuBar()->addMenu(tr("&View"));
     if (m_signalDock)
@@ -389,7 +422,11 @@ void MainWindow::clearPlotLayout()
     m_lastMousePlot = nullptr;
 }
 
-void MainWindow::setupPlotLayout(int rows, int cols)
+/**
+ * @brief [新增] 核心布局函数，使用 QRect 列表创建网格
+ * * QRect(x, y, colSpan, rowSpan)
+ */
+void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
 {
     clearPlotLayout(); // 清理旧布局 (这会清空 m_plotWidgets, m_plotGraphMap 等)
 
@@ -402,157 +439,135 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     QCPRange sharedXRange;
     bool hasSharedXRange = false;
 
-    // 从 m_plotSignalMap 恢复
-    // 1. 恢复图表
-    if (m_signalTreeModel && !m_fileDataMap.isEmpty()) // <-- 修改
+    // 1. 创建所有新布局的 plot
+    for (int i = 0; i < geometries.size(); ++i)
     {
-        // 遍历所有持久化存储的子图索引
-        for (int plotIndex : m_plotSignalMap.keys())
+        const QRect &geo = geometries[i];
+        int plotIndex = i; // 新的 plot 索引就是列表中的索引
+
+        // --- 创建 Plot ---
+        QFrame *plotFrame = new QFrame(m_plotContainer);
+        plotFrame->setFrameShape(QFrame::NoFrame);
+        plotFrame->setLineWidth(2);
+        plotFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
+
+        QVBoxLayout *frameLayout = new QVBoxLayout(plotFrame);
+        frameLayout->setContentsMargins(0, 0, 0, 0);
+
+        QCustomPlot *plot = new QCustomPlot(plotFrame);
+
+        frameLayout->addWidget(plot);
+        // --- 使用网格跨度添加 ---
+        grid->addWidget(plotFrame, geo.y(), geo.x(), geo.height(), geo.width());
+
+        m_plotWidgets.append(plot);
+        m_plotFrameMap.insert(plot, plotFrame);
+        m_plotWidgetMap.insert(plot, plotIndex);
+
+        // 2. 检查 m_plotSignalMap (持久化映射) 是否包含此索引的信号
+        if (m_plotSignalMap.contains(plotIndex))
         {
-            // 计算此索引在新布局中的行/列
-            int r = plotIndex / cols;
-            int c = plotIndex % cols;
-
-            // 如果此索引在新布局中仍然可见
-            if (r < rows && c < cols)
+            const QSet<QString> &signalIDs = m_plotSignalMap.value(plotIndex);
+            for (const QString &uniqueID : signalIDs)
             {
-                // 创建 Plot
-                QFrame *plotFrame = new QFrame(m_plotContainer);
-                plotFrame->setFrameShape(QFrame::NoFrame);
-                plotFrame->setLineWidth(2);
-                plotFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
+                // ... (这部分数据恢复逻辑与旧函数完全相同) ...
+                QStringList parts = uniqueID.split('/');
+                if (parts.size() < 2)
+                    continue;
 
-                QVBoxLayout *frameLayout = new QVBoxLayout(plotFrame);
-                frameLayout->setContentsMargins(0, 0, 0, 0);
+                QString filename = parts[0];
+                if (!m_fileDataMap.contains(filename))
+                    continue;
+                const FileData &fileData = m_fileDataMap.value(filename);
 
-                QCustomPlot *plot = new QCustomPlot(plotFrame);
+                const SignalTable *tableData = nullptr;
+                int signalIndex = -1;
 
-                frameLayout->addWidget(plot);
-                grid->addWidget(plotFrame, r, c);
-                m_plotWidgets.append(plot); // m_plotWidgets 被重新填充
-                m_plotFrameMap.insert(plot, plotFrame);
-                m_plotWidgetMap.insert(plot, plotIndex);
-
-                // 恢复信号
-                const QSet<QString> &signalIDs = m_plotSignalMap.value(plotIndex);
-                for (const QString &uniqueID : signalIDs)
+                if (parts.size() == 2) // CSV
                 {
-
-                    QStringList parts = uniqueID.split('/');
-                    if (parts.size() != 3)
+                    if (fileData.tables.isEmpty())
                         continue;
-                    QString filename = parts[0];
+                    tableData = &fileData.tables.first();
+                    signalIndex = parts[1].toInt();
+                }
+                else if (parts.size() == 3) // MAT
+                {
                     QString tablename = parts[1];
-                    int signalIndex = parts[2].toInt();
-
-                    // 查找 QStandardItem
-                    QList<QStandardItem *> fileItems = m_signalTreeModel->findItems(filename, Qt::MatchExactly);
-                    if (fileItems.isEmpty())
-                        continue;
-
-                    // 树中查找表和信号
-                    QStandardItem *tableItem = nullptr;
-                    for (int t_idx = 0; t_idx < fileItems.first()->rowCount(); ++t_idx)
+                    signalIndex = parts[2].toInt();
+                    for (const auto &table : fileData.tables)
                     {
-                        if (fileItems.first()->child(t_idx)->text() == tablename) // 假设表名是唯一的
+                        if (table.name == tablename)
                         {
-                            tableItem = fileItems.first()->child(t_idx);
+                            tableData = &table;
                             break;
                         }
                     }
-                    if (!tableItem || tableItem->rowCount() <= signalIndex)
-                        continue;
-                    QStandardItem *item = tableItem->child(signalIndex);
-
-                    // 查找 FileData
-                    if (item && m_fileDataMap.contains(filename))
-                    {
-                        const FileData &fileData = m_fileDataMap.value(filename);
-
-                        // 查找 SignalTable
-                        const SignalTable *tableData = nullptr;
-                        for (const auto &table : fileData.tables)
-                        {
-                            if (table.name == tablename)
-                            {
-                                tableData = &table;
-                                break;
-                            }
-                        }
-                        if (!tableData || signalIndex >= tableData->valueData.size())
-                            continue;
-
-                        QCPGraph *graph = plot->addGraph();
-                        graph->setName(item->text());
-                        // <-- 重点：使用特定文件和表的数据 -->
-                        graph->setData(tableData->timeData, tableData->valueData[signalIndex]);
-                        graph->setPen(item->data(PenDataRole).value<QPen>());
-                        // 重新填充 m_plotGraphMap
-                        m_plotGraphMap[plot].insert(uniqueID, graph);
-                    }
                 }
 
-                plot->rescaleAxes();
-                if (!hasSharedXRange && plot->graphCount() > 0) // 确保有图表再设置
+                if (!tableData || signalIndex < 0 || signalIndex >= tableData->valueData.size())
+                    continue;
+
+                // 查找 QStandardItem (仅用于获取名称和画笔)
+                QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+
+                if (item)
                 {
-                    sharedXRange = plot->xAxis->range();
-                    hasSharedXRange = true;
+                    QCPGraph *graph = plot->addGraph();
+                    graph->setName(item->text());
+                    graph->setData(tableData->timeData, tableData->valueData[signalIndex]);
+                    graph->setPen(item->data(PenDataRole).value<QPen>());
+                    // 重新填充 m_plotGraphMap
+                    m_plotGraphMap[plot].insert(uniqueID, graph);
                 }
-                else if (hasSharedXRange)
-                {
-                    plot->xAxis->setRange(sharedXRange);
-                }
-                plot->replot();
+            } // 结束 for (signalIDs)
+
+            plot->rescaleAxes();
+            if (!hasSharedXRange && plot->graphCount() > 0)
+            {
+                sharedXRange = plot->xAxis->range();
+                hasSharedXRange = true;
             }
-        }
-    }
-    // --- ---------------------------------- ---
-
-    // 2. 创建剩余的空 plot
-    for (int r = 0; r < rows; ++r)
-    {
-        for (int c = 0; c < cols; ++c)
-        {
-            int plotIndex = r * cols + c;
-            if (m_plotWidgetMap.key(plotIndex)) // 这个 plot 已经创建过了
-                continue;
-
-            // --- 创建 Plot ---
-            QFrame *plotFrame = new QFrame(m_plotContainer);
-            plotFrame->setFrameShape(QFrame::NoFrame);
-            plotFrame->setLineWidth(2);
-            plotFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
-
-            QVBoxLayout *frameLayout = new QVBoxLayout(plotFrame);
-            frameLayout->setContentsMargins(0, 0, 0, 0);
-
-            QCustomPlot *plot = new QCustomPlot(plotFrame);
-
-            frameLayout->addWidget(plot);
-            grid->addWidget(plotFrame, r, c);
-            m_plotWidgets.append(plot); // m_plotWidgets 被重新填充
-            m_plotFrameMap.insert(plot, plotFrame);
-            m_plotWidgetMap.insert(plot, plotIndex);
-
-            if (hasSharedXRange)
+            else if (hasSharedXRange)
             {
                 plot->xAxis->setRange(sharedXRange);
             }
+            plot->replot();
+        } // 结束 if (m_plotSignalMap.contains)
+
+        // 如果没有恢复信号，但已存在共享X轴，则应用它
+        else if (hasSharedXRange)
+        {
+            plot->xAxis->setRange(sharedXRange);
+        }
+
+    } // 结束 for (geometries)
+
+    // 3. 从持久化映射中移除不再存在的子图的信号
+    QList<int> oldIndices = m_plotSignalMap.keys();
+    for (int oldIndex : oldIndices)
+    {
+        if (oldIndex >= geometries.size())
+        {
+            m_plotSignalMap.remove(oldIndex);
         }
     }
 
-    // 3. 为所有新创建的 plot 设置交互
+    // 4. 为所有新创建的 plot 设置交互
     for (QCustomPlot *plot : m_plotWidgets)
     {
         setupPlotInteractions(plot);
     }
 
+    // 5. 设置活动子图 (逻辑与旧函数相同)
     if (!m_plotWidgets.isEmpty())
     {
-        // 尝试重新激活之前活动的子图，如果它仍然存在的话
         int activePlotIndex = m_activePlot ? m_plotWidgetMap.value(m_activePlot, 0) : 0;
 
-        QCustomPlot *newActivePlot = m_plotWidgetMap.key(activePlotIndex, m_plotWidgets.first());
+        // 确保索引在
+        if (activePlotIndex >= m_plotWidgets.size())
+            activePlotIndex = 0;
+
+        QCustomPlot *newActivePlot = m_plotWidgets.at(activePlotIndex);
         m_activePlot = newActivePlot;
 
         m_lastMousePlot = m_activePlot;
@@ -561,18 +576,34 @@ void MainWindow::setupPlotLayout(int rows, int cols)
         {
             frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
         }
-        updateSignalTreeChecks(); // <-- 这将更新新 m_activePlot 的复选框
+        updateSignalTreeChecks();
         m_signalTree->viewport()->update();
     }
 
-    // 布局更改后，重建游标
+    // 6. 布局更改后，重建游标
     setupCursors();
 
     if (m_cursorMode != NoCursor)
     {
-        // 使用 singleShot 连接到新槽
         QTimer::singleShot(0, this, &MainWindow::updateCursorsForLayoutChange);
     }
+}
+
+/**
+ * @brief [重构] 设置中央绘图区域的布局 (如 2x2)
+ * * 这是一个辅助函数，用于调用 setupPlotLayout(const QList<QRect> &geometries)
+ */
+void MainWindow::setupPlotLayout(int rows, int cols)
+{
+    QList<QRect> geometries;
+    for (int r = 0; r < rows; ++r)
+    {
+        for (int c = 0; c < cols; ++c)
+        {
+            geometries.append(QRect(c, r, 1, 1)); // (x, y, width, height)
+        }
+    }
+    setupPlotLayout(geometries);
 }
 
 void MainWindow::on_actionLayout1x1_triggered()
@@ -585,9 +616,93 @@ void MainWindow::on_actionLayout2x2_triggered()
     setupPlotLayout(2, 2);
 }
 
-void MainWindow::on_actionLayout3x2_triggered()
+void MainWindow::on_actionLayout1x2_triggered()
 {
-    setupPlotLayout(3, 2);
+    setupPlotLayout(1, 2);
+}
+
+void MainWindow::on_actionLayout2x1_triggered()
+{
+    setupPlotLayout(2, 1);
+}
+
+void MainWindow::on_actionLayoutSplitBottom_triggered()
+{
+    QList<QRect> geometries;
+    // QRect(col, row, colSpan, rowSpan)
+    geometries << QRect(0, 0, 2, 1); // Top plot (跨2列)
+    geometries << QRect(0, 1, 1, 1); // Bottom-left plot
+    geometries << QRect(1, 1, 1, 1); // Bottom-right plot
+    setupPlotLayout(geometries);
+}
+
+void MainWindow::on_actionLayoutSplitTop_triggered()
+{
+    QList<QRect> geometries;
+    // QRect(col, row, colSpan, rowSpan)
+    geometries << QRect(0, 0, 1, 1); // Top-left plot
+    geometries << QRect(1, 0, 1, 1); // Top-right plot
+    geometries << QRect(0, 1, 2, 1); // Bottom plot (跨2列)
+    setupPlotLayout(geometries);
+}
+
+void MainWindow::on_actionLayoutSplitLeft_triggered()
+{
+    QList<QRect> geometries;
+    // QRect(col, row, colSpan, rowSpan)
+    geometries << QRect(0, 0, 1, 2); // Left plot (跨2行)
+    geometries << QRect(1, 0, 1, 1); // Top-right plot
+    geometries << QRect(1, 1, 1, 1); // Bottom-right plot
+    setupPlotLayout(geometries);
+}
+
+void MainWindow::on_actionLayoutSplitRight_triggered()
+{
+    QList<QRect> geometries;
+    // QRect(col, row, colSpan, rowSpan)
+    geometries << QRect(0, 0, 1, 1); // Top-left plot
+    geometries << QRect(0, 1, 1, 1); // Bottom-left plot
+    geometries << QRect(1, 0, 1, 2); // Right plot (跨2行)
+    setupPlotLayout(geometries);
+}
+
+void MainWindow::on_actionLayoutCustom_triggered()
+{
+    // 1. 创建对话框 (一次性)
+    if (!m_customLayoutDialog)
+    {
+        m_customLayoutDialog = new QDialog(this);
+        m_customLayoutDialog->setWindowTitle(tr("Custom Grid Layout"));
+
+        QVBoxLayout *mainLayout = new QVBoxLayout(m_customLayoutDialog);
+        QFormLayout *formLayout = new QFormLayout;
+
+        m_customRowsSpinBox = new QSpinBox(m_customLayoutDialog);
+        m_customRowsSpinBox->setRange(1, 8);
+        m_customRowsSpinBox->setValue(2);
+
+        m_customColsSpinBox = new QSpinBox(m_customLayoutDialog);
+        m_customColsSpinBox->setRange(1, 8);
+        m_customColsSpinBox->setValue(2);
+
+        formLayout->addRow(tr("Rows:"), m_customRowsSpinBox);
+        formLayout->addRow(tr("Columns:"), m_customColsSpinBox);
+
+        QDialogButtonBox *buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, m_customLayoutDialog);
+        connect(buttonBox, &QDialogButtonBox::accepted, m_customLayoutDialog, &QDialog::accept);
+        connect(buttonBox, &QDialogButtonBox::rejected, m_customLayoutDialog, &QDialog::reject);
+
+        mainLayout->addLayout(formLayout);
+        mainLayout->addWidget(buttonBox);
+    }
+
+    // 2. 显示对话框并获取结果
+    if (m_customLayoutDialog->exec() == QDialog::Accepted)
+    {
+        int rows = m_customRowsSpinBox->value();
+        int cols = m_customColsSpinBox->value();
+        setupPlotLayout(rows, cols);
+    }
 }
 
 void MainWindow::on_actionLoadFile_triggered()

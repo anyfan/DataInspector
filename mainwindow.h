@@ -35,6 +35,8 @@ class QCPItemText;
 class QCPRange;
 class QCPLegend;
 class QCPAbstractLegendItem;
+class QDialog;
+class QSpinBox;
 
 // 为信号树条目定义自定义数据角色
 // 存储唯一的 "filename/tablename/signalindex" 字符串 ID
@@ -89,8 +91,14 @@ private slots:
 
     // 布局菜单动作
     void on_actionLayout1x1_triggered();
+    void on_actionLayout1x2_triggered();
+    void on_actionLayout2x1_triggered();
     void on_actionLayout2x2_triggered();
-    void on_actionLayout3x2_triggered();
+    void on_actionLayoutSplitBottom_triggered();
+    void on_actionLayoutSplitLeft_triggered();
+    void on_actionLayoutSplitTop_triggered();
+    void on_actionLayoutSplitRight_triggered();
+    void on_actionLayoutCustom_triggered();
 
     // 交互槽
     void onPlotClicked();
@@ -150,6 +158,11 @@ private:
      * @brief 设置中央绘图区域的布局 (如 2x2)
      */
     void setupPlotLayout(int rows, int cols);
+
+    /**
+     * @brief [新增] 核心布局函数，使用 QRect 列表创建网格
+     */
+    void setupPlotLayout(const QList<QRect> &geometries);
 
     /**
      * @brief 清理当前的绘图布局
@@ -251,9 +264,16 @@ private:
 
     // --- 菜单和工具栏动作 ---
     QAction *m_loadFileAction;
+
     QAction *m_layout1x1Action;
+    QAction *m_layout1x2Action;
+    QAction *m_layout2x1Action;
     QAction *m_layout2x2Action;
-    QAction *m_layout3x2Action;
+    QAction *m_layoutSplitBottomAction;
+    QAction *m_layoutSplitLeftAction;
+    QAction *m_layoutSplitTopAction;
+    QAction *m_layoutSplitRightAction;
+    QAction *m_layoutCustomAction;
 
     QToolBar *m_viewToolBar;
     QAction *m_cursorNoneAction;
@@ -266,6 +286,11 @@ private:
     QAction *m_fitViewAction;
     QAction *m_fitViewTimeAction;
     QAction *m_fitViewYAction;
+
+    // 自定义布局对话框的控件指针
+    QDialog *m_customLayoutDialog;
+    QSpinBox *m_customRowsSpinBox;
+    QSpinBox *m_customColsSpinBox;
     // --- -------------------- ---
 
     // --- 游标状态 ---
