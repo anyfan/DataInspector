@@ -376,6 +376,13 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
     plot->legend->setVisible(true);
 
+    QFont axisFont = plot->font(); // 从绘图控件获取基础字体
+    axisFont.setPointSize(7);      // 将字号设置为 9 (你可以按需调整)
+    plot->xAxis->setTickLabelFont(axisFont); // X轴的刻度数字
+    plot->xAxis->setLabelFont(axisFont);     // X轴的标签
+    plot->yAxis->setTickLabelFont(axisFont); // Y轴的刻度数字
+    plot->yAxis->setLabelFont(axisFont);     // Y轴的标签
+
     connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
 
     // --- 修改：连接新的鼠标事件处理器 ---
@@ -1684,6 +1691,15 @@ void MainWindow::setupCursors()
     QBrush xLabelBrush(xLabelBgColor);
     QPen xLabelPen(Qt::black);
 
+    // 为X轴游标标签创建小号字体-
+    QFont cursorFont;
+    if (!m_plotWidgets.isEmpty())
+        cursorFont = m_plotWidgets.first()->font(); // 使用第一个图表的字体作为基础
+    else
+        cursorFont = this->font(); // 后备为窗口字体
+
+    cursorFont.setPointSize(7); // 设置为你想要的小字号, 比如 9
+
     // 1. 为每个 Plot 创建垂直线 和 X轴标签
     for (QCustomPlot *plot : m_plotWidgets)
     {
@@ -1703,6 +1719,7 @@ void MainWindow::setupCursors()
         xLabel1->setPadding(QMargins(5, 2, 5, 2));
         xLabel1->setBrush(xLabelBrush);
         xLabel1->setPen(xLabelPen);
+        xLabel1->setFont(cursorFont);
         xLabel1->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter); // 顶部中心锚定
         xLabel1->position->setParentAnchor(line1->start);               // 锚定到线的底部
         xLabel1->position->setCoords(0, 5);                             // 偏移量 (0, 5)
@@ -1726,6 +1743,7 @@ void MainWindow::setupCursors()
             xLabel2->setPadding(QMargins(5, 2, 5, 2));
             xLabel2->setBrush(xLabelBrush);
             xLabel2->setPen(xLabelPen);
+            xLabel2->setFont(cursorFont);
             xLabel2->setPositionAlignment(Qt::AlignTop | Qt::AlignHCenter);
             xLabel2->position->setParentAnchor(line2->start);
             xLabel2->position->setCoords(0, 5);
