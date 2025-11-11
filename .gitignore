@@ -1,2 +1,5 @@
 build
 code_src
+libs/hdf5-1.14.6.zip
+libs/matio-1.5.28.zip
+libs/zlib131.zip

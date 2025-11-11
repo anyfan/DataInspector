@@ -7,7 +7,7 @@
 #include <QVector>
 #include <QPen>
 #include <QSet>
-#include "datamanager.h"
+#include "datamanager.h" // 包含 CsvData 定义
 
 // 向前声明
 class QCustomPlot;
@@ -33,6 +33,17 @@ class QCPItemLine;
 class QCPItemTracer;
 class QCPItemText;
 class QCPRange;
+
+// --- 新增：为信号树条目定义自定义数据角色 ---
+// 存储唯一的 "filename_signalIndex" 字符串 ID (用于信号条目)
+const int UniqueIdRole = Qt::UserRole + 1;
+// 存储布尔值，是否为顶层文件条目
+const int IsFileItemRole = Qt::UserRole + 2;
+// 存储画笔 (用于信号条目)
+const int PenDataRole = Qt::UserRole + 3;
+// 存储 QString 文件名 (用于文件条目和信号条目)
+const int FileNameRole = Qt::UserRole + 4; // <-- 新增
+// --- ---------------------------------- ---
 
 /**
  * @brief 主窗口类，实现 data flow.md 中的核心架构
@@ -64,7 +75,7 @@ private slots:
     void on_actionLoadFile_triggered();
 
     // DataManager 信号槽
-    void onDataLoadFinished(const CsvData &data);
+    void onDataLoadFinished(const CsvData &data); // <-- 修改：接收 CsvData
     void onDataLoadFailed(const QString &errorString);
     void showLoadProgress(int percentage);
 
@@ -77,6 +88,10 @@ private slots:
     void onPlotClicked();
     void onSignalItemChanged(QStandardItem *item);
     void onSignalItemDoubleClicked(const QModelIndex &index);
+    // --- 新增：信号树的右键菜单槽 ---
+    void onSignalTreeContextMenu(const QPoint &pos);
+    void onDeleteFileAction();
+    // --- ------------------------- ---
 
     // 游标和重放槽函数
     void onCursorModeChanged(QAction *action);
@@ -131,7 +146,7 @@ private:
     /**
      * @brief 使用加载的数据填充信号树
      */
-    void populateSignalTree(const CsvData &data);
+    void populateSignalTree(const CsvData &data); // <-- 修改：接收 CsvData
 
     /**
      * @brief 为新创建的 plot 设置标准交互
@@ -174,13 +189,21 @@ private:
     /**
      * @brief 估算数据的时间步长 (用于步进)
      */
-    double findDataTimeStep() const;
+    double getSmallestTimeStep() const; // <-- 修改：获取最小步长
 
     // --- 辅助函数 ---
     /**
-     * @brief 从 m_plotGraphMap 中安全地获取一个 QCPGraph*
+     * @brief [修改] 从 m_plotGraphMap 中安全地获取一个 QCPGraph*
      */
-    QCPGraph *getGraph(QCustomPlot *plot, int signalIndex) const;
+    QCPGraph *getGraph(QCustomPlot *plot, const QString &uniqueID) const;
+    /**
+     * @brief [新增] 从 item 构建 uniqueID
+     */
+    QString getUniqueID(QStandardItem *item) const;
+    /**
+     * @brief [新增] 移除一个文件的所有相关数据和图表
+     */
+    void removeFile(const QString &filename);
     // --- ---------------------- ---
 
     // --- 工作线程 ---
@@ -198,13 +221,13 @@ private:
     QList<QCustomPlot *> m_plotWidgets; // 存储所有 plot 实例
     QCustomPlot *m_activePlot;          // 当前选中的 plot
 
-    // (Plot -> (SignalIndex -> Graph)) 映射
-    // 用于*运行时*快速访问 QCPGraph*
-    QMap<QCustomPlot *, QMap<int, QCPGraph *>> m_plotGraphMap;
+    // (Plot -> (UniqueID -> Graph)) 映射
+    // UniqueID 是 "filename_signalIndex" 格式的字符串
+    QMap<QCustomPlot *, QMap<QString, QCPGraph *>> m_plotGraphMap; // <-- 修改
 
-    // (PlotIndex -> QSet<SignalIndex>) 映射
-    // 用于*持久化*存储布局状态
-    QMap<int, QSet<int>> m_plotSignalMap;
+    // (PlotIndex -> QSet<UniqueID>) 映射
+    // UniqueID 是 "filename_signalIndex" 格式的字符串
+    QMap<int, QSet<QString>> m_plotSignalMap; // <-- 修改
 
     // (Plot -> PlotIndex) 映射
     // 用于*运行时*快速查找 plot 的索引
@@ -263,9 +286,9 @@ private:
     QTimer *m_replayTimer;
 
     // --- 加载的数据缓存 ---
-    QVector<double> m_loadedTimeData;
-    QVector<QVector<double>> m_loadedValueData;
-    QVector<QPen> m_signalPens;
+    // --- 修改：使用 QMap 存储多个文件数据 ---
+    QMap<QString, CsvData> m_fileDataMap;
+    // --- --------------------------------- ---
 };
 
 #endif // MAINWINDOW_H

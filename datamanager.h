@@ -10,6 +10,7 @@
 // 我们使用 Q_DECLARE_METATYPE 使其能用于排队的信号槽
 struct CsvData
 {
+    QString filePath; // <-- 新增：用于标识数据来源
     QStringList headers;
     QVector<double> timeData;
     QVector<QVector<double>> valueData;
@@ -44,9 +45,9 @@ signals:
 
     /**
      * @brief [信号] 数据加载成功完成
-     * @param data 加载并解析后的数据
+     * @param data 加载并解析后的数据 (包含 filePath)
      */
-    void loadFinished(const CsvData &data);
+    void loadFinished(const CsvData &data); // <-- 修改：信号只发送 CsvData
 
     /**
      * @brief [信号] 数据加载失败

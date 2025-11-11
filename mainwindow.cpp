@@ -32,9 +32,11 @@
 #include <QHBoxLayout>
 #include <QStyle>
 #include <QIcon>
+#include <QFileInfo> // <-- 新增：用于获取文件名
 
-// 定义一个自定义角色 (Qt::UserRole + 1) 来存储 QPen
-const int PenDataRole = Qt::UserRole + 1;
+// --- 修改：在 mainwindow.h 中定义角色 ---
+// const int PenDataRole = Qt::UserRole + 1;
+// --- -------------------------------- ---
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr), m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr), m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr), m_lastMousePlot(nullptr), m_cursorMode(NoCursor), m_cursorKey1(0), m_cursorKey2(0),
@@ -98,7 +100,7 @@ void MainWindow::setupDataManagerThread()
 
     connect(this, &MainWindow::requestLoadCsv, m_dataManager, &DataManager::loadCsvFile, Qt::QueuedConnection);
     connect(m_dataManager, &DataManager::loadProgress, this, &MainWindow::showLoadProgress, Qt::QueuedConnection);
-    connect(m_dataManager, &DataManager::loadFinished, this, &MainWindow::onDataLoadFinished, Qt::QueuedConnection);
+    connect(m_dataManager, &DataManager::loadFinished, this, &MainWindow::onDataLoadFinished, Qt::QueuedConnection); // <-- 修改
     connect(m_dataManager, &DataManager::loadFailed, this, &MainWindow::onDataLoadFailed, Qt::QueuedConnection);
     connect(m_dataThread, &QThread::finished, m_dataManager, &QObject::deleteLater);
 
@@ -233,6 +235,11 @@ void MainWindow::createDocks()
 
     connect(m_signalTreeModel, &QStandardItemModel::itemChanged, this, &MainWindow::onSignalItemChanged);
     connect(m_signalTree, &QTreeView::doubleClicked, this, &MainWindow::onSignalItemDoubleClicked);
+
+    // --- 新增：连接右键菜单 ---
+    m_signalTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_signalTree, &QTreeView::customContextMenuRequested, this, &MainWindow::onSignalTreeContextMenu);
+    // --- -------------------- ---
 }
 
 /**
@@ -349,8 +356,9 @@ void MainWindow::setupPlotLayout(int rows, int cols)
     QCPRange sharedXRange;
     bool hasSharedXRange = false;
 
+    // --- 修改：从 m_plotSignalMap 恢复 ---
     // 1. 恢复图表
-    if (m_signalTreeModel && !m_loadedTimeData.isEmpty())
+    if (m_signalTreeModel && !m_fileDataMap.isEmpty()) // <-- 修改
     {
         // 遍历所有持久化存储的子图索引
         for (int plotIndex : m_plotSignalMap.keys())
@@ -381,28 +389,48 @@ void MainWindow::setupPlotLayout(int rows, int cols)
                 m_plotWidgetMap.insert(plot, plotIndex);
                 // --- ---------------- ---
 
-                // --- 恢复信号 ---
-                const QSet<int> &signalIndices = m_plotSignalMap.value(plotIndex);
-                for (int signalIndex : signalIndices)
+                // --- 恢复信号 (使用 UniqueID) ---
+                const QSet<QString> &signalIDs = m_plotSignalMap.value(plotIndex);
+                for (const QString &uniqueID : signalIDs)
                 {
-                    QStandardItem *item = m_signalTreeModel->item(signalIndex);
-                    if (item)
+                    // 从 uniqueID 解析文件名和索引
+                    QStringList parts = uniqueID.split('_');
+                    if (parts.size() != 2)
+                        continue;
+                    QString filename = parts[0];
+                    int signalIndex = parts[1].toInt();
+
+                    // 查找 QStandardItem
+                    QList<QStandardItem *> fileItems = m_signalTreeModel->findItems(filename, Qt::MatchExactly);
+                    if (fileItems.isEmpty() || fileItems.first()->rowCount() <= signalIndex)
+                        continue;
+                    QStandardItem *item = fileItems.first()->child(signalIndex);
+
+                    // 查找 CsvData
+                    if (item && m_fileDataMap.contains(filename))
                     {
+                        const CsvData &csvData = m_fileDataMap.value(filename);
+                        if (signalIndex >= csvData.valueData.size())
+                            continue;
+
                         QCPGraph *graph = plot->addGraph();
                         graph->setName(item->text());
-                        graph->setData(m_loadedTimeData, m_loadedValueData[signalIndex]);
+                        // <-- 重点：使用特定文件的数据 -->
+                        graph->setData(csvData.timeData, csvData.valueData[signalIndex]);
                         graph->setPen(item->data(PenDataRole).value<QPen>());
                         // 重新填充 m_plotGraphMap
-                        m_plotGraphMap[plot].insert(signalIndex, graph);
+                        m_plotGraphMap[plot].insert(uniqueID, graph);
                     }
                 }
+                // --- -------------------------- ---
+
                 plot->rescaleAxes();
-                if (!hasSharedXRange)
+                if (!hasSharedXRange && plot->graphCount() > 0) // <-- 确保有图表再设置
                 {
                     sharedXRange = plot->xAxis->range();
                     hasSharedXRange = true;
                 }
-                else
+                else if (hasSharedXRange)
                 {
                     plot->xAxis->setRange(sharedXRange);
                 }
@@ -410,6 +438,7 @@ void MainWindow::setupPlotLayout(int rows, int cols)
             }
         }
     }
+    // --- ---------------------------------- ---
 
     // 2. 创建剩余的空 plot
     for (int r = 0; r < rows; ++r)
@@ -524,58 +553,78 @@ void MainWindow::onDataLoadFinished(const CsvData &data)
     m_progressDialog->hide();
     qDebug() << "Main Thread: Load finished. Received" << data.timeData.count() << "data points.";
 
-    // 1. 缓存数据
-    m_loadedTimeData = data.timeData;
-    m_loadedValueData = data.valueData;
+    QString filename = QFileInfo(data.filePath).fileName(); // <-- 获取文件名
 
-    // --- 重点修改：加载新数据时，清空所有状态 ---
-    // 2. 清理所有图表和持久化状态
-    m_plotSignalMap.clear(); // 清除持久化状态
-    for (QCustomPlot *plot : m_plotWidgets)
+    // --- 新增：检查文件是否已加载 ---
+    if (m_fileDataMap.contains(filename))
     {
-        plot->clearGraphs();
-        // plot->replot(); // 将在 setupPlotLayout 中重绘
+        QMessageBox::StandardButton reply;
+        reply = QMessageBox::question(this, tr("File exists"),
+                                      tr("File '%1' is already loaded. Do you want to overwrite it?").arg(filename),
+                                      QMessageBox::Yes | QMessageBox::No);
+        if (reply == QMessageBox::No)
+        {
+            return;
+        }
+        // 如果用户选择 "Yes"，则移除旧文件
+        removeFile(filename);
     }
-    m_plotGraphMap.clear(); // 清除运行时 map
+    // --- ------------------------- ---
 
-    // 强制重新设置布局（例如 1x1），这将清除所有旧控件
-    // 并根据（现在为空的）m_plotSignalMap 创建新控件
-    setupPlotLayout(1, 1);
-    // --- ---------------------------------- ---
+    // 1. 缓存数据
+    m_fileDataMap.insert(filename, data); // <-- 存入 Map
+
+    // --- 重点修改：不再清理所有图表 ---
+    // (清理工作已在 removeFile 中完成，如果需要的话)
+    // ---------------------------------
 
     // 填充信号树
     {
         QSignalBlocker blocker(m_signalTreeModel);
-        populateSignalTree(data);
+        populateSignalTree(data); // <-- 传入新数据
     }
     m_signalTree->reset();
 
-    // 4. 更新勾选状态
-    updateSignalTreeChecks();
-
-    QMessageBox::information(this, tr("Success"), tr("Successfully loaded %1 data points.").arg(data.timeData.count()));
+    // 4. 更新勾选状态 (不需要，因为新文件没有勾选的信号)
+    // updateSignalTreeChecks(); // 在 onPlotClicked 中处理
 
     // 更新重放控件和游标
-    if (!m_loadedTimeData.isEmpty())
+    if (m_fileDataMap.size() == 1) // 如果这是加载的第一个文件
     {
-        // 将游标 1 移动到数据起点
-        m_cursorKey1 = m_loadedTimeData.first();
-        m_cursorKey2 = m_loadedTimeData.first() + getGlobalTimeRange().size() * 0.1; // 游标 2 在 10% 处
+        if (!data.timeData.isEmpty())
+        {
+            // 将游标 1 移动到数据起点
+            m_cursorKey1 = data.timeData.first();
+            m_cursorKey2 = data.timeData.first() + getGlobalTimeRange().size() * 0.1; // 游标 2 在 10% 处
+            updateCursors(m_cursorKey1, 1);
+            updateCursors(m_cursorKey2, 2);
+        }
+        // --- 新增：数据加载完成后自动缩放视图 ---
+        on_actionFitView_triggered();
+    }
+    else
+    {
+        // 如果已有数据，仅更新范围并重绘
+        on_actionFitView_triggered(); // 重新缩放以包含新数据
         updateCursors(m_cursorKey1, 1);
         updateCursors(m_cursorKey2, 2);
     }
     updateReplayControls(); // 设置滑块范围
-
-    // --- 新增：数据加载完成后自动缩放视图 ---
-    on_actionFitView_triggered();
     // ---------------------------------
 }
 
 void MainWindow::populateSignalTree(const CsvData &data)
 {
-    m_signalTreeModel->clear();
-    m_signalPens.clear();
+    // --- 修改：不再清除模型，而是添加条目 ---
+    QString filename = QFileInfo(data.filePath).fileName();
 
+    QStandardItem *fileItem = new QStandardItem(filename);
+    fileItem->setEditable(false);
+    fileItem->setCheckable(false); // 文件条目本身不可勾选
+    fileItem->setData(filename, FileNameRole);
+    fileItem->setData(true, IsFileItemRole);
+
+    QVector<QPen> pens;
     for (int i = 1; i < data.headers.count(); ++i)
     {
         QString signalName = data.headers[i].trimmed();
@@ -586,17 +635,27 @@ void MainWindow::populateSignalTree(const CsvData &data)
         item->setEditable(false);
         item->setCheckable(true);
         item->setCheckState(Qt::Unchecked);
-        item->setData(i - 1, Qt::UserRole); // <-- 信号索引 (i-1) 存储在 UserRole 中
+
+        int signalIndex = i - 1; // 信号索引 (0-based)
+        QString uniqueID = QString("%1_%2").arg(filename).arg(signalIndex);
+
+        item->setData(uniqueID, UniqueIdRole); // <-- 存储 UniqueID
+        item->setData(false, IsFileItemRole);  // <-- 不是文件条目
+        item->setData(filename, FileNameRole); // <-- 存储所属文件名
+        // item->setData(signalIndex, SignalIndexRole); // <-- 存储信号索引 (在 UniqueIdRole 中已包含)
 
         QColor color(10 + QRandomGenerator::global()->bounded(245),
                      10 + QRandomGenerator::global()->bounded(245),
                      10 + QRandomGenerator::global()->bounded(245));
         QPen pen(color, 1);
-        m_signalPens.append(pen);
+        pens.append(pen);
         item->setData(QVariant::fromValue(pen), PenDataRole);
 
-        m_signalTreeModel->appendRow(item); // <-- 行号 (row) 恰好等于信号索引 (i-1)
+        fileItem->appendRow(item); // <-- 添加为子条目
     }
+    m_signalTreeModel->appendRow(fileItem); // <-- 添加顶层文件条目
+    // m_fileSignalPens.insert(filename, pens); // <-- 存储画笔 (双击变色时需要)
+    // --- --------------------------------- ---
 }
 
 void MainWindow::onDataLoadFailed(const QString &errorString)
@@ -645,20 +704,29 @@ void MainWindow::updateSignalTreeChecks()
 
     // --- 修正：使用 m_plotSignalMap 和 m_plotWidgetMap ---
     int activePlotIndex = m_plotWidgetMap.value(m_activePlot, -1);
-    const auto &activeSignals = m_plotSignalMap.value(activePlotIndex); // 获取 QSet<int>
+    const auto &activeSignals = m_plotSignalMap.value(activePlotIndex); // 获取 QSet<QString>
 
+    // --- 修改：遍历树形结构 ---
     for (int i = 0; i < m_signalTreeModel->rowCount(); ++i)
     {
-        QStandardItem *item = m_signalTreeModel->item(i);
-        if (!item)
+        QStandardItem *fileItem = m_signalTreeModel->item(i);
+        if (!fileItem)
             continue;
-        int signalIndex = item->data(Qt::UserRole).toInt();
+        for (int j = 0; j < fileItem->rowCount(); ++j)
+        {
+            QStandardItem *item = fileItem->child(j);
+            if (!item)
+                continue;
 
-        // 使用 QSet::contains()
-        if (activeSignals.contains(signalIndex))
-            item->setCheckState(Qt::Checked);
-        else
-            item->setCheckState(Qt::Unchecked);
+            QString uniqueID = item->data(UniqueIdRole).toString();
+            // --- ------------------------- ---
+
+            // 使用 QSet::contains()
+            if (activeSignals.contains(uniqueID))
+                item->setCheckState(Qt::Checked);
+            else
+                item->setCheckState(Qt::Unchecked);
+        }
     }
 }
 
@@ -666,7 +734,15 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
 {
     if (!item)
         return;
-    if (m_loadedTimeData.isEmpty())
+
+    // --- 修改：如果是文件条目，则忽略 ---
+    if (item->data(IsFileItemRole).toBool())
+    {
+        return;
+    }
+    // --- ---------------------------- ---
+
+    if (m_fileDataMap.isEmpty()) // <-- 修改
     {
         if (item->checkState() == Qt::Checked)
         {
@@ -690,34 +766,50 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         return;
     }
 
-    int signalIndex = item->data(Qt::UserRole).toInt();
+    // --- 修改：使用 UniqueID ---
+    QString uniqueID = item->data(UniqueIdRole).toString();
     QString signalName = item->text();
-    if (signalIndex < 0 || signalIndex >= m_loadedValueData.count())
+    if (uniqueID.isEmpty())
     {
-        qWarning() << "Invalid signal index" << signalIndex;
+        qWarning() << "Invalid signal item" << signalName;
         return;
     }
+    // --- ----------------------- ---
 
     QSignalBlocker blocker(m_signalTreeModel);
     if (item->checkState() == Qt::Checked)
     {
         // --- 修正：使用 m_plotSignalMap ---
-        if (m_plotSignalMap.value(plotIndex).contains(signalIndex))
+        if (m_plotSignalMap.value(plotIndex).contains(uniqueID))
         // --- ------------------------- ---
         {
             qWarning() << "Graph already exists on this plot.";
             return;
         }
-        qDebug() << "Adding signal" << signalName << "(index" << signalIndex << ") to plot" << m_activePlot;
+        qDebug() << "Adding signal" << signalName << "(id" << uniqueID << ") to plot" << m_activePlot;
+
+        // --- 修改：从 uniqueID 获取数据 ---
+        QStringList parts = uniqueID.split('_');
+        if (parts.size() != 2)
+            return;
+        QString filename = parts[0];
+        int signalIndex = parts[1].toInt();
+        if (!m_fileDataMap.contains(filename))
+            return;
+        const CsvData &csvData = m_fileDataMap.value(filename);
+        if (signalIndex >= csvData.valueData.size())
+            return;
+        // --- ------------------------- ---
+
         QCPGraph *graph = m_activePlot->addGraph();
         graph->setName(signalName);
-        graph->setData(m_loadedTimeData, m_loadedValueData[signalIndex]);
+        graph->setData(csvData.timeData, csvData.valueData[signalIndex]); // <-- 使用特定文件的数据
         QPen pen = item->data(PenDataRole).value<QPen>();
         graph->setPen(pen);
 
         // --- 修正：同时更新两个 Map ---
-        m_plotGraphMap[m_activePlot].insert(signalIndex, graph);
-        m_plotSignalMap[plotIndex].insert(signalIndex);
+        m_plotGraphMap[m_activePlot].insert(uniqueID, graph);
+        m_plotSignalMap[plotIndex].insert(uniqueID);
         // --- ------------------------- ---
 
         m_activePlot->rescaleAxes();
@@ -726,13 +818,13 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
     else // Qt::Unchecked
     {
         // --- 修正：使用 m_plotSignalMap 和辅助函数 ---
-        if (!m_plotSignalMap.value(plotIndex).contains(signalIndex))
+        if (!m_plotSignalMap.value(plotIndex).contains(uniqueID))
         // --- ------------------------- ---
         {
             return;
         }
         // --- 修正：使用辅助函数 ---
-        QCPGraph *graph = getGraph(m_activePlot, signalIndex);
+        QCPGraph *graph = getGraph(m_activePlot, uniqueID);
         // --- ------------------------- ---
         if (graph)
         {
@@ -740,8 +832,8 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
             m_activePlot->removeGraph(graph); // removeGraph 会 delete graph
 
             // --- 修正：同时更新两个 Map ---
-            m_plotGraphMap[m_activePlot].remove(signalIndex);
-            m_plotSignalMap[plotIndex].remove(signalIndex);
+            m_plotGraphMap[m_activePlot].remove(uniqueID);
+            m_plotSignalMap[plotIndex].remove(uniqueID);
             // --- ------------------------- ---
 
             m_activePlot->replot();
@@ -759,11 +851,18 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
     if (!index.isValid())
         return;
     QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
-    if (!item)
+    if (!item || !item->data(IsFileItemRole).toBool()) // <-- 如果是文件条目则返回
         return;
-    int signalIndex = item->data(Qt::UserRole).toInt();
-    if (signalIndex < 0 || signalIndex >= m_signalPens.count())
+
+    // --- 修改：使用 UniqueID ---
+    QString uniqueID = item->data(UniqueIdRole).toString();
+    QStringList parts = uniqueID.split('_');
+    if (parts.size() != 2)
         return;
+    // QString filename = parts[0];
+    // int signalIndex = parts[1].toInt();
+    // (我们不需要单独的 m_fileSignalPens，画笔存储在条目本身)
+    // --- ----------------------- ---
 
     QPen currentPen = item->data(PenDataRole).value<QPen>();
     QColor newColor = QColorDialog::getColor(currentPen.color(), this, tr("Select Signal Color"));
@@ -773,14 +872,14 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
     QPen newPen = currentPen;
     newPen.setColor(newColor);
     item->setData(QVariant::fromValue(newPen), PenDataRole);
-    m_signalPens[signalIndex] = newPen;
+    // m_signalPens[signalIndex] = newPen; // <-- 不再需要
 
     // --- 修正：遍历 m_plotGraphMap ---
     for (auto it = m_plotGraphMap.begin(); it != m_plotGraphMap.end(); ++it)
     {
-        if (it.value().contains(signalIndex))
+        if (it.value().contains(uniqueID)) // <-- 按 uniqueID 检查
         {
-            QCPGraph *graph = it.value().value(signalIndex);
+            QCPGraph *graph = it.value().value(uniqueID);
             if (graph)
             {
                 graph->setPen(newPen);
@@ -790,6 +889,116 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
     }
     // --- ------------------------- ---
 }
+
+// --- 新增：信号树的右键菜单槽 ---
+void MainWindow::onSignalTreeContextMenu(const QPoint &pos)
+{
+    QModelIndex index = m_signalTree->indexAt(pos);
+    if (!index.isValid())
+        return;
+
+    QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
+    if (!item || !item->data(IsFileItemRole).toBool())
+        return; // 只在文件条目上显示菜单
+
+    QString filename = item->data(FileNameRole).toString(); // <-- 修改：使用 FileNameRole
+
+    QMenu contextMenu(this);
+    QAction *deleteAction = contextMenu.addAction(tr("Remove '%1'").arg(filename));
+    deleteAction->setData(filename); // 将文件名存储在动作中
+
+    connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteFileAction);
+    contextMenu.exec(m_signalTree->viewport()->mapToGlobal(pos));
+}
+
+// --- 新增：删除文件的动作 ---
+void MainWindow::onDeleteFileAction()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+    QString filename = action->data().toString();
+    if (filename.isEmpty())
+        return;
+
+    QMessageBox::StandardButton reply;
+    reply = QMessageBox::question(this, tr("Remove File"),
+                                  tr("Are you sure you want to remove all data and graphs from file '%1'?").arg(filename),
+                                  QMessageBox::Yes | QMessageBox::No);
+    if (reply == QMessageBox::Yes)
+    {
+        removeFile(filename);
+    }
+}
+
+// --- 新增：移除文件的辅助函数 ---
+void MainWindow::removeFile(const QString &filename)
+{
+    // 1. 从数据 map 中移除
+    if (!m_fileDataMap.remove(filename))
+    {
+        qWarning() << "File not found in data map:" << filename;
+        return;
+    }
+
+    // 2. 从图表和持久化 map 中移除
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (!m_plotGraphMap.contains(plot))
+            continue;
+
+        int plotIndex = m_plotWidgetMap.value(plot, -1);
+        if (plotIndex == -1)
+            continue;
+
+        QMap<QString, QCPGraph *> &graphMap = m_plotGraphMap[plot];
+        QSet<QString> &signalSet = m_plotSignalMap[plotIndex];
+
+        // 查找所有属于此文件的 unique IDs
+        QString prefix = filename + "_";
+        QList<QString> idsToRemove;
+        for (const QString &uniqueID : graphMap.keys())
+        {
+            if (uniqueID.startsWith(prefix))
+            {
+                idsToRemove.append(uniqueID);
+            }
+        }
+
+        // 移除图表
+        for (const QString &uniqueID : idsToRemove)
+        {
+            QCPGraph *graph = graphMap.value(uniqueID);
+            if (graph)
+            {
+                plot->removeGraph(graph); // removeGraph 会 delete graph
+            }
+            graphMap.remove(uniqueID);
+            signalSet.remove(uniqueID);
+        }
+        plot->replot();
+    }
+
+    // 3. 从信号树中移除
+    QList<QStandardItem *> items = m_signalTreeModel->findItems(filename);
+    for (QStandardItem *item : items)
+    {
+        if (item->data(IsFileItemRole).toBool())
+        {
+            m_signalTreeModel->removeRow(item->row());
+            break; // 假设文件名是唯一的
+        }
+    }
+
+    // 4. 清理和更新
+    setupCursors(); // 重建游标 (删除的图表会自动从 m_plotGraphMap 中移除)
+    updateCursors(m_cursorKey1, 1);
+    updateCursors(m_cursorKey2, 2);
+    updateReplayControls();
+    on_actionFitView_triggered(); // 重新缩放视图
+}
+
+// --- ----------------------------- ---
 
 /**
  * @brief 响应游标模式切换
@@ -1317,7 +1526,7 @@ void MainWindow::updateCursors(double key, int cursorIndex)
  */
 void MainWindow::updateReplayControls()
 {
-    if (m_loadedTimeData.isEmpty())
+    if (m_fileDataMap.isEmpty()) // <-- 修改
         return;
 
     QCPRange range = getGlobalTimeRange();
@@ -1340,22 +1549,61 @@ void MainWindow::updateReplayControls()
  */
 QCPRange MainWindow::getGlobalTimeRange() const
 {
-    if (m_loadedTimeData.isEmpty())
+    // --- 修改：遍历所有文件 ---
+    if (m_fileDataMap.isEmpty())
         return QCPRange(0, 1);
 
-    return QCPRange(m_loadedTimeData.first(), m_loadedTimeData.last());
+    bool first = true;
+    QCPRange totalRange;
+    for (const CsvData &data : m_fileDataMap.values())
+    {
+        if (!data.timeData.isEmpty())
+        {
+            if (first)
+            {
+                totalRange.lower = data.timeData.first();
+                totalRange.upper = data.timeData.last();
+                first = false;
+            }
+            else
+            {
+                if (data.timeData.first() < totalRange.lower)
+                    totalRange.lower = data.timeData.first();
+                if (data.timeData.last() > totalRange.upper)
+                    totalRange.upper = data.timeData.last();
+            }
+        }
+    }
+
+    if (first) // 意味着没有文件有数据
+        return QCPRange(0, 1);
+    else
+        return totalRange;
+    // --- ------------------- ---
 }
 
 /**
  * @brief 估算数据时间步
  */
-double MainWindow::findDataTimeStep() const
+double MainWindow::getSmallestTimeStep() const
 {
-    if (m_loadedTimeData.size() < 2)
-        return 0.01; // 默认步长
+    // --- 修改：查找所有文件中的最小步长 ---
+    double minStep = -1.0;
 
-    // 假设时间步长基本恒定
-    return m_loadedTimeData.at(1) - m_loadedTimeData.at(0);
+    for (const CsvData &data : m_fileDataMap.values())
+    {
+        if (data.timeData.size() >= 2)
+        {
+            double step = data.timeData.at(1) - data.timeData.at(0);
+            if (step > 0 && (minStep == -1.0 || step < minStep))
+            {
+                minStep = step;
+            }
+        }
+    }
+
+    return (minStep > 0) ? minStep : 0.01; // 默认步长
+    // --- ---------------------------- ---
 }
 
 /**
@@ -1370,16 +1618,11 @@ void MainWindow::onPlayPauseClicked()
     }
     else
     {
-        double speed = m_speedSpinBox->value();
-        double timeStep = findDataTimeStep();
-        if (timeStep <= 0 || speed <= 0)
-            return;
-
-        // (时间步长 / 速度) = 真实时间
-        int intervalMs = (timeStep * 1000.0) / speed;
-        m_replayTimer->setInterval(qMax(16, intervalMs)); // 限制最快 ~60 fps
+        // --- 修改：使用固定的 33ms 间隔 (约 30fps) ---
+        m_replayTimer->setInterval(33);
         m_replayTimer->start();
         m_playPauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+        // --- ------------------------------------ ---
     }
 }
 
@@ -1389,7 +1632,10 @@ void MainWindow::onPlayPauseClicked()
 void MainWindow::onReplayTimerTimeout()
 {
     double speed = m_speedSpinBox->value();
-    double timeStep = findDataTimeStep();
+    // --- 修改：时间步长取决于定时器间隔和速度 ---
+    double timeStep = (m_replayTimer->interval() / 1000.0) * speed;
+    // --- ------------------------------------ ---
+
     if (timeStep <= 0 || speed <= 0)
         return;
 
@@ -1404,9 +1650,7 @@ void MainWindow::onReplayTimerTimeout()
     // 更新游标 1
     updateCursors(newKey, 1);
 
-    // 检查速度是否已更改，并更新间隔
-    int intervalMs = (timeStep * 1000.0) / speed;
-    m_replayTimer->setInterval(qMax(16, intervalMs));
+    // 速度可能已更改，但我们保持间隔不变
 }
 
 /**
@@ -1417,7 +1661,7 @@ void MainWindow::onStepForwardClicked()
     if (m_replayTimer->isActive())
         return;
 
-    double timeStep = findDataTimeStep();
+    double timeStep = getSmallestTimeStep(); // <-- 修改
     double newKey = m_cursorKey1 + timeStep;
     updateCursors(newKey, 1); // updateCursors 会自动钳制
 }
@@ -1430,7 +1674,7 @@ void MainWindow::onStepBackwardClicked()
     if (m_replayTimer->isActive())
         return;
 
-    double timeStep = findDataTimeStep();
+    double timeStep = getSmallestTimeStep(); // <-- 修改
     double newKey = m_cursorKey1 - timeStep;
     updateCursors(newKey, 1); // updateCursors 会自动钳制
 }
@@ -1463,14 +1707,42 @@ void MainWindow::on_actionFitView_triggered()
     if (m_plotWidgets.isEmpty())
         return;
 
+    // --- 修改：单独缩放每个图表的 Y 轴，但同步 X 轴 ---
+    QCPRange globalXRange;
+    bool hasXRange = false;
+
+    // 第一次遍历：找到全局 X 范围并缩放 Y 轴
     for (QCustomPlot *plot : m_plotWidgets)
     {
         if (plot && plot->graphCount() > 0)
         {
-            plot->rescaleAxes();
-            plot->replot();
+            plot->rescaleAxes(false); // 缩放 Y 轴
+            if (!hasXRange)
+            {
+                globalXRange = plot->xAxis->range();
+                hasXRange = true;
+            }
+            else
+            {
+                globalXRange.expand(plot->xAxis->range());
+            }
+            // plot->replot(); // 稍后在第二次遍历中重绘
         }
     }
+
+    // 第二次遍历：应用全局 X 范围并重绘
+    if (hasXRange)
+    {
+        for (QCustomPlot *plot : m_plotWidgets)
+        {
+            if (plot)
+            {
+                plot->xAxis->setRange(globalXRange);
+                plot->replot();
+            }
+        }
+    }
+    // --- -------------------------------------- ---
 }
 
 /**
@@ -1481,14 +1753,39 @@ void MainWindow::on_actionFitViewTime_triggered()
     if (m_plotWidgets.isEmpty())
         return;
 
+    // --- 修改：找到全局 X 范围并应用 ---
+    QCPRange globalXRange;
+    bool hasXRange = false;
+
     for (QCustomPlot *plot : m_plotWidgets)
     {
         if (plot && plot->graphCount() > 0)
         {
             plot->xAxis->rescale();
-            plot->replot();
+            if (!hasXRange)
+            {
+                globalXRange = plot->xAxis->range();
+                hasXRange = true;
+            }
+            else
+            {
+                globalXRange.expand(plot->xAxis->range());
+            }
         }
     }
+
+    if (hasXRange)
+    {
+        for (QCustomPlot *plot : m_plotWidgets)
+        {
+            if (plot)
+            {
+                plot->xAxis->setRange(globalXRange);
+                plot->replot();
+            }
+        }
+    }
+    // --- ---------------------------- ---
 }
 
 /**
@@ -1570,18 +1867,31 @@ void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
 
 // --- 新增：辅助函数 ---
 /**
- * @brief 从 m_plotGraphMap 中安全地获取一个 QCPGraph*
+ * @brief [修改] 从 m_plotGraphMap 中安全地获取一个 QCPGraph*
  * @param plot QCustomPlot 控件
- * @param signalIndex 信号索引
+ * @param uniqueID 信号的唯一ID ("filename_signalIndex")
  * @return 如果找到则返回 QCPGraph*，否则返回 nullptr
  */
-QCPGraph *MainWindow::getGraph(QCustomPlot *plot, int signalIndex) const
+QCPGraph *MainWindow::getGraph(QCustomPlot *plot, const QString &uniqueID) const
 {
     if (plot && m_plotGraphMap.contains(plot))
     {
-        return m_plotGraphMap.value(plot).value(signalIndex, nullptr);
+        return m_plotGraphMap.value(plot).value(uniqueID, nullptr);
     }
     return nullptr;
+}
+
+/**
+ * @brief [新增] 从 QStandardItem 构建 UniqueID
+ */
+QString MainWindow::getUniqueID(QStandardItem *item) const
+{
+    if (!item || item->data(IsFileItemRole).toBool())
+        return QString();
+
+    // --- 修改：UniqueID 现在直接存储在条目中 ---
+    return item->data(UniqueIdRole).toString();
+    // --- ------------------------------------ ---
 }
 // --- ---------------- ---
 

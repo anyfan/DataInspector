@@ -13,6 +13,7 @@ DataManager::DataManager(QObject *parent) : QObject(parent)
 void DataManager::loadCsvFile(const QString &filePath)
 {
     CsvData data;
+    data.filePath = filePath; // <-- 新增：存储文件路径
 
     QFile file(filePath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
@@ -112,6 +113,6 @@ void DataManager::loadCsvFile(const QString &filePath)
     }
 
     emit loadProgress(100);
-    emit loadFinished(data);
+    emit loadFinished(data); // <-- 修改：只发送 data
     qDebug() << "DataManager: Load finished on thread" << QThread::currentThreadId();
 }
