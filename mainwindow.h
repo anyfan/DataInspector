@@ -338,6 +338,10 @@ private:
 
     // --- 加载的数据缓存 使用 QMap 存储多个文件数据 ---
     QMap<QString, FileData> m_fileDataMap;
+
+    // --- 用于颜色循环的成员 ---
+    QVector<QColor> m_colorList; // 预定义的颜色列表
+    int m_colorIndex;            // 用于循环颜色列表的索引
 };
 
 #endif // MAINWINDOW_H

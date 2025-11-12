@@ -6,6 +6,15 @@
 #include <QFormLayout>
 #include <QVBoxLayout>
 #include <QColorDialog>
+#include <QVector> // <-- 新增
+#include <QColor>  // <-- 新增
+
+static const QVector<QColor> matlabColors = {
+    QColor("#0072bd"), QColor("#d95319"), QColor("#edb120"),
+    QColor("#7e2f8e"), QColor("#77ac30"), QColor("#4dbeee"),
+    QColor("#a2142f"), QColor("#139fff"), QColor("#ff6929"),
+    QColor("#b746ff"), QColor("#64d413"), QColor("#ff13a6"),
+    QColor("#fe330a"), QColor("#22b573")};
 
 SignalPropertiesDialog::SignalPropertiesDialog(const QPen &initialPen, QWidget *parent)
     : QDialog(parent), m_selectedColor(initialPen.color())
@@ -78,12 +87,28 @@ QPen SignalPropertiesDialog::getSelectedPen() const
  */
 void SignalPropertiesDialog::onColorButtonClicked()
 {
-    QColor newColor = QColorDialog::getColor(m_selectedColor, this, tr("Select Signal Color"));
-    if (newColor.isValid())
+    // --- 修改：使用 QColorDialog 实例并设置自定义颜色 ---
+    QColorDialog dialog(m_selectedColor, this);
+    dialog.setWindowTitle(tr("Select Signal Color"));
+    dialog.setOptions(QColorDialog::ShowAlphaChannel); // 允许设置透明度
+
+    // 设置14种自定义颜色
+    for (int i = 0; i < matlabColors.size() && i < 16; ++i) // QColorDialog 最多支持 16 个自定义颜色
     {
-        m_selectedColor = newColor;
-        updateColorButton();
+        dialog.setCustomColor(i, matlabColors.at(i));
     }
+
+    // 执行对话框
+    if (dialog.exec() == QDialog::Accepted)
+    {
+        QColor newColor = dialog.selectedColor();
+        if (newColor.isValid())
+        {
+            m_selectedColor = newColor;
+            updateColorButton();
+        }
+    }
+    // --- -------------------------------------------- ---
 }
 
 /**

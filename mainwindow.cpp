@@ -91,9 +91,13 @@ static QStandardItem *findItemByUniqueID_BFS(QStandardItemModel *model, const QS
 // --- ---------------- ---
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr), m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr), m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr), m_lastMousePlot(nullptr), m_cursorMode(NoCursor), m_cursorKey1(0), m_cursorKey2(0),
+    : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr),
+      m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr),
+      m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr),
+      m_lastMousePlot(nullptr), m_cursorMode(NoCursor), m_cursorKey1(0), m_cursorKey2(0),
       m_isDraggingCursor1(false),
-      m_isDraggingCursor2(false)
+      m_isDraggingCursor2(false),
+      m_colorIndex(0)
 {
     setupDataManagerThread();
 
@@ -113,6 +117,25 @@ MainWindow::MainWindow(QWidget *parent)
 
     // --- 新增：在构造函数中启用拖放 ---
     setAcceptDrops(true);
+
+    // --- 新增：初始化颜色列表 ---
+    // 默认颜色 (7)
+    m_colorList << QColor("#0072bd"); // 蓝
+    m_colorList << QColor("#d95319"); // 橙
+    m_colorList << QColor("#edb120"); // 黄
+    m_colorList << QColor("#7e2f8e"); // 紫
+    m_colorList << QColor("#77ac30"); // 绿
+    m_colorList << QColor("#4dbeee"); // 青
+    m_colorList << QColor("#a2142f"); // 红
+
+    // 扩展颜色 (7)
+    m_colorList << QColor("#139fff"); // 亮蓝
+    m_colorList << QColor("#ff6929"); // 亮橙
+    m_colorList << QColor("#b746ff"); // 亮紫
+    m_colorList << QColor("#64d413"); // 亮绿
+    m_colorList << QColor("#ff13a6"); // 亮粉
+    m_colorList << QColor("#fe330a"); // 亮红
+    m_colorList << QColor("#22b573"); // 蓝绿
 
     // 5. 设置初始布局
     setupPlotLayout(2, 1);
@@ -377,8 +400,8 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
     plot->legend->setVisible(true);
 
-    QFont axisFont = plot->font(); // 从绘图控件获取基础字体
-    axisFont.setPointSize(7);      // 将字号设置为 9 (你可以按需调整)
+    QFont axisFont = plot->font();           // 从绘图控件获取基础字体
+    axisFont.setPointSize(7);                // 将字号设置为 9 (你可以按需调整)
     plot->xAxis->setTickLabelFont(axisFont); // X轴的刻度数字
     plot->xAxis->setLabelFont(axisFont);     // X轴的标签
     plot->yAxis->setTickLabelFont(axisFont); // Y轴的刻度数字
@@ -936,9 +959,13 @@ void MainWindow::populateSignalTree(const FileData &data)
             item->setData(true, IsSignalItemRole);
             item->setData(filename, FileNameRole);
 
-            QColor color(10 + QRandomGenerator::global()->bounded(245),
-                         10 + QRandomGenerator::global()->bounded(245),
-                         10 + QRandomGenerator::global()->bounded(245));
+            if (m_colorList.isEmpty()) // 安全检查
+            {
+                m_colorList << Qt::black;
+            }
+
+            QColor color = m_colorList.at(m_colorIndex);
+            m_colorIndex = (m_colorIndex + 1) % m_colorList.size();
 
             // 将默认宽度为 2
             // QPen pen(color, 2); //宽度2绘制密集线段会卡
