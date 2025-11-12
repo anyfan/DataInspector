@@ -91,10 +91,51 @@ static QStandardItem *findItemByUniqueID_BFS(QStandardItemModel *model, const QS
 // --- ---------------- ---
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), m_dataThread(nullptr), m_dataManager(nullptr),
-      m_plotContainer(nullptr), m_signalDock(nullptr), m_signalTree(nullptr),
-      m_signalTreeModel(nullptr), m_progressDialog(nullptr), m_activePlot(nullptr),
-      m_lastMousePlot(nullptr), m_cursorMode(NoCursor), m_cursorKey1(0), m_cursorKey2(0),
+    : QMainWindow(parent), // --- 修复：将所有指针成员初始化为 nullptr ---
+      m_dataThread(nullptr),
+      m_dataManager(nullptr),
+      m_plotContainer(nullptr),
+      m_signalDock(nullptr),
+      m_signalTree(nullptr),
+      m_signalTreeModel(nullptr),
+      m_progressDialog(nullptr),
+      m_activePlot(nullptr),
+      m_lastMousePlot(nullptr),
+      m_loadFileAction(nullptr),
+      m_layout1x1Action(nullptr),
+      m_layout1x2Action(nullptr),
+      m_layout2x1Action(nullptr),
+      m_layout2x2Action(nullptr),
+      m_layoutSplitBottomAction(nullptr),
+      m_layoutSplitLeftAction(nullptr),
+      m_layoutSplitTopAction(nullptr),
+      m_layoutSplitRightAction(nullptr),
+      m_layoutCustomAction(nullptr),
+      m_viewToolBar(nullptr),
+      m_cursorNoneAction(nullptr),
+      m_cursorSingleAction(nullptr),
+      m_cursorDoubleAction(nullptr),
+      m_replayAction(nullptr),
+      m_cursorGroup(nullptr),
+      m_fitViewAction(nullptr),
+      m_fitViewTimeAction(nullptr),
+      m_fitViewYAction(nullptr),
+      m_customLayoutDialog(nullptr), // <-- 崩溃修复
+      m_customRowsSpinBox(nullptr),  // <-- 崩溃修复
+      m_customColsSpinBox(nullptr),  // <-- 崩溃修复
+      m_replayDock(nullptr),
+      m_replayWidget(nullptr),
+      m_playPauseButton(nullptr),
+      m_stepForwardButton(nullptr),
+      m_stepBackwardButton(nullptr),
+      m_speedSpinBox(nullptr),
+      m_timeSlider(nullptr),
+      m_currentTimeLabel(nullptr),
+      m_replayTimer(nullptr),
+      // --- 非指针成员保持不变 ---
+      m_cursorMode(NoCursor),
+      m_cursorKey1(0),
+      m_cursorKey2(0),
       m_isDraggingCursor1(false),
       m_isDraggingCursor2(false),
       m_colorIndex(0)
@@ -590,16 +631,6 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
         }
 
     } // 结束 for (geometries)
-
-    // 3. 从持久化映射中移除不再存在的子图的信号
-    QList<int> oldIndices = m_plotSignalMap.keys();
-    for (int oldIndex : oldIndices)
-    {
-        if (oldIndex >= geometries.size())
-        {
-            m_plotSignalMap.remove(oldIndex);
-        }
-    }
 
     // 4. 为所有新创建的 plot 设置交互
     for (QCustomPlot *plot : m_plotWidgets)
