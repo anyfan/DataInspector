@@ -1548,21 +1548,73 @@ void MainWindow::onPlotMouseMove(QMouseEvent *event)
     else
         return; // 没有 plot
 
-    // 从 plot 获取 x 坐标
-    double key = plot->xAxis->pixelToCoord(event->pos().x());
+    // 1. 从 plot 获取平滑的 x 坐标 (key)
+    double smoothKey = plot->xAxis->pixelToCoord(event->pos().x());
+    double snappedKey = smoothKey; // 默认使用平滑键
 
-    // --- 拖拽逻辑 ---
+    // --- 拖拽逻辑 (在此处实现吸附) ---
+    if (m_isDraggingCursor1 || m_isDraggingCursor2)
+    {
+        // 仅在拖动时执行吸附
+        double closestKey = smoothKey;
+        double minDistance = -1.0;
+
+        // 2. 查找此图(plot)上的所有图表(graph)
+        const auto &graphsOnPlot = m_plotGraphMap.value(plot);
+        if (!graphsOnPlot.isEmpty())
+        {
+            // 3. 遍历此图上的所有图表，找到最近的数据点键
+            for (QCPGraph *graph : graphsOnPlot)
+            {
+                if (graph && !graph->data()->isEmpty())
+                {
+                    // 使用 QCPDataContainer 的 findBegin 进行高效的二分查找
+                    auto it = graph->data()->findBegin(smoothKey); // 找到第一个 >= smoothKey 的点
+
+                    // 检查找到的点
+                    if (it != graph->data()->constEnd())
+                    {
+                        double distAt = qAbs(it->key - smoothKey);
+                        if (minDistance < 0 || distAt < minDistance)
+                        {
+                            minDistance = distAt;
+                            closestKey = it->key;
+                        }
+                    }
+
+                    // 检查找到的点的前一个点
+                    if (it != graph->data()->constBegin())
+                    {
+                        double distBefore = qAbs((it - 1)->key - smoothKey);
+                        if (minDistance < 0 || distBefore < minDistance)
+                        {
+                            minDistance = distBefore;
+                            closestKey = (it - 1)->key;
+                        }
+                    }
+                }
+            } // 结束 for (graphs)
+
+            if (minDistance >= 0) // 如果找到了一个最近的键
+            {
+                snappedKey = closestKey; // 4. 使用吸附后的键
+            }
+        }
+        // else: 如果此图上没有图表, 将使用 smoothKey
+    }
+
+    // --- 5. 使用最终的键 (snappedKey) 更新游标 ---
     if (m_isDraggingCursor1)
     {
-        updateCursors(key, 1);
+        updateCursors(snappedKey, 1);
         event->accept();
     }
     else if (m_isDraggingCursor2)
     {
-        updateCursors(key, 2);
+        updateCursors(snappedKey, 2);
         event->accept();
     }
-    // --- 悬停逻辑 ---
+    // --- 悬停逻辑 (保持不变，不吸附) ---
     else if (m_cursorMode != NoCursor)
     {
         int plotIndex = m_plotWidgets.indexOf(plot);
@@ -1575,6 +1627,7 @@ void MainWindow::onPlotMouseMove(QMouseEvent *event)
         bool nearCursor = false;
         if (plotIndex < m_cursorLines1.size())
         {
+            // 悬停检查是基于像素位置的，所以我们不需要使用键
             double dist1 = m_cursorLines1.at(plotIndex)->selectTest(event->pos(), false);
             if (dist1 >= 0 && dist1 < plot->selectionTolerance())
                 nearCursor = true;
