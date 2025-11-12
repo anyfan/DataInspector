@@ -119,6 +119,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 6. 创建进度对话框
     m_progressDialog = new QProgressDialog(this);
+    m_progressDialog->reset();
     m_progressDialog->setWindowModality(Qt::WindowModal);
     m_progressDialog->setAutoClose(true);
     m_progressDialog->setAutoReset(true);
