@@ -485,6 +485,9 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
             this, &MainWindow::onXAxisRangeChanged);
 
+    // --- 新增：连接子图的选择信号，以同步树视图 ---
+    connect(plot, &QCustomPlot::selectionChangedByUser, this, &MainWindow::onPlotSelectionChanged);
+
     // --- 新增：设置Y轴的数字格式 ---
     // (使用 'g' 格式并设置精度，以便大数字自动切换到科学计数法)
     plot->yAxis->setNumberFormat("g");  // 'g' = 通用格式
@@ -2736,5 +2739,51 @@ void MainWindow::onSignalSearchChanged(const QString &text)
     if (!query.isEmpty())
     {
         m_signalTree->expandAll();
+    }
+}
+
+/**
+ * @brief [槽] 当子图中的选择发生用户更改时调用
+ */
+void MainWindow::onPlotSelectionChanged()
+{
+    // 1. 获取是哪个 QCustomPlot 发出的信号
+    QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
+    if (!plot)
+        return;
+
+    // 2. 获取该子图上当前选中的图表 (plottables)
+    QList<QCPAbstractPlottable *> selected = plot->selectedPlottables(); //
+    if (selected.isEmpty())
+    {
+        // 如果没有选中的图表 (例如，用户可能点击了空白处以取消所有选择)
+        // 我们可以选择清除树中的当前索引
+        m_signalTree->setCurrentIndex(QModelIndex());
+        return;
+    }
+
+    // 3. 我们只关心第一个被选中的图表
+    QCPGraph *graph = qobject_cast<QCPGraph *>(selected.first());
+    if (!graph)
+        return; // 选中的可能不是 QCPGraph
+
+    // 4. 从我们的映射中反向查找该图表的 UniqueID
+    // m_plotGraphMap 是 QMap<QCustomPlot *, QMap<QString, QCPGraph *>>
+    // QMap::key() 可以高效地通过 value (QCPGraph*) 查找 key (QString)
+    QString uniqueID = m_plotGraphMap.value(plot).key(graph, QString());
+    if (uniqueID.isEmpty())
+        return; // 未在映射中找到
+
+    // 5. 在树模型中查找与该 ID 对应的项
+    QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID); //
+    if (!item)
+        return;
+
+    // 6. 滚动到该项并将其设置为当前选中项
+    // (我们阻塞信号，以防 setCurrentIndex 触发不必要的重绘或逻辑)
+    {
+        QSignalBlocker blocker(m_signalTree);
+        m_signalTree->scrollTo(item->index(), QAbstractItemView::PositionAtCenter);
+        m_signalTree->setCurrentIndex(item->index()); //
     }
 }

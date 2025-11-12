@@ -146,6 +146,9 @@ private slots:
 
     void onSignalSearchChanged(const QString &text);
 
+    // --- 新增：用于在子图选中时同步信号树的槽 ---
+    void onPlotSelectionChanged();
+
     // --- 新增：重写拖放事件处理函数 ---
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
