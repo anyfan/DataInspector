@@ -39,6 +39,7 @@ class QCPLegend;
 class QCPAbstractLegendItem;
 class QDialog;
 class QSpinBox;
+class QLineEdit;
 
 // 为信号树条目定义自定义数据角色
 // 存储唯一的 "filename/tablename/signalindex" 字符串 ID
@@ -143,6 +144,8 @@ private slots:
     // --- 新增：用于在布局更改后更新游标的槽 ---
     void updateCursorsForLayoutChange();
 
+    void onSignalSearchChanged(const QString &text);
+
     // --- 新增：重写拖放事件处理函数 ---
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -243,6 +246,14 @@ private:
      * @param filePath 要加载的文件的路径
      */
     void loadFile(const QString &filePath);
+
+    /**
+     * @brief [新增] 递归辅助函数，用于过滤信号树
+     * @param item 要检查的当前 QStandardItem
+     * @param query 小写的搜索查询
+     * @return true 如果此项或其任何子项匹配查询，则返回
+     */
+    bool filterSignalTree(QStandardItem *item, const QString &query);
     // --- ---------------------- ---
 
     // --- 工作线程 ---
@@ -254,6 +265,7 @@ private:
     QDockWidget *m_signalDock; // 左侧停靠栏
     QTreeView *m_signalTree;   // 信号列表
     QStandardItemModel *m_signalTreeModel;
+    QLineEdit *m_signalSearchBox; // <-- 新增：搜索框
     QProgressDialog *m_progressDialog;
 
     // --- 绘图管理 ---

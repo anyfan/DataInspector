@@ -39,6 +39,8 @@
 #include <QFormLayout>
 #include <QSpinBox>
 #include <QDialogButtonBox>
+#include <QLineEdit>   // <-- 新增
+#include <QVBoxLayout> // <-- 新增
 // --- 新增：包含拖放和MIME数据的头文件 ---
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -370,12 +372,32 @@ void MainWindow::createToolBars()
 void MainWindow::createDocks()
 {
     m_signalDock = new QDockWidget(tr("信号"), this);
-    m_signalTree = new QTreeView(m_signalDock);
+
+    // --- 新增：创建一个容器 QWidget 来存放搜索框和树 ---
+    QWidget *dockWidget = new QWidget(m_signalDock);
+    QVBoxLayout *dockLayout = new QVBoxLayout(dockWidget);
+    dockLayout->setContentsMargins(4, 4, 4, 4); // 紧凑边距
+    dockLayout->setSpacing(4);                  // 控件间距
+
+    // --- 新增：创建并添加搜索框 ---
+    m_signalSearchBox = new QLineEdit(dockWidget);
+    m_signalSearchBox->setPlaceholderText(tr("搜索信号..."));
+    m_signalSearchBox->setClearButtonEnabled(true);
+    dockLayout->addWidget(m_signalSearchBox);
+    // --- ---------------------- ---
+
+    m_signalTree = new QTreeView(dockWidget);
     m_signalTreeModel = new QStandardItemModel(m_signalDock);
     m_signalTree->setModel(m_signalTreeModel);
     m_signalTree->setHeaderHidden(true);
     m_signalTree->setItemDelegate(new SignalTreeDelegate(m_signalTree));
-    m_signalDock->setWidget(m_signalTree);
+
+    dockLayout->addWidget(m_signalTree); // <-- 将树添加到布局中
+
+    m_signalDock->setWidget(dockWidget); // <-- 设置容器 QWidget 为 dock 的控件
+
+    // --- --------------------------------------------------- ---
+
     m_signalDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
     addDockWidget(Qt::LeftDockWidgetArea, m_signalDock);
 
@@ -385,6 +407,10 @@ void MainWindow::createDocks()
     // --- 新增：连接右键菜单 ---
     m_signalTree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_signalTree, &QTreeView::customContextMenuRequested, this, &MainWindow::onSignalTreeContextMenu);
+
+    // --- 新增：连接搜索框信号 ---
+    connect(m_signalSearchBox, &QLineEdit::textChanged, this, &MainWindow::onSignalSearchChanged);
+    // --- ------------------------ ---
 }
 
 /**
@@ -913,6 +939,9 @@ void MainWindow::onDataLoadFinished(const FileData &data)
         populateSignalTree(data); // <-- 传入新数据
     }
     m_signalTree->reset(); // <-- CSV 和 MAT 都需要
+
+    // --- 新增：默认展开所有条目 ---
+    m_signalTree->expandAll();
 
     // 3. 更新重放控件和游标
     if (m_fileDataMap.size() == 1 && !data.tables.isEmpty() && !data.tables.first().timeData.isEmpty()) // 如果这是加载的第一个文件
@@ -2639,4 +2668,73 @@ void MainWindow::onDeleteSubplotAction()
     // QCustomPlot *plot = m_plotWidgetMap.key(plotIndex, nullptr);
     // if (plot)
     //     plot->replot();
+}
+
+// ---
+// ---
+// --- 新增：搜索过滤逻辑
+// ---
+// ---
+
+/**
+ * @brief [辅助函数] 递归地过滤信号树。
+ * @param item 当前要检查的 QStandardItem
+ * @param query 小写的搜索查询
+ * @return true 如果此项或其任何子项匹配查询，则返回
+ */
+bool MainWindow::filterSignalTree(QStandardItem *item, const QString &query)
+{
+    if (!item)
+        return false;
+
+    // 1. 检查此项是否匹配
+    // 我们匹配信号、文件和表名
+    bool selfMatches = item->text().toLower().contains(query);
+
+    // 2. 检查是否有任何子项匹配
+    bool childrenMatch = false;
+    for (int i = 0; i < item->rowCount(); ++i)
+    {
+        if (filterSignalTree(item->child(i), query))
+        {
+            childrenMatch = true;
+        }
+    }
+
+    // 3. 决定可见性
+    bool visible = selfMatches || childrenMatch;
+
+    // 4. 如果查询为空，所有项都可见
+    if (query.isEmpty())
+    {
+        visible = true;
+    }
+
+    // 5. 在视图中设置行隐藏
+    // 根项没有父项，所以使用 QModelIndex()
+    QModelIndex parentIndex = item->parent() ? item->parent()->index() : QModelIndex();
+    m_signalTree->setRowHidden(item->row(), parentIndex, !visible);
+
+    return visible;
+}
+
+/**
+ * @brief [槽] 当信号搜索框中的文本更改时调用
+ */
+void MainWindow::onSignalSearchChanged(const QString &text)
+{
+    QString query = text.trimmed().toLower();
+    QStandardItem *root = m_signalTreeModel->invisibleRootItem();
+
+    // 递归地遍历所有项并设置它们的隐藏状态
+    for (int i = 0; i < root->rowCount(); ++i)
+    {
+        filterSignalTree(root->child(i), query);
+    }
+
+    // 如果在搜索，展开所有内容以显示匹配项
+    if (!query.isEmpty())
+    {
+        m_signalTree->expandAll();
+    }
 }
