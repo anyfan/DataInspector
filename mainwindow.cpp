@@ -1235,6 +1235,30 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         QPen pen = item->data(PenDataRole).value<QPen>();
         graph->setPen(pen);
 
+        // ---
+        // --- 新增修复：优化选中性能 ---
+        // ---
+        // 默认的 QCPSelectionDecorator 使用 2.5px 宽的笔。
+        // 在绘制密集数据时，这会导致严重的性能问题并使UI冻结。
+        // 我们通过修改装饰器来解决这个问题，使其使用与图表
+        // 原始线条 *相同宽度* 的笔，只改变颜色。
+        if (graph->selectionDecorator())
+        {
+            QCPSelectionDecorator *decorator = graph->selectionDecorator(); //
+            QPen selPen = decorator->pen();                                 // 获取默认的选中笔刷（蓝色，2.5px）
+
+            // 将宽度修改为与原始线条相同（在我们的例子中为 1px）
+            selPen.setWidth(pen.width());
+
+            decorator->setPen(selPen);
+
+            // 我们不希望选中时出现填充或更改散点样式，
+            // 所以我们明确禁用它们（尽管它们默认可能是关闭的）
+            decorator->setBrush(Qt::NoBrush);
+            decorator->setUsedScatterProperties(QCPScatterStyle::spNone); //
+        }
+        // --- 修复结束 ---
+
         // --- 修正：同时更新两个 Map ---
         m_plotGraphMap[m_activePlot].insert(uniqueID, graph);
         m_plotSignalMap[plotIndex].insert(uniqueID);
