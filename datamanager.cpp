@@ -298,7 +298,7 @@ void DataManager::loadMatFile(const QString &filePath)
     fileData.filePath = filePath;
 
     // MATIO 需要 const char*，所以我们转换路径
-    QByteArray cFilePath = filePath.toLocal8Bit();
+    QByteArray cFilePath = filePath.toUtf8();
     mat_t *matfile = Mat_Open(cFilePath.constData(), MAT_ACC_RDONLY);
 
     if (matfile == NULL)
