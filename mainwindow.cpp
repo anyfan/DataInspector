@@ -427,7 +427,7 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 
     // 1. (修正) 连接图例的左键点击信号，用于切换可见性
     //    这个信号在 QCustomPlot *plot* 上，而不是在 plot->legend 上
-    connect(plot, &QCustomPlot::legendClick, this, &MainWindow::onLegendClick);
+    // connect(plot, &QCustomPlot::legendClick, this, &MainWindow::onLegendClick);
 
     // 2. 启用并连接图表的上下文菜单（用于图例的右键点击）
     plot->setContextMenuPolicy(Qt::CustomContextMenu);
@@ -2392,13 +2392,43 @@ void MainWindow::onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, Q
 }
 
 /**
- * @brief [槽] 响应图表区域的右键点击，检查是在图例上还是在图表背景上
+ * @brief [槽] 响应图表区域的右键点击，检查是在图例上、图线上还是在图表背景上
  */
 void MainWindow::onLegendContextMenu(const QPoint &pos)
 {
     QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
     if (!plot)
         return;
+
+    // --- 新增：首先检查是否点击了图线 (QCPGraph) ---
+    // 我们使用 plottableAt 来查找鼠标位置下的 plottable
+    // "false" 表示我们不关心它是否可选，我们只想知道它是否在那里
+    QCPAbstractPlottable *plottable = plot->plottableAt(pos, false);
+    QCPGraph *graph = qobject_cast<QCPGraph *>(plottable);
+
+    if (graph)
+    {
+        // --- 1. 用户右键点击了 *图线* ---
+        // 找到此 graph 对应的 uniqueID
+        QString uniqueID = m_plotGraphMap.value(plot).key(graph, QString());
+
+        if (uniqueID.isEmpty())
+            return;
+
+        // 创建上下文菜单
+        QMenu contextMenu(this);
+        QAction *deleteAction = contextMenu.addAction(tr("Delete '%1'").arg(graph->name()));
+        deleteAction->setData(uniqueID); // 将 uniqueID 存储在 action 中
+
+        connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSignalAction);
+
+        // 在全局坐标位置显示菜单
+        contextMenu.exec(plot->mapToGlobal(pos));
+        return; // 处理完毕，退出函数
+    }
+    // --- 新增逻辑结束 ---
+
+    // --- 如果没有点击图线，则继续检查图例项或背景 ---
 
     // 检查点击位置的顶层可布局元素
     QCPLayoutElement *el = plot->layoutElementAt(pos);
@@ -2408,8 +2438,8 @@ void MainWindow::onLegendContextMenu(const QPoint &pos)
 
     if (QCPPlottableLegendItem *plottableItem = qobject_cast<QCPPlottableLegendItem *>(legendItem))
     {
-        // --- 1. 用户右键点击了 *图例条目* ---
-        QCPGraph *graph = qobject_cast<QCPGraph *>(plottableItem->plottable());
+        // --- 2. 用户右键点击了 *图例条目* ---
+        graph = qobject_cast<QCPGraph *>(plottableItem->plottable()); // 复用 graph 变量
         if (!graph)
             return;
 
@@ -2431,7 +2461,7 @@ void MainWindow::onLegendContextMenu(const QPoint &pos)
     }
     else if (qobject_cast<QCPAxisRect *>(el) || qobject_cast<QCPLegend *>(el))
     {
-        // --- 2. (新增) 用户右键点击了 *图表背景* (QCPAxisRect) 或 *图例背景* (QCPLegend) ---
+        // --- 3. (不变) 用户右键点击了 *图表背景* (QCPAxisRect) 或 *图例背景* (QCPLegend) ---
 
         // 找到此 plot 对应的 plotIndex
         int plotIndex = m_plotWidgetMap.value(plot, -1);
