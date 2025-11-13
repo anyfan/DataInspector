@@ -122,6 +122,7 @@ MainWindow::MainWindow(QWidget *parent)
       m_fitViewAction(nullptr),
       m_fitViewTimeAction(nullptr),
       m_fitViewYAction(nullptr),
+      m_toggleLegendAction(nullptr),
       m_customLayoutDialog(nullptr), // <-- 崩溃修复
       m_customRowsSpinBox(nullptr),  // <-- 崩溃修复
       m_customColsSpinBox(nullptr),  // <-- 崩溃修复
@@ -303,6 +304,15 @@ void MainWindow::createActions()
     m_replayAction = new QAction(tr("重放"), this);
     m_replayAction->setCheckable(true);
     connect(m_replayAction, &QAction::toggled, this, &MainWindow::onReplayActionToggled);
+
+    // --- 新增：图例切换动作 ---
+    m_toggleLegendAction = new QAction(tr("切换图例"), this);
+    m_toggleLegendAction->setCheckable(true);
+    m_toggleLegendAction->setChecked(true);                                                 // 默认图例是可见的
+    m_toggleLegendAction->setIcon(style()->standardIcon(QStyle::SP_MessageBoxInformation)); // 暂时使用一个占位图标
+    m_toggleLegendAction->setToolTip(tr("显示/隐藏图例"));
+    connect(m_toggleLegendAction, &QAction::toggled, this, &MainWindow::on_actionToggleLegend_toggled);
+    // --- -------------------- ---
 }
 
 void MainWindow::createMenus()
@@ -339,6 +349,10 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_fitViewAction);
     viewMenu->addAction(m_fitViewTimeAction);
     viewMenu->addAction(m_fitViewYAction);
+
+    // --- 添加图例切换菜单项 ---
+    viewMenu->addSeparator();
+    viewMenu->addAction(m_toggleLegendAction);
 }
 
 /**
@@ -357,6 +371,10 @@ void MainWindow::createToolBars()
     m_viewToolBar->addAction(m_fitViewAction);
     m_viewToolBar->addAction(m_fitViewTimeAction);
     m_viewToolBar->addAction(m_fitViewYAction);
+    m_viewToolBar->addSeparator();
+
+    // 添加图例切换按钮
+    m_viewToolBar->addAction(m_toggleLegendAction);
     m_viewToolBar->addSeparator();
 
     // 添加游标动作
@@ -465,7 +483,8 @@ void MainWindow::createReplayDock()
 void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 {
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
-    plot->legend->setVisible(true);
+    // --- 修改：根据 m_toggleLegendAction 的状态设置图例可见性 ---
+    plot->legend->setVisible(m_toggleLegendAction->isChecked());
 
     QFont axisFont = plot->font();           // 从绘图控件获取基础字体
     axisFont.setPointSize(7);                // 将字号设置为 9 (你可以按需调整)
@@ -2809,5 +2828,20 @@ void MainWindow::onPlotSelectionChanged()
         QSignalBlocker blocker(m_signalTree);
         m_signalTree->scrollTo(item->index(), QAbstractItemView::PositionAtCenter);
         m_signalTree->setCurrentIndex(item->index()); //
+    }
+}
+
+/**
+ * @brief [新增] 切换所有子图中图例的可见性
+ */
+void MainWindow::on_actionToggleLegend_toggled(bool checked)
+{
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (plot && plot->legend)
+        {
+            plot->legend->setVisible(checked);
+            plot->replot();
+        }
     }
 }

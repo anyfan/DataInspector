@@ -149,6 +149,10 @@ private slots:
     // --- 新增：用于在子图选中时同步信号树的槽 ---
     void onPlotSelectionChanged();
 
+    // --- 新增：图例切换槽 ---
+    void on_actionToggleLegend_toggled(bool checked);
+    // --- ----------------- ---
+
     // --- 新增：重写拖放事件处理函数 ---
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -314,6 +318,9 @@ private:
     QAction *m_fitViewAction;
     QAction *m_fitViewTimeAction;
     QAction *m_fitViewYAction;
+
+    // --- 新增：图例切换动作 ---
+    QAction *m_toggleLegendAction;
 
     // 自定义布局对话框的控件指针
     QDialog *m_customLayoutDialog;
