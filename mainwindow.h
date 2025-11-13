@@ -10,6 +10,7 @@
 #include "datamanager.h"
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QEvent> // <-- 新增
 
 // 向前声明
 class QCustomPlot;
@@ -157,8 +158,12 @@ private slots:
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    // --- 新增：设置活动子图的辅助函数 ---
+    void setActivePlot(QCustomPlot *plot);
+    
     // UI 创建
     void createActions();
     void createMenus();

@@ -45,6 +45,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
+#include <QEvent> // <-- 新增
 
 /**
  * @brief [辅助函数] 通过 UniqueIdRole 在模型中迭代查找 QStandardItem (广度优先)
@@ -410,6 +411,12 @@ void MainWindow::createDocks()
     m_signalTree->setHeaderHidden(true);
     m_signalTree->setItemDelegate(new SignalTreeDelegate(m_signalTree));
 
+    // --- 新增：启用从树状视图拖动 ---
+    m_signalTree->setDragEnabled(true);
+    m_signalTree->setDragDropMode(QAbstractItemView::DragOnly);
+    m_signalTree->setSelectionMode(QAbstractItemView::ExtendedSelection); // 允许选择多行进行拖拽
+    // --- ------------------------- ---
+
     dockLayout->addWidget(m_signalTree); // <-- 将树添加到布局中
 
     m_signalDock->setWidget(dockWidget); // <-- 设置容器 QWidget 为 dock 的控件
@@ -511,6 +518,10 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     // (使用 'g' 格式并设置精度，以便大数字自动切换到科学计数法)
     plot->yAxis->setNumberFormat("g");  // 'g' = 通用格式
     plot->yAxis->setNumberPrecision(4); // 精度为 4 (例如 90000 -> 9e+4)
+
+    // --- 新增：允许子图接收拖放并安装事件过滤器 ---
+    plot->setAcceptDrops(true);
+    plot->installEventFilter(this);
 
     // --- 新增：连接图例交互信号 ---
 
@@ -1068,14 +1079,26 @@ void MainWindow::onDataLoadFailed(const QString &filePath, const QString &errorS
     QMessageBox::warning(this, tr("Load Error"), tr("Failed to load %1:\n%2").arg(filePath).arg(errorString));
 }
 
+// --- 修改：恢复 onPlotClicked() 并使用 setActivePlot() ---
 void MainWindow::onPlotClicked()
 {
+    // 这个槽现在只由 mousePress 信号触发，所以 sender() 总是有效的
     QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
-    if (!clickedPlot || clickedPlot == m_activePlot)
+    setActivePlot(clickedPlot); // 调用新的辅助函数
+}
+
+/**
+ * @brief [新增] 设置活动子图的辅助函数
+ * (这个函数包含了上一步 onPlotClicked(QCustomPlot *plot) 的逻辑)
+ * @param plot 要激活的子图
+ */
+void MainWindow::setActivePlot(QCustomPlot *plot)
+{
+    if (!plot || plot == m_activePlot)
         return;
 
     // --- 修正：使用 m_plotWidgetMap 查找索引 ---
-    int plotIndex = m_plotWidgetMap.value(clickedPlot, -1);
+    int plotIndex = m_plotWidgetMap.value(plot, -1);
     if (plotIndex == -1)
         return;
 
@@ -1087,8 +1110,8 @@ void MainWindow::onPlotClicked()
             oldFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
     }
 
-    m_activePlot = clickedPlot;
-    m_lastMousePlot = clickedPlot;
+    m_activePlot = plot;
+    m_lastMousePlot = plot;
 
     // 高亮新的 active plot
     QFrame *frame = m_plotFrameMap.value(m_activePlot);
@@ -2844,4 +2867,92 @@ void MainWindow::on_actionToggleLegend_toggled(bool checked)
             plot->replot();
         }
     }
+}
+
+// ---
+// ---
+// --- 新增：事件过滤器
+// ---
+// ---
+
+/**
+ * @brief [新增] 事件过滤器，用于处理 QCustomPlot 上的拖放事件
+ */
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    // 1. 检查事件是否来自我们的某个 QCustomPlot 控件
+    QCustomPlot *targetPlot = qobject_cast<QCustomPlot *>(watched);
+    if (m_plotWidgets.contains(targetPlot))
+    {
+        // 2. 处理拖动进入事件 (DragEnter)
+        if (event->type() == QEvent::DragEnter)
+        {
+            QDragEnterEvent *dragEvent = static_cast<QDragEnterEvent *>(event);
+
+            // 检查 MimeData 是否来自 QStandardItemModel (即我们的树视图)
+            if (dragEvent->mimeData()->hasFormat("application/x-qabstractitemmodeldatalist"))
+            {
+                // 可选：更严格的检查，确保它是一个信号条目
+                QByteArray encoded = dragEvent->mimeData()->data("application/x-qabstractitemmodeldatalist");
+                QDataStream stream(&encoded, QIODevice::ReadOnly);
+                if (!stream.atEnd())
+                {
+                    int r, c;
+                    QMap<int, QVariant> data;
+                    stream >> r >> c >> data; // 只读取第一个条目进行检查
+
+                    // 如果它是一个信号条目 (而不是文件或表)，则接受拖动
+                    if (data.contains(UniqueIdRole) && data.value(IsSignalItemRole).toBool())
+                    {
+                        dragEvent->acceptProposedAction();
+                        return true; // 已处理事件
+                    }
+                }
+            }
+            // 如果 MimeData 不正确，则忽略事件 (event->ignore() 是默认的)
+        }
+        // 3. 处理放下事件 (Drop)
+        else if (event->type() == QEvent::Drop)
+        {
+            QDropEvent *dropEvent = static_cast<QDropEvent *>(event);
+            QByteArray encoded = dropEvent->mimeData()->data("application/x-qabstractitemmodeldatalist");
+            QDataStream stream(&encoded, QIODevice::ReadOnly);
+
+            // 循环处理所有被拖拽的条目
+            while (!stream.atEnd())
+            {
+                int r, c;
+                QMap<int, QVariant> data;
+                stream >> r >> c >> data; // 读取每个条目的数据
+
+                if (data.contains(UniqueIdRole) && data.value(IsSignalItemRole).toBool())
+                {
+                    QString uniqueID = data.value(UniqueIdRole).toString();
+                    QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+
+                    if (item && item->checkState() == Qt::Unchecked)
+                    {
+                        // 核心逻辑：
+                        // 1. 将活动子图切换到我们放下的目标子图
+                        // --- 修改：调用新的辅助函数 ---
+                        setActivePlot(targetPlot);
+                        // 2. 勾选该条目
+                        // 这将触发 onSignalItemChanged，
+                        // 它会自动将信号添加到 *新* 的活动子图中。
+                        item->setCheckState(Qt::Checked);
+                    }
+                }
+            }
+            dropEvent->acceptProposedAction();
+
+            // --- 新增：拖放完成后清除树的选择 ---
+            m_signalTree->clearSelection();
+
+            updateSignalTreeChecks(); // 确保树的勾选状态在拖放后正确同步
+            return true;              // 已处理事件
+        }
+    }
+
+    // 4. 将所有其他事件传递给基类
+    return QMainWindow::eventFilter(watched, event);
 }
