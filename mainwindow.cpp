@@ -1125,6 +1125,142 @@ void MainWindow::setActivePlot(QCustomPlot *plot)
     m_signalTree->viewport()->update();
 }
 
+/**
+ * @brief [新增] 将指定ID的信号添加到指定的子图中
+ * (此逻辑从 onSignalItemChanged 提取而来)
+ * @param uniqueID 要添加的信号ID
+ * @param plot 目标 QCustomPlot
+ */
+void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot)
+{
+    int plotIndex = m_plotWidgetMap.value(plot, -1);
+    if (plotIndex == -1)
+        return;
+
+    // 1. 检查是否已存在
+    if (m_plotSignalMap.value(plotIndex).contains(uniqueID))
+    {
+        qWarning() << "Graph" << uniqueID << "already exists on plot" << plot;
+        return;
+    }
+
+    // 2. 查找 QStandardItem (用于获取元数据)
+    QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+    if (!item)
+    {
+        qWarning() << "addSignalToPlot: Could not find item in tree model for ID" << uniqueID;
+        return;
+    }
+    QString signalName = item->text();
+    QPen pen = item->data(PenDataRole).value<QPen>();
+
+    // 3. 查找信号数据 (与 onSignalItemChanged 中的逻辑相同)
+    QStringList parts = uniqueID.split('/');
+    if (parts.size() < 2)
+        return;
+    QString filename = parts[0];
+    if (!m_fileDataMap.contains(filename))
+        return;
+    const FileData &fileData = m_fileDataMap.value(filename);
+
+    const SignalTable *tableData = nullptr;
+    int signalIndex = -1;
+
+    if (parts.size() == 2) // CSV
+    {
+        if (fileData.tables.isEmpty())
+            return;
+        tableData = &fileData.tables.first();
+        signalIndex = parts[1].toInt();
+    }
+    else if (parts.size() == 3) // MAT
+    {
+        QString tablename = parts[1];
+        signalIndex = parts[2].toInt();
+        for (const auto &table : fileData.tables)
+        {
+            if (table.name == tablename)
+            {
+                tableData = &table;
+                break;
+            }
+        }
+    }
+
+    if (!tableData || signalIndex < 0 || signalIndex >= tableData->valueData.size())
+        return;
+
+    // 4. 创建图表
+    QCPGraph *graph = plot->addGraph();
+    graph->setName(signalName);
+    graph->setData(tableData->timeData, tableData->valueData[signalIndex]);
+    graph->setPen(pen);
+
+    // 5. 应用性能修复 (与 onSignalItemChanged 中的逻辑相同)
+    if (graph->selectionDecorator())
+    {
+        QCPSelectionDecorator *decorator = graph->selectionDecorator();
+        QPen selPen = decorator->pen();
+        selPen.setWidth(pen.width());
+        decorator->setPen(selPen);
+        decorator->setBrush(Qt::NoBrush);
+        decorator->setUsedScatterProperties(QCPScatterStyle::spNone);
+    }
+
+    // 6. 更新映射
+    m_plotGraphMap[plot].insert(uniqueID, graph);
+    m_plotSignalMap[plotIndex].insert(uniqueID);
+
+    // 7. 刷新
+    plot->rescaleAxes();
+    plot->replot();
+
+    // 8. 更新游标 (添加新图形后必须重建游标)
+    setupCursors();
+    updateCursors(m_cursorKey1, 1);
+    updateCursors(m_cursorKey2, 2);
+}
+
+/**
+ * @brief [新增] 从指定的子图中移除指定ID的信号
+ * (此逻辑从 onSignalItemChanged 提取而来)
+ * @param uniqueID 要移除的信号ID
+ * @param plot 目标 QCustomPlot
+ */
+void MainWindow::removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot)
+{
+    int plotIndex = m_plotWidgetMap.value(plot, -1);
+    if (plotIndex == -1)
+        return;
+
+    // 1. 检查是否存在
+    if (!m_plotSignalMap.value(plotIndex).contains(uniqueID))
+    {
+        qWarning() << "Graph" << uniqueID << "does not exist on plot" << plot;
+        return;
+    }
+
+    // 2. 查找图表
+    QCPGraph *graph = getGraph(plot, uniqueID);
+    if (graph)
+    {
+        // 3. 移除
+        plot->removeGraph(graph); // removeGraph 会 delete graph
+
+        // 4. 更新映射
+        m_plotGraphMap[plot].remove(uniqueID);
+        m_plotSignalMap[plotIndex].remove(uniqueID);
+
+        // 5. 刷新
+        plot->replot();
+
+        // 6. 更新游标 (移除图形后必须重建游标)
+        setupCursors();
+        updateCursors(m_cursorKey1, 1);
+        updateCursors(m_cursorKey2, 2);
+    }
+}
+
 void MainWindow::updateSignalTreeChecks()
 {
     QSignalBlocker blocker(m_signalTreeModel);
@@ -1221,123 +1357,18 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
     }
     // --- ----------------------- ---
 
-    QSignalBlocker blocker(m_signalTreeModel);
+    // --- 修改：使用新的辅助函数 ---
     if (item->checkState() == Qt::Checked)
     {
-        // --- 修正：使用 m_plotSignalMap ---
-        if (m_plotSignalMap.value(plotIndex).contains(uniqueID))
-        // --- ------------------------- ---
-        {
-            qWarning() << "Graph already exists on this plot.";
-            return;
-        }
         qDebug() << "Adding signal" << signalName << "(id" << uniqueID << ") to plot" << m_activePlot;
-
-        // --- 修改：从 uniqueID 获取数据 ---
-        QStringList parts = uniqueID.split('/');
-        if (parts.size() < 2) // 至少 "filename/signalindex" 或 "filename/tablename/signalindex"
-            return;
-
-        QString filename = parts[0];
-        if (!m_fileDataMap.contains(filename))
-            return;
-        const FileData &fileData = m_fileDataMap.value(filename);
-
-        const SignalTable *tableData = nullptr;
-        int signalIndex = -1;
-
-        if (parts.size() == 2) // CSV 格式: "filename/signalindex" (表名被跳过)
-        {
-            if (fileData.tables.isEmpty())
-                return;
-            tableData = &fileData.tables.first();
-            signalIndex = parts[1].toInt();
-        }
-        else if (parts.size() == 3) // MAT 格式: "filename/tablename/signalindex"
-        {
-            QString tablename = parts[1];
-            signalIndex = parts[2].toInt();
-            for (const auto &table : fileData.tables)
-            {
-                if (table.name == tablename)
-                {
-                    tableData = &table;
-                    break;
-                }
-            }
-        }
-
-        if (!tableData || signalIndex < 0 || signalIndex >= tableData->valueData.size())
-            return;
-        // --- ------------------------- ---
-
-        QCPGraph *graph = m_activePlot->addGraph();
-        graph->setName(signalName);
-        graph->setData(tableData->timeData, tableData->valueData[signalIndex]); // <-- 使用特定文件和表的数据
-        QPen pen = item->data(PenDataRole).value<QPen>();
-        graph->setPen(pen);
-
-        // ---
-        // --- 新增修复：优化选中性能 ---
-        // ---
-        // 默认的 QCPSelectionDecorator 使用 2.5px 宽的笔。
-        // 在绘制密集数据时，这会导致严重的性能问题并使UI冻结。
-        // 我们通过修改装饰器来解决这个问题，使其使用与图表
-        // 原始线条 *相同宽度* 的笔，只改变颜色。
-        if (graph->selectionDecorator())
-        {
-            QCPSelectionDecorator *decorator = graph->selectionDecorator(); //
-            QPen selPen = decorator->pen();                                 // 获取默认的选中笔刷（蓝色，2.5px）
-
-            // 将宽度修改为与原始线条相同（在我们的例子中为 1px）
-            selPen.setWidth(pen.width());
-
-            decorator->setPen(selPen);
-
-            // 我们不希望选中时出现填充或更改散点样式，
-            // 所以我们明确禁用它们（尽管它们默认可能是关闭的）
-            decorator->setBrush(Qt::NoBrush);
-            decorator->setUsedScatterProperties(QCPScatterStyle::spNone); //
-        }
-        // --- 修复结束 ---
-
-        // --- 修正：同时更新两个 Map ---
-        m_plotGraphMap[m_activePlot].insert(uniqueID, graph);
-        m_plotSignalMap[plotIndex].insert(uniqueID);
-        // --- ------------------------- ---
-
-        m_activePlot->rescaleAxes();
-        m_activePlot->replot();
+        addSignalToPlot(uniqueID, m_activePlot);
     }
     else // Qt::Unchecked
     {
-        // --- 修正：使用 m_plotSignalMap 和辅助函数 ---
-        if (!m_plotSignalMap.value(plotIndex).contains(uniqueID))
-        // --- ------------------------- ---
-        {
-            return;
-        }
-        // --- 修正：使用辅助函数 ---
-        QCPGraph *graph = getGraph(m_activePlot, uniqueID);
-        // --- ------------------------- ---
-        if (graph)
-        {
-            qDebug() << "Removing signal" << signalName << "from plot" << m_activePlot;
-            m_activePlot->removeGraph(graph); // removeGraph 会 delete graph
-
-            // --- 修正：同时更新两个 Map ---
-            m_plotGraphMap[m_activePlot].remove(uniqueID);
-            m_plotSignalMap[plotIndex].remove(uniqueID);
-            // --- ------------------------- ---
-
-            m_activePlot->replot();
-        }
+        qDebug() << "Removing signal" << signalName << "from plot" << m_activePlot;
+        removeSignalFromPlot(uniqueID, m_activePlot);
     }
-
-    // 添加/删除 graph 后，重建游标以包含/排除它
-    setupCursors();
-    updateCursors(m_cursorKey1, 1);
-    updateCursors(m_cursorKey2, 2);
+    // --- ------------------------- ---
 }
 
 void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index) // <-- 替换此函数
@@ -2929,17 +2960,32 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 {
                     QString uniqueID = data.value(UniqueIdRole).toString();
                     QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+                    if (!item)
+                        continue;
+                    int targetPlotIndex = m_plotWidgetMap.value(targetPlot, -1);
+                    if (targetPlotIndex == -1)
+                        continue;
 
-                    if (item && item->checkState() == Qt::Unchecked)
+                    bool alreadyOnPlot = m_plotSignalMap.value(targetPlotIndex).contains(uniqueID);
+
+                    // 2. 如果不在，则添加它
+                    if (!alreadyOnPlot)
                     {
-                        // 核心逻辑：
-                        // 1. 将活动子图切换到我们放下的目标子图
-                        // --- 修改：调用新的辅助函数 ---
+                        // 设为活动子图 (这样 onSignalItemChanged/addSignalToPlot 会自动使用它)
                         setActivePlot(targetPlot);
-                        // 2. 勾选该条目
-                        // 这将触发 onSignalItemChanged，
-                        // 它会自动将信号添加到 *新* 的活动子图中。
-                        item->setCheckState(Qt::Checked);
+
+                        if (item->checkState() == Qt::Unchecked)
+                        {
+                            // 设为勾选, 这将触发 onSignalItemChanged,
+                            // 后者调用 addSignalToPlot
+                            item->setCheckState(Qt::Checked);
+                        }
+                        else // item 已经是勾选状态
+                        {
+                            // onSignalItemChanged 不会触发,
+                            // 我们必须手动调用 addSignalToPlot
+                            addSignalToPlot(uniqueID, targetPlot);
+                        }
                     }
                 }
             }

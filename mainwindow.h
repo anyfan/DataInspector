@@ -161,9 +161,13 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-    // --- 新增：设置活动子图的辅助函数 ---
+    // --- 设置活动子图的辅助函数 ---
     void setActivePlot(QCustomPlot *plot);
-    
+
+    // --- 新增：添加/删除信号的辅助函数 ---
+    void addSignalToPlot(const QString &uniqueID, QCustomPlot *plot);
+    void removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot);
+
     // UI 创建
     void createActions();
     void createMenus();
