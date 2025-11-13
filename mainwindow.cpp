@@ -818,11 +818,11 @@ void MainWindow::on_actionLayoutCustom_triggered()
 
         m_customRowsSpinBox = new QSpinBox(m_customLayoutDialog);
         m_customRowsSpinBox->setRange(1, 8);
-        m_customRowsSpinBox->setValue(2);
+        m_customRowsSpinBox->setValue(3);
 
         m_customColsSpinBox = new QSpinBox(m_customLayoutDialog);
         m_customColsSpinBox->setRange(1, 8);
-        m_customColsSpinBox->setValue(2);
+        m_customColsSpinBox->setValue(3);
 
         formLayout->addRow(tr("Rows:"), m_customRowsSpinBox);
         formLayout->addRow(tr("Columns:"), m_customColsSpinBox);
