@@ -35,7 +35,6 @@ set_target_properties(matio PROPERTIES
 
 target_link_libraries(matio INTERFACE hdf5)
 
-
 # 查找 Qt5 
 find_package(Qt5 REQUIRED COMPONENTS
     Core
@@ -45,12 +44,17 @@ find_package(Qt5 REQUIRED COMPONENTS
     OpenGL
 )
 
+add_library(qcustomplot ${CMAKE_SOURCE_DIR}/third_libs/qcustomplot-2.1.1/qcustomplot.cpp)
+set_target_properties(qcustomplot PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_libs/qcustomplot-2.1.1"
+)
+target_link_libraries(qcustomplot Qt5::Core Qt5::PrintSupport)
+
 # 添加可执行文件
 add_executable(DataInspector
     main.cpp
     mainwindow.cpp
     datamanager.cpp
-    qcustomplot.cpp 
     signaltreedelegate.cpp
     signalpropertiesdialog.cpp
 )
@@ -60,10 +64,10 @@ target_link_libraries(DataInspector
     Qt5::Core
     Qt5::Gui
     Qt5::Widgets
-    Qt5::PrintSupport
     Qt5::OpenGL
     matio
+    qcustomplot
 )
 
-# 包含当前目录以便找到 qcustomplot.h 等
+# 包含当前
 target_include_directories(DataInspector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
