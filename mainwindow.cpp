@@ -1,7 +1,8 @@
 #include "mainwindow.h"
 #include "qcustomplot.h"
-#include "signaltreedelegate.h"     // <-- 包含自定义委托
-#include "signalpropertiesdialog.h" // <-- 新增：包含新对话框的头文件
+#include "signaltreedelegate.h"
+#include "signalpropertiesdialog.h"
+#include "replaymanager.h"
 
 #include <QMenuBar>
 #include <QMenu>
@@ -27,11 +28,6 @@
 #include <QToolBar>
 #include <QActionGroup>
 #include <QTimer>
-#include <QPushButton>
-#include <QSlider>
-#include <QLabel>
-#include <QDoubleSpinBox>
-#include <QHBoxLayout>
 #include <QStyle>
 #include <QIcon>
 #include <QFileInfo> // 用于获取文件名
@@ -124,21 +120,11 @@ MainWindow::MainWindow(QWidget *parent)
       m_fitViewTimeAction(nullptr),
       m_fitViewYAction(nullptr),
       m_toggleLegendAction(nullptr),
-      m_customLayoutDialog(nullptr), // <-- 崩溃修复
-      m_customRowsSpinBox(nullptr),  // <-- 崩溃修复
-      m_customColsSpinBox(nullptr),  // <-- 崩溃修复
-      m_replayDock(nullptr),
-      m_replayWidget(nullptr),
-      m_playPauseButton(nullptr),
-      m_stepForwardButton(nullptr),
-      m_stepBackwardButton(nullptr),
-      m_speedSpinBox(nullptr),
-      m_timeSlider(nullptr),
-      m_currentTimeLabel(nullptr),
-      m_replayTimer(nullptr),
-      // --- 非指针成员保持不变 ---
-      m_cursorKey1(0),
-      m_cursorKey2(0),
+      m_customLayoutDialog(nullptr),
+      m_customRowsSpinBox(nullptr),
+      m_customColsSpinBox(nullptr),
+      m_cursorManager(nullptr),
+      m_replayManager(nullptr),
       m_colorIndex(0)
 {
     setupDataManagerThread();
@@ -150,9 +136,11 @@ MainWindow::MainWindow(QWidget *parent)
     m_cursorManager = new CursorManager(&m_plotGraphMap, &m_plotWidgets, &m_lastMousePlot, this);
 
     createActions();
+
+    m_replayManager = new ReplayManager(m_replayAction, m_cursorManager, this);
+
     createDocks();
     createToolBars();
-    createReplayDock();
     createMenus();
 
     // 4. 设置窗口标题和大小
@@ -198,12 +186,8 @@ MainWindow::MainWindow(QWidget *parent)
     // 7. 注册 QPen 类型
     qRegisterMetaType<QPen>("QPen");
 
-    // 8. 初始化重放定时器
-    m_replayTimer = new QTimer(this);
-    connect(m_replayTimer, &QTimer::timeout, this, &MainWindow::onReplayTimerTimeout);
-
-    // --- 新增: 连接 CursorManager 的信号 ---
-    connect(m_cursorManager, &CursorManager::cursorKeyChanged, this, &MainWindow::onCursorKeyChanged);
+    connect(m_cursorManager, &CursorManager::cursorKeyChanged,
+            m_replayManager, &ReplayManager::onCursorKeyChanged);
 }
 
 MainWindow::~MainWindow()
@@ -343,9 +327,9 @@ void MainWindow::createMenus()
         viewMenu->addAction(m_signalDock->toggleViewAction());
     }
     // 重放面板菜单项
-    if (m_replayDock)
+    if (m_replayManager && m_replayManager->getDockWidget())
     {
-        viewMenu->addAction(m_replayDock->toggleViewAction());
+        viewMenu->addAction(m_replayManager->getDockWidget()->toggleViewAction());
     }
     // 添加视图菜单项
     viewMenu->addSeparator();
@@ -437,56 +421,11 @@ void MainWindow::createDocks()
 
     // --- 新增：连接搜索框信号 ---
     connect(m_signalSearchBox, &QLineEdit::textChanged, this, &MainWindow::onSignalSearchChanged);
-    // --- ------------------------ ---
-}
 
-/**
- * @brief 创建底部重放停靠栏
- */
-void MainWindow::createReplayDock()
-{
-    m_replayDock = new QDockWidget(tr("重放控制"), this);
-    m_replayWidget = new QWidget(m_replayDock);
-
-    QHBoxLayout *layout = new QHBoxLayout(m_replayWidget);
-
-    m_stepBackwardButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaSeekBackward), "", m_replayWidget);
-    m_playPauseButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaPlay), "", m_replayWidget);
-    m_stepForwardButton = new QPushButton(style()->standardIcon(QStyle::SP_MediaSeekForward), "", m_replayWidget);
-
-    m_currentTimeLabel = new QLabel(tr("Time: 0.0"), m_replayWidget);
-    m_timeSlider = new QSlider(Qt::Horizontal, m_replayWidget);
-    m_timeSlider->setMinimum(0);
-    m_timeSlider->setMaximum(10000); // 10000 步的分辨率
-
-    QLabel *speedLabel = new QLabel(tr("Speed:"), m_replayWidget);
-    m_speedSpinBox = new QDoubleSpinBox(m_replayWidget);
-    m_speedSpinBox->setMinimum(0.1);
-    m_speedSpinBox->setMaximum(100.0);
-    m_speedSpinBox->setValue(1.0);
-    m_speedSpinBox->setSuffix("x");
-
-    layout->addWidget(m_stepBackwardButton);
-    layout->addWidget(m_playPauseButton);
-    layout->addWidget(m_stepForwardButton);
-    layout->addWidget(m_currentTimeLabel);
-    layout->addWidget(m_timeSlider, 1); // 1 = stretch factor
-    layout->addWidget(speedLabel);
-    layout->addWidget(m_speedSpinBox);
-
-    m_replayDock->setWidget(m_replayWidget);
-    m_replayDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
-
-    addDockWidget(Qt::BottomDockWidgetArea, m_replayDock); // 使用 BottomDockWidgetArea 替代错误的 BottomToolBarArea
-
-    // 默认隐藏
-    m_replayDock->hide();
-
-    // 连接信号
-    connect(m_playPauseButton, &QPushButton::clicked, this, &MainWindow::onPlayPauseClicked);
-    connect(m_stepForwardButton, &QPushButton::clicked, this, &MainWindow::onStepForwardClicked);
-    connect(m_stepBackwardButton, &QPushButton::clicked, this, &MainWindow::onStepBackwardClicked);
-    connect(m_timeSlider, &QSlider::valueChanged, this, &MainWindow::onTimeSliderChanged);
+    if (m_replayManager && m_replayManager->getDockWidget())
+    {
+        addDockWidget(Qt::BottomDockWidgetArea, m_replayManager->getDockWidget());
+    }
 }
 
 void MainWindow::setupPlotInteractions(QCustomPlot *plot)
@@ -724,7 +663,7 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
     // 6. 布局更改后，重建游标
     m_cursorManager->setupCursors();
 
-    if (m_cursorManager->getMode() != CursorManager::CursorMode::NoCursor)
+    if (m_cursorManager->getMode() != CursorManager::NoCursor)
     {
         QTimer::singleShot(0, this, &MainWindow::updateCursorsForLayoutChange);
     }
@@ -983,22 +922,20 @@ void MainWindow::onDataLoadFinished(const FileData &data)
     {
         const SignalTable &firstTable = data.tables.first();
         // 将游标 1 移动到数据起点
-        m_cursorKey1 = firstTable.timeData.first();
-        m_cursorKey2 = firstTable.timeData.first() + getGlobalTimeRange().size() * 0.1; // 游标 2 在 10% 处
-        m_cursorManager->updateCursors(m_cursorKey1, 1);
-        m_cursorManager->updateCursors(m_cursorKey2, 2);
+        m_cursorManager->updateCursors(firstTable.timeData.first(), 1); // 设置初始位置
+        m_cursorManager->updateCursors(firstTable.timeData.first() + getGlobalTimeRange().size() * 0.1, 2);
 
         // 数据加载完成后自动缩放视图
         on_actionFitView_triggered();
     }
     else
     {
-        // 如果已有数据，仅更新范围并重绘
-        on_actionFitView_triggered(); // 重新缩放以包含新数据
-        m_cursorManager->updateCursors(m_cursorKey1, 1);
-        m_cursorManager->updateCursors(m_cursorKey2, 2);
+        // 如果已有数据，重新缩放以包含新数据
+        on_actionFitView_triggered();
+
+        m_cursorManager->updateAllCursors();
     }
-    updateReplayControls(); // 设置滑块范围
+    updateReplayManagerRange(); // 设置滑块范围
 }
 
 void MainWindow::populateSignalTree(const FileData &data)
@@ -1219,8 +1156,7 @@ void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot)
 
     // 8. 更新游标 (添加新图形后必须重建游标)
     m_cursorManager->setupCursors();
-    m_cursorManager->updateCursors(m_cursorKey1, 1);
-    m_cursorManager->updateCursors(m_cursorKey2, 2);
+    m_cursorManager->updateAllCursors();
 }
 
 /**
@@ -1258,8 +1194,7 @@ void MainWindow::removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot
 
         // 6. 更新游标 (移除图形后必须重建游标)
         m_cursorManager->setupCursors();
-        m_cursorManager->updateCursors(m_cursorKey1, 1);
-        m_cursorManager->updateCursors(m_cursorKey2, 2);
+        m_cursorManager->updateAllCursors();
     }
 }
 
@@ -1541,27 +1476,11 @@ void MainWindow::removeFile(const QString &filename)
     }
 
     // 4. 清理和更新
-    m_cursorManager->setupCursors(); // 重建游标
-    m_cursorManager->updateCursors(m_cursorKey1, 1);
-    m_cursorManager->updateCursors(m_cursorKey2, 2);
-    updateReplayControls();
+    m_cursorManager->setupCursors();
+    m_cursorManager->updateAllCursors();
+    updateReplayManagerRange(); // <-- 新增
+
     on_actionFitView_triggered(); // 重新缩放视图
-}
-
-// --- ----------------------------- ---
-
-void MainWindow::onCursorKeyChanged(double key, int cursorIndex)
-{
-    if (cursorIndex == 1)
-    {
-        m_cursorKey1 = key;
-        // 仅当游标 1 移动时更新重放控件
-        updateReplayControls();
-    }
-    else if (cursorIndex == 2)
-    {
-        m_cursorKey2 = key;
-    }
 }
 
 /**
@@ -1569,40 +1488,14 @@ void MainWindow::onCursorKeyChanged(double key, int cursorIndex)
  */
 void MainWindow::onReplayActionToggled(bool checked)
 {
-    m_replayDock->setVisible(checked);
-
-    // --- 修改：使用 CursorManager 的状态 ---
     if (checked && m_cursorManager->getMode() == CursorManager::NoCursor)
     {
         // 如果没有游标，自动启用单游标
         m_cursorSingleAction->setChecked(true);
         // 手动触发 CursorManager 更新
-        m_cursorManager->onCursorActionTriggered(m_cursorSingleAction);
+        m_cursorManager->setMode(CursorManager::SingleCursor);
     }
     // --- --------------------------------- ---
-}
-
-/**
- * @brief [新增] 更新重放控件 (滑块和标签)
- */
-void MainWindow::updateReplayControls()
-{
-    if (m_fileDataMap.isEmpty())
-        return;
-
-    QCPRange range = getGlobalTimeRange();
-    if (range.size() <= 0)
-        return;
-
-    // 更新标签 (读取 m_cursorKey1)
-    m_currentTimeLabel->setText(tr("Time: %1").arg(m_cursorKey1, 0, 'f', 4));
-
-    // 更新滑块 (读取 m_cursorKey1)
-    double relativePos = (m_cursorKey1 - range.lower) / range.size();
-    {
-        QSignalBlocker blocker(m_timeSlider);
-        m_timeSlider->setValue(relativePos * m_timeSlider->maximum());
-    }
 }
 
 /**
@@ -1678,97 +1571,15 @@ double MainWindow::getSmallestTimeStep() const
 }
 
 /**
- * @brief 播放/暂停按钮点击
+ * @brief [新增] 辅助函数，用于将数据范围推送到 ReplayManager
  */
-void MainWindow::onPlayPauseClicked()
+void MainWindow::updateReplayManagerRange()
 {
-    if (m_replayTimer->isActive())
+    if (m_replayManager)
     {
-        m_replayTimer->stop();
-        m_playPauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
-    }
-    else
-    {
-        // --- 修改：使用固定的 33ms 间隔 (约 30fps) ---
-        m_replayTimer->setInterval(33);
-        m_replayTimer->start();
-        m_playPauseButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
-        // --- ------------------------------------ ---
+        m_replayManager->updateDataRange(getGlobalTimeRange(), getSmallestTimeStep());
     }
 }
-
-/**
- * @brief  重放定时器触发
- */
-void MainWindow::onReplayTimerTimeout()
-{
-    double speed = m_speedSpinBox->value();
-    // --- 修改：时间步长取决于定时器间隔和速度 ---
-    double timeStep = (m_replayTimer->interval() / 1000.0) * speed;
-    // --- ------------------------------------ ---
-
-    if (timeStep <= 0 || speed <= 0)
-        return;
-
-    double newKey = m_cursorKey1 + timeStep; // 总是步进
-    QCPRange range = getGlobalTimeRange();
-
-    if (newKey > range.upper)
-    {
-        newKey = range.lower; // 循环
-    }
-
-    // 更新游标 1
-    m_cursorManager->updateCursors(newKey, 1);
-
-    // 速度可能已更改，但我们保持间隔不变
-}
-
-/**
- * @brief 步进按钮
- */
-void MainWindow::onStepForwardClicked()
-{
-    if (m_replayTimer->isActive())
-        return;
-
-    double timeStep = getSmallestTimeStep(); // <-- 修改
-    double newKey = m_cursorKey1 + timeStep;
-    m_cursorManager->updateCursors(newKey, 1);
-}
-
-/**
- * @brief 步退按钮
- */
-void MainWindow::onStepBackwardClicked()
-{
-    if (m_replayTimer->isActive())
-        return;
-
-    double timeStep = getSmallestTimeStep(); // <-- 修改
-    double newKey = m_cursorKey1 - timeStep;
-    m_cursorManager->updateCursors(newKey, 1);
-}
-
-/**
- * @brief 时间滑块被用户拖动
- */
-void MainWindow::onTimeSliderChanged(int value)
-{
-    if (m_replayTimer->isActive())
-        return; // 播放时，定时器优先
-
-    QCPRange range = getGlobalTimeRange();
-    if (range.size() <= 0)
-        return;
-
-    double relativePos = (double)value / m_timeSlider->maximum();
-    double newKey = range.lower + relativePos * range.size();
-
-    m_cursorManager->updateCursors(newKey, 1);
-}
-
-// --- 新增：视图缩放槽函数实现 ---
 
 /**
  * @brief [槽] 适应视图大小 (所有子图, X 和 Y 轴)
@@ -1928,9 +1739,7 @@ void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
     // X轴变化时，游标也需要更新
     if (m_cursorManager->getMode() != CursorManager::NoCursor)
     {
-        m_cursorManager->updateCursors(m_cursorKey1, 1);
-        if (m_cursorManager->getMode() == CursorManager::DoubleCursor)
-            m_cursorManager->updateCursors(m_cursorKey2, 2);
+        m_cursorManager->updateAllCursors();
     }
 }
 // --- ----------------------- ---
@@ -1972,11 +1781,7 @@ void MainWindow::updateCursorsForLayoutChange()
 {
     if (m_cursorManager->getMode() != CursorManager::NoCursor)
     {
-        m_cursorManager->updateCursors(m_cursorKey1, 1);
-        if (m_cursorManager->getMode() == CursorManager::DoubleCursor)
-        {
-            m_cursorManager->updateCursors(m_cursorKey2, 2);
-        }
+        m_cursorManager->updateAllCursors();
     }
 }
 

@@ -58,6 +58,7 @@ add_executable(DataInspector
     signaltreedelegate.cpp
     signalpropertiesdialog.cpp
     cursormanager.cpp
+    replaymanager.cpp
 )
 
 # 链接 Qt5 库

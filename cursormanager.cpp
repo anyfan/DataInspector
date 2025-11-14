@@ -35,9 +35,6 @@ CursorManager::CursorMode CursorManager::getMode() const
  */
 void CursorManager::onCursorActionTriggered(QAction *action)
 {
-    // 我们假设 action->text() 是在 mainwindow.cpp 中设置的
-    // "关闭游标", "单游标", "双游标"
-    // (一个更健壮的方法是使用 QAction::setData() 存储枚举值)
     QString text = action->text();
     CursorMode newMode = CursorManager::NoCursor;
 
@@ -54,10 +51,18 @@ void CursorManager::onCursorActionTriggered(QAction *action)
         newMode = CursorManager::NoCursor;
     }
 
-    if (m_cursorMode == newMode)
+    setMode(newMode); // <-- 调用新的 setMode 槽
+}
+
+/**
+ * @brief [新增] 以编程方式设置游标模式
+ */
+void CursorManager::setMode(CursorManager::CursorMode mode)
+{
+    if (m_cursorMode == mode)
         return; // 模式未改变
 
-    m_cursorMode = newMode;
+    m_cursorMode = mode;
 
     // --- 修正：在启用/禁用游标时，始终保持平移开启 ---
     for (QCustomPlot *plot : *m_plotWidgets)
@@ -68,6 +73,14 @@ void CursorManager::onCursorActionTriggered(QAction *action)
 
     // 重建游标 UI
     setupCursors();
+    updateAllCursors(); // <-- 使用 updateAllCursors
+}
+
+/**
+ * @brief [新增] 使用内部键值强制更新所有游标
+ */
+void CursorManager::updateAllCursors()
+{
     updateCursors(m_cursorKey1, 1);
     updateCursors(m_cursorKey2, 2);
 }

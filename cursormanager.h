@@ -66,6 +66,17 @@ public slots:
     void onCursorActionTriggered(QAction *action);
 
     /**
+     * @brief [新增][槽] 以编程方式设置游标模式
+     */
+    void setMode(CursorManager::CursorMode mode);
+
+    /**
+     * @brief [新增][槽] 使用内部键值强制更新所有游标
+     * (用于布局更改、添加/删除图表等)
+     */
+    void updateAllCursors();
+
+    /**
      * @brief [槽] 核心同步逻辑：更新所有游标到指定的 key
      * @param key 新的 X 轴坐标
      * @param cursorIndex 要移动的游标 (1 或 2)

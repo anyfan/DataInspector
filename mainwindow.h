@@ -10,9 +10,10 @@
 #include "datamanager.h"
 #include <QDragEnterEvent>
 #include <QDropEvent>
-#include <QEvent> // <-- 新增
+#include <QEvent>
 
 #include "cursormanager.h"
+#include "replaymanager.h"
 
 // 向前声明
 class QCustomPlot;
@@ -30,10 +31,6 @@ class QFrame;
 class QToolBar;
 class QActionGroup;
 class QTimer;
-class QPushButton;
-class QSlider;
-class QLabel;
-class QDoubleSpinBox;
 class QCPRange;
 class QCPLegend;
 class QCPAbstractLegendItem;
@@ -112,18 +109,6 @@ private slots:
     // 重放槽函数
     void onReplayActionToggled(bool checked);
 
-    // --- -------------------- ---
-
-    // 响应 CursorManager 的槽
-    void onCursorKeyChanged(double key, int cursorIndex);
-
-    // 重放控制槽
-    void onPlayPauseClicked();
-    void onStepForwardClicked();
-    void onStepBackwardClicked();
-    void onReplayTimerTimeout();
-    void onTimeSliderChanged(int value);
-
     // 视图缩放槽函数
     void on_actionFitView_triggered();
     void on_actionFitViewTime_triggered();
@@ -162,7 +147,6 @@ private:
     void createMenus();
     void createDocks();
     void createToolBars();
-    void createReplayDock();
 
     /**
      * @brief 设置数据管理工作线程
@@ -200,11 +184,6 @@ private:
     void updateSignalTreeChecks();
 
     /**
-     * @brief 更新重放控件的状态 (滑块范围、标签)
-     */
-    void updateReplayControls();
-
-    /**
      * @brief 获取已加载数据的全局时间范围
      */
     QCPRange getGlobalTimeRange() const;
@@ -213,6 +192,11 @@ private:
      * @brief 估算数据的时间步长 (用于步进)
      */
     double getSmallestTimeStep() const; // <-- 修改：获取最小步长
+
+    /**
+     * @brief 辅助函数，用于将数据范围推送到 ReplayManager
+     */
+    void updateReplayManagerRange();
 
     // --- 辅助函数 ---
     /**
@@ -308,10 +292,6 @@ private:
     QSpinBox *m_customColsSpinBox;
     // --- -------------------- ---
 
-    // --- 游标状态 ---
-    double m_cursorKey1;
-    double m_cursorKey2;
-
     QList<QCPItemLine *> m_cursorLines1;
     QList<QCPItemLine *> m_cursorLines2;
     QList<QCPItemText *> m_cursorXLabels1; // 用于 X 轴标签
@@ -324,19 +304,11 @@ private:
     QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels1; // 用于 Y 轴标签
     QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels2; // 用于 Y 轴标签
 
-    // --- 新增：游标管理器 ---
+    // 游标管理器
     CursorManager *m_cursorManager;
 
-    // --- 重放控制 ---
-    QDockWidget *m_replayDock;
-    QWidget *m_replayWidget;
-    QPushButton *m_playPauseButton;
-    QPushButton *m_stepForwardButton;
-    QPushButton *m_stepBackwardButton;
-    QDoubleSpinBox *m_speedSpinBox;
-    QSlider *m_timeSlider;
-    QLabel *m_currentTimeLabel;
-    QTimer *m_replayTimer;
+    // 重放管理器
+    ReplayManager *m_replayManager;
 
     // --- 加载的数据缓存 使用 QMap 存储多个文件数据 ---
     QMap<QString, FileData> m_fileDataMap;
