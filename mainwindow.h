@@ -12,6 +12,8 @@
 #include <QDropEvent>
 #include <QEvent> // <-- 新增
 
+#include "cursormanager.h"
+
 // 向前声明
 class QCustomPlot;
 class QAction;
@@ -32,9 +34,6 @@ class QPushButton;
 class QSlider;
 class QLabel;
 class QDoubleSpinBox;
-class QCPItemLine;
-class QCPItemTracer;
-class QCPItemText;
 class QCPRange;
 class QCPLegend;
 class QCPAbstractLegendItem;
@@ -64,14 +63,6 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
-
-    // 游标模式枚举
-    enum CursorMode
-    {
-        NoCursor,
-        SingleCursor,
-        DoubleCursor
-    };
 
 signals:
     /**
@@ -118,15 +109,13 @@ private slots:
     void onDeleteFileAction();
     // --- ------------------------- ---
 
-    // 游标和重放槽函数
-    void onCursorModeChanged(QAction *action);
+    // 重放槽函数
     void onReplayActionToggled(bool checked);
 
-    // --- 修改：游标鼠标事件 ---
-    void onPlotMousePress(QMouseEvent *event);
-    void onPlotMouseMove(QMouseEvent *event);
-    void onPlotMouseRelease(QMouseEvent *event);
     // --- -------------------- ---
+
+    // 响应 CursorManager 的槽
+    void onCursorKeyChanged(double key, int cursorIndex);
 
     // 重放控制槽
     void onPlayPauseClicked();
@@ -209,24 +198,6 @@ private:
      * @brief [新增] 根据 m_activePlot 更新信号树的勾选状态
      */
     void updateSignalTreeChecks();
-
-    // --- 游标和重放辅助函数 ---
-    /**
-     * @brief 销毁所有游标项
-     */
-    void clearCursors();
-
-    /**
-     * @brief 根据 m_cursorMode 创建游标项 (lines, tracers)
-     */
-    void setupCursors();
-
-    /**
-     * @brief 核心同步逻辑：更新所有游标到指定的 key
-     * @param key 新的 X 轴坐标
-     * @param cursorIndex 要移动的游标 (1 或 2)
-     */
-    void updateCursors(double key, int cursorIndex = 1);
 
     /**
      * @brief 更新重放控件的状态 (滑块范围、标签)
@@ -338,11 +309,8 @@ private:
     // --- -------------------- ---
 
     // --- 游标状态 ---
-    CursorMode m_cursorMode;
     double m_cursorKey1;
     double m_cursorKey2;
-    bool m_isDraggingCursor1; // 拖拽状态
-    bool m_isDraggingCursor2; // 拖拽状态
 
     QList<QCPItemLine *> m_cursorLines1;
     QList<QCPItemLine *> m_cursorLines2;
@@ -355,6 +323,9 @@ private:
     // (Tracer -> Label) 映射
     QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels1; // 用于 Y 轴标签
     QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels2; // 用于 Y 轴标签
+
+    // --- 新增：游标管理器 ---
+    CursorManager *m_cursorManager;
 
     // --- 重放控制 ---
     QDockWidget *m_replayDock;

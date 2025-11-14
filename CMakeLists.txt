@@ -57,6 +57,7 @@ add_executable(DataInspector
     datamanager.cpp
     signaltreedelegate.cpp
     signalpropertiesdialog.cpp
+    cursormanager.cpp
 )
 
 # 链接 Qt5 库
