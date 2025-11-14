@@ -2,7 +2,7 @@
 #define REPLAYMANAGER_H
 
 #include <QObject>
-// #include <QCPRange> // <-- 新增
+// #include <QCPRange> 
 #include "cursormanager.h"
 #include "qcustomplot.h"
 

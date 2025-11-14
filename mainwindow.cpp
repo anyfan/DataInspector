@@ -30,18 +30,17 @@
 #include <QTimer>
 #include <QStyle>
 #include <QIcon>
-#include <QFileInfo> // 用于获取文件名
-#include <QCursor>   // 用于获取鼠标位置
+#include <QFileInfo>
+#include <QCursor>
 #include <QFormLayout>
 #include <QSpinBox>
 #include <QDialogButtonBox>
-#include <QLineEdit>   // <-- 新增
-#include <QVBoxLayout> // <-- 新增
-// --- 新增：包含拖放和MIME数据的头文件 ---
+#include <QLineEdit>
+#include <QVBoxLayout>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QMimeData>
-#include <QEvent> // <-- 新增
+#include <QEvent>
 
 /**
  * @brief [辅助函数] 通过 UniqueIdRole 在模型中迭代查找 QStandardItem (广度优先)
@@ -90,7 +89,7 @@ static QStandardItem *findItemByUniqueID_BFS(QStandardItemModel *model, const QS
 // --- ---------------- ---
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), // --- 修复：将所有指针成员初始化为 nullptr ---
+    : QMainWindow(parent),
       m_dataThread(nullptr),
       m_dataManager(nullptr),
       m_plotContainer(nullptr),
@@ -147,11 +146,10 @@ MainWindow::MainWindow(QWidget *parent)
     setWindowTitle(tr("Data Inspector (Async)"));
     resize(1280, 800);
 
-    // --- 新增：在构造函数中启用拖放 ---
+    // 在构造函数中启用拖放
     setAcceptDrops(true);
 
-    // --- 新增：初始化颜色列表 ---
-    // 默认颜色 (7)
+    // 初始化颜色列表
     m_colorList << QColor("#0072bd"); // 蓝
     m_colorList << QColor("#d95319"); // 橙
     m_colorList << QColor("#edb120"); // 黄
@@ -207,7 +205,7 @@ void MainWindow::setupDataManagerThread()
 
     connect(this, &MainWindow::requestLoadCsv, m_dataManager, &DataManager::loadCsvFile, Qt::QueuedConnection);
     connect(this, &MainWindow::requestLoadMat, m_dataManager, &DataManager::loadMatFile, Qt::QueuedConnection);
-    // --- --------------------- ---
+
     connect(m_dataManager, &DataManager::loadProgress, this, &MainWindow::showLoadProgress, Qt::QueuedConnection);
     connect(m_dataManager, &DataManager::loadFinished, this, &MainWindow::onDataLoadFinished, Qt::QueuedConnection);
     connect(m_dataManager, &DataManager::loadFailed, this, &MainWindow::onDataLoadFailed, Qt::QueuedConnection);
@@ -226,7 +224,7 @@ void MainWindow::createActions()
     m_loadFileAction->setShortcut(QKeySequence::Open);
     connect(m_loadFileAction, &QAction::triggered, this, &MainWindow::on_actionLoadFile_triggered);
 
-    // --- 替换布局菜单 ---
+    // 替换布局菜单
     m_layout1x1Action = new QAction(tr("1x1 Layout"), this);
     connect(m_layout1x1Action, &QAction::triggered, this, &MainWindow::on_actionLayout1x1_triggered);
 
@@ -253,21 +251,20 @@ void MainWindow::createActions()
 
     m_layoutCustomAction = new QAction(tr("Custom Grid..."), this);
     connect(m_layoutCustomAction, &QAction::triggered, this, &MainWindow::on_actionLayoutCustom_triggered);
-    // --- ---------------- ---
 
     // 视图缩放动作
     m_fitViewAction = new QAction(tr("Fit View"), this);
-    m_fitViewAction->setIcon(style()->standardIcon(QStyle::SP_DesktopIcon)); // 使用标准图标
+    m_fitViewAction->setIcon(style()->standardIcon(QStyle::SP_DesktopIcon));
     m_fitViewAction->setToolTip(tr("适应视图"));
     connect(m_fitViewAction, &QAction::triggered, this, &MainWindow::on_actionFitView_triggered);
 
     m_fitViewTimeAction = new QAction(tr("Fit View (Time)"), this);
-    m_fitViewTimeAction->setIcon(QIcon::fromTheme("zoom-fit-width", style()->standardIcon(QStyle::SP_ArrowRight))); // 尝试主题图标
+    m_fitViewTimeAction->setIcon(QIcon::fromTheme("zoom-fit-width", style()->standardIcon(QStyle::SP_ArrowRight)));
     m_fitViewTimeAction->setToolTip(tr("适应视图（时间轴）"));
     connect(m_fitViewTimeAction, &QAction::triggered, this, &MainWindow::on_actionFitViewTime_triggered);
 
     m_fitViewYAction = new QAction(tr("Fit View (Y-Axis)"), this);
-    m_fitViewYAction->setIcon(QIcon::fromTheme("zoom-fit-height", style()->standardIcon(QStyle::SP_ArrowDown))); // 尝试主题图标
+    m_fitViewYAction->setIcon(QIcon::fromTheme("zoom-fit-height", style()->standardIcon(QStyle::SP_ArrowDown)));
     m_fitViewYAction->setToolTip(tr("适应视图（Y轴）"));
     connect(m_fitViewYAction, &QAction::triggered, this, &MainWindow::on_actionFitViewY_triggered);
 
@@ -292,14 +289,13 @@ void MainWindow::createActions()
     m_replayAction->setCheckable(true);
     connect(m_replayAction, &QAction::toggled, this, &MainWindow::onReplayActionToggled);
 
-    // --- 新增：图例切换动作 ---
+    // 图例切换动作
     m_toggleLegendAction = new QAction(tr("切换图例"), this);
     m_toggleLegendAction->setCheckable(true);
     m_toggleLegendAction->setChecked(true);                                                 // 默认图例是可见的
     m_toggleLegendAction->setIcon(style()->standardIcon(QStyle::SP_MessageBoxInformation)); // 暂时使用一个占位图标
     m_toggleLegendAction->setToolTip(tr("显示/隐藏图例"));
     connect(m_toggleLegendAction, &QAction::toggled, this, &MainWindow::on_actionToggleLegend_toggled);
-    // --- -------------------- ---
 }
 
 void MainWindow::createMenus()
@@ -337,7 +333,7 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_fitViewTimeAction);
     viewMenu->addAction(m_fitViewYAction);
 
-    // --- 添加图例切换菜单项 ---
+    // 添加图例切换菜单项
     viewMenu->addSeparator();
     viewMenu->addAction(m_toggleLegendAction);
 }
@@ -354,7 +350,7 @@ void MainWindow::createToolBars()
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_viewToolBar->addWidget(spacer);
 
-    // 添加视图缩放按钮 ---
+    // 添加视图缩放按钮
     m_viewToolBar->addAction(m_fitViewAction);
     m_viewToolBar->addAction(m_fitViewTimeAction);
     m_viewToolBar->addAction(m_fitViewYAction);
@@ -378,18 +374,17 @@ void MainWindow::createDocks()
 {
     m_signalDock = new QDockWidget(tr("信号"), this);
 
-    // --- 新增：创建一个容器 QWidget 来存放搜索框和树 ---
+    // 创建一个容器 QWidget 来存放搜索框和树
     QWidget *dockWidget = new QWidget(m_signalDock);
     QVBoxLayout *dockLayout = new QVBoxLayout(dockWidget);
     dockLayout->setContentsMargins(4, 4, 4, 4); // 紧凑边距
     dockLayout->setSpacing(4);                  // 控件间距
 
-    // --- 新增：创建并添加搜索框 ---
+    // 创建并添加搜索框
     m_signalSearchBox = new QLineEdit(dockWidget);
     m_signalSearchBox->setPlaceholderText(tr("搜索信号..."));
     m_signalSearchBox->setClearButtonEnabled(true);
     dockLayout->addWidget(m_signalSearchBox);
-    // --- ---------------------- ---
 
     m_signalTree = new QTreeView(dockWidget);
     m_signalTreeModel = new QStandardItemModel(m_signalDock);
@@ -397,17 +392,14 @@ void MainWindow::createDocks()
     m_signalTree->setHeaderHidden(true);
     m_signalTree->setItemDelegate(new SignalTreeDelegate(m_signalTree));
 
-    // --- 新增：启用从树状视图拖动 ---
+    // 启用从树状视图拖动
     m_signalTree->setDragEnabled(true);
     m_signalTree->setDragDropMode(QAbstractItemView::DragOnly);
     m_signalTree->setSelectionMode(QAbstractItemView::ExtendedSelection); // 允许选择多行进行拖拽
-    // --- ------------------------- ---
 
     dockLayout->addWidget(m_signalTree); // <-- 将树添加到布局中
 
     m_signalDock->setWidget(dockWidget); // <-- 设置容器 QWidget 为 dock 的控件
-
-    // --- --------------------------------------------------- ---
 
     m_signalDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
     addDockWidget(Qt::LeftDockWidgetArea, m_signalDock);
@@ -415,11 +407,11 @@ void MainWindow::createDocks()
     connect(m_signalTreeModel, &QStandardItemModel::itemChanged, this, &MainWindow::onSignalItemChanged);
     connect(m_signalTree, &QTreeView::doubleClicked, this, &MainWindow::onSignalItemDoubleClicked);
 
-    // --- 新增：连接右键菜单 ---
+    // 连接右键菜单
     m_signalTree->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_signalTree, &QTreeView::customContextMenuRequested, this, &MainWindow::onSignalTreeContextMenu);
 
-    // --- 新增：连接搜索框信号 ---
+    // 连接搜索框信号
     connect(m_signalSearchBox, &QLineEdit::textChanged, this, &MainWindow::onSignalSearchChanged);
 
     if (m_replayManager && m_replayManager->getDockWidget())
@@ -431,7 +423,7 @@ void MainWindow::createDocks()
 void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 {
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
-    // --- 修改：根据 m_toggleLegendAction 的状态设置图例可见性 ---
+    // --- 根据 m_toggleLegendAction 的状态设置图例可见性 ---
     plot->legend->setVisible(m_toggleLegendAction->isChecked());
 
     QFont axisFont = plot->font();           // 从绘图控件获取基础字体
@@ -443,7 +435,7 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 
     connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
 
-    // --- 修改：连接新的鼠标事件处理器 ---
+    // --- 连接新的鼠标事件处理器 ---
     connect(plot, &QCustomPlot::mousePress, m_cursorManager, &CursorManager::onPlotMousePress);
     connect(plot, &QCustomPlot::mouseMove, m_cursorManager, &CursorManager::onPlotMouseMove);
     connect(plot, &QCustomPlot::mouseRelease, m_cursorManager, &CursorManager::onPlotMouseRelease);
@@ -452,28 +444,27 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
             this, &MainWindow::onXAxisRangeChanged);
 
-    // --- 新增：连接子图的选择信号，以同步树视图 ---
+    // 连接子图的选择信号，以同步树视图 ---
     connect(plot, &QCustomPlot::selectionChangedByUser, this, &MainWindow::onPlotSelectionChanged);
 
-    // --- 新增：设置Y轴的数字格式 ---
+    // 设置Y轴的数字格式 ---
     // (使用 'g' 格式并设置精度，以便大数字自动切换到科学计数法)
     plot->yAxis->setNumberFormat("g");  // 'g' = 通用格式
     plot->yAxis->setNumberPrecision(4); // 精度为 4 (例如 90000 -> 9e+4)
 
-    // --- 新增：允许子图接收拖放并安装事件过滤器 ---
+    // 允许子图接收拖放并安装事件过滤器 ---
     plot->setAcceptDrops(true);
     plot->installEventFilter(this);
 
-    // --- 新增：连接图例交互信号 ---
+    // 连接图例交互信号 ---
 
-    // 1. (修正) 连接图例的左键点击信号，用于切换可见性
+    // 1. 连接图例的左键点击信号，用于切换可见性
     //    这个信号在 QCustomPlot *plot* 上，而不是在 plot->legend 上
     // connect(plot, &QCustomPlot::legendClick, this, &MainWindow::onLegendClick);
 
     // 2. 启用并连接图表的上下文菜单（用于图例的右键点击）
     plot->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(plot, &QCustomPlot::customContextMenuRequested, this, &MainWindow::onLegendContextMenu);
-    // --- -------------------------- ---
 }
 
 void MainWindow::clearPlotLayout()
@@ -507,7 +498,7 @@ void MainWindow::clearPlotLayout()
 }
 
 /**
- * @brief [新增] 核心布局函数，使用 QRect 列表创建网格
+ * @brief 核心布局函数，使用 QRect 列表创建网格
  * * QRect(x, y, colSpan, rowSpan)
  */
 void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
@@ -670,7 +661,7 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
 }
 
 /**
- * @brief [重构] 设置中央绘图区域的布局 (如 2x2)
+ * @brief 设置中央绘图区域的布局 (如 2x2)
  * * 这是一个辅助函数，用于调用 setupPlotLayout(const QList<QRect> &geometries)
  */
 void MainWindow::setupPlotLayout(int rows, int cols)
@@ -799,7 +790,7 @@ void MainWindow::on_actionLoadFile_triggered()
 }
 
 /**
- * @brief [新增] 启动加载单个文件的辅助函数
+ * @brief 启动加载单个文件的辅助函数
  * * 无论是通过菜单打开还是拖放，都会调用此函数
  * @param filePath 要加载的文件的路径
  */
@@ -813,7 +804,7 @@ void MainWindow::loadFile(const QString &filePath)
     m_progressDialog->setLabelText(tr("Loading %1...").arg(QFileInfo(filePath).fileName()));
     m_progressDialog->show();
 
-    // --- 新增：检查文件类型 ---
+    // 检查文件类型 ---
     if (filePath.endsWith(".mat", Qt::CaseInsensitive))
     {
         emit requestLoadMat(filePath);
@@ -823,8 +814,6 @@ void MainWindow::loadFile(const QString &filePath)
         emit requestLoadCsv(filePath);
     }
 }
-
-// --- 新增：拖放事件实现 ---
 
 /**
  * @brief [重写] 当文件被拖入窗口时调用
@@ -876,7 +865,6 @@ void MainWindow::dropEvent(QDropEvent *event)
         event->acceptProposedAction();
     }
 }
-// --- ---------------------- ---
 
 void MainWindow::showLoadProgress(int percentage)
 {
@@ -914,7 +902,7 @@ void MainWindow::onDataLoadFinished(const FileData &data)
     }
     m_signalTree->reset(); // <-- CSV 和 MAT 都需要
 
-    // --- 新增：默认展开所有条目 ---
+    // 默认展开所有条目 ---
     m_signalTree->expandAll();
 
     // 3. 更新重放控件和游标
@@ -966,7 +954,7 @@ void MainWindow::populateSignalTree(const FileData &data)
             tableItem->setCheckable(false);
             tableItem->setData(filename, FileNameRole);
             tableItem->setData(false, IsFileItemRole);
-            tableItem->setData(false, IsSignalItemRole); // <-- 新增
+            tableItem->setData(false, IsSignalItemRole);
             fileItem->appendRow(tableItem);
             parentItem = tableItem; // 信号将附加到表条目
         }
@@ -1002,23 +990,21 @@ void MainWindow::populateSignalTree(const FileData &data)
             // 将默认宽度为 2
             // QPen pen(color, 2); //宽度2绘制密集线段会卡
             QPen pen(color, 1);
-            // --- ---------------------------- ---
 
             item->setData(QVariant::fromValue(pen), PenDataRole);
 
             parentItem->appendRow(item); // <-- 添加到父条目 (文件或表)
         }
     }
-    // --- ------------------------------- ---
 }
 
-void MainWindow::onDataLoadFailed(const QString &filePath, const QString &errorString) // <-- 修改
+void MainWindow::onDataLoadFailed(const QString &filePath, const QString &errorString)
 {
     m_progressDialog->hide();
     QMessageBox::warning(this, tr("Load Error"), tr("Failed to load %1:\n%2").arg(filePath).arg(errorString));
 }
 
-// --- 修改：恢复 onPlotClicked() 并使用 setActivePlot() ---
+// --- 恢复 onPlotClicked() 并使用 setActivePlot() ---
 void MainWindow::onPlotClicked()
 {
     // 这个槽现在只由 mousePress 信号触发，所以 sender() 总是有效的
@@ -1027,7 +1013,7 @@ void MainWindow::onPlotClicked()
 }
 
 /**
- * @brief [新增] 设置活动子图的辅助函数
+ * @brief 设置活动子图的辅助函数
  * (这个函数包含了上一步 onPlotClicked(QCustomPlot *plot) 的逻辑)
  * @param plot 要激活的子图
  */
@@ -1036,7 +1022,7 @@ void MainWindow::setActivePlot(QCustomPlot *plot)
     if (!plot || plot == m_activePlot)
         return;
 
-    // --- 修正：使用 m_plotWidgetMap 查找索引 ---
+    // --- 使用 m_plotWidgetMap 查找索引 ---
     int plotIndex = m_plotWidgetMap.value(plot, -1);
     if (plotIndex == -1)
         return;
@@ -1065,7 +1051,7 @@ void MainWindow::setActivePlot(QCustomPlot *plot)
 }
 
 /**
- * @brief [新增] 将指定ID的信号添加到指定的子图中
+ * @brief 将指定ID的信号添加到指定的子图中
  * (此逻辑从 onSignalItemChanged 提取而来)
  * @param uniqueID 要添加的信号ID
  * @param plot 目标 QCustomPlot
@@ -1160,7 +1146,7 @@ void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot)
 }
 
 /**
- * @brief [新增] 从指定的子图中移除指定ID的信号
+ * @brief 从指定的子图中移除指定ID的信号
  * (此逻辑从 onSignalItemChanged 提取而来)
  * @param uniqueID 要移除的信号ID
  * @param plot 目标 QCustomPlot
@@ -1202,11 +1188,11 @@ void MainWindow::updateSignalTreeChecks()
 {
     QSignalBlocker blocker(m_signalTreeModel);
 
-    // --- 修正：使用 m_plotSignalMap 和 m_plotWidgetMap ---
+    // --- 使用 m_plotSignalMap 和 m_plotWidgetMap ---
     int activePlotIndex = m_plotWidgetMap.value(m_activePlot, -1);
     const auto &activeSignals = m_plotSignalMap.value(activePlotIndex); // 获取 QSet<QString>
 
-    // --- 修改：遍历树形结构 (文件 -> 表 -> 信号) ---
+    // --- 遍历树形结构 (文件 -> 表 -> 信号) ---
     for (int i = 0; i < m_signalTreeModel->rowCount(); ++i)
     {
         QStandardItem *fileItem = m_signalTreeModel->item(i);
@@ -1253,14 +1239,13 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
     if (!item)
         return;
 
-    // --- 修改：如果是文件或表条目，则忽略 ---
+    // --- 如果是文件或表条目，则忽略 ---
     if (!item->data(IsSignalItemRole).toBool())
     {
         return;
     }
-    // --- ---------------------------- ---
 
-    if (m_fileDataMap.isEmpty()) // <-- 修改
+    if (m_fileDataMap.isEmpty())
     {
         if (item->checkState() == Qt::Checked)
         {
@@ -1270,10 +1255,9 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         return;
     }
 
-    // --- 修正：使用 m_plotWidgetMap ---
+    // --- 使用 m_plotWidgetMap ---
     int plotIndex = m_plotWidgetMap.value(m_activePlot, -1);
     if (!m_activePlot || plotIndex == -1) // 检查 m_activePlot 是否为 null 并且索引有效
-    // --- ------------------------- ---
     {
         if (item->checkState() == Qt::Checked)
         {
@@ -1284,7 +1268,7 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         return;
     }
 
-    // --- 修改：使用 UniqueID ---
+    // --- 使用 UniqueID ---
     QString uniqueID = item->data(UniqueIdRole).toString();
     QString signalName = item->text();
     if (uniqueID.isEmpty())
@@ -1292,9 +1276,8 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         qWarning() << "Invalid signal item" << signalName;
         return;
     }
-    // --- ----------------------- ---
 
-    // --- 修改：使用新的辅助函数 ---
+    // --- 使用新的辅助函数 ---
     if (item->checkState() == Qt::Checked)
     {
         qDebug() << "Adding signal" << signalName << "(id" << uniqueID << ") to plot" << m_activePlot;
@@ -1305,7 +1288,6 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         qDebug() << "Removing signal" << signalName << "from plot" << m_activePlot;
         removeSignalFromPlot(uniqueID, m_activePlot);
     }
-    // --- ------------------------- ---
 }
 
 void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index) // <-- 替换此函数
@@ -1338,7 +1320,7 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index) // <-- 替�
         return; // 用户点击了文本，不是预览线
     }
 
-    // --- 3. (修改) 如果点击在预览线上，则打开新对话框 ---
+    // --- 3. 如果点击在预览线上，则打开新对话框 ---
     QString uniqueID = item->data(UniqueIdRole).toString();
     QPen currentPen = item->data(PenDataRole).value<QPen>();
 
@@ -1350,7 +1332,6 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index) // <-- 替�
     }
 
     QPen newPen = dialog.getSelectedPen(); // 获取包含所有属性的新 QPen
-    // --- ------------------------- ---
 
     item->setData(QVariant::fromValue(newPen), PenDataRole);
 
@@ -1369,7 +1350,7 @@ void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index) // <-- 替�
     }
 }
 
-// --- 新增：信号树的右键菜单槽 ---
+// 信号树的右键菜单槽 ---
 void MainWindow::onSignalTreeContextMenu(const QPoint &pos)
 {
     QModelIndex index = m_signalTree->indexAt(pos);
@@ -1377,12 +1358,11 @@ void MainWindow::onSignalTreeContextMenu(const QPoint &pos)
         return;
 
     QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
-    // --- 修改：只在文件条目上显示菜单 ---
+    // --- 只在文件条目上显示菜单 ---
     if (!item || !item->data(IsFileItemRole).toBool())
         return; // 只在文件条目上显示菜单
-    // --- ---------------------------- ---
 
-    QString filename = item->data(FileNameRole).toString(); // <-- 修改：使用 FileNameRole
+    QString filename = item->data(FileNameRole).toString(); // <-- 使用 FileNameRole
 
     QMenu contextMenu(this);
     QAction *deleteAction = contextMenu.addAction(tr("Remove '%1'").arg(filename));
@@ -1392,7 +1372,7 @@ void MainWindow::onSignalTreeContextMenu(const QPoint &pos)
     contextMenu.exec(m_signalTree->viewport()->mapToGlobal(pos));
 }
 
-// --- 新增：删除文件的动作 ---
+// 删除文件的动作 ---
 void MainWindow::onDeleteFileAction()
 {
     QAction *action = qobject_cast<QAction *>(sender());
@@ -1412,7 +1392,7 @@ void MainWindow::onDeleteFileAction()
     }
 }
 
-// --- 新增：移除文件的辅助函数 ---
+// 移除文件的辅助函数 ---
 void MainWindow::removeFile(const QString &filename)
 {
     // 1. 从数据 map 中移除
@@ -1436,7 +1416,7 @@ void MainWindow::removeFile(const QString &filename)
         QSet<QString> &signalSet = m_plotSignalMap[plotIndex];
 
         // 查找所有属于此文件的 unique IDs
-        // --- 修改：新的 ID 格式 ---
+        // --- 新的 ID 格式 ---
         QString prefix = filename + "/";
         // --- ------------------ ---
         QList<QString> idsToRemove;
@@ -1466,7 +1446,7 @@ void MainWindow::removeFile(const QString &filename)
     QList<QStandardItem *> items = m_signalTreeModel->findItems(filename);
     for (QStandardItem *item : items)
     {
-        // --- 修改：确保我们得到的是顶层文件条目 ---
+        // --- 确保我们得到的是顶层文件条目 ---
         if (item->data(IsFileItemRole).toBool() && item->parent() == nullptr)
         // --- --------------------------------- ---
         {
@@ -1478,7 +1458,7 @@ void MainWindow::removeFile(const QString &filename)
     // 4. 清理和更新
     m_cursorManager->setupCursors();
     m_cursorManager->updateAllCursors();
-    updateReplayManagerRange(); // <-- 新增
+    updateReplayManagerRange();
 
     on_actionFitView_triggered(); // 重新缩放视图
 }
@@ -1495,7 +1475,6 @@ void MainWindow::onReplayActionToggled(bool checked)
         // 手动触发 CursorManager 更新
         m_cursorManager->setMode(CursorManager::SingleCursor);
     }
-    // --- --------------------------------- ---
 }
 
 /**
@@ -1503,7 +1482,7 @@ void MainWindow::onReplayActionToggled(bool checked)
  */
 QCPRange MainWindow::getGlobalTimeRange() const
 {
-    // --- 修改：遍历所有文件 ---
+    // --- 遍历所有文件 ---
     if (m_fileDataMap.isEmpty())
         return QCPRange(0, 1);
 
@@ -1511,7 +1490,7 @@ QCPRange MainWindow::getGlobalTimeRange() const
     QCPRange totalRange;
     for (const FileData &data : m_fileDataMap.values())
     {
-        // --- 新增：遍历所有表 ---
+        // 遍历所有表 ---
         for (const SignalTable &table : data.tables)
         {
             if (!table.timeData.isEmpty())
@@ -1531,14 +1510,12 @@ QCPRange MainWindow::getGlobalTimeRange() const
                 }
             }
         }
-        // --- ----------------- ---
     }
 
     if (first) // 意味着没有文件有数据
         return QCPRange(0, 1);
     else
         return totalRange;
-    // --- ------------------- ---
 }
 
 /**
@@ -1546,12 +1523,12 @@ QCPRange MainWindow::getGlobalTimeRange() const
  */
 double MainWindow::getSmallestTimeStep() const
 {
-    // --- 修改：查找所有文件中的最小步长 ---
+    // --- 查找所有文件中的最小步长 ---
     double minStep = -1.0;
 
     for (const FileData &data : m_fileDataMap.values())
     {
-        // --- 新增：遍历所有表 ---
+        // 遍历所有表 ---
         for (const SignalTable &table : data.tables)
         {
             if (table.timeData.size() >= 2)
@@ -1563,15 +1540,13 @@ double MainWindow::getSmallestTimeStep() const
                 }
             }
         }
-        // --- ----------------- ---
     }
 
     return (minStep > 0) ? minStep : 0.01; // 默认步长
-    // --- ---------------------------- ---
 }
 
 /**
- * @brief [新增] 辅助函数，用于将数据范围推送到 ReplayManager
+ * @brief 辅助函数，用于将数据范围推送到 ReplayManager
  */
 void MainWindow::updateReplayManagerRange()
 {
@@ -1589,7 +1564,7 @@ void MainWindow::on_actionFitView_triggered()
     if (m_plotWidgets.isEmpty())
         return;
 
-    // --- 修改：单独缩放每个图表的 Y 轴，但同步 X 轴 ---
+    // --- 单独缩放每个图表的 Y 轴，但同步 X 轴 ---
     QCPRange globalXRange;
     bool hasXRange = false;
 
@@ -1624,7 +1599,6 @@ void MainWindow::on_actionFitView_triggered()
             }
         }
     }
-    // --- -------------------------------------- ---
 }
 
 /**
@@ -1635,7 +1609,7 @@ void MainWindow::on_actionFitViewTime_triggered()
     if (m_plotWidgets.isEmpty())
         return;
 
-    // --- 修改：找到全局 X 范围并应用 ---
+    // --- 找到全局 X 范围并应用 ---
     QCPRange globalXRange;
     bool hasXRange = false;
 
@@ -1667,7 +1641,6 @@ void MainWindow::on_actionFitViewTime_triggered()
             }
         }
     }
-    // --- ---------------------------- ---
 }
 
 /**
@@ -1675,7 +1648,7 @@ void MainWindow::on_actionFitViewTime_triggered()
  */
 void MainWindow::on_actionFitViewY_triggered()
 {
-    // --- 修正：仅缩放当前X轴范围内的Y轴 ---
+    // --- 仅缩放当前X轴范围内的Y轴 ---
     if (m_activePlot && m_activePlot->graphCount() > 0)
     {
         QCPRange keyRange = m_activePlot->xAxis->range();
@@ -1683,7 +1656,7 @@ void MainWindow::on_actionFitViewY_triggered()
         bool foundRange = false;
 
         // 遍历活动子图上的所有图表
-        // --- 修正：使用 m_plotGraphMap ---
+        // --- 使用 m_plotGraphMap ---
         const auto &graphs = m_plotGraphMap.value(m_activePlot);
         for (QCPGraph *graph : graphs)
         // --- ------------------------- ---
@@ -1709,9 +1682,8 @@ void MainWindow::on_actionFitViewY_triggered()
         }
     }
 }
-// --- ------------------------- ---
 
-// --- 新增：X轴同步槽函数实现 ---
+// X轴同步槽函数实现 ---
 /**
  * @brief [槽] 当一个X轴范围改变时，同步所有其他的X轴
  */
@@ -1742,11 +1714,10 @@ void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
         m_cursorManager->updateAllCursors();
     }
 }
-// --- ----------------------- ---
 
-// --- 新增：辅助函数 ---
+// 辅助函数
 /**
- * @brief [修改] 从 m_plotGraphMap 中安全地获取一个 QCPGraph*
+ * @brief  从 m_plotGraphMap 中安全地获取一个 QCPGraph*
  * @param plot QCustomPlot 控件
  * @param uniqueID 信号的唯一ID ("filename/tablename/signalindex")
  * @return 如果找到则返回 QCPGraph*，否则返回 nullptr
@@ -1761,18 +1732,16 @@ QCPGraph *MainWindow::getGraph(QCustomPlot *plot, const QString &uniqueID) const
 }
 
 /**
- * @brief [修改] 从 QStandardItem 构建 UniqueID
+ * @brief  从 QStandardItem 构建 UniqueID
  */
 QString MainWindow::getUniqueID(QStandardItem *item) const
 {
-    if (!item || !item->data(IsSignalItemRole).toBool()) // <-- 修改
+    if (!item || !item->data(IsSignalItemRole).toBool())
         return QString();
 
-    // --- 修改：UniqueID 现在直接存储在条目中 ---
+    // --- UniqueID 现在直接存储在条目中 ---
     return item->data(UniqueIdRole).toString();
-    // --- ------------------------------------ ---
 }
-// --- ---------------- ---
 
 /**
  * @brief [槽] 在布局更改和重绘完成后更新游标位置
@@ -1787,7 +1756,7 @@ void MainWindow::updateCursorsForLayoutChange()
 
 // ---
 // ---
-// --- 新增：图例交互槽函数
+// 图例交互槽函数
 // ---
 // ---
 
@@ -1825,7 +1794,7 @@ void MainWindow::onLegendContextMenu(const QPoint &pos)
     if (!plot)
         return;
 
-    // --- 新增：首先检查是否点击了图线 (QCPGraph) ---
+    // 首先检查是否点击了图线 (QCPGraph) ---
     // 我们使用 plottableAt 来查找鼠标位置下的 plottable
     // "false" 表示我们不关心它是否可选，我们只想知道它是否在那里
     QCPAbstractPlottable *plottable = plot->plottableAt(pos, false);
@@ -1851,7 +1820,6 @@ void MainWindow::onLegendContextMenu(const QPoint &pos)
         contextMenu.exec(plot->mapToGlobal(pos));
         return; // 处理完毕，退出函数
     }
-    // --- 新增逻辑结束 ---
 
     // --- 如果没有点击图线，则继续检查图例项或背景 ---
 
@@ -1917,9 +1885,8 @@ void MainWindow::onDeleteSignalAction()
     if (uniqueID.isEmpty())
         return;
 
-    // --- 修正：使用更可靠的 BFS 搜索替换 findItems 循环 ---
+    // --- 使用更可靠的 BFS 搜索替换 findItems 循环 ---
     QStandardItem *itemToUncheck = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
-    // --- ------------------------------------------- ---
 
     if (itemToUncheck)
     {
@@ -1947,7 +1914,7 @@ void MainWindow::onDeleteSubplotAction()
 
     // 重点：我们必须迭代一个 *副本*，
     // 因为取消勾选会触发 onSignalItemChanged，
-    // 这将 *修改* 原始的 m_plotSignalMap[plotIndex]，
+    // 这将修改原始的 m_plotSignalMap[plotIndex]，
     // 从而使迭代器失效。
     const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
 
@@ -1984,7 +1951,7 @@ void MainWindow::onDeleteSubplotAction()
 
 // ---
 // ---
-// --- 新增：搜索过滤逻辑
+// 搜索过滤逻辑
 // ---
 // ---
 
@@ -2098,7 +2065,7 @@ void MainWindow::onPlotSelectionChanged()
 }
 
 /**
- * @brief [新增] 切换所有子图中图例的可见性
+ * @brief 切换所有子图中图例的可见性
  */
 void MainWindow::on_actionToggleLegend_toggled(bool checked)
 {
@@ -2114,12 +2081,12 @@ void MainWindow::on_actionToggleLegend_toggled(bool checked)
 
 // ---
 // ---
-// --- 新增：事件过滤器
+// 事件过滤器
 // ---
 // ---
 
 /**
- * @brief [新增] 事件过滤器，用于处理 QCustomPlot 上的拖放事件
+ * @brief 事件过滤器，用于处理 QCustomPlot 上的拖放事件
  */
 bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 {
@@ -2203,7 +2170,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             }
             dropEvent->acceptProposedAction();
 
-            // --- 新增：拖放完成后清除树的选择 ---
+            // 拖放完成后清除树的选择 ---
             m_signalTree->clearSelection();
 
             updateSignalTreeChecks(); // 确保树的勾选状态在拖放后正确同步

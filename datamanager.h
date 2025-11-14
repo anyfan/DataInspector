@@ -5,10 +5,10 @@
 #include <QString>
 #include <QVector>
 #include <QStringList>
-#include <QList> // <-- 新增
+#include <QList> 
 
 /**
- * @brief [新增] 存储一个单独的信号表 (来自 MAT 文件中的 pX)
+ * @brief 存储一个单独的信号表 (来自 MAT 文件中的 pX)
  * * CSV 文件将被视为一个只包含单个 SignalTable 的 FileData。
  */
 struct SignalTable
@@ -21,7 +21,7 @@ struct SignalTable
 Q_DECLARE_METATYPE(SignalTable)
 
 /**
- * @brief [修改] 这是一个新的数据容器，用于通过信号槽传递
+ * @brief  这是一个新的数据容器，用于通过信号槽传递
  * * 它可以容纳来自 CSV 的单个表或来自 MAT 的多个表。
  */
 struct FileData
@@ -51,7 +51,7 @@ public slots:
     void loadCsvFile(const QString &filePath);
 
     /**
-     * @brief [新增][槽] 开始加载 MAT 文件
+     * @brief [槽] 开始加载 MAT 文件
      * @param filePath 文件的完整路径
      */
     void loadMatFile(const QString &filePath);
@@ -64,13 +64,13 @@ signals:
     void loadProgress(int percentage);
 
     /**
-     * @brief [修改][信号] 数据加载成功完成
+     * @brief [信号] 数据加载成功完成
      * @param data 加载并解析后的数据 (包含 filePath 和一个或多个表)
      */
     void loadFinished(const FileData &data);
 
     /**
-     * @brief [修改][信号] 数据加载失败
+     * @brief [信号] 数据加载失败
      * @param filePath 加载失败的文件
      * @param errorString 错误信息
      */

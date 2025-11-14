@@ -5,15 +5,12 @@
 #include <QThread>
 #include <QFileInfo>
 
-// --- 新增：包含 Matio 库 ---
 #include <stdio.h>
 #include <string.h>
 #include "matio.h"
-#include <stdlib.h> // 为了 malloc 和 free
+#include <stdlib.h>
 #include <QMap>
-// --- --------------------- ---
 
-// --- 新增：来自您示例的 UTF-8 辅助函数 ---
 /**
  * @brief [辅助函数] 返回一个 UTF-8 字符的字节长度
  * @param c 字符串的第一个字节
@@ -115,7 +112,7 @@ static QStringList readMatStringArray(matvar_t *variable)
 
         return result;
     }
-    // --- [修改] 新增：检查 MAT_T_UINT8 ---
+    // --- 检查 MAT_T_UINT8 ---
     else if (variable->data_type == MAT_T_INT8)
     {
         size_t rows = variable->dims[0]; // 字符串数量
@@ -157,7 +154,7 @@ static QStringList readMatStringArray(matvar_t *variable)
  */
 static QString readMatString(matvar_t *variable)
 {
-    // --- [修改] 移除类型检查，让 readMatStringArray 处理 ---
+    // --- 移除类型检查，让 readMatStringArray 处理 ---
     if (variable == NULL || variable->data == NULL || variable->rank != 2)
     {
         return QString();
@@ -169,7 +166,6 @@ static QString readMatString(matvar_t *variable)
     }
     return QString();
 }
-// --- --------------------------------- ---
 
 // 注册 FileData 类型，以便在信号槽中使用
 DataManager::DataManager(QObject *parent) : QObject(parent)
@@ -179,7 +175,6 @@ DataManager::DataManager(QObject *parent) : QObject(parent)
 
 void DataManager::loadCsvFile(const QString &filePath)
 {
-    // [修改] loadCsvFile 现在发出 FileData
     FileData fileData;
     fileData.filePath = filePath;
 
@@ -200,7 +195,6 @@ void DataManager::loadCsvFile(const QString &filePath)
     if (!stream.atEnd())
     {
         QString headerLine = stream.readLine();
-        // [修改] 存储在 SignalTable 的 headers 中
         table.headers = headerLine.split(',');
     }
 
@@ -256,7 +250,7 @@ void DataManager::loadCsvFile(const QString &filePath)
             qWarning() << "Skipping line" << lineCount << ": Key is not a valid double.";
             continue;
         }
-        table.timeData.append(key); // [修改]
+        table.timeData.append(key);
 
         for (int i = 0; i < numValueColumns; ++i)
         {
@@ -264,11 +258,11 @@ void DataManager::loadCsvFile(const QString &filePath)
             double value = parts[i + 1].toDouble(&valueOk);
             if (valueOk)
             {
-                table.valueData[i].append(value); // [修改]
+                table.valueData[i].append(value);
             }
             else
             {
-                table.valueData[i].append(qQNaN()); // [修改]
+                table.valueData[i].append(qQNaN());
             }
         }
     }
@@ -283,14 +277,14 @@ void DataManager::loadCsvFile(const QString &filePath)
         }
     }
 
-    fileData.tables.append(table); // [修改]
+    fileData.tables.append(table);
     emit loadProgress(100);
-    emit loadFinished(fileData); // [修改]
+    emit loadFinished(fileData);
     qDebug() << "DataManager: CSV Load finished on thread" << QThread::currentThreadId();
 }
 
 /**
- * @brief [新增] 加载 MAT 文件
+ * @brief 加载 MAT 文件
  */
 void DataManager::loadMatFile(const QString &filePath)
 {
@@ -336,7 +330,7 @@ void DataManager::loadMatFile(const QString &filePath)
         }
 
         SignalTable table;
-        // --- [修改] ---
+
         // 3. 获取表名 (pX) - 根据用户请求
         table.name = pName;
 
@@ -354,7 +348,7 @@ void DataManager::loadMatFile(const QString &filePath)
         int numValueCols = cols - 1;
         double *data = static_cast<double *>(pVar->data);
 
-        // 6. [修改] 验证/调整/组合 headers
+        // 6.  验证/调整/组合 headers
 
         // 检查 titleList1 和 titleList2 是否可能包含时间列
         if (titleList1.size() == numValueCols + 1)
@@ -400,8 +394,6 @@ void DataManager::loadMatFile(const QString &filePath)
             }
         }
 
-        // --- ----------------------- ---
-
         // 7. 调整值数据的大小
         table.valueData.resize(numValueCols);
         table.timeData.reserve(rows);
@@ -410,8 +402,7 @@ void DataManager::loadMatFile(const QString &filePath)
             table.valueData[j].reserve(rows);
         }
 
-        // MATLAB/Matio 以列优先顺序存储数据
-        // data[ (col * rows) + row ]
+        // MATLAB/Matio 以列优先顺序存储数据 data[ (col * rows) + row ]
         for (size_t r = 0; r < rows; ++r)
         {
             // Col 0 是时间
@@ -443,6 +434,6 @@ void DataManager::loadMatFile(const QString &filePath)
     }
 
     emit loadProgress(100);
-    emit loadFinished(fileData); // [修改]
+    emit loadFinished(fileData);
     qDebug() << "DataManager: MAT Load finished on thread" << QThread::currentThreadId();
 }

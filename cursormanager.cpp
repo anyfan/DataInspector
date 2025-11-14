@@ -55,7 +55,7 @@ void CursorManager::onCursorActionTriggered(QAction *action)
 }
 
 /**
- * @brief [新增] 以编程方式设置游标模式
+ * @brief 以编程方式设置游标模式
  */
 void CursorManager::setMode(CursorManager::CursorMode mode)
 {
@@ -64,7 +64,7 @@ void CursorManager::setMode(CursorManager::CursorMode mode)
 
     m_cursorMode = mode;
 
-    // --- 修正：在启用/禁用游标时，始终保持平移开启 ---
+    // --- 在启用/禁用游标时，始终保持平移开启 ---
     for (QCustomPlot *plot : *m_plotWidgets)
     {
         plot->setInteraction(QCP::iRangeDrag, true);
@@ -77,7 +77,7 @@ void CursorManager::setMode(CursorManager::CursorMode mode)
 }
 
 /**
- * @brief [新增] 使用内部键值强制更新所有游标
+ * @brief 使用内部键值强制更新所有游标
  */
 void CursorManager::updateAllCursors()
 {
@@ -111,7 +111,7 @@ void CursorManager::onPlotMousePress(QMouseEvent *event)
             if (dist1 >= 0 && dist1 < plot->selectionTolerance())
             {
                 m_isDraggingCursor1 = true;
-                // --- 修正：暂时禁用平移 ---
+                // --- 暂时禁用平移 ---
                 plot->setInteraction(QCP::iRangeDrag, false);
                 event->accept(); // 接受事件，阻止 QCustomPlot 的 iRangeDrag
                 return;          // 优先拖动游标 1
@@ -129,7 +129,7 @@ void CursorManager::onPlotMousePress(QMouseEvent *event)
             if (dist2 >= 0 && dist2 < plot->selectionTolerance())
             {
                 m_isDraggingCursor2 = true;
-                // --- 修正：暂时禁用平移 ---
+                // --- 暂时禁用平移 ---
                 plot->setInteraction(QCP::iRangeDrag, false);
                 event->accept(); // 接受事件，阻止 QCustomPlot 的 iRangeDrag
                 return;
@@ -264,7 +264,7 @@ void CursorManager::onPlotMouseRelease(QMouseEvent *event)
 {
     Q_UNUSED(event);
 
-    // --- 修正：重新启用平移 ---
+    // --- 重新启用平移 ---
     if (m_isDraggingCursor1 || m_isDraggingCursor2)
     {
         // 必须找到正确的 plot 指针，sender() 可能不可靠

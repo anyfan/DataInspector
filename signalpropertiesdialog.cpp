@@ -6,8 +6,8 @@
 #include <QFormLayout>
 #include <QVBoxLayout>
 #include <QColorDialog>
-#include <QVector> // <-- 新增
-#include <QColor>  // <-- 新增
+#include <QVector>
+#include <QColor>
 
 static const QVector<QColor> matlabColors = {
     QColor("#0072bd"), QColor("#d95319"), QColor("#edb120"),
@@ -87,7 +87,7 @@ QPen SignalPropertiesDialog::getSelectedPen() const
  */
 void SignalPropertiesDialog::onColorButtonClicked()
 {
-    // --- 修改：使用 QColorDialog 实例并设置自定义颜色 ---
+    // --- 使用 QColorDialog 实例并设置自定义颜色 ---
     QColorDialog dialog(m_selectedColor, this);
     dialog.setWindowTitle(tr("Select Signal Color"));
     dialog.setOptions(QColorDialog::ShowAlphaChannel); // 允许设置透明度
@@ -108,7 +108,6 @@ void SignalPropertiesDialog::onColorButtonClicked()
             updateColorButton();
         }
     }
-    // --- -------------------------------------------- ---
 }
 
 /**

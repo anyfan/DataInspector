@@ -4,14 +4,12 @@
 #include <QVariant>
 #include <QApplication>
 
-// --- 修改：更新了角色定义 ---
 // 在 mainwindow.h 中定义
 const int UniqueIdRole = Qt::UserRole + 1;
 const int IsFileItemRole = Qt::UserRole + 2;
 const int PenDataRole = Qt::UserRole + 3;
 const int FileNameRole = Qt::UserRole + 4;
 const int IsSignalItemRole = Qt::UserRole + 5;
-// --- ---------------------------- ---
 
 SignalTreeDelegate::SignalTreeDelegate(QObject *parent)
     : QStyledItemDelegate(parent)
@@ -78,7 +76,6 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     QRect textRect = style->subElementRect(QStyle::SE_ItemViewItemText, &opt, opt.widget);
 
     textRect.setWidth(opt.rect.right() - textRect.left());
-    // --- ------------------------------------------------- ---
 
     style->drawItemText(painter, textRect, opt.displayAlignment, opt.palette, opt.state & QStyle::State_Enabled, text, QPalette::NoRole); // <-- 确保使用 NoRole
 

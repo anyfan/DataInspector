@@ -68,7 +68,7 @@ signals:
     void requestLoadCsv(const QString &filePath);
 
     /**
-     * @brief [新增][信号] 请求工作线程加载一个 MAT 文件
+     * @brief [信号] 请求工作线程加载一个 MAT 文件
      */
     void requestLoadMat(const QString &filePath);
 
@@ -101,7 +101,7 @@ private slots:
     void onLegendContextMenu(const QPoint &pos);
     void onDeleteSignalAction();
     void onDeleteSubplotAction();
-    // --- 新增：信号树的右键菜单槽 ---
+    // 信号树的右键菜单槽 ---
     void onSignalTreeContextMenu(const QPoint &pos);
     void onDeleteFileAction();
     // --- ------------------------- ---
@@ -116,19 +116,19 @@ private slots:
 
     // X轴同步槽
     void onXAxisRangeChanged(const QCPRange &newRange);
-    // --- 新增：用于在布局更改后更新游标的槽 ---
+    // 用于在布局更改后更新游标的槽 ---
     void updateCursorsForLayoutChange();
 
     void onSignalSearchChanged(const QString &text);
 
-    // --- 新增：用于在子图选中时同步信号树的槽 ---
+    // 用于在子图选中时同步信号树的槽 ---
     void onPlotSelectionChanged();
 
-    // --- 新增：图例切换槽 ---
+    // 图例切换槽 ---
     void on_actionToggleLegend_toggled(bool checked);
     // --- ----------------- ---
 
-    // --- 新增：重写拖放事件处理函数 ---
+    // 重写拖放事件处理函数 ---
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
@@ -138,7 +138,7 @@ private:
     // --- 设置活动子图的辅助函数 ---
     void setActivePlot(QCustomPlot *plot);
 
-    // --- 新增：添加/删除信号的辅助函数 ---
+    // 添加/删除信号的辅助函数 ---
     void addSignalToPlot(const QString &uniqueID, QCustomPlot *plot);
     void removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot);
 
@@ -159,7 +159,7 @@ private:
     void setupPlotLayout(int rows, int cols);
 
     /**
-     * @brief [新增] 核心布局函数，使用 QRect 列表创建网格
+     * @brief 核心布局函数，使用 QRect 列表创建网格
      */
     void setupPlotLayout(const QList<QRect> &geometries);
 
@@ -171,7 +171,7 @@ private:
     /**
      * @brief 使用加载的数据填充信号树
      */
-    void populateSignalTree(const FileData &data); // <-- 修改：接收 FileData
+    void populateSignalTree(const FileData &data);
 
     /**
      * @brief 为新创建的 plot 设置标准交互
@@ -179,7 +179,7 @@ private:
     void setupPlotInteractions(QCustomPlot *plot);
 
     /**
-     * @brief [新增] 根据 m_activePlot 更新信号树的勾选状态
+     * @brief 根据 m_activePlot 更新信号树的勾选状态
      */
     void updateSignalTreeChecks();
 
@@ -191,7 +191,7 @@ private:
     /**
      * @brief 估算数据的时间步长 (用于步进)
      */
-    double getSmallestTimeStep() const; // <-- 修改：获取最小步长
+    double getSmallestTimeStep() const; // 获取最小步长
 
     /**
      * @brief 辅助函数，用于将数据范围推送到 ReplayManager
@@ -200,26 +200,26 @@ private:
 
     // --- 辅助函数 ---
     /**
-     * @brief [修改] 从 m_plotGraphMap 中安全地获取一个 QCPGraph*
+     * @brief  从 m_plotGraphMap 中安全地获取一个 QCPGraph*
      */
     QCPGraph *getGraph(QCustomPlot *plot, const QString &uniqueID) const;
     /**
-     * @brief [修改] 从 item 构建 uniqueID
+     * @brief  从 item 构建 uniqueID
      */
     QString getUniqueID(QStandardItem *item) const;
     /**
-     * @brief [新增] 移除一个文件的所有相关数据和图表
+     * @brief 移除一个文件的所有相关数据和图表
      */
     void removeFile(const QString &filename);
 
     /**
-     * @brief [新增] 启动加载单个文件的辅助函数
+     * @brief 启动加载单个文件的辅助函数
      * @param filePath 要加载的文件的路径
      */
     void loadFile(const QString &filePath);
 
     /**
-     * @brief [新增] 递归辅助函数，用于过滤信号树
+     * @brief 递归辅助函数，用于过滤信号树
      * @param item 要检查的当前 QStandardItem
      * @param query 小写的搜索查询
      * @return true 如果此项或其任何子项匹配查询，则返回
@@ -236,7 +236,7 @@ private:
     QDockWidget *m_signalDock; // 左侧停靠栏
     QTreeView *m_signalTree;   // 信号列表
     QStandardItemModel *m_signalTreeModel;
-    QLineEdit *m_signalSearchBox; // <-- 新增：搜索框
+    QLineEdit *m_signalSearchBox;
     QProgressDialog *m_progressDialog;
 
     // --- 绘图管理 ---
@@ -245,7 +245,7 @@ private:
 
     // (Plot -> (UniqueID -> Graph)) 映射
     // UniqueID 是 "filename/tablename/signalindex" 格式的字符串
-    QMap<QCustomPlot *, QMap<QString, QCPGraph *>> m_plotGraphMap; // <-- 修改
+    QMap<QCustomPlot *, QMap<QString, QCPGraph *>> m_plotGraphMap;
 
     // (PlotIndex -> QSet<UniqueID>) 映射
     // UniqueID 是 "filename/tablename/signalindex" 格式的字符串
@@ -283,7 +283,7 @@ private:
     QAction *m_fitViewTimeAction;
     QAction *m_fitViewYAction;
 
-    // --- 新增：图例切换动作 ---
+    // 图例切换动作 ---
     QAction *m_toggleLegendAction;
 
     // 自定义布局对话框的控件指针
