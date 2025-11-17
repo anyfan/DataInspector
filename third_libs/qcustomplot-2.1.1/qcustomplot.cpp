@@ -908,6 +908,12 @@ void QCPPaintBufferGlFbo::draw(QCPPainter *painter) const
     qDebug() << Q_FUNC_INFO << "OpenGL frame buffer object doesn't exist, reallocateBuffer was not called?";
     return;
   }
+
+  //上下文出现紊乱导致
+  if(QOpenGLContext::currentContext() != mGlContext.toStrongRef()){
+      mGlContext.toStrongRef()->makeCurrent(mGlContext.toStrongRef()->surface());
+  }
+
   painter->drawImage(0, 0, mGlFrameBuffer->toImage());
 }
 
@@ -968,7 +974,8 @@ void QCPPaintBufferGlFbo::reallocateBuffer()
   if (paintDevice->size() != mSize*mDevicePixelRatio)
     paintDevice->setSize(mSize*mDevicePixelRatio);
 #ifdef QCP_DEVICEPIXELRATIO_SUPPORTED
-  paintDevice->setDevicePixelRatio(mDevicePixelRatio);
+  // paintDevice->setDevicePixelRatio(mDevicePixelRatio);
+  paintDevice->setDevicePixelRatio(1.0); //修正缩放异常
 #endif
 }
 #endif // QCP_OPENGL_FBO

@@ -44,11 +44,17 @@ find_package(Qt5 REQUIRED COMPONENTS
     OpenGL
 )
 
+# 查找 OpenGL
+find_package(OpenGL REQUIRED)
+
+# 添加预处理器定义以启用QCustomPlot的OpenGL支持
+add_definitions(-DQCUSTOMPLOT_USE_OPENGL)
+
 add_library(qcustomplot ${CMAKE_SOURCE_DIR}/third_libs/qcustomplot-2.1.1/qcustomplot.cpp)
 set_target_properties(qcustomplot PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_libs/qcustomplot-2.1.1"
 )
-target_link_libraries(qcustomplot Qt5::Core Qt5::PrintSupport)
+target_link_libraries(qcustomplot Qt5::Core Qt5::PrintSupport Qt5::OpenGL ${OPENGL_LIBRARIES})
 
 # 添加可执行文件
 add_executable(DataInspector
@@ -69,6 +75,7 @@ target_link_libraries(DataInspector
     Qt5::OpenGL
     matio
     qcustomplot
+    ${OPENGL_LIBRARIES}
 )
 
 # 包含当前
