@@ -1689,6 +1689,12 @@ void MainWindow::on_actionFitViewY_triggered()
         // 设置Y轴范围并重绘
         if (foundRange)
         {
+            // 添加5%的上下边距
+            double size = valueRange.size();
+            double margin = size * 0.05;
+            valueRange.lower -= margin;
+            valueRange.upper += margin;
+
             m_activePlot->yAxis->setRange(valueRange);
             m_activePlot->replot();
         }
