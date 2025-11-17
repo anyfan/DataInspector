@@ -124,6 +124,7 @@ MainWindow::MainWindow(QWidget *parent)
       m_customColsSpinBox(nullptr),
       m_cursorManager(nullptr),
       m_replayManager(nullptr),
+      m_yAxisGroup(nullptr),
       m_colorIndex(0)
 {
     setupDataManagerThread();
@@ -433,6 +434,9 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     plot->yAxis->setTickLabelFont(axisFont); // Y轴的刻度数字
     plot->yAxis->setLabelFont(axisFont);     // Y轴的标签
 
+    // 使用 QCPMarginGroup 进行自动对齐，告诉这个子图的轴矩形，它的左边距由 m_yAxisGroup 管理
+    plot->axisRect()->setMarginGroup(QCP::msLeft, m_yAxisGroup);
+
     connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
 
     // --- 连接新的鼠标事件处理器 ---
@@ -472,6 +476,13 @@ void MainWindow::clearPlotLayout()
 
     // 清除游标
     m_cursorManager->clearCursors();
+
+    // 删除旧的 Y 轴边距组
+    if (m_yAxisGroup)
+    {
+        delete m_yAxisGroup;
+        m_yAxisGroup = nullptr;
+    }
 
     // 清理布局中的所有 QFrame (及其 QCustomPlot 子控件)
     QLayout *layout = m_plotContainer->layout();
@@ -531,11 +542,12 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
 
         QCustomPlot *plot = new QCustomPlot(plotFrame);
 
-        // 强制设置固定的左边距以实现游标对齐
-        plot->axisRect()->setAutoMargins(QCP::MarginSides(QCP::msAll & ~QCP::msLeft));
-        QMargins newMargins = plot->axisRect()->margins();
-        newMargins.setLeft(50); // <-- 你可以在这里调整这个固定值
-        plot->axisRect()->setMargins(newMargins);
+        // --- 创建 Y 轴边距组 ---
+        if (i == 0)
+        {
+            // 如果这是第一个创建的 plot (i == 0)，用它作为父对象来创建新的边距组
+            m_yAxisGroup = new QCPMarginGroup(plot);
+        }
 
         frameLayout->addWidget(plot);
         // --- 使用网格跨度添加 ---

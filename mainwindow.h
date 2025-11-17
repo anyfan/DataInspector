@@ -34,6 +34,7 @@ class QTimer;
 class QCPRange;
 class QCPLegend;
 class QCPAbstractLegendItem;
+class QCPMarginGroup;
 class QDialog;
 class QSpinBox;
 class QLineEdit;
@@ -309,6 +310,9 @@ private:
 
     // 重放管理器
     ReplayManager *m_replayManager;
+
+    // --- Y轴对齐组 ---
+    QCPMarginGroup *m_yAxisGroup; //用于Y轴自动对齐
 
     // --- 加载的数据缓存 使用 QMap 存储多个文件数据 ---
     QMap<QString, FileData> m_fileDataMap;
