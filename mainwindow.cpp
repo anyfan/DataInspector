@@ -258,16 +258,19 @@ void MainWindow::createActions()
     m_fitViewAction = new QAction(tr("Fit View"), this);
     m_fitViewAction->setIcon(style()->standardIcon(QStyle::SP_DesktopIcon));
     m_fitViewAction->setToolTip(tr("适应视图"));
+    m_fitViewAction->setShortcut(Qt::Key_Space); // 空格快捷键
     connect(m_fitViewAction, &QAction::triggered, this, &MainWindow::on_actionFitView_triggered);
 
     m_fitViewTimeAction = new QAction(tr("Fit View (Time)"), this);
     m_fitViewTimeAction->setIcon(QIcon::fromTheme("zoom-fit-width", style()->standardIcon(QStyle::SP_ArrowRight)));
     m_fitViewTimeAction->setToolTip(tr("适应视图（时间轴）"));
+    m_fitViewTimeAction->setShortcut(QKeySequence(tr("Ctrl+Alt+T")));
     connect(m_fitViewTimeAction, &QAction::triggered, this, &MainWindow::on_actionFitViewTime_triggered);
 
     m_fitViewYAction = new QAction(tr("Fit View (Y-Axis)"), this);
     m_fitViewYAction->setIcon(QIcon::fromTheme("zoom-fit-height", style()->standardIcon(QStyle::SP_ArrowDown)));
     m_fitViewYAction->setToolTip(tr("适应视图（Y轴）"));
+    m_fitViewYAction->setShortcut(QKeySequence(tr("Ctrl+Alt+Y")));
     connect(m_fitViewYAction, &QAction::triggered, this, &MainWindow::on_actionFitViewY_triggered);
 
     // 视图/游标动作
@@ -1625,50 +1628,94 @@ void MainWindow::on_actionFitView_triggered()
     if (m_plotWidgets.isEmpty())
         return;
 
-    // --- 单独缩放每个图表的 Y 轴，但同步 X 轴 ---
     QCPRange globalXRange;
     bool hasXRange = false;
 
-    // 第一次遍历：找到全局 X 范围并缩放 Y 轴
+    // 第一次遍历：找到全局 X 范围并计算和设置 Y 轴
     for (QCustomPlot *plot : m_plotWidgets)
     {
+        bool hasYRange = false; // 此子图是否有 Y 范围
+        QCPRange plotYRange;    // 此子图的紧密 Y 范围
+
         if (plot && plot->graphCount() > 0)
         {
-            plot->rescaleAxes(false); // 缩放 Y 轴 (和 X 轴)
+            // 获取此子图上的图表映射
+            const auto &graphsOnPlot = m_plotGraphMap.value(plot);
 
-            // --- 为 Y 轴添加 5% 的边距 ---
-            QCPRange yRange = plot->yAxis->range();
-            double size = yRange.size();
-            double margin = size * 0.05;
-
-            // 处理平坦线 (size == 0) 的情况
-            if (qFuzzyCompare(yRange.lower, yRange.upper))
+            for (QCPGraph *graph : graphsOnPlot.values())
             {
-                // 如果范围是 0，添加一个绝对边距
-                margin = qAbs(yRange.lower * 0.05); // 5% of the value
-                if (qFuzzyIsNull(margin))           // 如果值也是 0
+                if (graph && !graph->data()->isEmpty())
                 {
-                    margin = 0.5; // 添加一个 +/- 0.5 的硬编码边距
+                    bool keyFound = false;
+                    bool valueFound = false;
+
+                    // 1. 获取此图表的 *完整* 键 (X) 范围
+                    QCPRange graphKeyRange = graph->data()->keyRange(keyFound);
+                    if (!keyFound)
+                        continue; // 跳过没有有效键的图表
+
+                    // 2. 获取此图表在 *其完整 X 范围* 内的 *完整* 值 (Y) 范围
+                    QCPRange graphValueRange = graph->getValueRange(valueFound, QCP::sdBoth, graphKeyRange);
+                    if (!valueFound)
+                        continue; // 跳过没有有效值的图表
+
+                    // 3. 扩展全局 X 范围
+                    if (!hasXRange)
+                    {
+                        globalXRange = graphKeyRange;
+                        hasXRange = true;
+                    }
+                    else
+                    {
+                        globalXRange.expand(graphKeyRange);
+                    }
+
+                    // 4. 扩展此子图的 Y 范围
+                    if (!hasYRange)
+                    {
+                        plotYRange = graphValueRange;
+                        hasYRange = true;
+                    }
+                    else
+                    {
+                        plotYRange.expand(graphValueRange);
+                    }
                 }
-            }
+            } // 结束 [遍历此子图上的所有图表]
+            // --- ----------------------- ---
 
-            yRange.lower -= margin;
-            yRange.upper += margin;
-
-            plot->yAxis->setRange(yRange);
-
-            if (!hasXRange)
+            // 5. 现在我们有了此子图的紧密 Y 范围 (plotYRange)，应用 5% 的边距
+            if (hasYRange)
             {
-                globalXRange = plot->xAxis->range();
-                hasXRange = true;
+                QCPRange yRange = plotYRange; // 使用我们刚找到的紧密范围
+                double size = yRange.size();
+                double margin = size * 0.05;
+
+                // 处理平坦线 (size == 0) 的情况
+                if (qFuzzyCompare(yRange.lower, yRange.upper))
+                {
+                    margin = qAbs(yRange.lower * 0.05); // 5% of the value
+                    if (qFuzzyIsNull(margin))           // 如果值也是 0
+                    {
+                        margin = 0.5; // 添加一个 +/- 0.5 的硬编码边距
+                    }
+                }
+
+                yRange.lower -= margin;
+                yRange.upper += margin;
+
+                plot->yAxis->setRange(yRange); // 设置带边距的 Y 轴
             }
-            else
+            else // 此子图有图表对象，但没有有效数据
             {
-                globalXRange.expand(plot->xAxis->range());
+                plot->yAxis->setRange(0, 1); // 设置默认 Y 轴
             }
-            // plot->replot(); // 稍后在第二次遍历中重绘
         }
-    }
+        else if (plot) // 是一个空的子图
+        {
+            plot->yAxis->setRange(0, 1); // 设置默认 Y 轴
+        }
+    } // 结束 [遍历所有子图]
 
     // 第二次遍历：应用全局 X 范围并重绘
     if (hasXRange)
@@ -1678,6 +1725,17 @@ void MainWindow::on_actionFitView_triggered()
             if (plot)
             {
                 plot->xAxis->setRange(globalXRange);
+                plot->replot();
+            }
+        }
+    }
+    else // 所有子图上都没有找到任何有效数据
+    {
+        for (QCustomPlot *plot : m_plotWidgets)
+        {
+            if (plot)
+            {
+                plot->xAxis->setRange(0, 1); // 设置默认 X 轴
                 plot->replot();
             }
         }
