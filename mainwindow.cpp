@@ -449,6 +449,11 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     plot->yAxis->setTickLabelFont(axisFont); // Y轴的刻度数字
     plot->yAxis->setLabelFont(axisFont);     // Y轴的标签
 
+    // 将图例字体也设置为 7pt
+    plot->legend->setFont(axisFont);
+    plot->legend->setIconSize(20, 10);   // 将图标宽度设为20，高度设为10 (默认可能更大)
+    plot->legend->setIconTextPadding(3); // 将图标和文本的间距设为 3 像素 (默认值 5 或 8)
+
     // 使用 QCPMarginGroup 进行自动对齐，告诉这个子图的轴矩形，它的左边距由 m_yAxisGroup 管理
     plot->axisRect()->setMarginGroup(QCP::msLeft, m_yAxisGroup);
 
@@ -1036,6 +1041,35 @@ void MainWindow::onPlotClicked()
 {
     // 这个槽现在只由 mousePress 信号触发，所以 sender() 总是有效的
     QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
+    if (!clickedPlot)
+        return; // 安全检查
+
+    // 1. 检查点击是否在图线 (plottable) 上
+    // 我们需要获取鼠标位置
+    QPoint pos = clickedPlot->mapFromGlobal(QCursor::pos());
+    QCPAbstractPlottable *plottable = clickedPlot->plottableAt(pos, true);
+
+    // 2. 如果点击在背景上 (不在图线上)
+    if (!plottable)
+    {
+        // 取消此子图上的所有选择
+        clickedPlot->deselectAll();
+    }
+
+    // 3. 如果我们正在切换到 *新* 的子图
+    if (m_activePlot && clickedPlot != m_activePlot)
+    {
+        // 遍历所有 *其他* 子图并取消它们的选择
+        for (QCustomPlot *plot : m_plotWidgets)
+        {
+            if (plot && plot != clickedPlot)
+            {
+                plot->deselectAll();
+                plot->replot(); // 确保旧的子图重绘以显示取消选择
+            }
+        }
+    }
+
     setActivePlot(clickedPlot); // 调用新的辅助函数
 }
 
@@ -1072,7 +1106,7 @@ void MainWindow::setActivePlot(QCustomPlot *plot)
         frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
     }
 
-    qDebug() << "Active plot set to:" << m_activePlot << "(Index: " << plotIndex << ")";
+    // qDebug() << "Active plot set to:" << m_activePlot << "(Index: " << plotIndex << ")";
     updateSignalTreeChecks();
     m_signalTree->viewport()->update();
 }
@@ -1600,7 +1634,29 @@ void MainWindow::on_actionFitView_triggered()
     {
         if (plot && plot->graphCount() > 0)
         {
-            plot->rescaleAxes(false); // 缩放 Y 轴
+            plot->rescaleAxes(false); // 缩放 Y 轴 (和 X 轴)
+
+            // --- 为 Y 轴添加 5% 的边距 ---
+            QCPRange yRange = plot->yAxis->range();
+            double size = yRange.size();
+            double margin = size * 0.05;
+
+            // 处理平坦线 (size == 0) 的情况
+            if (qFuzzyCompare(yRange.lower, yRange.upper))
+            {
+                // 如果范围是 0，添加一个绝对边距
+                margin = qAbs(yRange.lower * 0.05); // 5% of the value
+                if (qFuzzyIsNull(margin))           // 如果值也是 0
+                {
+                    margin = 0.5; // 添加一个 +/- 0.5 的硬编码边距
+                }
+            }
+
+            yRange.lower -= margin;
+            yRange.upper += margin;
+
+            plot->yAxis->setRange(yRange);
+
             if (!hasXRange)
             {
                 globalXRange = plot->xAxis->range();
@@ -2221,7 +2277,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
  */
 void MainWindow::onOpenGLActionToggled(bool checked)
 {
-    qDebug() << "Setting OpenGL acceleration to:" << checked;
+    // qDebug() << "Setting OpenGL acceleration to:" << checked;
 
     // 遍历所有当前存在的 QCustomPlot 实例并更新它们
     for (QCustomPlot *plot : m_plotWidgets)
