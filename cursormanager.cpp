@@ -2,6 +2,8 @@
 #include "qcustomplot.h"
 #include <QMouseEvent>
 #include <QDebug>
+#include <algorithm>
+#include <QFontMetrics>
 
 CursorManager::CursorManager(QMap<QCustomPlot *, QMap<QString, QCPGraph *>> *plotGraphMap,
                              QList<QCustomPlot *> *plotWidgets,
@@ -436,6 +438,7 @@ void CursorManager::setupCursors()
             yLabel1->setPositionAlignment(Qt::AlignLeft | Qt::AlignVCenter);
             yLabel1->position->setParentAnchor(tracer1->position);
             yLabel1->position->setCoords(5, 0);
+            yLabel1->setFont(cursorFont);
             m_cursorYLabels1.insert(tracer1, yLabel1);
 
             if (m_cursorMode == CursorManager::DoubleCursor)
@@ -461,6 +464,7 @@ void CursorManager::setupCursors()
                 yLabel2->setPositionAlignment(Qt::AlignLeft | Qt::AlignVCenter);
                 yLabel2->position->setParentAnchor(tracer2->position);
                 yLabel2->position->setCoords(5, 0);
+                yLabel2->setFont(cursorFont);
                 m_cursorYLabels2.insert(tracer2, yLabel2);
             }
         }
@@ -470,6 +474,90 @@ void CursorManager::setupCursors()
     for (QCustomPlot *plot : *m_plotWidgets)
     {
         plot->replot();
+    }
+}
+
+/**
+ * @brief [辅助] 解析并堆叠重叠的Y轴游标标签
+ * * 这个函数在 updateCursors 中被调用
+ * @param labelsOnPlot 此子图上此游标的所有 Y 轴标签
+ */
+void CursorManager::resolveLabelOverlaps(QList<QCPItemText *> &labelsOnPlot)
+{
+    if (labelsOnPlot.size() < 2)
+    {
+        // 如果只有一个或没有标签，重置其偏移量 (以防万一)
+        if (!labelsOnPlot.isEmpty())
+            labelsOnPlot.first()->position->setCoords(5, 0);
+        return;
+    }
+
+    // 1. 按理想的 Y 像素位置 (从上到下) 对标签进行排序
+    std::sort(labelsOnPlot.begin(), labelsOnPlot.end(), [](QCPItemText *a, QCPItemText *b)
+              {
+
+        QCPItemPosition *posA = static_cast<QCPItemPosition*>(a->position->parentAnchor()); // Tracer A
+        QCPItemPosition *posB = static_cast<QCPItemPosition*>(b->position->parentAnchor()); // Tracer B
+  
+        
+        if (posA && posB)
+        {
+            // Y 像素坐标 0 在顶部
+            return posA->pixelPosition().y() < posB->pixelPosition().y();
+        }
+        return false; });
+
+    // 2. 迭代，检查重叠并应用垂直偏移
+    // (我们假设所有标签字体和内边距都相同)
+    QFontMetrics fm(labelsOnPlot.first()->font());
+    const int labelHeight = fm.height() + labelsOnPlot.first()->padding().top() + labelsOnPlot.first()->padding().bottom();
+    const int verticalGap = 2;      // 标签之间的垂直间隙
+    const int horizontalOffset = 5; // 默认水平偏移
+
+    // 'lastBottomY' 存储上一个标签放置后的*屏幕* Y 像素坐标 (底部边缘)
+    double lastBottomY = -1e9; // 初始化为一个非常小的值
+
+    for (QCPItemText *label : labelsOnPlot)
+    {
+
+        QCPItemPosition *anchor = static_cast<QCPItemPosition *>(label->position->parentAnchor()); // Tracer
+
+        if (!anchor)
+            continue;
+
+        // 标签锚点 (tracer) 的理想 Y 像素位置 (垂直居中)
+        double idealY = anchor->pixelPosition().y();
+
+        // 该标签的理想*顶部*边缘
+        // (标签的 Y 坐标是其中心，所以顶部是 中心 - 半高)
+        double idealTopY = idealY - (labelHeight / 2.0);
+
+        // 检查是否与上一个标签重叠
+        if (idealTopY < lastBottomY + verticalGap)
+        {
+            // --- 重叠：向下推 ---
+            // 新的顶部边缘应位于上一个标签的底部 + 间隙
+            double newTopY = lastBottomY + verticalGap;
+
+            // 计算新的中心点
+            double newCenterY = newTopY + (labelHeight / 2.0);
+
+            // Y 偏移量是 *新中心* 和 *理想中心* 之间的差值
+            double yOffset = newCenterY - idealY;
+
+            label->position->setCoords(horizontalOffset, yOffset);
+
+            // 更新下一个循环要检查的 "最后一个底部"
+            lastBottomY = newTopY + labelHeight;
+        }
+        else
+        {
+            // --- 不重叠：使用理想位置 ---
+            label->position->setCoords(horizontalOffset, 0); // 0 垂直偏移
+
+            // 更新 "最后一个底部"
+            lastBottomY = idealTopY + labelHeight;
+        }
     }
 }
 
@@ -545,6 +633,9 @@ void CursorManager::updateCursors(double key, int cursorIndex)
         if (i >= lines->size())
             continue; // 安全检查
 
+        // 用于存储此图上的所有 Y 标签以进行重叠检测
+        QList<QCPItemText *> labelsOnThisPlot;
+
         // A. 更新垂直线 (使用绝对像素坐标)
         double xPixel = plot->xAxis->coordToPixel(key);
         QCPItemLine *line = lines->at(i);
@@ -572,10 +663,18 @@ void CursorManager::updateCursors(double key, int cursorIndex)
                         double value = tracer->position->value();
                         yLabel->setText(QString::number(value, 'f', 3));
                         yLabel->setVisible(true);
+
+                        // 将标签添加到列表中以进行后处理
+
+                        labelsOnThisPlot.append(yLabel);
                     }
                 }
             }
         }
+
+        //  D. 解析此图上所有收集到的标签的重叠
+        resolveLabelOverlaps(labelsOnThisPlot);
+
         plot->replot();
     }
 }

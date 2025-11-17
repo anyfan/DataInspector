@@ -111,6 +111,12 @@ public slots:
     void onPlotMouseRelease(QMouseEvent *event);
 
 private:
+    /**
+     * @brief [辅助] 解析并堆叠重叠的Y轴游标标签
+     * @param labelsOnPlot 此子图上此游标的所有 Y 轴标签
+     */
+    void resolveLabelOverlaps(QList<QCPItemText *> &labelsOnPlot);
+
     // --- 游标状态 ---
     CursorMode m_cursorMode;
     double m_cursorKey1;
