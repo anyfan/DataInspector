@@ -124,6 +124,7 @@ MainWindow::MainWindow(QWidget *parent)
       m_customColsSpinBox(nullptr),
       m_cursorManager(nullptr),
       m_replayManager(nullptr),
+      m_openGLAction(nullptr),
       m_yAxisGroup(nullptr),
       m_colorIndex(0)
 {
@@ -297,6 +298,13 @@ void MainWindow::createActions()
     m_toggleLegendAction->setIcon(style()->standardIcon(QStyle::SP_MessageBoxInformation)); // 暂时使用一个占位图标
     m_toggleLegendAction->setToolTip(tr("显示/隐藏图例"));
     connect(m_toggleLegendAction, &QAction::toggled, this, &MainWindow::on_actionToggleLegend_toggled);
+
+    // 创建 OpenGL 动作 ---
+    m_openGLAction = new QAction(tr("启用 OpenGL 加速"), this);
+    m_openGLAction->setToolTip(tr("切换 QCustomPlot 的 OpenGL 渲染。"));
+    m_openGLAction->setCheckable(true);
+    m_openGLAction->setChecked(false); // 默认关闭
+    connect(m_openGLAction, &QAction::toggled, this, &MainWindow::onOpenGLActionToggled);
 }
 
 void MainWindow::createMenus()
@@ -337,6 +345,10 @@ void MainWindow::createMenus()
     // 添加图例切换菜单项
     viewMenu->addSeparator();
     viewMenu->addAction(m_toggleLegendAction);
+
+    // --- 创建 "设置" 菜单 ---
+    QMenu *settingsMenu = menuBar()->addMenu(tr("&设置"));
+    settingsMenu->addAction(m_openGLAction);
 }
 
 /**
@@ -426,6 +438,9 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
     // --- 根据 m_toggleLegendAction 的状态设置图例可见性 ---
     plot->legend->setVisible(m_toggleLegendAction->isChecked());
+
+    // --- 根据 m_openGLAction 的状态设置 OpenGL ---
+    plot->setOpenGl(m_openGLAction->isChecked());
 
     QFont axisFont = plot->font();           // 从绘图控件获取基础字体
     axisFont.setPointSize(7);                // 将字号设置为 9 (你可以按需调整)
@@ -2198,4 +2213,23 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 
     // 4. 将所有其他事件传递给基类
     return QMainWindow::eventFilter(watched, event);
+}
+
+/**
+ * @brief [槽] 当 OpenGL 动作被切换时调用
+ * @param checked 动作的新勾选状态
+ */
+void MainWindow::onOpenGLActionToggled(bool checked)
+{
+    qDebug() << "Setting OpenGL acceleration to:" << checked;
+
+    // 遍历所有当前存在的 QCustomPlot 实例并更新它们
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (plot)
+        {
+            plot->setOpenGl(checked);
+            plot->replot(); // 立即重绘以应用更改
+        }
+    }
 }

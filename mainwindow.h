@@ -127,6 +127,9 @@ private slots:
 
     // 图例切换槽 ---
     void on_actionToggleLegend_toggled(bool checked);
+
+    // 用于切换 OpenGL
+    void onOpenGLActionToggled(bool checked);
     // --- ----------------- ---
 
     // 重写拖放事件处理函数 ---
@@ -286,6 +289,9 @@ private:
 
     // 图例切换动作 ---
     QAction *m_toggleLegendAction;
+
+    // OpenGL 启用切换
+    QAction *m_openGLAction;
 
     // 自定义布局对话框的控件指针
     QDialog *m_customLayoutDialog;
