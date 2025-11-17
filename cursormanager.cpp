@@ -478,23 +478,49 @@ void CursorManager::setupCursors()
  */
 void CursorManager::updateCursors(double key, int cursorIndex)
 {
-    if (m_cursorMode == CursorManager::NoCursor)
-        return;
+    double *keyToUpdate = nullptr;
 
-    // (此函数依赖 MainWindow::getGlobalTimeRange()，
-    //  在更深度的重构中，这个也应该被移走，但现在
-    //  我们假定 key 已经是钳制过的)
-
-    // 1. 存储 key
-    QList<QCPItemLine *> *lines;
-    QMap<QCPGraph *, QCPItemTracer *> *tracers;
-    QList<QCPItemText *> *xLabels;
-    QMap<QCPItemTracer *, QCPItemText *> *yLabels;
-    double *keyToUpdate;
-
+    // 1. 确定要更新哪个内部状态 (keyToUpdate)
     if (cursorIndex == 1)
     {
         keyToUpdate = &m_cursorKey1;
+    }
+    else if (cursorIndex == 2)
+    {
+        keyToUpdate = &m_cursorKey2;
+    }
+    else
+    {
+        return; // 无效索引
+    }
+
+    // 2. 检查 key 是否真的改变了
+    if (qFuzzyCompare(*keyToUpdate, key))
+    {
+        if (m_cursorMode == CursorManager::NoCursor)
+            return;
+    }
+
+    // 3. 更新内部状态
+    *keyToUpdate = key;
+
+    // 4. 发出信号，通知 (例如 ReplayManager) key 已更新
+    emit cursorKeyChanged(key, cursorIndex);
+
+    // 5. 检查是否需要 *视觉* 更新
+    if (m_cursorMode == CursorManager::NoCursor)
+    {
+        return; // 状态已更新，但没有视觉效果
+    }
+
+    // 6. 确定要更新哪些视觉元素
+    QList<QCPItemLine *> *lines = nullptr;
+    QMap<QCPGraph *, QCPItemTracer *> *tracers = nullptr;
+    QList<QCPItemText *> *xLabels = nullptr;
+    QMap<QCPItemTracer *, QCPItemText *> *yLabels = nullptr;
+
+    if (cursorIndex == 1)
+    {
         lines = &m_cursorLines1;
         tracers = &m_graphTracers1;
         xLabels = &m_cursorXLabels1;
@@ -502,7 +528,6 @@ void CursorManager::updateCursors(double key, int cursorIndex)
     }
     else if (cursorIndex == 2 && m_cursorMode == CursorManager::DoubleCursor)
     {
-        keyToUpdate = &m_cursorKey2;
         lines = &m_cursorLines2;
         tracers = &m_graphTracers2;
         xLabels = &m_cursorXLabels2;
@@ -510,17 +535,10 @@ void CursorManager::updateCursors(double key, int cursorIndex)
     }
     else
     {
-        return; // 无效
+        return; // 状态已更新，但此游标当前模式下不可见
     }
 
-    // 2. 检查 key 是否真的改变了
-    if (qFuzzyCompare(*keyToUpdate, key))
-    {
-        // return; // 避免不必要的重绘
-    }
-    *keyToUpdate = key;
-
-    // 3. 遍历所有 plot，更新它们的游标
+    // 7. 遍历所有 plot，更新它们的游标 (与原函数相同的视觉逻辑)
     for (int i = 0; i < m_plotWidgets->size(); ++i)
     {
         QCustomPlot *plot = m_plotWidgets->at(i);
@@ -560,7 +578,4 @@ void CursorManager::updateCursors(double key, int cursorIndex)
         }
         plot->replot();
     }
-
-    // 4. 发出信号，通知 MainWindow (和其他人) key 已更新
-    emit cursorKeyChanged(key, cursorIndex);
 }
