@@ -82,7 +82,7 @@ add_executable(DataInspector
     DataInspector.rc
 )
 
- target_compile_definitions(DataInspector PRIVATE QUAZIP_STATIC)
+target_compile_definitions(DataInspector PRIVATE QUAZIP_STATIC)
 
 # 链接 Qt5 库
 target_link_libraries(DataInspector
@@ -95,7 +95,6 @@ target_link_libraries(DataInspector
     qcustomplot
     quazip
     ${OPENGL_LIBRARIES}
-
 )
 
 # 包含当前

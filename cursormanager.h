@@ -117,6 +117,13 @@ private:
      */
     void resolveLabelOverlaps(QList<QCPItemText *> &labelsOnPlot);
 
+    /**
+     * @brief [辅助] 将一个 key (X坐标) 吸附到活动子图上的最近数据点
+     * @param key 要吸附的原始 key
+     * @return 吸附后的 key
+     */
+    double snapKeyToData(double key) const;
+
     // --- 游标状态 ---
     CursorMode m_cursorMode;
     double m_cursorKey1;

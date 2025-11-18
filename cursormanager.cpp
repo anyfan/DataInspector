@@ -64,18 +64,86 @@ void CursorManager::setMode(CursorManager::CursorMode mode)
     if (m_cursorMode == mode)
         return; // 模式未改变
 
-    m_cursorMode = mode;
+    CursorMode oldMode = m_cursorMode; // 记录旧模式，以便我们知道是从哪个模式切换过来的
+    m_cursorMode = mode;               // 立即设置新模式
+
+    // --- 计算游标的初始位置 ---
+    // 仅当我们 *启用* 游标时 (即新模式不是 NoCursor)
+    if (mode != CursorManager::NoCursor)
+    {
+        // 1. 获取一个有效的 QCustomPlot* 来读取可见范围
+        QCustomPlot *plot = (*m_lastMousePlotPtr); // 尝试 m_lastMousePlot (最后交互过的)
+        if (!plot && !m_plotWidgets->isEmpty())
+        {
+            plot = m_plotWidgets->first(); // 后备：使用第一个 plot
+        }
+
+        QCPRange visibleRange(0, 1); // 最终后备：如果连 plot 都没有
+        if (plot)
+        {
+            visibleRange = plot->xAxis->range();
+        }
+
+        // 2. 计算 5% 间距
+        double rangeSize = visibleRange.size();
+        double margin = rangeSize * 0.05; // 5%
+
+        // 确保间距有效 (防止范围大小为0 或负数)
+        if (margin <= 0)
+        {
+            margin = 0.1; // 备用一个小的绝对间距
+        }
+
+        // 3. 检查是否是从 "NoCursor" 状态启动
+        if (oldMode == CursorManager::NoCursor)
+        {
+            // 设置 C1 的位置
+            m_cursorKey1 = visibleRange.lower + margin; // 左侧 5%
+
+            // 如果是双游标模式，也设置 C2 的位置
+            if (mode == CursorManager::DoubleCursor)
+            {
+                m_cursorKey2 = visibleRange.upper - margin; // 右侧 5% (95% 位置)
+            }
+        }
+        // 4. 检查是否是从 "Single" 切换到 "Double"
+        else if (oldMode == CursorManager::SingleCursor && mode == CursorManager::DoubleCursor)
+        {
+            // m_cursorKey1 保持原位。我们只需要设置 m_cursorKey2。
+            double newKey2 = visibleRange.upper - margin; // 尝试 95% 位置
+
+            // 确保 C2 在 C1 的右侧 (至少 5% 间距)
+            if (newKey2 <= m_cursorKey1 + margin)
+            {
+                // 放在 C1 右侧 10% 的位置
+                newKey2 = m_cursorKey1 + (rangeSize * 0.1);
+                // 再次检查是否超出右边界
+                if (newKey2 >= visibleRange.upper)
+                {
+                    // 如果 C1 已经很靠右了, 就把 C2 放在 C1 和右边界的中间
+                    newKey2 = (m_cursorKey1 + visibleRange.upper) / 2.0;
+                }
+            }
+            m_cursorKey2 = newKey2;
+        }
+
+        // 在显示游标之前，将计算出的位置吸附到最近的数据点
+        m_cursorKey1 = snapKeyToData(m_cursorKey1);
+        if (mode == CursorManager::DoubleCursor)
+        {
+            m_cursorKey2 = snapKeyToData(m_cursorKey2);
+        }
+    }
 
     // --- 在启用/禁用游标时，始终保持平移开启 ---
     for (QCustomPlot *plot : *m_plotWidgets)
     {
         plot->setInteraction(QCP::iRangeDrag, true);
     }
-    // --- ----------------------------------------- ---
 
     // 重建游标 UI
     setupCursors();
-    updateAllCursors(); // <-- 使用 updateAllCursors
+    updateAllCursors();
 }
 
 /**
@@ -95,9 +163,6 @@ void CursorManager::onPlotMousePress(QMouseEvent *event)
     QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
     if (!plot)
         return;
-
-    // (MainWindow 的 onPlotMousePress 中的非游标逻辑被保留在 MainWindow 中)
-    // ...
 
     if (m_cursorMode == CursorManager::NoCursor)
         return; // 游标未激活
@@ -277,8 +342,6 @@ void CursorManager::onPlotMouseRelease(QMouseEvent *event)
             plot->setInteraction(QCP::iRangeDrag, true);
         }
     }
-    // --- ----------------------- ---
-
     m_isDraggingCursor1 = false;
     m_isDraggingCursor2 = false;
 }
@@ -677,4 +740,73 @@ void CursorManager::updateCursors(double key, int cursorIndex)
 
         plot->replot();
     }
+}
+
+/**
+ * @brief [辅助] 将一个 key (X坐标) 吸附到活动子图上的最近数据点
+ * @param key 要吸附的原始 key
+ * @return 吸附后的 key
+ */
+double CursorManager::snapKeyToData(double key) const
+{
+    // 1. 获取活动 plot
+    QCustomPlot *plot = (*m_lastMousePlotPtr);
+    if (!plot && !m_plotWidgets->isEmpty())
+    {
+        plot = m_plotWidgets->first();
+    }
+
+    if (!plot)
+    {
+        return key; // 没有 plot 可供吸附
+    }
+
+    // 2. 查找此图(plot)上的所有图表(graph)
+    const auto &graphsOnPlot = m_plotGraphMap->value(plot);
+    if (graphsOnPlot.isEmpty())
+    {
+        return key; // 此图上没有图表
+    }
+
+    // 3. 遍历图表, 查找最近的键
+    double closestKey = key;
+    double minDistance = -1.0;
+
+    for (QCPGraph *graph : graphsOnPlot)
+    {
+        if (graph && !graph->data()->isEmpty())
+        {
+            // 使用 QCPDataContainer 的 findBegin 进行高效的二分查找
+            auto it = graph->data()->findBegin(key); // 找到第一个 >= key 的点
+
+            // 检查找到的点
+            if (it != graph->data()->constEnd())
+            {
+                double distAt = qAbs(it->key - key);
+                if (minDistance < 0 || distAt < minDistance)
+                {
+                    minDistance = distAt;
+                    closestKey = it->key;
+                }
+            }
+
+            // 检查找到的点的前一个点
+            if (it != graph->data()->constBegin())
+            {
+                double distBefore = qAbs((it - 1)->key - key);
+                if (minDistance < 0 || distBefore < minDistance)
+                {
+                    minDistance = distBefore;
+                    closestKey = (it - 1)->key;
+                }
+            }
+        }
+    } // 结束 for (graphs)
+
+    if (minDistance >= 0) // 如果找到了一个最近的键
+    {
+        return closestKey; // 4. 返回吸附后的键
+    }
+
+    return key; // 没有找到数据点, 返回原始键
 }
