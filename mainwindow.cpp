@@ -41,6 +41,11 @@
 #include <QDropEvent>
 #include <QMimeData>
 #include <QEvent>
+#include <QDomDocument>
+#include <QColor>
+#include <QMap>
+#include "quazip/quazip.h"
+#include "quazip/quazipfile.h"
 
 /**
  * @brief [辅助函数] 通过 UniqueIdRole 在模型中迭代查找 QStandardItem (广度优先)
@@ -86,6 +91,67 @@ static QStandardItem *findItemByUniqueID_BFS(QStandardItemModel *model, const QS
 
     return nullptr; // 未找到
 }
+
+// --- 导入 .mldatx 视图所需的数据结构 ---
+
+/**
+ * @brief 存储 sdi_view_meta_data.xml 中的布局信息
+ */
+struct MainWindow::LayoutInfo
+{
+    int rows = 1;
+    int cols = 1;
+    QString layoutType = "grid";
+};
+
+/**
+ * @brief 存储 sdi_checked_signals.xml 中单个信号的信息
+ */
+struct MainWindow::SignalInfo
+{
+    QString name;
+    int id = 0;
+    QColor color;
+    QList<int> plotIds; // 该信号显示在哪些子图上 (SDI 索引从 1 开始)
+};
+
+// --- ---------------------------------- ---
+
+/**
+ * @brief [辅助函数] 递归地在 QStandardItemModel 中按名称查找信号条目
+ * @param parentItem 开始搜索的父项 (初始调用时传入 invisibleRootItem)
+ * @param name 要查找的信号名称 (item->text())
+ * @return 找到的 QStandardItem，如果未找到则返回 nullptr
+ */
+static QStandardItem *findItemByName_Recursive(QStandardItem *parentItem, const QString &name)
+{
+    if (!parentItem)
+        return nullptr;
+
+    for (int r = 0; r < parentItem->rowCount(); ++r)
+    {
+        QStandardItem *child = parentItem->child(r);
+        if (!child)
+            continue;
+
+        if (child->data(IsSignalItemRole).toBool())
+        {
+            // 是信号条目，检查名称
+            if (child->text() == name)
+            {
+                return child;
+            }
+        }
+        else
+        {
+            // 是文件或表条目，递归搜索其子项
+            QStandardItem *found = findItemByName_Recursive(child, name);
+            if (found)
+                return found;
+        }
+    }
+    return nullptr; // 在此分支未找到
+}
 // --- ---------------- ---
 
 MainWindow::MainWindow(QWidget *parent)
@@ -100,6 +166,7 @@ MainWindow::MainWindow(QWidget *parent)
       m_activePlot(nullptr),
       m_lastMousePlot(nullptr),
       m_loadFileAction(nullptr),
+      m_importViewAction(nullptr),
       m_layout1x1Action(nullptr),
       m_layout1x2Action(nullptr),
       m_layout2x1Action(nullptr),
@@ -226,6 +293,10 @@ void MainWindow::createActions()
     m_loadFileAction->setShortcut(QKeySequence::Open);
     connect(m_loadFileAction, &QAction::triggered, this, &MainWindow::on_actionLoadFile_triggered);
 
+    // 导入视图动作
+    m_importViewAction = new QAction(tr("&Import View..."), this);
+    connect(m_importViewAction, &QAction::triggered, this, &MainWindow::on_actionImportView_triggered);
+
     // 替换布局菜单
     m_layout1x1Action = new QAction(tr("1x1 Layout"), this);
     connect(m_layout1x1Action, &QAction::triggered, this, &MainWindow::on_actionLayout1x1_triggered);
@@ -314,6 +385,7 @@ void MainWindow::createMenus()
 {
     QMenu *fileMenu = menuBar()->addMenu(tr("&文件"));
     fileMenu->addAction(m_loadFileAction);
+    fileMenu->addAction(m_importViewAction);
 
     QMenu *layoutMenu = menuBar()->addMenu(tr("&布局"));
     layoutMenu->addAction(m_layout1x1Action);
@@ -848,6 +920,189 @@ void MainWindow::loadFile(const QString &filePath)
     {
         emit requestLoadCsv(filePath);
     }
+}
+
+/**
+ * @brief [槽] "导入视图..." 菜单动作被触发
+ */
+void MainWindow::on_actionImportView_triggered()
+{
+    QString mldatxFilePath = QFileDialog::getOpenFileName(this,
+                                                          tr("Import Simulink View"), "", tr("Simulink Data (*.mldatx)"));
+
+    if (mldatxFilePath.isEmpty())
+        return;
+
+    // --- 使用 QuaZip 打开 ---
+    QuaZip zip(mldatxFilePath);
+    if (!zip.open(QuaZip::mdUnzip))
+    {
+        QMessageBox::critical(this, tr("Import Error"), tr("Error: Could not open file as ZIP archive."));
+        return;
+    }
+
+    // --- 查找并解析关键 XML ---
+    QDomDocument viewMetaDataDoc;
+    QDomDocument checkedSignalsDoc;
+    bool foundViewMeta = false;
+    bool foundCheckedSignals = false;
+
+    QStringList allFiles = zip.getFileNameList();
+    qDebug() << "Found" << allFiles.size() << "files in archive. Looking for view XMLs...";
+
+    for (const QString &fileName : allFiles)
+    {
+        // 我们只关心目标文件
+        if (fileName != "views/sdi_view_meta_data.xml" && fileName != "views/sdi_checked_signals.xml")
+        {
+            continue;
+        }
+
+        if (!zip.setCurrentFile(fileName))
+            continue;
+
+        QuaZipFile zFile(&zip);
+        if (!zFile.open(QIODevice::ReadOnly))
+            continue;
+
+        QByteArray xmlData = zFile.readAll();
+        zFile.close();
+
+        QDomDocument doc;
+        QString errorMsg;
+        int errorLine, errorCol;
+        if (doc.setContent(xmlData, &errorMsg, &errorLine, &errorCol))
+        {
+            qDebug() << "  [Success] Parsed:" << fileName;
+            if (fileName == "views/sdi_view_meta_data.xml")
+            {
+                viewMetaDataDoc = doc;
+                foundViewMeta = true;
+            }
+            else if (fileName == "views/sdi_checked_signals.xml")
+            {
+                checkedSignalsDoc = doc;
+                foundCheckedSignals = true;
+            }
+        }
+        else
+        {
+            qWarning() << "  [Failed] Could not parse XML:" << fileName << "Error:" << errorMsg << "at line" << errorLine;
+        }
+    }
+    zip.close();
+
+    // --- 检查是否找到了所有需要的文件 ---
+    if (!foundViewMeta)
+    {
+        QMessageBox::critical(this, tr("Import Error"), tr("Error: Did not find 'views/sdi_view_meta_data.xml' in .mldatx file."));
+        return;
+    }
+    if (!foundCheckedSignals)
+    {
+        QMessageBox::critical(this, tr("Import Error"), tr("Error: Did not find 'views/sdi_checked_signals.xml' in .mldatx file."));
+        return;
+    }
+
+    // --- 4. 调用解析函数 ---
+    qDebug() << "--- Parsing Results ---";
+
+    LayoutInfo layout = parseViewMetaData(viewMetaDataDoc);
+    QList<SignalInfo> signalList = parseCheckedSignals(checkedSignalsDoc);
+
+    qDebug().noquote() << QString("Layout Info: %1x%2 %3").arg(layout.rows).arg(layout.cols).arg(layout.layoutType);
+    qDebug().noquote() << QString("Signal Info: Found %1 signals").arg(signalList.count());
+
+    // --- 5. 应用布局 ---
+    applyImportedView(layout, signalList);
+}
+
+/**
+ * @brief [辅助] 解析 sdi_view_meta_data.xml 的 QDomDocument
+ */
+MainWindow::LayoutInfo MainWindow::parseViewMetaData(const QDomDocument &doc)
+{
+    LayoutInfo info;
+    QDomElement root = doc.documentElement(); // <sdi> 标签
+
+    // 使用 firstChildElement 来安全地获取标签
+    QDomElement rowsEl = root.firstChildElement("SubPlotRows");
+    if (!rowsEl.isNull())
+    {
+        info.rows = rowsEl.text().toInt();
+    }
+
+    QDomElement colsEl = root.firstChildElement("SubPlotCols");
+    if (!colsEl.isNull())
+    {
+        info.cols = colsEl.text().toInt();
+    }
+
+    QDomElement layoutEl = root.firstChildElement("LayoutType");
+    if (!layoutEl.isNull())
+    {
+        info.layoutType = layoutEl.text();
+    }
+
+    return info;
+}
+
+/**
+ * @brief [辅助] 解析 sdi_checked_signals.xml 的 QDomDocument
+ */
+QList<MainWindow::SignalInfo> MainWindow::parseCheckedSignals(const QDomDocument &doc)
+{
+    QList<SignalInfo> signalList;
+    QDomElement root = doc.documentElement(); // <sdi> 标签
+
+    // 1. 找到 <Signals> 标签
+    QDomElement signalsNode = root.firstChildElement("Signals");
+    if (signalsNode.isNull())
+    {
+        qWarning() << "Could not find <Signals> tag in sdi_checked_signals.xml";
+        return signalList;
+    }
+
+    // 2. 遍历 <Signals> 下的所有子节点 (Sig1, Sig2, ...)
+    QDomElement sigEl = signalsNode.firstChildElement(); // 从第一个 <Sig*> 开始
+    while (!sigEl.isNull())
+    {
+        SignalInfo sigInfo;
+
+        // 3. 提取普通文本标签
+        sigInfo.name = sigEl.firstChildElement("SignalName").text();
+        sigInfo.id = sigEl.firstChildElement("ID").text().toInt();
+
+        // 4. 提取颜色
+        QDomElement colorEl = sigEl.firstChildElement("Color");
+        if (!colorEl.isNull())
+        {
+            qreal r = colorEl.firstChildElement("r").text().toDouble();
+            qreal g = colorEl.firstChildElement("g").text().toDouble();
+            qreal b = colorEl.firstChildElement("b").text().toDouble();
+            // QColor::fromRgbF 用于 0.0-1.0 范围的浮点数
+            sigInfo.color = QColor::fromRgbF(r, g, b);
+        }
+
+        // 5. 提取子图 ID (<Plots><Element>2</Element></Plots>)
+        QDomElement plotsEl = sigEl.firstChildElement("Plots");
+        if (!plotsEl.isNull())
+        {
+            // 找到所有名为 "Element" 的子标签
+            QDomNodeList plotIdNodes = plotsEl.elementsByTagName("Element");
+            for (int i = 0; i < plotIdNodes.count(); ++i)
+            {
+                sigInfo.plotIds.append(plotIdNodes.at(i).toElement().text().toInt());
+            }
+        }
+
+        signalList.append(sigInfo);
+
+        // 移动到下一个兄弟节点 (例如: 从 <Sig1> 到 <Sig2>)
+        sigEl = sigEl.nextSiblingElement();
+    }
+
+    return signalList;
 }
 
 /**
@@ -2166,6 +2421,15 @@ void MainWindow::onSignalSearchChanged(const QString &text)
 }
 
 /**
+ * @brief [辅助] 在信号树中通过信号名称查找条目
+ */
+QStandardItem *MainWindow::findItemBySignalName(const QString &name)
+{
+    // 使用静态辅助函数开始从根节点递归搜索
+    return findItemByName_Recursive(m_signalTreeModel->invisibleRootItem(), name);
+}
+
+/**
  * @brief [槽] 当子图中的选择发生用户更改时调用
  */
 void MainWindow::onPlotSelectionChanged()
@@ -2327,6 +2591,135 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 
     // 4. 将所有其他事件传递给基类
     return QMainWindow::eventFilter(watched, event);
+}
+
+/**
+ * @brief [辅助] 应用导入的布局和信号设置
+ * @param layout 从 sdi_view_meta_data.xml 解析的布局信息
+ * @param signalList 从 sdi_checked_signals.xml 解析的信号列表
+ */
+void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList)
+{
+    // --- 1. 彻底清除旧状态 (Fix: 必须在 setupPlotLayout 之前执行) ---
+
+    // A. 在 UI 上取消勾选所有信号
+    // 使用 QSignalBlocker 阻止 model 发出 itemChanged 信号
+    // 这样我们可以快速更新 UI 状态，而不触发 onSignalItemChanged 中的复杂逻辑
+    // (因为 onSignalItemChanged 依赖 m_activePlot，不适合这种批量跨子图的清理)
+    {
+        const QSignalBlocker blocker(m_signalTreeModel);
+
+        QList<int> plotIndices = m_plotSignalMap.keys();
+        for (int plotIndex : plotIndices)
+        {
+            const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
+            for (const QString &uniqueID : signalIDsCopy)
+            {
+                QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+                if (item)
+                {
+                    item->setCheckState(Qt::Unchecked);
+                }
+            }
+        }
+    }
+
+    // B. 强制清空内部映射
+    // 这确保了 setupPlotLayout 被调用时，不会恢复任何旧信号
+    m_plotSignalMap.clear();
+    // m_plotGraphMap 会在 setupPlotLayout -> clearPlotLayout 中被清空
+
+    // --- 2. 设置新布局 ---
+    qDebug() << "Applying layout:" << layout.rows << "rows," << layout.cols << "cols";
+    setupPlotLayout(layout.rows, layout.cols);
+
+    // 确保我们有足够多的子图
+    if (m_plotWidgets.isEmpty())
+    {
+        QMessageBox::warning(this, tr("Import Error"), tr("Failed to create plot layout."));
+        return;
+    }
+
+    // --- 3. 遍历信号列表并应用设置 (包含索引转换) ---
+    const int numRows = layout.rows;
+    const int numCols = layout.cols;
+    const int totalPlots = m_plotWidgets.size();
+
+    if (numRows <= 0 || numCols <= 0 || totalPlots == 0)
+    {
+        QMessageBox::warning(this, tr("Import Error"), tr("Invalid layout dimensions."));
+        return;
+    }
+
+    for (const SignalInfo &sig : signalList)
+    {
+        // 3a. 在树中查找信号
+        QStandardItem *item = findItemBySignalName(sig.name);
+        if (!item)
+        {
+            qWarning() << "Import View: Could not find signal in tree:" << sig.name;
+            continue;
+        }
+
+        QString uniqueID = item->data(UniqueIdRole).toString();
+        if (uniqueID.isEmpty())
+            continue;
+
+        // 3b. 更新颜色
+        QPen currentPen = item->data(PenDataRole).value<QPen>();
+        currentPen.setColor(sig.color);
+        item->setData(QVariant::fromValue(currentPen), PenDataRole);
+
+        // 3c. 遍历该信号应在的子图 ID
+        for (int sdiPlotId : sig.plotIds) // sdiPlotId 是 1-based, 列优先
+        {
+            // --- 索引转换 (Simulink 列优先 -> Qt 行优先) ---
+            // SDI 也是 1-based 索引
+            if (sdiPlotId < 1)
+                sdiPlotId = 1;
+
+            // 假设 SDI 总是基于 8 行的网格逻辑 (或根据实际 XML 逻辑调整)
+            // 这里使用你提供的转换逻辑:
+            int r = (sdiPlotId - 1) % 8 + 1; // 1-based row
+            int c = (sdiPlotId - 1) / 8 + 1; // 1-based col
+
+            // 映射到我们要创建的网格 (row-major, 0-based)
+            int plotIndex = (r - 1) * numCols + (c - 1);
+
+            // 边界检查：如果计算出的行列超出了当前布局
+            if (r > numRows || c > numCols)
+            {
+                // 这种情况下 SDI 可能是在一个很大的虚拟网格上，而我们将布局缩小了
+                // 策略：忽略，或者放到第一个图，或者警告
+                // 这里我们按照你的代码，尝试放入 plotIndex=0 作为 fallback，或者跳过
+                // qWarning() << "Import: Signal" << sig.name << "at SDI(" << r << "," << c << ") is outside current layout(" << numRows << "," << numCols << ")";
+                if (plotIndex >= totalPlots)
+                    plotIndex = 0; // Fallback
+            }
+
+            if (plotIndex >= 0 && plotIndex < totalPlots)
+            {
+                QCustomPlot *targetPlot = m_plotWidgets.at(plotIndex);
+                addSignalToPlot(uniqueID, targetPlot);
+
+                // 既然我们手动添加了信号，也需要手动更新 item 的勾选状态
+                // (因为我们之前 block 了信号，且 addSignalToPlot 不会反向更新 TreeItem)
+                // 注意：如果一个信号在多个图中，CheckState 只能表示"部分选中"或"选中"
+                // 简单起见，只要添加了就设为 Checked
+                {
+                    const QSignalBlocker blocker(m_signalTreeModel);
+                    item->setCheckState(Qt::Checked);
+                }
+            }
+        }
+    }
+
+    // 4. 全部完成后，更新树以匹配(新的)活动子图 (处理 PartiallyChecked 等状态)
+    updateSignalTreeChecks();
+
+    // 5. 缩放视图
+    on_actionFitView_triggered();
+    QMessageBox::information(this, tr("Import Successful"), tr("Successfully imported view settings."));
 }
 
 /**

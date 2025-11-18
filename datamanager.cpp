@@ -388,7 +388,7 @@ void DataManager::loadMatFile(const QString &filePath)
             for (int j = 0; j < numValueCols; ++j)
             {
                 // 用户的公式是 `pX_title[n] + pX_title2[n]`，我们按字面意思执行。
-                table.headers.append(titleList1.at(j) + titleList2.at(j));
+                table.headers.append(titleList2.at(j) + " " + titleList1.at(j));
             }
         }
         // --- [回退逻辑] ---

@@ -11,6 +11,7 @@
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QEvent>
+#include <QDomDocument>
 
 #include "cursormanager.h"
 #include "replaymanager.h"
@@ -77,6 +78,11 @@ private slots:
     // 文件菜单动作
     void on_actionLoadFile_triggered();
 
+    /**
+     * @brief [槽] "导入视图..." 菜单动作被触发
+     */
+    void on_actionImportView_triggered();
+
     // DataManager 信号槽
     void onDataLoadFinished(const FileData &data);
     void onDataLoadFailed(const QString &filePath, const QString &errorString);
@@ -139,6 +145,9 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
+    // --- 导入视图功能所需的数据结构 (前向声明) ---
+    struct LayoutInfo;
+    struct SignalInfo;
     // --- 设置活动子图的辅助函数 ---
     void setActivePlot(QCustomPlot *plot);
 
@@ -229,6 +238,29 @@ private:
      * @return true 如果此项或其任何子项匹配查询，则返回
      */
     bool filterSignalTree(QStandardItem *item, const QString &query);
+
+    // --- 导入视图辅助函数 ---
+
+    /**
+     * @brief [辅助] 解析 sdi_view_meta_data.xml (来自 .mldatx)
+     */
+    LayoutInfo parseViewMetaData(const QDomDocument &doc);
+
+    /**
+     * @brief [辅助] 解析 sdi_checked_signals.xml (来自 .mldatx)
+     */
+    QList<SignalInfo> parseCheckedSignals(const QDomDocument &doc);
+
+    /**
+     * @brief [辅助] 在信号树中通过信号名称查找条目
+     */
+    QStandardItem *findItemBySignalName(const QString &name);
+
+    /**
+     * @brief [辅助] 应用导入的布局和信号设置
+     */
+    void applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList);
+
     // --- ---------------------- ---
 
     // --- 工作线程 ---
@@ -264,6 +296,7 @@ private:
 
     // --- 菜单和工具栏动作 ---
     QAction *m_loadFileAction;
+    QAction *m_importViewAction;
 
     QAction *m_layout1x1Action;
     QAction *m_layout1x2Action;
@@ -318,7 +351,7 @@ private:
     ReplayManager *m_replayManager;
 
     // --- Y轴对齐组 ---
-    QCPMarginGroup *m_yAxisGroup; //用于Y轴自动对齐
+    QCPMarginGroup *m_yAxisGroup; // 用于Y轴自动对齐
 
     // --- 加载的数据缓存 使用 QMap 存储多个文件数据 ---
     QMap<QString, FileData> m_fileDataMap;
