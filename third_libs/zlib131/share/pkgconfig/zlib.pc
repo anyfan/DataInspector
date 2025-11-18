@@ -1,0 +1,13 @@
+prefix=C:/Users/admin/Desktop/sim_work_dev/sdi/mldatx_test/libs/zlib131
+exec_prefix=C:/Users/admin/Desktop/sim_work_dev/sdi/mldatx_test/libs/zlib131
+libdir=C:/Users/admin/Desktop/sim_work_dev/sdi/mldatx_test/libs/zlib131/lib
+sharedlibdir=C:/Users/admin/Desktop/sim_work_dev/sdi/mldatx_test/libs/zlib131/lib
+includedir=C:/Users/admin/Desktop/sim_work_dev/sdi/mldatx_test/libs/zlib131/include
+
+Name: zlib
+Description: zlib compression library
+Version: 1.3.1
+
+Requires:
+Libs: -L${libdir} -L${sharedlibdir} -lz
+Cflags: -I${includedir}

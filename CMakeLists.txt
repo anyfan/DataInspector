@@ -11,16 +11,13 @@ set(CMAKE_AUTORCC ON)
 # 添加对ZLIB的支持
 add_library(zlib STATIC IMPORTED)
 set_target_properties(zlib PROPERTIES
-    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/zlib131/libzlibstatic.a"
+    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/zlib131/lib/libzlibstatic.a"
 )
 
 # 添加对HDF5的支持
 add_library(hdf5 STATIC IMPORTED)
 set_target_properties(hdf5 PROPERTIES
     IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/hdf5-1.14.6/lib/libhdf5.a"
-)
-set_target_properties(hdf5 PROPERTIES
-    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_libs/hdf5-1.14.6/include"
 )
 target_link_libraries(hdf5 INTERFACE zlib)
 
@@ -32,12 +29,12 @@ set_target_properties(matio PROPERTIES
 set_target_properties(matio PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_libs/matio-1.5.28/include"
 )
-
 target_link_libraries(matio INTERFACE hdf5)
 
 # 查找 Qt5 
 find_package(Qt5 REQUIRED COMPONENTS
     Core
+    Xml
     Gui
     Widgets
     PrintSupport
@@ -56,6 +53,22 @@ set_target_properties(qcustomplot PROPERTIES
 )
 target_link_libraries(qcustomplot Qt5::Core Qt5::PrintSupport Qt5::OpenGL ${OPENGL_LIBRARIES})
 
+
+add_library(bzip STATIC IMPORTED)
+set_target_properties(bzip PROPERTIES
+    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/quazip-1.5/lib/libbzip2.a"
+)
+
+# 修改QuaZip库配置，添加缺失的依赖项
+add_library(quazip STATIC IMPORTED)
+set_target_properties(quazip PROPERTIES
+    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/quazip-1.5/lib/libquazip1-qt5.a"
+)
+set_target_properties(quazip PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_libs/quazip-1.5/include/QuaZip-Qt5-1.5"
+)
+target_link_libraries(quazip INTERFACE bzip)
+
 # 添加可执行文件
 add_executable(DataInspector
     main.cpp
@@ -69,15 +82,20 @@ add_executable(DataInspector
     DataInspector.rc
 )
 
+ target_compile_definitions(DataInspector PRIVATE QUAZIP_STATIC)
+
 # 链接 Qt5 库
 target_link_libraries(DataInspector
     Qt5::Core
+    Qt5::Xml
     Qt5::Gui
     Qt5::Widgets
     Qt5::OpenGL
     matio
     qcustomplot
+    quazip
     ${OPENGL_LIBRARIES}
+
 )
 
 # 包含当前

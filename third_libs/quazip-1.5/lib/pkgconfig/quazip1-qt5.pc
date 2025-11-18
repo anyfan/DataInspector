@@ -1,0 +1,11 @@
+prefix=C:/Users/admin/Desktop/sim_work_dev/sdi/mldatx_test/libs/quazip-1.5
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: QuaZip-Qt5
+Description: Minizip wrapper library for Qt 5.x
+Version: 1.5
+Libs: -lquazip1-qt5
+Cflags: -I${includedir}/QuaZip-Qt5-1.5 -I${includedir}/QuaZip-Qt5-1.5/quazip
+Requires: zlib, Qt5Core
