@@ -4,6 +4,8 @@
 #include <QDebug>
 #include <QThread>
 #include <QFileInfo>
+#include <QRegularExpression>
+#include <algorithm>
 
 #include <stdio.h>
 #include <string.h>
@@ -310,19 +312,38 @@ void DataManager::loadMatFile(const QString &filePath)
     }
     emit loadProgress(10); // 10% for reading directory
 
-    // 2. 循环查找 p1, p2, p3...
-    for (int i = 1;; ++i)
+    // 2. 遍历所有找到的变量，查找 "p" + 数字 格式的变量
+    QRegularExpression pVarRegex("^p(\\d+)$");
+    QList<int> pIndices;
+    for (const QString &key : varMap.keys())
     {
+        QRegularExpressionMatch match = pVarRegex.match(key);
+        if (match.hasMatch())
+        {
+            bool ok;
+            int index = match.captured(1).toInt(&ok);
+            if (ok && index > 0)
+            {
+                pIndices.append(index);
+            }
+        }
+    }
+
+    // 对索引进行数字排序 (例如: p1, p2, p5, p998, p999)
+    std::sort(pIndices.begin(), pIndices.end());
+
+    // 现在使用排序后的索引列表进行循环
+    for (int loop_idx = 0; loop_idx < pIndices.size(); ++loop_idx)
+    {
+        int i = pIndices.at(loop_idx); // 获取 p 后面的数字 (例如 1, 2, 5, 998, 999)
+
         QString pName = QString("p%1").arg(i);
         QString pTitleName = QString("p%1_title").arg(i);
         QString pTitle2Name = QString("p%1_title2").arg(i);
 
-        if (!varMap.contains(pName))
-        {
-            break; // 找到的最后一个 'p' 表，循环结束
-        }
-
+        // 我们已经从 varMap 中确认了 pName 存在 (在上面的 regex 循环中)
         matvar_t *pVar = varMap.value(pName);
+
         if (pVar->data_type != MAT_T_DOUBLE || pVar->rank != 2 || pVar->dims[0] == 0 || pVar->dims[1] < 2)
         {
             qWarning() << "DataManager: Skipping variable" << pName << "- not a 2D double matrix or not enough columns.";
@@ -331,7 +352,7 @@ void DataManager::loadMatFile(const QString &filePath)
 
         SignalTable table;
 
-        // 3. 获取表名 (pX) - 根据用户请求
+        // 3. 获取表名 (pX)
         table.name = pName;
 
         // 4. 获取 pX_title 和 pX_title2
@@ -418,7 +439,11 @@ void DataManager::loadMatFile(const QString &filePath)
         // 8. 将此表添加到 FileData
         fileData.tables.append(table);
 
-        emit loadProgress(10 + 80 * i / varMap.size()); // 粗略的进度
+        // (更新进度)
+        if (pIndices.size() > 0)
+        {
+            emit loadProgress(10 + 80 * (loop_idx + 1) / pIndices.size());
+        }
     }
 
     // 9. 清理 matvar_t*
