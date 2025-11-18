@@ -65,6 +65,8 @@ add_executable(DataInspector
     signalpropertiesdialog.cpp
     cursormanager.cpp
     replaymanager.cpp
+    resources.qrc
+    DataInspector.rc
 )
 
 # 链接 Qt5 库

@@ -8,6 +8,13 @@ int main(int argc, char *argv[])
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
 
     QApplication a(argc, argv);
+    
+    // 设置应用程序图标
+    QIcon appIcon(":/plotjuggler.svg");
+    if (!appIcon.isNull()) {
+        a.setWindowIcon(appIcon);
+    }
+
     MainWindow w;
     w.resize(1024, 768); // 设置一个默认大小
     w.show();
