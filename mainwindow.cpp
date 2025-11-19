@@ -488,6 +488,9 @@ void MainWindow::createDocks()
     m_signalTree->setHeaderHidden(true);
     m_signalTree->setItemDelegate(new SignalTreeDelegate(m_signalTree));
 
+    // 设置缩进宽度，默认通常为20，这里减小为10以减少层级缩进感
+    m_signalTree->setIndentation(8);
+
     // 启用从树状视图拖动
     m_signalTree->setDragEnabled(true);
     m_signalTree->setDragDropMode(QAbstractItemView::DragOnly);
