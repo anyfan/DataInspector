@@ -21,7 +21,7 @@ SignalPropertiesDialog::SignalPropertiesDialog(const QPen &initialPen, QWidget *
 {
     setWindowTitle(tr("Signal Properties"));
 
-    // --- 1. 创建控件 ---
+    //  1. 创建控件 
 
     // 颜色按钮
     m_colorButton = new QPushButton(this);
@@ -52,7 +52,7 @@ SignalPropertiesDialog::SignalPropertiesDialog(const QPen &initialPen, QWidget *
     // OK 和 Cancel 按钮
     m_buttonBox = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
 
-    // --- 2. 布局 ---
+    //  2. 布局 
     QFormLayout *formLayout = new QFormLayout;
     formLayout->addRow(tr("Color:"), m_colorButton);
     formLayout->addRow(tr("Width:"), m_widthSpinBox);
@@ -62,7 +62,7 @@ SignalPropertiesDialog::SignalPropertiesDialog(const QPen &initialPen, QWidget *
     mainLayout->addLayout(formLayout);
     mainLayout->addWidget(m_buttonBox);
 
-    // --- 3. 连接 ---
+    //  3. 连接 
     connect(m_colorButton, &QPushButton::clicked, this, &SignalPropertiesDialog::onColorButtonClicked);
     connect(m_buttonBox, &QDialogButtonBox::accepted, this, &QDialog::accept);
     connect(m_buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -87,7 +87,7 @@ QPen SignalPropertiesDialog::getSelectedPen() const
  */
 void SignalPropertiesDialog::onColorButtonClicked()
 {
-    // --- 使用 QColorDialog 实例并设置自定义颜色 ---
+    //  使用 QColorDialog 实例并设置自定义颜色 
     QColorDialog dialog(m_selectedColor, this);
     dialog.setWindowTitle(tr("Select Signal Color"));
     dialog.setOptions(QColorDialog::ShowAlphaChannel); // 允许设置透明度

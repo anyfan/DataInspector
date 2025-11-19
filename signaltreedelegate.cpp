@@ -17,7 +17,7 @@ SignalTreeDelegate::SignalTreeDelegate(QObject *parent)
 }
 
 void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
-                               const QModelIndex &index) const // <-- 替换此函数
+                               const QModelIndex &index) const
 {
     // 1. 先调用基类 paint() 来绘制标准内容 (复选框、文本、图标等)
     QStyleOptionViewItem opt = option;
@@ -77,7 +77,7 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
 
     textRect.setWidth(opt.rect.right() - textRect.left());
 
-    style->drawItemText(painter, textRect, opt.displayAlignment, opt.palette, opt.state & QStyle::State_Enabled, text, QPalette::NoRole); // <-- 确保使用 NoRole
+    style->drawItemText(painter, textRect, opt.displayAlignment, opt.palette, opt.state & QStyle::State_Enabled, text, QPalette::NoRole); // 确保使用 NoRole
 
     // 2. 绘制我们的自定义预览线
     if (isSignalItem)

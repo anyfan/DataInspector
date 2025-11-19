@@ -53,7 +53,7 @@ void CursorManager::onCursorActionTriggered(QAction *action)
         newMode = CursorManager::NoCursor;
     }
 
-    setMode(newMode); // <-- 调用新的 setMode 槽
+    setMode(newMode);
 }
 
 /**
@@ -67,7 +67,7 @@ void CursorManager::setMode(CursorManager::CursorMode mode)
     CursorMode oldMode = m_cursorMode; // 记录旧模式，以便我们知道是从哪个模式切换过来的
     m_cursorMode = mode;               // 立即设置新模式
 
-    // --- 计算游标的初始位置 ---
+    //  计算游标的初始位置
     // 仅当我们 *启用* 游标时 (即新模式不是 NoCursor)
     if (mode != CursorManager::NoCursor)
     {
@@ -135,7 +135,7 @@ void CursorManager::setMode(CursorManager::CursorMode mode)
         }
     }
 
-    // --- 在启用/禁用游标时，始终保持平移开启 ---
+    //  在启用/禁用游标时，始终保持平移开启
     for (QCustomPlot *plot : *m_plotWidgets)
     {
         plot->setInteraction(QCP::iRangeDrag, true);
@@ -178,7 +178,7 @@ void CursorManager::onPlotMousePress(QMouseEvent *event)
             if (dist1 >= 0 && dist1 < plot->selectionTolerance())
             {
                 m_isDraggingCursor1 = true;
-                // --- 暂时禁用平移 ---
+                //  暂时禁用平移
                 plot->setInteraction(QCP::iRangeDrag, false);
                 event->accept(); // 接受事件，阻止 QCustomPlot 的 iRangeDrag
                 return;          // 优先拖动游标 1
@@ -196,7 +196,7 @@ void CursorManager::onPlotMousePress(QMouseEvent *event)
             if (dist2 >= 0 && dist2 < plot->selectionTolerance())
             {
                 m_isDraggingCursor2 = true;
-                // --- 暂时禁用平移 ---
+                //  暂时禁用平移
                 plot->setInteraction(QCP::iRangeDrag, false);
                 event->accept(); // 接受事件，阻止 QCustomPlot 的 iRangeDrag
                 return;
@@ -225,7 +225,7 @@ void CursorManager::onPlotMouseMove(QMouseEvent *event)
     double smoothKey = plot->xAxis->pixelToCoord(event->pos().x());
     double snappedKey = smoothKey; // 默认使用平滑键
 
-    // --- 拖拽逻辑 (在此处实现吸附) ---
+    //  拖拽逻辑 (在此处实现吸附)
     if (m_isDraggingCursor1 || m_isDraggingCursor2)
     {
         // 仅在拖动时执行吸附
@@ -273,10 +273,9 @@ void CursorManager::onPlotMouseMove(QMouseEvent *event)
                 snappedKey = closestKey; // 4. 使用吸附后的键
             }
         }
-        // else: 如果此图上没有图表, 将使用 smoothKey
     }
 
-    // --- 5. 使用最终的键 (snappedKey) 更新游标 ---
+    //  5. 使用最终的键 (snappedKey) 更新游标
     if (m_isDraggingCursor1)
     {
         updateCursors(snappedKey, 1);
@@ -287,7 +286,7 @@ void CursorManager::onPlotMouseMove(QMouseEvent *event)
         updateCursors(snappedKey, 2);
         event->accept();
     }
-    // --- 悬停逻辑 (保持不变，不吸附) ---
+    //  悬停逻辑 (保持不变，不吸附)
     else if (m_cursorMode != CursorManager::NoCursor)
     {
         int plotIndex = m_plotWidgets->indexOf(plot);
@@ -331,7 +330,7 @@ void CursorManager::onPlotMouseRelease(QMouseEvent *event)
 {
     Q_UNUSED(event);
 
-    // --- 重新启用平移 ---
+    //  重新启用平移
     if (m_isDraggingCursor1 || m_isDraggingCursor2)
     {
         // 必须找到正确的 plot 指针，sender() 可能不可靠
@@ -428,7 +427,7 @@ void CursorManager::setupCursors()
     // 1. 为每个 Plot 创建垂直线 和 X轴标签
     for (QCustomPlot *plot : *m_plotWidgets)
     {
-        // --- 创建游标 1 ---
+        //  创建游标 1
         QCPItemLine *line1 = new QCPItemLine(plot);
         line1->setPen(pen1);
         line1->setSelectable(true);
@@ -451,7 +450,7 @@ void CursorManager::setupCursors()
 
         if (m_cursorMode == CursorManager::DoubleCursor)
         {
-            // --- 创建游标 2 ---
+            //  创建游标 2
             QCPItemLine *line2 = new QCPItemLine(plot);
             line2->setPen(pen2);
             line2->setSelectable(true);
@@ -480,7 +479,7 @@ void CursorManager::setupCursors()
         QCustomPlot *plot = it.key();
         for (QCPGraph *graph : it.value())
         {
-            // --- 游标 1 Y标签 ---
+            //  游标 1 Y标签
             QCPItemTracer *tracer1 = new QCPItemTracer(plot);
             tracer1->setGraph(graph);
             tracer1->setInterpolating(false);
@@ -506,7 +505,7 @@ void CursorManager::setupCursors()
 
             if (m_cursorMode == CursorManager::DoubleCursor)
             {
-                // --- 游标 2 Y标签 ---
+                //  游标 2 Y标签
                 QCPItemTracer *tracer2 = new QCPItemTracer(plot);
                 tracer2->setGraph(graph);
                 tracer2->setInterpolating(false);
@@ -598,7 +597,7 @@ void CursorManager::resolveLabelOverlaps(QList<QCPItemText *> &labelsOnPlot)
         // 检查是否与上一个标签重叠
         if (idealTopY < lastBottomY + verticalGap)
         {
-            // --- 重叠：向下推 ---
+            //  重叠：向下推
             // 新的顶部边缘应位于上一个标签的底部 + 间隙
             double newTopY = lastBottomY + verticalGap;
 
@@ -615,7 +614,7 @@ void CursorManager::resolveLabelOverlaps(QList<QCPItemText *> &labelsOnPlot)
         }
         else
         {
-            // --- 不重叠：使用理想位置 ---
+            //  不重叠：使用理想位置
             label->position->setCoords(horizontalOffset, 0); // 0 垂直偏移
 
             // 更新 "最后一个底部"

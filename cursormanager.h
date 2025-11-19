@@ -93,7 +93,7 @@ public slots:
      */
     void setupCursors();
 
-    // --- QCustomPlot 信号槽 ---
+    //  QCustomPlot 信号槽
 
     /**
      * @brief [槽] 响应 Plot 上的鼠标按下
@@ -124,7 +124,7 @@ private:
      */
     double snapKeyToData(double key) const;
 
-    // --- 游标状态 ---
+    //  游标状态
     CursorMode m_cursorMode;
     double m_cursorKey1;
     double m_cursorKey2;
@@ -143,8 +143,7 @@ private:
     QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels1; // 用于 Y 轴标签
     QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels2; // 用于 Y 轴标签
 
-    // --- 指向 MainWindow 成员的指针 ---
-    // (我们不拥有这些对象，只使用它们)
+    //  指向 MainWindow 成员的指针
     QMap<QCustomPlot *, QMap<QString, QCPGraph *>> *m_plotGraphMap;
     QList<QCustomPlot *> *m_plotWidgets;
     QCustomPlot **m_lastMousePlotPtr; // 指向 m_lastMousePlot 指针的指针

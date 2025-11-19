@@ -45,7 +45,7 @@ static QStringList readMatStringArray(matvar_t *variable)
         return result;
     }
 
-    // --- 检查 MAT_T_UTF8 ---
+    //  检查 MAT_T_UTF8
     if (variable->data_type == MAT_T_UTF8)
     {
         unsigned char *data_scanner = (unsigned char *)variable->data;
@@ -80,7 +80,7 @@ static QStringList readMatStringArray(matvar_t *variable)
             }
         }
 
-        // --- 字符重组 ---
+        //  字符重组
         int char_len = 0;
         for (size_t j = 0; j < cols; j++)
         {
@@ -98,7 +98,7 @@ static QStringList readMatStringArray(matvar_t *variable)
             }
         }
 
-        // --- 转换并清理 ---
+        //  转换并清理
         for (size_t i = 0; i < rows; i++)
         {
             if (row_buffers[i] != NULL)
@@ -114,7 +114,7 @@ static QStringList readMatStringArray(matvar_t *variable)
 
         return result;
     }
-    // --- 检查 MAT_T_UINT8 ---
+    //  检查 MAT_T_UINT8
     else if (variable->data_type == MAT_T_INT8)
     {
         size_t rows = variable->dims[0]; // 字符串数量
@@ -145,7 +145,7 @@ static QStringList readMatStringArray(matvar_t *variable)
         }
         return result;
     }
-    // --- --------------------------- ---
+    //
 
     return result; // 不支持的类型
 }
@@ -156,7 +156,7 @@ static QStringList readMatStringArray(matvar_t *variable)
  */
 static QString readMatString(matvar_t *variable)
 {
-    // --- 移除类型检查，让 readMatStringArray 处理 ---
+    //  移除类型检查，让 readMatStringArray 处理
     if (variable == NULL || variable->data == NULL || variable->rank != 2)
     {
         return QString();
@@ -361,7 +361,6 @@ void DataManager::loadMatFile(const QString &filePath)
 
         QStringList titleList1 = readMatStringArray(titleVar);
         QStringList titleList2 = readMatStringArray(title2Var);
-        // --- -------- ---
 
         // 5. 读取数值数据 (提前获取列数)
         size_t rows = pVar->dims[0]; // N 个数据点
@@ -391,7 +390,7 @@ void DataManager::loadMatFile(const QString &filePath)
                 table.headers.append(titleList2.at(j) + " " + titleList1.at(j));
             }
         }
-        // --- [回退逻辑] ---
+        //  [回退逻辑]
         else if (titleList2.size() == numValueCols)
         {
             // pX_title 列表无效，但 pX_title2 有效。
@@ -404,7 +403,7 @@ void DataManager::loadMatFile(const QString &filePath)
             qWarning() << "DataManager: Mismatch for" << pTitle2Name << "(size" << titleList2.size() << "). Falling back to" << pTitleName << "only.";
             table.headers = titleList1;
         }
-        // --- [默认值] ---
+        //  [默认值]
         else // 两个列表都无效，生成默认值
         {
             qWarning() << "DataManager: Header count mismatch for" << pTitleName << "(size" << titleList1.size() << ") and" << pTitle2Name << "(size" << titleList2.size() << "). Expected" << numValueCols << ". Generating defaults.";

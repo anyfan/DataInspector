@@ -64,7 +64,7 @@ private slots:
      */
     void onReplayActionToggled(bool checked);
 
-    // --- 内部重放控制槽 ---
+    //  内部重放控制槽 
     void onPlayPauseClicked();
     void onStepForwardClicked();
     void onStepBackwardClicked();
@@ -82,10 +82,10 @@ private:
      */
     void updateReplayControls();
 
-    // --- 依赖 ---
+    //  依赖 
     CursorManager *m_cursorManager; // (不拥有)
 
-    // --- UI 控件 (拥有) ---
+    //  UI 控件 (拥有) 
     QDockWidget *m_replayDock;
     QWidget *m_replayWidget;
     QPushButton *m_playPauseButton;
@@ -96,7 +96,7 @@ private:
     QLabel *m_currentTimeLabel;
     QTimer *m_replayTimer;
 
-    // --- 内部状态 ---
+    //  内部状态 
     QCPRange m_globalTimeRange;
     double m_minTimeStep;
     double m_cursorKey1; // 本地缓存的游标 1 位置

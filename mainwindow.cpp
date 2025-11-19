@@ -92,31 +92,6 @@ static QStandardItem *findItemByUniqueID_BFS(QStandardItemModel *model, const QS
     return nullptr; // 未找到
 }
 
-// --- 导入 .mldatx 视图所需的数据结构 ---
-
-/**
- * @brief 存储 sdi_view_meta_data.xml 中的布局信息
- */
-struct MainWindow::LayoutInfo
-{
-    int rows = 1;
-    int cols = 1;
-    QString layoutType = "grid";
-};
-
-/**
- * @brief 存储 sdi_checked_signals.xml 中单个信号的信息
- */
-struct MainWindow::SignalInfo
-{
-    QString name;
-    int id = 0;
-    QColor color;
-    QList<int> plotIds; // 该信号显示在哪些子图上 (SDI 索引从 1 开始)
-};
-
-// --- ---------------------------------- ---
-
 /**
  * @brief [辅助函数] 递归地在 QStandardItemModel 中按名称查找信号条目
  * @param parentItem 开始搜索的父项 (初始调用时传入 invisibleRootItem)
@@ -150,9 +125,8 @@ static QStandardItem *findItemByName_Recursive(QStandardItem *parentItem, const 
                 return found;
         }
     }
-    return nullptr; // 在此分支未找到
+    return nullptr;
 }
-// --- ---------------- ---
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
@@ -379,7 +353,7 @@ void MainWindow::createActions()
     m_toggleLegendAction->setToolTip(tr("显示/隐藏图例"));
     connect(m_toggleLegendAction, &QAction::toggled, this, &MainWindow::on_actionToggleLegend_toggled);
 
-    // 创建 OpenGL 动作 ---
+    // 创建 OpenGL 动作
     m_openGLAction = new QAction(tr("启用 OpenGL 加速"), this);
     m_openGLAction->setToolTip(tr("切换 QCustomPlot 的 OpenGL 渲染。"));
     m_openGLAction->setCheckable(true);
@@ -434,14 +408,11 @@ void MainWindow::createMenus()
     viewMenu->addSeparator();
     viewMenu->addAction(m_toggleLegendAction);
 
-    // --- 创建 "设置" 菜单 ---
+    // 创建 "设置" 菜单
     QMenu *settingsMenu = menuBar()->addMenu(tr("&设置"));
     settingsMenu->addAction(m_openGLAction);
 }
 
-/**
- * @brief 创建视图工具栏 (用于游标和重放)
- */
 void MainWindow::createToolBars()
 {
     m_viewToolBar = new QToolBar(tr("View Toolbar"), this);
@@ -504,9 +475,9 @@ void MainWindow::createDocks()
     m_signalTree->setDragDropMode(QAbstractItemView::DragOnly);
     m_signalTree->setSelectionMode(QAbstractItemView::ExtendedSelection); // 允许选择多行进行拖拽
 
-    dockLayout->addWidget(m_signalTree); // <-- 将树添加到布局中
+    dockLayout->addWidget(m_signalTree); // 将树添加到布局中
 
-    m_signalDock->setWidget(dockWidget); // <-- 设置容器 QWidget 为 dock 的控件
+    m_signalDock->setWidget(dockWidget); // 设置容器 QWidget 为 dock 的控件
 
     m_signalDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
     addDockWidget(Qt::LeftDockWidgetArea, m_signalDock);
@@ -527,108 +498,6 @@ void MainWindow::createDocks()
     }
 }
 
-void MainWindow::setupPlotInteractions(QCustomPlot *plot)
-{
-    plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
-
-    plot->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop | Qt::AlignLeft);
-
-    // 4. 优化上方图例的样式
-    plot->legend->setBorderPen(Qt::NoPen);                  // 去除边框
-    plot->legend->setBrush(Qt::NoBrush);                    // 背景透明
-    plot->legend->setFillOrder(QCPLayoutGrid::foRowsFirst); // 水平排列
-    // plot->legend->setWrap(5);                               // 每行最多5个
-    // -------------------------------------
-
-    // --- 根据 m_toggleLegendAction 的状态设置图例可见性 ---
-    plot->legend->setVisible(m_toggleLegendAction->isChecked());
-
-    // --- 根据 m_openGLAction 的状态设置 OpenGL ---
-    plot->setOpenGl(m_openGLAction->isChecked());
-
-    QFont axisFont = plot->font();           // 从绘图控件获取基础字体
-    axisFont.setPointSize(7);                // 将字号设置为 7
-    plot->xAxis->setTickLabelFont(axisFont); // X轴的刻度数字
-    plot->xAxis->setLabelFont(axisFont);     // X轴的标签
-    plot->yAxis->setTickLabelFont(axisFont); // Y轴的刻度数字
-    plot->yAxis->setLabelFont(axisFont);     // Y轴的标签
-
-    // 将图例字体也设置为 7pt
-    plot->legend->setFont(axisFont);
-    plot->legend->setIconSize(10, 10);   // 将图标宽度设为20，高度设为10
-    plot->legend->setIconTextPadding(3); // 将图标和文本的间距设为 3 像素
-
-    // 使用 QCPMarginGroup 进行自动对齐
-    plot->axisRect()->setMarginGroup(QCP::msLeft, m_yAxisGroup);
-
-    connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
-
-    // --- 连接新的鼠标事件处理器 ---
-    connect(plot, &QCustomPlot::mousePress, m_cursorManager, &CursorManager::onPlotMousePress);
-    connect(plot, &QCustomPlot::mouseMove, m_cursorManager, &CursorManager::onPlotMouseMove);
-    connect(plot, &QCustomPlot::mouseRelease, m_cursorManager, &CursorManager::onPlotMouseRelease);
-
-    // X轴同步
-    connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
-            this, &MainWindow::onXAxisRangeChanged);
-
-    // 连接子图的选择信号
-    connect(plot, &QCustomPlot::selectionChangedByUser, this, &MainWindow::onPlotSelectionChanged);
-
-    // 设置Y轴的数字格式 ---
-    plot->yAxis->setNumberFormat("g");
-    plot->yAxis->setNumberPrecision(4);
-
-    // 允许子图接收拖放并安装事件过滤器 ---
-    plot->setAcceptDrops(true);
-    plot->installEventFilter(this);
-
-    // 连接图例交互信号 ---
-    plot->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(plot, &QCustomPlot::customContextMenuRequested, this, &MainWindow::onLegendContextMenu);
-}
-
-void MainWindow::clearPlotLayout()
-{
-
-    // 清除游标
-    m_cursorManager->clearCursors();
-
-    // 删除旧的 Y 轴边距组
-    if (m_yAxisGroup)
-    {
-        delete m_yAxisGroup;
-        m_yAxisGroup = nullptr;
-    }
-
-    // 清理布局中的所有 QFrame (及其 QCustomPlot 子控件)
-    QLayout *layout = m_plotContainer->layout();
-    if (layout)
-    {
-        QLayoutItem *item;
-        while ((item = layout->takeAt(0)) != nullptr)
-        {
-            if (item->widget())
-            {
-                item->widget()->deleteLater();
-            }
-            delete item;
-        }
-    }
-
-    // 清除所有运行时查找表和指针
-    m_plotWidgets.clear();
-    m_activePlot = nullptr;
-    m_plotFrameMap.clear();
-    m_plotGraphMap.clear();
-    m_plotWidgetMap.clear();
-    m_lastMousePlot = nullptr;
-}
-
-/**
- * @brief 核心布局函数，使用 QRect 列表创建网格
- * * QRect(x, y, colSpan, rowSpan)
- */
 void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
 {
     clearPlotLayout(); // 清理旧布局 (这会清空 m_plotWidgets, m_plotGraphMap 等)
@@ -648,7 +517,7 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
         const QRect &geo = geometries[i];
         int plotIndex = i; // 新的 plot 索引就是列表中的索引
 
-        // --- 创建 Plot ---
+        // 创建 Plot
         QFrame *plotFrame = new QFrame(m_plotContainer);
         plotFrame->setFrameShape(QFrame::NoFrame);
         plotFrame->setLineWidth(2);
@@ -659,7 +528,7 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
 
         QCustomPlot *plot = new QCustomPlot(plotFrame);
 
-        // --- 创建 Y 轴边距组 ---
+        // 创建 Y 轴边距组
         if (i == 0)
         {
             // 如果这是第一个创建的 plot (i == 0)，用它作为父对象来创建新的边距组
@@ -667,7 +536,7 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
         }
 
         frameLayout->addWidget(plot);
-        // --- 使用网格跨度添加 ---
+        // 使用网格跨度添加
         grid->addWidget(plotFrame, geo.y(), geo.x(), geo.height(), geo.width());
 
         m_plotWidgets.append(plot);
@@ -789,10 +658,6 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
     }
 }
 
-/**
- * @brief 设置中央绘图区域的布局 (如 2x2)
- * * 这是一个辅助函数，用于调用 setupPlotLayout(const QList<QRect> &geometries)
- */
 void MainWindow::setupPlotLayout(int rows, int cols)
 {
     QList<QRect> geometries;
@@ -804,6 +669,1761 @@ void MainWindow::setupPlotLayout(int rows, int cols)
         }
     }
     setupPlotLayout(geometries);
+}
+
+/**
+ * @brief 启动加载单个文件的辅助函数
+ * * 无论是通过菜单打开还是拖放，都会调用此函数
+ * @param filePath 要加载的文件的路径
+ */
+void MainWindow::loadFile(const QString &filePath)
+{
+    if (filePath.isEmpty())
+        return;
+
+    // 注意：当拖放多个文件时，这将为每个文件显示和隐藏进度对话框
+    m_progressDialog->setValue(0);
+    m_progressDialog->setLabelText(tr("Loading %1...").arg(QFileInfo(filePath).fileName()));
+    m_progressDialog->show();
+
+    // 检查文件类型
+    if (filePath.endsWith(".mat", Qt::CaseInsensitive))
+    {
+        emit requestLoadMat(filePath);
+    }
+    else
+    {
+        emit requestLoadCsv(filePath);
+    }
+}
+
+/**
+ * @brief [槽] "Load File..." 菜单动作被触发
+ * * 此函数现在只负责打开文件对话框，然后调用辅助函数 loadFile()
+ */
+void MainWindow::on_actionLoadFile_triggered()
+{
+    QString filePath = QFileDialog::getOpenFileName(this,
+                                                    tr("Open File"), "", tr("Data Files (*.csv *.txt *.mat)"));
+
+    // 只需调用新的辅助函数
+    loadFile(filePath);
+}
+
+void MainWindow::importView(const QString &mldatxFilePath)
+{
+    if (mldatxFilePath.isEmpty())
+        return;
+
+    // 使用 QuaZip 打开
+    QuaZip zip(mldatxFilePath);
+    if (!zip.open(QuaZip::mdUnzip))
+    {
+        QMessageBox::critical(this, tr("Import Error"), tr("Error: Could not open file as ZIP archive."));
+        return;
+    }
+
+    // 查找并解析关键 XML
+    QDomDocument viewMetaDataDoc;
+    QDomDocument checkedSignalsDoc;
+    bool foundViewMeta = false;
+    bool foundCheckedSignals = false;
+
+    QStringList allFiles = zip.getFileNameList();
+    qDebug() << "Found" << allFiles.size() << "files in archive. Looking for view XMLs...";
+
+    for (const QString &fileName : allFiles)
+    {
+        // 我们只关心目标文件
+        if (fileName != "views/sdi_view_meta_data.xml" && fileName != "views/sdi_checked_signals.xml")
+        {
+            continue;
+        }
+
+        if (!zip.setCurrentFile(fileName))
+            continue;
+
+        QuaZipFile zFile(&zip);
+        if (!zFile.open(QIODevice::ReadOnly))
+            continue;
+
+        QByteArray xmlData = zFile.readAll();
+        zFile.close();
+
+        QDomDocument doc;
+        QString errorMsg;
+        int errorLine, errorCol;
+        if (doc.setContent(xmlData, &errorMsg, &errorLine, &errorCol))
+        {
+            qDebug() << "  [Success] Parsed:" << fileName;
+            if (fileName == "views/sdi_view_meta_data.xml")
+            {
+                viewMetaDataDoc = doc;
+                foundViewMeta = true;
+            }
+            else if (fileName == "views/sdi_checked_signals.xml")
+            {
+                checkedSignalsDoc = doc;
+                foundCheckedSignals = true;
+            }
+        }
+        else
+        {
+            qWarning() << "  [Failed] Could not parse XML:" << fileName << "Error:" << errorMsg << "at line" << errorLine;
+        }
+    }
+    zip.close();
+
+    // 检查是否找到了所有需要的文件
+    if (!foundViewMeta)
+    {
+        QMessageBox::critical(this, tr("Import Error"), tr("Error: Did not find 'views/sdi_view_meta_data.xml' in .mldatx file."));
+        return;
+    }
+    if (!foundCheckedSignals)
+    {
+        QMessageBox::critical(this, tr("Import Error"), tr("Error: Did not find 'views/sdi_checked_signals.xml' in .mldatx file."));
+        return;
+    }
+
+    // 4. 调用解析函数
+    qDebug() << "  Parsing Results  ";
+
+    LayoutInfo layout = parseViewMetaData(viewMetaDataDoc);
+    QList<SignalInfo> signalList = parseCheckedSignals(checkedSignalsDoc);
+
+    qDebug().noquote() << QString("Layout Info: %1x%2 %3").arg(layout.rows).arg(layout.cols).arg(layout.layoutType);
+    qDebug().noquote() << QString("Signal Info: Found %1 signals").arg(signalList.count());
+
+    // 5. 应用布局
+    applyImportedView(layout, signalList);
+}
+
+/**
+ * @brief [槽] "导入视图..." 菜单动作被触发
+ */
+void MainWindow::on_actionImportView_triggered()
+{
+    QString mldatxFilePath = QFileDialog::getOpenFileName(this,
+                                                          tr("Import Simulink View"), "", tr("Simulink Data (*.mldatx)"));
+
+    if (mldatxFilePath.isEmpty())
+        return;
+
+    importView(mldatxFilePath);
+}
+
+void MainWindow::setupPlotInteractions(QCustomPlot *plot)
+{
+    plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
+
+    plot->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop | Qt::AlignLeft);
+
+    // 4. 优化上方图例的样式
+    plot->legend->setBorderPen(Qt::NoPen);                  // 去除边框
+    plot->legend->setBrush(Qt::NoBrush);                    // 背景透明
+    plot->legend->setFillOrder(QCPLayoutGrid::foRowsFirst); // 水平排列
+    // plot->legend->setWrap(5);                               // 每行最多5个
+    //             -
+
+    // 根据 m_toggleLegendAction 的状态设置图例可见性
+    plot->legend->setVisible(m_toggleLegendAction->isChecked());
+
+    // 根据 m_openGLAction 的状态设置 OpenGL
+    plot->setOpenGl(m_openGLAction->isChecked());
+
+    QFont axisFont = plot->font();           // 从绘图控件获取基础字体
+    axisFont.setPointSize(7);                // 将字号设置为 7
+    plot->xAxis->setTickLabelFont(axisFont); // X轴的刻度数字
+    plot->xAxis->setLabelFont(axisFont);     // X轴的标签
+    plot->yAxis->setTickLabelFont(axisFont); // Y轴的刻度数字
+    plot->yAxis->setLabelFont(axisFont);     // Y轴的标签
+
+    // 将图例字体也设置为 7pt
+    plot->legend->setFont(axisFont);
+    plot->legend->setIconSize(10, 10);   // 将图标宽度设为20，高度设为10
+    plot->legend->setIconTextPadding(3); // 将图标和文本的间距设为 3 像素
+
+    // 使用 QCPMarginGroup 进行自动对齐
+    plot->axisRect()->setMarginGroup(QCP::msLeft, m_yAxisGroup);
+
+    connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
+
+    // 连接新的鼠标事件处理器
+    connect(plot, &QCustomPlot::mousePress, m_cursorManager, &CursorManager::onPlotMousePress);
+    connect(plot, &QCustomPlot::mouseMove, m_cursorManager, &CursorManager::onPlotMouseMove);
+    connect(plot, &QCustomPlot::mouseRelease, m_cursorManager, &CursorManager::onPlotMouseRelease);
+
+    // X轴同步
+    connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
+            this, &MainWindow::onXAxisRangeChanged);
+
+    // 连接子图的选择信号
+    connect(plot, &QCustomPlot::selectionChangedByUser, this, &MainWindow::onPlotSelectionChanged);
+
+    // 设置Y轴的数字格式
+    plot->yAxis->setNumberFormat("g");
+    plot->yAxis->setNumberPrecision(4);
+
+    // 允许子图接收拖放并安装事件过滤器
+    plot->setAcceptDrops(true);
+    plot->installEventFilter(this);
+
+    // 连接图例交互信号
+    plot->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(plot, &QCustomPlot::customContextMenuRequested, this, &MainWindow::onLegendContextMenu);
+}
+
+void MainWindow::clearPlotLayout()
+{
+
+    // 清除游标
+    m_cursorManager->clearCursors();
+
+    // 删除旧的 Y 轴边距组
+    if (m_yAxisGroup)
+    {
+        delete m_yAxisGroup;
+        m_yAxisGroup = nullptr;
+    }
+
+    // 清理布局中的所有 QFrame (及其 QCustomPlot 子控件)
+    QLayout *layout = m_plotContainer->layout();
+    if (layout)
+    {
+        QLayoutItem *item;
+        while ((item = layout->takeAt(0)) != nullptr)
+        {
+            if (item->widget())
+            {
+                item->widget()->deleteLater();
+            }
+            delete item;
+        }
+    }
+
+    // 清除所有运行时查找表和指针
+    m_plotWidgets.clear();
+    m_activePlot = nullptr;
+    m_plotFrameMap.clear();
+    m_plotGraphMap.clear();
+    m_plotWidgetMap.clear();
+    m_lastMousePlot = nullptr;
+}
+
+void MainWindow::onDataLoadFinished(const FileData &data)
+{
+    m_progressDialog->hide();
+    qDebug() << "Main Thread: Load finished for" << data.filePath;
+
+    QString filename = QFileInfo(data.filePath).fileName();
+    // 检查文件是否已加载
+    if (m_fileDataMap.contains(filename))
+    {
+        QMessageBox::StandardButton reply;
+        reply = QMessageBox::question(this, tr("File exists"),
+                                      tr("File '%1' is already loaded. Do you want to overwrite it?").arg(filename),
+                                      QMessageBox::Yes | QMessageBox::No);
+        if (reply == QMessageBox::No)
+        {
+            return;
+        }
+        // 如果用户选择 "Yes"，则移除旧文件
+        removeFile(filename);
+    }
+
+    // 1. 缓存数据
+    m_fileDataMap.insert(filename, data);
+
+    // 2. 填充信号树
+    {
+        QSignalBlocker blocker(m_signalTreeModel);
+        populateSignalTree(data); //  传入新数据
+    }
+    m_signalTree->reset(); // CSV 和 MAT 都需要
+
+    // 默认展开所有条目
+    m_signalTree->expandAll();
+
+    // 3. 更新重放控件和游标
+    if (m_fileDataMap.size() == 1 && !data.tables.isEmpty() && !data.tables.first().timeData.isEmpty()) // 如果这是加载的第一个文件
+    {
+        const SignalTable &firstTable = data.tables.first();
+        // 将游标 1 移动到数据起点
+        m_cursorManager->updateCursors(firstTable.timeData.first(), 1); // 设置初始位置
+        m_cursorManager->updateCursors(firstTable.timeData.first() + getGlobalTimeRange().size() * 0.1, 2);
+
+        // 数据加载完成后自动缩放视图
+        on_actionFitView_triggered();
+    }
+    else
+    {
+        // 如果已有数据，重新缩放以包含新数据
+        on_actionFitView_triggered();
+
+        m_cursorManager->updateAllCursors();
+    }
+    updateReplayManagerRange(); // 设置滑块范围
+}
+
+void MainWindow::onDataLoadFailed(const QString &filePath, const QString &errorString)
+{
+    m_progressDialog->hide();
+    QMessageBox::warning(this, tr("Load Error"), tr("Failed to load %1:\n%2").arg(filePath).arg(errorString));
+}
+
+// 移除文件的辅助函数
+void MainWindow::removeFile(const QString &filename)
+{
+    // 1. 从数据 map 中移除
+    if (!m_fileDataMap.remove(filename))
+    {
+        qWarning() << "File not found in data map:" << filename;
+        return;
+    }
+
+    // 2. 从图表和持久化 map 中移除
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (!m_plotGraphMap.contains(plot))
+            continue;
+
+        int plotIndex = m_plotWidgetMap.value(plot, -1);
+        if (plotIndex == -1)
+            continue;
+
+        QMap<QString, QCPGraph *> &graphMap = m_plotGraphMap[plot];
+        QSet<QString> &signalSet = m_plotSignalMap[plotIndex];
+
+        // 查找所有属于此文件的 unique IDs
+        // 新的 ID 格式
+        QString prefix = filename + "/";
+        //
+        QList<QString> idsToRemove;
+        for (const QString &uniqueID : graphMap.keys())
+        {
+            if (uniqueID.startsWith(prefix))
+            {
+                idsToRemove.append(uniqueID);
+            }
+        }
+
+        // 移除图表
+        for (const QString &uniqueID : idsToRemove)
+        {
+            QCPGraph *graph = graphMap.value(uniqueID);
+            if (graph)
+            {
+                plot->removeGraph(graph); // removeGraph 会 delete graph
+            }
+            graphMap.remove(uniqueID);
+            signalSet.remove(uniqueID);
+        }
+        plot->replot();
+    }
+
+    // 3. 从信号树中移除
+    QList<QStandardItem *> items = m_signalTreeModel->findItems(filename);
+    for (QStandardItem *item : items)
+    {
+        // 确保我们得到的是顶层文件条目
+        if (item->data(IsFileItemRole).toBool() && item->parent() == nullptr)
+        //
+        {
+            m_signalTreeModel->removeRow(item->row());
+            break; // 假设文件名是唯一的
+        }
+    }
+
+    // 4. 清理和更新
+    m_cursorManager->setupCursors();
+    m_cursorManager->updateAllCursors();
+    updateReplayManagerRange();
+
+    on_actionFitView_triggered(); // 重新缩放视图
+}
+
+// 删除文件的动作
+void MainWindow::onDeleteFileAction()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+    QString filename = action->data().toString();
+    if (filename.isEmpty())
+        return;
+
+    QMessageBox::StandardButton reply;
+    reply = QMessageBox::question(this, tr("Remove File"),
+                                  tr("Are you sure you want to remove all data and graphs from file '%1'?").arg(filename),
+                                  QMessageBox::Yes | QMessageBox::No);
+    if (reply == QMessageBox::Yes)
+    {
+        removeFile(filename);
+    }
+}
+
+/**
+ * @brief 将指定ID的信号添加到指定的子图中
+ * @param uniqueID 要添加的信号ID
+ * @param plot 目标 QCustomPlot
+ */
+void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot)
+{
+    int plotIndex = m_plotWidgetMap.value(plot, -1);
+    if (plotIndex == -1)
+        return;
+
+    // 1. 检查是否已存在
+    if (m_plotSignalMap.value(plotIndex).contains(uniqueID))
+    {
+        qWarning() << "Graph" << uniqueID << "already exists on plot" << plot;
+        return;
+    }
+
+    // 2. 查找 QStandardItem (用于获取元数据)
+    QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+    if (!item)
+    {
+        qWarning() << "addSignalToPlot: Could not find item in tree model for ID" << uniqueID;
+        return;
+    }
+    QString signalName = item->text();
+    QPen pen = item->data(PenDataRole).value<QPen>();
+
+    // 3. 查找信号数据 (与 onSignalItemChanged 中的逻辑相同)
+    QStringList parts = uniqueID.split('/');
+    if (parts.size() < 2)
+        return;
+    QString filename = parts[0];
+    if (!m_fileDataMap.contains(filename))
+        return;
+    const FileData &fileData = m_fileDataMap.value(filename);
+
+    const SignalTable *tableData = nullptr;
+    int signalIndex = -1;
+
+    if (parts.size() == 2) // CSV
+    {
+        if (fileData.tables.isEmpty())
+            return;
+        tableData = &fileData.tables.first();
+        signalIndex = parts[1].toInt();
+    }
+    else if (parts.size() == 3) // MAT
+    {
+        QString tablename = parts[1];
+        signalIndex = parts[2].toInt();
+        for (const auto &table : fileData.tables)
+        {
+            if (table.name == tablename)
+            {
+                tableData = &table;
+                break;
+            }
+        }
+    }
+
+    if (!tableData || signalIndex < 0 || signalIndex >= tableData->valueData.size())
+        return;
+
+    // 4. 创建图表
+    QCPGraph *graph = plot->addGraph();
+    graph->setName(signalName);
+    graph->setData(tableData->timeData, tableData->valueData[signalIndex]);
+    graph->setPen(pen);
+
+    // 5. 应用性能修复 (与 onSignalItemChanged 中的逻辑相同)
+    if (graph->selectionDecorator())
+    {
+        QCPSelectionDecorator *decorator = graph->selectionDecorator();
+        QPen selPen = decorator->pen();
+        selPen.setWidth(pen.width());
+        decorator->setPen(selPen);
+        decorator->setBrush(Qt::NoBrush);
+        decorator->setUsedScatterProperties(QCPScatterStyle::spNone);
+    }
+
+    // 6. 更新映射
+    m_plotGraphMap[plot].insert(uniqueID, graph);
+    m_plotSignalMap[plotIndex].insert(uniqueID);
+
+    // 7. 刷新
+    plot->rescaleAxes();
+    plot->replot();
+
+    // 8. 更新游标 (添加新图形后必须重建游标)
+    m_cursorManager->setupCursors();
+    m_cursorManager->updateAllCursors();
+}
+
+/**
+ * @brief 从指定的子图中移除指定ID的信号
+ * @param uniqueID 要移除的信号ID
+ * @param plot 目标 QCustomPlot
+ */
+void MainWindow::removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot)
+{
+    int plotIndex = m_plotWidgetMap.value(plot, -1);
+    if (plotIndex == -1)
+        return;
+
+    // 1. 检查是否存在
+    if (!m_plotSignalMap.value(plotIndex).contains(uniqueID))
+    {
+        qWarning() << "Graph" << uniqueID << "does not exist on plot" << plot;
+        return;
+    }
+
+    // 2. 查找图表
+    QCPGraph *graph = getGraph(plot, uniqueID);
+    if (graph)
+    {
+        // 3. 移除
+        plot->removeGraph(graph); // removeGraph 会 delete graph
+
+        // 4. 更新映射
+        m_plotGraphMap[plot].remove(uniqueID);
+        m_plotSignalMap[plotIndex].remove(uniqueID);
+
+        // 5. 刷新
+        plot->replot();
+
+        // 6. 更新游标 (移除图形后必须重建游标)
+        m_cursorManager->setupCursors();
+        m_cursorManager->updateAllCursors();
+    }
+}
+
+/**
+ * @brief 设置活动子图的辅助函数
+ * (这个函数包含了上一步 onPlotClicked(QCustomPlot *plot) 的逻辑)
+ * @param plot 要激活的子图
+ */
+void MainWindow::setActivePlot(QCustomPlot *plot)
+{
+    if (!plot || plot == m_activePlot)
+        return;
+
+    // 使用 m_plotWidgetMap 查找索引
+    int plotIndex = m_plotWidgetMap.value(plot, -1);
+    if (plotIndex == -1)
+        return;
+
+    // 取消高亮旧的 active plot
+    if (m_activePlot)
+    {
+        QFrame *oldFrame = m_plotFrameMap.value(m_activePlot);
+        if (oldFrame)
+            oldFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
+    }
+
+    m_activePlot = plot;
+    m_lastMousePlot = plot;
+
+    // 高亮新的 active plot
+    QFrame *frame = m_plotFrameMap.value(m_activePlot);
+    if (frame)
+    {
+        frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
+    }
+
+    // qDebug() << "Active plot set to:" << m_activePlot << "(Index: " << plotIndex << ")";
+    updateSignalTreeChecks();
+    m_signalTree->viewport()->update();
+}
+
+void MainWindow::onPlotClicked()
+{
+    // 这个槽现在只由 mousePress 信号触发，所以 sender() 总是有效的
+    QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
+    if (!clickedPlot)
+        return; // 安全检查
+
+    // 1. 检查点击是否在图线 (plottable) 上
+    // 我们需要获取鼠标位置
+    QPoint pos = clickedPlot->mapFromGlobal(QCursor::pos());
+    QCPAbstractPlottable *plottable = clickedPlot->plottableAt(pos, true);
+
+    // 2. 如果点击在背景上 (不在图线上)
+    if (!plottable)
+    {
+        // 取消此子图上的所有选择
+        clickedPlot->deselectAll();
+    }
+
+    // 3. 如果我们正在切换到 *新* 的子图
+    if (m_activePlot && clickedPlot != m_activePlot)
+    {
+        // 遍历所有 *其他* 子图并取消它们的选择
+        for (QCustomPlot *plot : m_plotWidgets)
+        {
+            if (plot && plot != clickedPlot)
+            {
+                plot->deselectAll();
+                plot->replot(); // 确保旧的子图重绘以显示取消选择
+            }
+        }
+    }
+
+    setActivePlot(clickedPlot); // 调用新的辅助函数
+}
+
+/**
+ * @brief [槽] 当 OpenGL 动作被切换时调用
+ * @param checked 动作的新勾选状态
+ */
+void MainWindow::onOpenGLActionToggled(bool checked)
+{
+    // qDebug() << "Setting OpenGL acceleration to:" << checked;
+
+    // 遍历所有当前存在的 QCustomPlot 实例并更新它们
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (plot)
+        {
+            plot->setOpenGl(checked);
+            plot->replot(); // 立即重绘以应用更改
+        }
+    }
+}
+
+/**
+ * @brief [槽] 当子图中的选择发生用户更改时调用
+ */
+void MainWindow::onPlotSelectionChanged()
+{
+    // 1. 获取是哪个 QCustomPlot 发出的信号
+    QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
+    if (!plot)
+        return;
+
+    // 2. 获取该子图上当前选中的图表 (plottables)
+    QList<QCPAbstractPlottable *> selected = plot->selectedPlottables(); //
+    if (selected.isEmpty())
+    {
+        // 如果没有选中的图表 (例如，用户可能点击了空白处以取消所有选择)
+        // 我们可以选择清除树中的当前索引
+        m_signalTree->setCurrentIndex(QModelIndex());
+        return;
+    }
+
+    // 3. 我们只关心第一个被选中的图表
+    QCPGraph *graph = qobject_cast<QCPGraph *>(selected.first());
+    if (!graph)
+        return; // 选中的可能不是 QCPGraph
+
+    // 4. 从我们的映射中反向查找该图表的 UniqueID
+    QString uniqueID = m_plotGraphMap.value(plot).key(graph, QString());
+    if (uniqueID.isEmpty())
+        return; // 未在映射中找到
+
+    // 5. 在树模型中查找与该 ID 对应的项
+    QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID); //
+    if (!item)
+        return;
+
+    // 6. 滚动到该项并将其设置为当前选中项
+    {
+        QSignalBlocker blocker(m_signalTree);
+        m_signalTree->scrollTo(item->index(), QAbstractItemView::PositionAtCenter);
+        m_signalTree->setCurrentIndex(item->index()); //
+    }
+}
+
+// 清除所有子图信号的槽函数实现
+void MainWindow::on_actionClearAllPlots_triggered()
+{
+    // 1. 简单的确认对话框 (防止误触)
+    QMessageBox::StandardButton reply;
+    reply = QMessageBox::question(this, tr("Clear All Plots"),
+                                  tr("Are you sure you want to remove all signals from all plots?"),
+                                  QMessageBox::Yes | QMessageBox::No);
+    if (reply == QMessageBox::No)
+        return;
+
+    // 2. 在 UI 树中取消勾选所有已加载的信号
+    {
+        const QSignalBlocker blocker(m_signalTreeModel);
+
+        // 遍历当前记录在案的所有信号映射
+        for (auto it = m_plotSignalMap.begin(); it != m_plotSignalMap.end(); ++it)
+        {
+            const QSet<QString> &signalIDs = it.value();
+            for (const QString &uniqueID : signalIDs)
+            {
+                QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+                if (item)
+                {
+                    item->setCheckState(Qt::Unchecked);
+                }
+            }
+        }
+    }
+
+    // 3. 清空所有子图的 Graph 对象
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (plot)
+        {
+            plot->clearGraphs();
+            // 注意：我们只清除 Graph，保留游标辅助项(Item)，它们由 CursorManager 管理
+            plot->legend->setVisible(m_toggleLegendAction->isChecked()); // 保持图例状态但内容会变空
+            plot->replot();
+        }
+    }
+
+    // 4. 清空内部数据映射
+    m_plotGraphMap.clear();
+    m_plotSignalMap.clear();
+
+    // 5. 重置游标 (因为 Graph 指针均已失效)
+    m_cursorManager->setupCursors();     // 重建游标对象
+    m_cursorManager->updateAllCursors(); // 刷新位置
+
+    qDebug() << "All plots cleared.";
+}
+
+/**
+ * @brief [辅助] 解析 sdi_view_meta_data.xml 的 QDomDocument
+ */
+MainWindow::LayoutInfo MainWindow::parseViewMetaData(const QDomDocument &doc)
+{
+    LayoutInfo info;
+    QDomElement root = doc.documentElement(); // <sdi> 标签
+
+    // 使用 firstChildElement 来安全地获取标签
+    QDomElement rowsEl = root.firstChildElement("SubPlotRows");
+    if (!rowsEl.isNull())
+    {
+        info.rows = rowsEl.text().toInt();
+    }
+
+    QDomElement colsEl = root.firstChildElement("SubPlotCols");
+    if (!colsEl.isNull())
+    {
+        info.cols = colsEl.text().toInt();
+    }
+
+    QDomElement layoutEl = root.firstChildElement("LayoutType");
+    if (!layoutEl.isNull())
+    {
+        info.layoutType = layoutEl.text();
+    }
+
+    return info;
+}
+
+/**
+ * @brief [辅助] 解析 sdi_checked_signals.xml 的 QDomDocument
+ */
+QList<MainWindow::SignalInfo> MainWindow::parseCheckedSignals(const QDomDocument &doc)
+{
+    QList<SignalInfo> signalList;
+    QDomElement root = doc.documentElement(); // <sdi> 标签
+
+    // 1. 找到 <Signals> 标签
+    QDomElement signalsNode = root.firstChildElement("Signals");
+    if (signalsNode.isNull())
+    {
+        qWarning() << "Could not find <Signals> tag in sdi_checked_signals.xml";
+        return signalList;
+    }
+
+    // 2. 遍历 <Signals> 下的所有子节点 (Sig1, Sig2, ...)
+    QDomElement sigEl = signalsNode.firstChildElement(); // 从第一个 <Sig*> 开始
+    while (!sigEl.isNull())
+    {
+        SignalInfo sigInfo;
+
+        // 3. 提取普通文本标签
+        sigInfo.name = sigEl.firstChildElement("SignalName").text();
+        sigInfo.id = sigEl.firstChildElement("ID").text().toInt();
+
+        // 4. 提取颜色
+        QDomElement colorEl = sigEl.firstChildElement("Color");
+        if (!colorEl.isNull())
+        {
+            qreal r = colorEl.firstChildElement("r").text().toDouble();
+            qreal g = colorEl.firstChildElement("g").text().toDouble();
+            qreal b = colorEl.firstChildElement("b").text().toDouble();
+            // QColor::fromRgbF 用于 0.0-1.0 范围的浮点数
+            sigInfo.color = QColor::fromRgbF(r, g, b);
+        }
+
+        // 5. 提取子图 ID (<Plots><Element>2</Element></Plots>)
+        QDomElement plotsEl = sigEl.firstChildElement("Plots");
+        if (!plotsEl.isNull())
+        {
+            // 找到所有名为 "Element" 的子标签
+            QDomNodeList plotIdNodes = plotsEl.elementsByTagName("Element");
+            for (int i = 0; i < plotIdNodes.count(); ++i)
+            {
+                sigInfo.plotIds.append(plotIdNodes.at(i).toElement().text().toInt());
+            }
+        }
+
+        signalList.append(sigInfo);
+
+        // 移动到下一个兄弟节点 (例如: 从 <Sig1> 到 <Sig2>)
+        sigEl = sigEl.nextSiblingElement();
+    }
+
+    return signalList;
+}
+
+void MainWindow::showLoadProgress(int percentage)
+{
+    m_progressDialog->setValue(percentage);
+}
+
+void MainWindow::populateSignalTree(const FileData &data)
+{
+    QString filename = QFileInfo(data.filePath).fileName();
+
+    QStandardItem *fileItem = new QStandardItem(filename);
+    fileItem->setEditable(false);
+    fileItem->setCheckable(false); // 文件条目本身不可勾选
+    fileItem->setData(filename, FileNameRole);
+    fileItem->setData(true, IsFileItemRole);
+    fileItem->setData(false, IsSignalItemRole);
+    m_signalTreeModel->appendRow(fileItem);
+
+    // 遍历所有表 (对于 CSV，只有一个表)
+    for (int t_idx = 0; t_idx < data.tables.size(); ++t_idx)
+    {
+        const SignalTable &table = data.tables.at(t_idx);
+
+        // 如果只有一个表，并且其名称与文件名相同，则跳过创建表节点
+        bool skipTableNode = (data.tables.size() == 1 && table.name == QFileInfo(filename).completeBaseName());
+
+        QStandardItem *parentItem = fileItem;
+        if (!skipTableNode)
+        {
+            QStandardItem *tableItem = new QStandardItem(table.name);
+            tableItem->setEditable(false);
+            tableItem->setCheckable(false);
+            tableItem->setData(filename, FileNameRole);
+            tableItem->setData(false, IsFileItemRole);
+            tableItem->setData(false, IsSignalItemRole);
+            fileItem->appendRow(tableItem);
+            parentItem = tableItem; // 信号将附加到表条目
+        }
+
+        // 使用表中的 headers
+        for (int i = 0; i < table.headers.count(); ++i)
+        {
+            QString signalName = table.headers[i].trimmed();
+            if (signalName.isEmpty())
+                signalName = tr("Signal %1").arg(i + 1);
+
+            QStandardItem *item = new QStandardItem(signalName);
+            item->setEditable(false);
+            item->setCheckable(true);
+            item->setCheckState(Qt::Unchecked);
+
+            // 新的 UniqueID 格式 "filename/tablename/signalindex"
+            QString uniqueID = QString("%1/%2/%3").arg(filename).arg(table.name).arg(i);
+
+            item->setData(uniqueID, UniqueIdRole);
+            item->setData(false, IsFileItemRole);
+            item->setData(true, IsSignalItemRole);
+            item->setData(filename, FileNameRole);
+
+            if (m_colorList.isEmpty()) // 安全检查
+            {
+                m_colorList << Qt::black;
+            }
+
+            QColor color = m_colorList.at(m_colorIndex);
+            m_colorIndex = (m_colorIndex + 1) % m_colorList.size();
+
+            // 将默认宽度为 2
+            // QPen pen(color, 2); //宽度2绘制密集线段会卡
+            QPen pen(color, 1);
+
+            item->setData(QVariant::fromValue(pen), PenDataRole);
+
+            parentItem->appendRow(item); // 添加到父条目 (文件或表)
+        }
+    }
+}
+
+void MainWindow::updateSignalTreeChecks()
+{
+    QSignalBlocker blocker(m_signalTreeModel);
+
+    // 使用 m_plotSignalMap 和 m_plotWidgetMap
+    int activePlotIndex = m_plotWidgetMap.value(m_activePlot, -1);
+    const auto &activeSignals = m_plotSignalMap.value(activePlotIndex); // 获取 QSet<QString>
+
+    // 遍历树形结构 (文件 -> 表 -> 信号)
+    for (int i = 0; i < m_signalTreeModel->rowCount(); ++i)
+    {
+        QStandardItem *fileItem = m_signalTreeModel->item(i);
+        if (!fileItem)
+            continue;
+        for (int j = 0; j < fileItem->rowCount(); ++j)
+        {
+            QStandardItem *tableItem = fileItem->child(j);
+            if (!tableItem)
+                continue;
+
+            // 检查是表节点还是直接的信号节点
+            if (tableItem->data(IsSignalItemRole).toBool())
+            {
+                // 这是 (CSV) 信号项
+                QString uniqueID = tableItem->data(UniqueIdRole).toString();
+                if (activeSignals.contains(uniqueID))
+                    tableItem->setCheckState(Qt::Checked);
+                else
+                    tableItem->setCheckState(Qt::Unchecked);
+            }
+            else
+            {
+                // 这是 (MAT) 表项，遍历其子信号项
+                for (int k = 0; k < tableItem->rowCount(); ++k)
+                {
+                    QStandardItem *signalItem = tableItem->child(k);
+                    if (signalItem)
+                    {
+                        QString uniqueID = signalItem->data(UniqueIdRole).toString();
+                        if (activeSignals.contains(uniqueID))
+                            signalItem->setCheckState(Qt::Checked);
+                        else
+                            signalItem->setCheckState(Qt::Unchecked);
+                    }
+                }
+            }
+        }
+    }
+}
+
+void MainWindow::onSignalItemChanged(QStandardItem *item)
+{
+    if (!item)
+        return;
+
+    // 如果是文件或表条目，则忽略
+    if (!item->data(IsSignalItemRole).toBool())
+    {
+        return;
+    }
+
+    if (m_fileDataMap.isEmpty())
+    {
+        if (item->checkState() == Qt::Checked)
+        {
+            QSignalBlocker blocker(m_signalTreeModel);
+            item->setCheckState(Qt::Unchecked);
+        }
+        return;
+    }
+
+    // 使用 m_plotWidgetMap
+    int plotIndex = m_plotWidgetMap.value(m_activePlot, -1);
+    if (!m_activePlot || plotIndex == -1) // 检查 m_activePlot 是否为 null 并且索引有效
+    {
+        if (item->checkState() == Qt::Checked)
+        {
+            QSignalBlocker blocker(m_signalTreeModel);
+            item->setCheckState(Qt::Unchecked);
+            QMessageBox::information(this, tr("No Plot Selected"), tr("Please click on a plot to activate it before adding a signal."));
+        }
+        return;
+    }
+
+    // 使用 UniqueID
+    QString uniqueID = item->data(UniqueIdRole).toString();
+    QString signalName = item->text();
+    if (uniqueID.isEmpty())
+    {
+        qWarning() << "Invalid signal item" << signalName;
+        return;
+    }
+
+    // 使用新的辅助函数
+    if (item->checkState() == Qt::Checked)
+    {
+        qDebug() << "Adding signal" << signalName << "(id" << uniqueID << ") to plot" << m_activePlot;
+        addSignalToPlot(uniqueID, m_activePlot);
+    }
+    else // Qt::Unchecked
+    {
+        qDebug() << "Removing signal" << signalName << "from plot" << m_activePlot;
+        removeSignalFromPlot(uniqueID, m_activePlot);
+    }
+}
+
+void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
+{
+    if (!index.isValid())
+        return;
+    QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
+    // 1. 检查是否为信号条目
+    if (!item || !item->data(IsSignalItemRole).toBool())
+        return;
+
+    // 2. 检查点击位置
+    QPoint localPos = m_signalTree->viewport()->mapFromGlobal(QCursor::pos());
+    QRect itemRect = m_signalTree->visualRect(index);
+
+    // 这些值必须与 SignalTreeDelegate::paint 中的值匹配
+    const int previewWidth = 40;
+    const int margin = 2;
+
+    // 计算预览线本身的可点击区域
+    QRect previewClickRect(
+        itemRect.right() - previewWidth + margin, // 预览区域的左边缘 + 边距
+        itemRect.top(),
+        previewWidth - (2 * margin), // 只在两个边距之间
+        itemRect.height());
+
+    // 如果点击不在预览线区域，则忽略
+    if (!previewClickRect.contains(localPos))
+    {
+        return; // 用户点击了文本，不是预览线
+    }
+
+    // 3. 如果点击在预览线上，则打开新对话框
+    QString uniqueID = item->data(UniqueIdRole).toString();
+    QPen currentPen = item->data(PenDataRole).value<QPen>();
+
+    // 使用新的自定义对话框
+    SignalPropertiesDialog dialog(currentPen, this);
+    if (dialog.exec() != QDialog::Accepted)
+    {
+        return; // 用户点击了 "Cancel"
+    }
+
+    QPen newPen = dialog.getSelectedPen(); // 获取包含所有属性的新 QPen
+
+    item->setData(QVariant::fromValue(newPen), PenDataRole);
+
+    // 更新所有图表中该信号的画笔
+    for (auto it = m_plotGraphMap.begin(); it != m_plotGraphMap.end(); ++it)
+    {
+        if (it.value().contains(uniqueID))
+        {
+            QCPGraph *graph = it.value().value(uniqueID);
+            if (graph)
+            {
+                graph->setPen(newPen);
+                graph->parentPlot()->replot();
+            }
+        }
+    }
+}
+
+// 信号树的右键菜单槽
+void MainWindow::onSignalTreeContextMenu(const QPoint &pos)
+{
+    QModelIndex index = m_signalTree->indexAt(pos);
+    if (!index.isValid())
+        return;
+
+    QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
+    // 只在文件条目上显示菜单
+    if (!item || !item->data(IsFileItemRole).toBool())
+        return; // 只在文件条目上显示菜单
+
+    QString filename = item->data(FileNameRole).toString(); //  使用 FileNameRole
+
+    QMenu contextMenu(this);
+    QAction *deleteAction = contextMenu.addAction(tr("Remove '%1'").arg(filename));
+    deleteAction->setData(filename); // 将文件名存储在动作中
+
+    connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteFileAction);
+    contextMenu.exec(m_signalTree->viewport()->mapToGlobal(pos));
+}
+
+/**
+ * @brief 响应重放按钮切换
+ */
+void MainWindow::onReplayActionToggled(bool checked)
+{
+    if (checked && m_cursorManager->getMode() == CursorManager::NoCursor)
+    {
+        // 如果没有游标，自动启用单游标
+        m_cursorSingleAction->setChecked(true);
+        // 手动触发 CursorManager 更新
+        m_cursorManager->setMode(CursorManager::SingleCursor);
+    }
+}
+
+/**
+ * @brief  获取全局时间范围
+ */
+QCPRange MainWindow::getGlobalTimeRange() const
+{
+    // 遍历所有文件
+    if (m_fileDataMap.isEmpty())
+        return QCPRange(0, 1);
+
+    bool first = true;
+    QCPRange totalRange;
+    for (const FileData &data : m_fileDataMap.values())
+    {
+        // 遍历所有表
+        for (const SignalTable &table : data.tables)
+        {
+            if (!table.timeData.isEmpty())
+            {
+                if (first)
+                {
+                    totalRange.lower = table.timeData.first();
+                    totalRange.upper = table.timeData.last();
+                    first = false;
+                }
+                else
+                {
+                    if (table.timeData.first() < totalRange.lower)
+                        totalRange.lower = table.timeData.first();
+                    if (table.timeData.last() > totalRange.upper)
+                        totalRange.upper = table.timeData.last();
+                }
+            }
+        }
+    }
+
+    if (first) // 意味着没有文件有数据
+        return QCPRange(0, 1);
+    else
+        return totalRange;
+}
+
+/**
+ * @brief 估算数据时间步
+ */
+double MainWindow::getSmallestTimeStep() const
+{
+    // 查找所有文件中的最小步长
+    double minStep = -1.0;
+
+    for (const FileData &data : m_fileDataMap.values())
+    {
+        // 遍历所有表
+        for (const SignalTable &table : data.tables)
+        {
+            if (table.timeData.size() >= 2)
+            {
+                double step = table.timeData.at(1) - table.timeData.at(0);
+                if (step > 0 && (minStep == -1.0 || step < minStep))
+                {
+                    minStep = step;
+                }
+            }
+        }
+    }
+
+    return (minStep > 0) ? minStep : 0.01; // 默认步长
+}
+
+// 辅助函数
+/**
+ * @brief  从 m_plotGraphMap 中安全地获取一个 QCPGraph*
+ * @param plot QCustomPlot 控件
+ * @param uniqueID 信号的唯一ID ("filename/tablename/signalindex")
+ * @return 如果找到则返回 QCPGraph*，否则返回 nullptr
+ */
+QCPGraph *MainWindow::getGraph(QCustomPlot *plot, const QString &uniqueID) const
+{
+    if (plot && m_plotGraphMap.contains(plot))
+    {
+        return m_plotGraphMap.value(plot).value(uniqueID, nullptr);
+    }
+    return nullptr;
+}
+
+/**
+ * @brief  从 QStandardItem 构建 UniqueID
+ */
+QString MainWindow::getUniqueID(QStandardItem *item) const
+{
+    if (!item || !item->data(IsSignalItemRole).toBool())
+        return QString();
+
+    // UniqueID 现在直接存储在条目中
+    return item->data(UniqueIdRole).toString();
+}
+
+/**
+ * @brief [槽] 在布局更改和重绘完成后更新游标位置
+ */
+void MainWindow::updateCursorsForLayoutChange()
+{
+    if (m_cursorManager->getMode() != CursorManager::NoCursor)
+    {
+        m_cursorManager->updateAllCursors();
+    }
+}
+
+/**
+ * @brief [槽] 响应图例上下文菜单中的“删除”动作
+ */
+void MainWindow::onDeleteSignalAction()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+
+    QString uniqueID = action->data().toString();
+    if (uniqueID.isEmpty())
+        return;
+
+    // 使用更可靠的 BFS 搜索替换 findItems 循环
+    QStandardItem *itemToUncheck = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+
+    if (itemToUncheck)
+    {
+        itemToUncheck->setCheckState(Qt::Unchecked);
+    }
+    else
+    {
+        qWarning() << "onDeleteSignalAction: Could not find item in tree model for ID" << uniqueID;
+    }
+}
+
+/**
+ * @brief [槽] 响应子图上下文菜单中的“删除子图”动作
+ * * 此函数通过取消勾选树中的所有相关条目来移除子图上的所有信号。
+ */
+void MainWindow::onDeleteSubplotAction()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+
+    int plotIndex = action->data().toInt();
+    if (!m_plotSignalMap.contains(plotIndex))
+        return;
+
+    const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
+
+    if (signalIDsCopy.isEmpty())
+        return; // 子图上没有信号
+
+    qDebug() << "Clearing subplot index" << plotIndex << "- removing" << signalIDsCopy.size() << "signals.";
+
+    for (const QString &uniqueID : signalIDsCopy)
+    {
+        // 查找树中的条目
+        QStandardItem *itemToUncheck = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+
+        // 如果找到了，并且它当前被选中，则取消勾选它
+        if (itemToUncheck && itemToUncheck->checkState() == Qt::Checked)
+        {
+            itemToUncheck->setCheckState(Qt::Unchecked);
+        }
+    }
+}
+
+/**
+ * @brief [槽] 当信号搜索框中的文本更改时调用
+ */
+void MainWindow::onSignalSearchChanged(const QString &text)
+{
+    QString query = text.trimmed().toLower();
+    QStandardItem *root = m_signalTreeModel->invisibleRootItem();
+
+    // 递归地遍历所有项并设置它们的隐藏状态
+    for (int i = 0; i < root->rowCount(); ++i)
+    {
+        filterSignalTree(root->child(i), query);
+    }
+
+    // 如果在搜索，展开所有内容以显示匹配项
+    if (!query.isEmpty())
+    {
+        m_signalTree->expandAll();
+    }
+}
+
+/**
+ * @brief [辅助函数] 递归地过滤信号树。
+ * @param item 当前要检查的 QStandardItem
+ * @param query 小写的搜索查询
+ * @return true 如果此项或其任何子项匹配查询，则返回
+ */
+bool MainWindow::filterSignalTree(QStandardItem *item, const QString &query)
+{
+    if (!item)
+        return false;
+
+    // 1. 检查此项是否匹配
+    // 我们匹配信号、文件和表名
+    bool selfMatches = item->text().toLower().contains(query);
+
+    // 2. 检查是否有任何子项匹配
+    bool childrenMatch = false;
+    for (int i = 0; i < item->rowCount(); ++i)
+    {
+        if (filterSignalTree(item->child(i), query))
+        {
+            childrenMatch = true;
+        }
+    }
+
+    // 3. 决定可见性
+    bool visible = selfMatches || childrenMatch;
+
+    // 4. 如果查询为空，所有项都可见
+    if (query.isEmpty())
+    {
+        visible = true;
+    }
+
+    // 5. 在视图中设置行隐藏
+    // 根项没有父项，所以使用 QModelIndex()
+    QModelIndex parentIndex = item->parent() ? item->parent()->index() : QModelIndex();
+    m_signalTree->setRowHidden(item->row(), parentIndex, !visible);
+
+    return visible;
+}
+
+/**
+ * @brief [辅助] 在信号树中通过信号名称查找条目
+ */
+QStandardItem *MainWindow::findItemBySignalName(const QString &name)
+{
+    // 使用静态辅助函数开始从根节点递归搜索
+    return findItemByName_Recursive(m_signalTreeModel->invisibleRootItem(), name);
+}
+
+/**
+ * @brief 切换所有子图中图例的可见性
+ */
+void MainWindow::on_actionToggleLegend_toggled(bool checked)
+{
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (plot && plot->legend)
+        {
+            plot->legend->setVisible(checked);
+            plot->replot();
+        }
+    }
+}
+
+/**
+ * @brief [辅助] 应用导入的布局和信号设置
+ * @param layout 从 sdi_view_meta_data.xml 解析的布局信息
+ * @param signalList 从 sdi_checked_signals.xml 解析的信号列表
+ */
+void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList)
+{
+    // 1. 彻底清除旧状态 (Fix: 必须在 setupPlotLayout 之前执行)
+
+    // A. 在 UI 上取消勾选所有信号
+
+    {
+        const QSignalBlocker blocker(m_signalTreeModel);
+
+        QList<int> plotIndices = m_plotSignalMap.keys();
+        for (int plotIndex : plotIndices)
+        {
+            const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
+            for (const QString &uniqueID : signalIDsCopy)
+            {
+                QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+                if (item)
+                {
+                    item->setCheckState(Qt::Unchecked);
+                }
+            }
+        }
+    }
+
+    // B. 强制清空内部映射
+    // 这确保了 setupPlotLayout 被调用时，不会恢复任何旧信号
+    m_plotSignalMap.clear();
+    // m_plotGraphMap 会在 setupPlotLayout -> clearPlotLayout 中被清空
+
+    // 2. 设置新布局
+    qDebug() << "Applying layout:" << layout.rows << "rows," << layout.cols << "cols";
+    setupPlotLayout(layout.rows, layout.cols);
+
+    // 确保我们有足够多的子图
+    if (m_plotWidgets.isEmpty())
+    {
+        QMessageBox::warning(this, tr("Import Error"), tr("Failed to create plot layout."));
+        return;
+    }
+
+    // 3. 遍历信号列表并应用设置 (包含索引转换)
+    const int numRows = layout.rows;
+    const int numCols = layout.cols;
+    const int totalPlots = m_plotWidgets.size();
+
+    if (numRows <= 0 || numCols <= 0 || totalPlots == 0)
+    {
+        QMessageBox::warning(this, tr("Import Error"), tr("Invalid layout dimensions."));
+        return;
+    }
+
+    for (const SignalInfo &sig : signalList)
+    {
+        // 3a. 在树中查找信号
+        QStandardItem *item = findItemBySignalName(sig.name);
+        if (!item)
+        {
+            qWarning() << "Import View: Could not find signal in tree:" << sig.name;
+            continue;
+        }
+
+        QString uniqueID = item->data(UniqueIdRole).toString();
+        if (uniqueID.isEmpty())
+            continue;
+
+        // 3b. 更新颜色
+        QPen currentPen = item->data(PenDataRole).value<QPen>();
+        currentPen.setColor(sig.color);
+        item->setData(QVariant::fromValue(currentPen), PenDataRole);
+
+        // 3c. 遍历该信号应在的子图 ID
+        for (int sdiPlotId : sig.plotIds) // sdiPlotId 是 1-based, 列优先
+        {
+            // 索引转换 (Simulink 列优先 -> Qt 行优先)
+            // SDI 也是 1-based 索引
+            if (sdiPlotId < 1)
+                sdiPlotId = 1;
+
+            // 假设 SDI 总是基于 8 行的网格逻辑 (或根据实际 XML 逻辑调整)
+            // 这里使用你提供的转换逻辑:
+            int r = (sdiPlotId - 1) % 8 + 1; // 1-based row
+            int c = (sdiPlotId - 1) / 8 + 1; // 1-based col
+
+            // 映射到我们要创建的网格 (row-major, 0-based)
+            int plotIndex = (r - 1) * numCols + (c - 1);
+
+            // 边界检查：如果计算出的行列超出了当前布局
+            if (r > numRows || c > numCols)
+            {
+                // 这种情况下 SDI 可能是在一个很大的虚拟网格上，而我们将布局缩小了
+                // 策略：忽略，或者放到第一个图，或者警告
+                // 这里我们按照你的代码，尝试放入 plotIndex=0 作为 fallback，或者跳过
+                // qWarning() << "Import: Signal" << sig.name << "at SDI(" << r << "," << c << ") is outside current layout(" << numRows << "," << numCols << ")";
+                if (plotIndex >= totalPlots)
+                    plotIndex = 0; // Fallback
+            }
+
+            if (plotIndex >= 0 && plotIndex < totalPlots)
+            {
+                QCustomPlot *targetPlot = m_plotWidgets.at(plotIndex);
+                addSignalToPlot(uniqueID, targetPlot);
+
+                // 既然我们手动添加了信号，也需要手动更新 item 的勾选状态
+                // (因为我们之前 block 了信号，且 addSignalToPlot 不会反向更新 TreeItem)
+                // 注意：如果一个信号在多个图中，CheckState 只能表示"部分选中"或"选中"
+                // 简单起见，只要添加了就设为 Checked
+                {
+                    const QSignalBlocker blocker(m_signalTreeModel);
+                    item->setCheckState(Qt::Checked);
+                }
+            }
+        }
+    }
+
+    // 4. 全部完成后，更新树以匹配(新的)活动子图 (处理 PartiallyChecked 等状态)
+    updateSignalTreeChecks();
+
+    // 5. 缩放视图
+    on_actionFitView_triggered();
+    QMessageBox::information(this, tr("Import Successful"), tr("Successfully imported view settings."));
+}
+
+void MainWindow::on_actionFitViewYAll_triggered()
+{
+    // 遍历所有子图
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (!plot || plot->graphCount() == 0)
+            continue;
+
+        // 获取当前子图的 X 轴范围
+        QCPRange keyRange = plot->xAxis->range();
+        QCPRange valueRange;
+        bool foundRange = false;
+
+        // 获取该子图上的所有图表
+        const auto &graphs = m_plotGraphMap.value(plot);
+
+        // 遍历图表，计算在当前 X 轴范围内的 Y 轴最大/最小值
+        for (QCPGraph *graph : graphs)
+        {
+            bool currentFound = false;
+            // 获取该图表在当前 X 轴范围内的 Y 值范围
+            QCPRange graphValueRange = graph->getValueRange(currentFound, QCP::sdBoth, keyRange);
+            if (currentFound)
+            {
+                if (!foundRange)
+                    valueRange = graphValueRange;
+                else
+                    valueRange.expand(graphValueRange);
+                foundRange = true;
+            }
+        }
+
+        // 如果找到了有效的 Y 轴范围，应用并重绘
+        if (foundRange)
+        {
+            // 添加 5% 的上下边距，避免线条贴边
+            double size = valueRange.size();
+            double margin = size * 0.05;
+
+            // 处理数值完全相同（一条直线）的情况
+            if (qFuzzyCompare(valueRange.lower, valueRange.upper))
+            {
+                margin = qAbs(valueRange.lower * 0.05);
+                if (qFuzzyIsNull(margin))
+                    margin = 0.5;
+            }
+
+            valueRange.lower -= margin;
+            valueRange.upper += margin;
+
+            plot->yAxis->setRange(valueRange);
+            plot->replot();
+        }
+    }
+}
+
+/**
+ * @brief [槽] 适应视图大小 (所有子图, X 和 Y 轴)
+ */
+void MainWindow::on_actionFitView_triggered()
+{
+    if (m_plotWidgets.isEmpty())
+        return;
+
+    QCPRange globalXRange;
+    bool hasXRange = false;
+
+    // 第一次遍历：找到全局 X 范围并计算和设置 Y 轴
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        bool hasYRange = false; // 此子图是否有 Y 范围
+        QCPRange plotYRange;    // 此子图的紧密 Y 范围
+
+        if (plot && plot->graphCount() > 0)
+        {
+            // 获取此子图上的图表映射
+            const auto &graphsOnPlot = m_plotGraphMap.value(plot);
+
+            for (QCPGraph *graph : graphsOnPlot.values())
+            {
+                if (graph && !graph->data()->isEmpty())
+                {
+                    bool keyFound = false;
+                    bool valueFound = false;
+
+                    // 1. 获取此图表的 *完整* 键 (X) 范围
+                    QCPRange graphKeyRange = graph->data()->keyRange(keyFound);
+                    if (!keyFound)
+                        continue; // 跳过没有有效键的图表
+
+                    // 2. 获取此图表在 *其完整 X 范围* 内的 *完整* 值 (Y) 范围
+                    QCPRange graphValueRange = graph->getValueRange(valueFound, QCP::sdBoth, graphKeyRange);
+                    if (!valueFound)
+                        continue; // 跳过没有有效值的图表
+
+                    // 3. 扩展全局 X 范围
+                    if (!hasXRange)
+                    {
+                        globalXRange = graphKeyRange;
+                        hasXRange = true;
+                    }
+                    else
+                    {
+                        globalXRange.expand(graphKeyRange);
+                    }
+
+                    // 4. 扩展此子图的 Y 范围
+                    if (!hasYRange)
+                    {
+                        plotYRange = graphValueRange;
+                        hasYRange = true;
+                    }
+                    else
+                    {
+                        plotYRange.expand(graphValueRange);
+                    }
+                }
+            }
+
+            // 5. 现在我们有了此子图的紧密 Y 范围 (plotYRange)，应用 5% 的边距
+            if (hasYRange)
+            {
+                QCPRange yRange = plotYRange; // 使用我们刚找到的紧密范围
+                double size = yRange.size();
+                double margin = size * 0.05;
+
+                // 处理平坦线 (size == 0) 的情况
+                if (qFuzzyCompare(yRange.lower, yRange.upper))
+                {
+                    margin = qAbs(yRange.lower * 0.05); // 5% of the value
+                    if (qFuzzyIsNull(margin))           // 如果值也是 0
+                    {
+                        margin = 0.5; // 添加一个 +/- 0.5 的硬编码边距
+                    }
+                }
+
+                yRange.lower -= margin;
+                yRange.upper += margin;
+
+                plot->yAxis->setRange(yRange); // 设置带边距的 Y 轴
+            }
+            else // 此子图有图表对象，但没有有效数据
+            {
+                plot->yAxis->setRange(0, 1); // 设置默认 Y 轴
+            }
+        }
+        else if (plot) // 是一个空的子图
+        {
+            plot->yAxis->setRange(0, 1); // 设置默认 Y 轴
+        }
+    }
+
+    // 第二次遍历：应用全局 X 范围并重绘
+    if (hasXRange)
+    {
+        for (QCustomPlot *plot : m_plotWidgets)
+        {
+            if (plot)
+            {
+                plot->xAxis->setRange(globalXRange);
+                plot->replot();
+            }
+        }
+    }
+    else // 所有子图上都没有找到任何有效数据
+    {
+        for (QCustomPlot *plot : m_plotWidgets)
+        {
+            if (plot)
+            {
+                plot->xAxis->setRange(0, 1); // 设置默认 X 轴
+                plot->replot();
+            }
+        }
+    }
+}
+
+/**
+ * @brief [槽] 适应视图大小 (所有子图, 仅 X 轴)
+ */
+void MainWindow::on_actionFitViewTime_triggered()
+{
+    if (m_plotWidgets.isEmpty())
+        return;
+
+    // 找到全局 X 范围并应用
+    QCPRange globalXRange;
+    bool hasXRange = false;
+
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (plot && plot->graphCount() > 0)
+        {
+            plot->xAxis->rescale();
+            if (!hasXRange)
+            {
+                globalXRange = plot->xAxis->range();
+                hasXRange = true;
+            }
+            else
+            {
+                globalXRange.expand(plot->xAxis->range());
+            }
+        }
+    }
+
+    if (hasXRange)
+    {
+        for (QCustomPlot *plot : m_plotWidgets)
+        {
+            if (plot)
+            {
+                plot->xAxis->setRange(globalXRange);
+                plot->replot();
+            }
+        }
+    }
+}
+
+/**
+ * @brief [槽] 适应视图大小 (仅活动子图, 仅 Y 轴)
+ */
+void MainWindow::on_actionFitViewY_triggered()
+{
+    // 仅缩放当前X轴范围内的Y轴
+    if (m_activePlot && m_activePlot->graphCount() > 0)
+    {
+        QCPRange keyRange = m_activePlot->xAxis->range();
+        QCPRange valueRange;
+        bool foundRange = false;
+
+        // 遍历活动子图上的所有图表
+        // 使用 m_plotGraphMap
+        const auto &graphs = m_plotGraphMap.value(m_activePlot);
+        for (QCPGraph *graph : graphs)
+        //         -
+        {
+            bool currentFound = false;
+            // 获取该图表在当前X轴范围内的Y值范围
+            QCPRange graphValueRange = graph->getValueRange(currentFound, QCP::sdBoth, keyRange);
+            if (currentFound)
+            {
+                if (!foundRange)
+                    valueRange = graphValueRange;
+                else
+                    valueRange.expand(graphValueRange);
+                foundRange = true;
+            }
+        }
+
+        // 设置Y轴范围并重绘
+        if (foundRange)
+        {
+            // 添加5%的上下边距
+            double size = valueRange.size();
+            double margin = size * 0.05;
+            valueRange.lower -= margin;
+            valueRange.upper += margin;
+
+            m_activePlot->yAxis->setRange(valueRange);
+            m_activePlot->replot();
+        }
+    }
+}
+
+/**
+ * @brief [槽] 当一个X轴范围改变时，同步所有其他的X轴
+ */
+void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
+{
+    QObject *senderAxis = sender();
+    if (!senderAxis)
+        return;
+
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        // 仅更新 *其他* 图表, 避免信号循环
+        if (plot->xAxis != senderAxis)
+        {
+            // 阻止此 setRange 再次发出 rangeChanged 信号
+            QSignalBlocker blocker(plot->xAxis);
+            plot->xAxis->setRange(newRange);
+
+            plot->replot();
+        }
+    }
+
+    // X轴变化时，游标也需要更新
+    if (m_cursorManager->getMode() != CursorManager::NoCursor)
+    {
+        m_cursorManager->updateAllCursors();
+    }
 }
 
 void MainWindow::on_actionLayout1x1_triggered()
@@ -906,236 +2526,6 @@ void MainWindow::on_actionLayoutCustom_triggered()
 }
 
 /**
- * @brief [槽] "Load File..." 菜单动作被触发
- * * 此函数现在只负责打开文件对话框，然后调用辅助函数 loadFile()
- */
-void MainWindow::on_actionLoadFile_triggered()
-{
-    QString filePath = QFileDialog::getOpenFileName(this,
-                                                    tr("Open File"), "", tr("Data Files (*.csv *.txt *.mat)"));
-
-    // 只需调用新的辅助函数
-    loadFile(filePath);
-}
-
-/**
- * @brief 启动加载单个文件的辅助函数
- * * 无论是通过菜单打开还是拖放，都会调用此函数
- * @param filePath 要加载的文件的路径
- */
-void MainWindow::loadFile(const QString &filePath)
-{
-    if (filePath.isEmpty())
-        return;
-
-    // 注意：当拖放多个文件时，这将为每个文件显示和隐藏进度对话框
-    m_progressDialog->setValue(0);
-    m_progressDialog->setLabelText(tr("Loading %1...").arg(QFileInfo(filePath).fileName()));
-    m_progressDialog->show();
-
-    // 检查文件类型 ---
-    if (filePath.endsWith(".mat", Qt::CaseInsensitive))
-    {
-        emit requestLoadMat(filePath);
-    }
-    else
-    {
-        emit requestLoadCsv(filePath);
-    }
-}
-
-/**
- * @brief [槽] "导入视图..." 菜单动作被触发
- */
-void MainWindow::on_actionImportView_triggered()
-{
-    QString mldatxFilePath = QFileDialog::getOpenFileName(this,
-                                                          tr("Import Simulink View"), "", tr("Simulink Data (*.mldatx)"));
-
-    if (mldatxFilePath.isEmpty())
-        return;
-
-    importView(mldatxFilePath);
-}
-
-void MainWindow::importView(const QString &mldatxFilePath)
-{
-    if (mldatxFilePath.isEmpty())
-        return;
-
-    // --- 使用 QuaZip 打开 ---
-    QuaZip zip(mldatxFilePath);
-    if (!zip.open(QuaZip::mdUnzip))
-    {
-        QMessageBox::critical(this, tr("Import Error"), tr("Error: Could not open file as ZIP archive."));
-        return;
-    }
-
-    // --- 查找并解析关键 XML ---
-    QDomDocument viewMetaDataDoc;
-    QDomDocument checkedSignalsDoc;
-    bool foundViewMeta = false;
-    bool foundCheckedSignals = false;
-
-    QStringList allFiles = zip.getFileNameList();
-    qDebug() << "Found" << allFiles.size() << "files in archive. Looking for view XMLs...";
-
-    for (const QString &fileName : allFiles)
-    {
-        // 我们只关心目标文件
-        if (fileName != "views/sdi_view_meta_data.xml" && fileName != "views/sdi_checked_signals.xml")
-        {
-            continue;
-        }
-
-        if (!zip.setCurrentFile(fileName))
-            continue;
-
-        QuaZipFile zFile(&zip);
-        if (!zFile.open(QIODevice::ReadOnly))
-            continue;
-
-        QByteArray xmlData = zFile.readAll();
-        zFile.close();
-
-        QDomDocument doc;
-        QString errorMsg;
-        int errorLine, errorCol;
-        if (doc.setContent(xmlData, &errorMsg, &errorLine, &errorCol))
-        {
-            qDebug() << "  [Success] Parsed:" << fileName;
-            if (fileName == "views/sdi_view_meta_data.xml")
-            {
-                viewMetaDataDoc = doc;
-                foundViewMeta = true;
-            }
-            else if (fileName == "views/sdi_checked_signals.xml")
-            {
-                checkedSignalsDoc = doc;
-                foundCheckedSignals = true;
-            }
-        }
-        else
-        {
-            qWarning() << "  [Failed] Could not parse XML:" << fileName << "Error:" << errorMsg << "at line" << errorLine;
-        }
-    }
-    zip.close();
-
-    // --- 检查是否找到了所有需要的文件 ---
-    if (!foundViewMeta)
-    {
-        QMessageBox::critical(this, tr("Import Error"), tr("Error: Did not find 'views/sdi_view_meta_data.xml' in .mldatx file."));
-        return;
-    }
-    if (!foundCheckedSignals)
-    {
-        QMessageBox::critical(this, tr("Import Error"), tr("Error: Did not find 'views/sdi_checked_signals.xml' in .mldatx file."));
-        return;
-    }
-
-    // --- 4. 调用解析函数 ---
-    qDebug() << "--- Parsing Results ---";
-
-    LayoutInfo layout = parseViewMetaData(viewMetaDataDoc);
-    QList<SignalInfo> signalList = parseCheckedSignals(checkedSignalsDoc);
-
-    qDebug().noquote() << QString("Layout Info: %1x%2 %3").arg(layout.rows).arg(layout.cols).arg(layout.layoutType);
-    qDebug().noquote() << QString("Signal Info: Found %1 signals").arg(signalList.count());
-
-    // --- 5. 应用布局 ---
-    applyImportedView(layout, signalList);
-}
-
-/**
- * @brief [辅助] 解析 sdi_view_meta_data.xml 的 QDomDocument
- */
-MainWindow::LayoutInfo MainWindow::parseViewMetaData(const QDomDocument &doc)
-{
-    LayoutInfo info;
-    QDomElement root = doc.documentElement(); // <sdi> 标签
-
-    // 使用 firstChildElement 来安全地获取标签
-    QDomElement rowsEl = root.firstChildElement("SubPlotRows");
-    if (!rowsEl.isNull())
-    {
-        info.rows = rowsEl.text().toInt();
-    }
-
-    QDomElement colsEl = root.firstChildElement("SubPlotCols");
-    if (!colsEl.isNull())
-    {
-        info.cols = colsEl.text().toInt();
-    }
-
-    QDomElement layoutEl = root.firstChildElement("LayoutType");
-    if (!layoutEl.isNull())
-    {
-        info.layoutType = layoutEl.text();
-    }
-
-    return info;
-}
-
-/**
- * @brief [辅助] 解析 sdi_checked_signals.xml 的 QDomDocument
- */
-QList<MainWindow::SignalInfo> MainWindow::parseCheckedSignals(const QDomDocument &doc)
-{
-    QList<SignalInfo> signalList;
-    QDomElement root = doc.documentElement(); // <sdi> 标签
-
-    // 1. 找到 <Signals> 标签
-    QDomElement signalsNode = root.firstChildElement("Signals");
-    if (signalsNode.isNull())
-    {
-        qWarning() << "Could not find <Signals> tag in sdi_checked_signals.xml";
-        return signalList;
-    }
-
-    // 2. 遍历 <Signals> 下的所有子节点 (Sig1, Sig2, ...)
-    QDomElement sigEl = signalsNode.firstChildElement(); // 从第一个 <Sig*> 开始
-    while (!sigEl.isNull())
-    {
-        SignalInfo sigInfo;
-
-        // 3. 提取普通文本标签
-        sigInfo.name = sigEl.firstChildElement("SignalName").text();
-        sigInfo.id = sigEl.firstChildElement("ID").text().toInt();
-
-        // 4. 提取颜色
-        QDomElement colorEl = sigEl.firstChildElement("Color");
-        if (!colorEl.isNull())
-        {
-            qreal r = colorEl.firstChildElement("r").text().toDouble();
-            qreal g = colorEl.firstChildElement("g").text().toDouble();
-            qreal b = colorEl.firstChildElement("b").text().toDouble();
-            // QColor::fromRgbF 用于 0.0-1.0 范围的浮点数
-            sigInfo.color = QColor::fromRgbF(r, g, b);
-        }
-
-        // 5. 提取子图 ID (<Plots><Element>2</Element></Plots>)
-        QDomElement plotsEl = sigEl.firstChildElement("Plots");
-        if (!plotsEl.isNull())
-        {
-            // 找到所有名为 "Element" 的子标签
-            QDomNodeList plotIdNodes = plotsEl.elementsByTagName("Element");
-            for (int i = 0; i < plotIdNodes.count(); ++i)
-            {
-                sigInfo.plotIds.append(plotIdNodes.at(i).toElement().text().toInt());
-            }
-        }
-
-        signalList.append(sigInfo);
-
-        // 移动到下一个兄弟节点 (例如: 从 <Sig1> 到 <Sig2>)
-        sigEl = sigEl.nextSiblingElement();
-    }
-
-    return signalList;
-}
-
-/**
  * @brief [重写] 当文件被拖入窗口时调用
  */
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
@@ -1190,1346 +2580,6 @@ void MainWindow::dropEvent(QDropEvent *event)
         event->acceptProposedAction();
     }
 }
-
-void MainWindow::showLoadProgress(int percentage)
-{
-    m_progressDialog->setValue(percentage);
-}
-
-void MainWindow::onDataLoadFinished(const FileData &data)
-{
-    m_progressDialog->hide();
-    qDebug() << "Main Thread: Load finished for" << data.filePath;
-
-    QString filename = QFileInfo(data.filePath).fileName();
-    // 检查文件是否已加载
-    if (m_fileDataMap.contains(filename))
-    {
-        QMessageBox::StandardButton reply;
-        reply = QMessageBox::question(this, tr("File exists"),
-                                      tr("File '%1' is already loaded. Do you want to overwrite it?").arg(filename),
-                                      QMessageBox::Yes | QMessageBox::No);
-        if (reply == QMessageBox::No)
-        {
-            return;
-        }
-        // 如果用户选择 "Yes"，则移除旧文件
-        removeFile(filename);
-    }
-
-    // 1. 缓存数据
-    m_fileDataMap.insert(filename, data);
-
-    // 2. 填充信号树
-    {
-        QSignalBlocker blocker(m_signalTreeModel);
-        populateSignalTree(data); // <-- 传入新数据
-    }
-    m_signalTree->reset(); // <-- CSV 和 MAT 都需要
-
-    // 默认展开所有条目 ---
-    m_signalTree->expandAll();
-
-    // 3. 更新重放控件和游标
-    if (m_fileDataMap.size() == 1 && !data.tables.isEmpty() && !data.tables.first().timeData.isEmpty()) // 如果这是加载的第一个文件
-    {
-        const SignalTable &firstTable = data.tables.first();
-        // 将游标 1 移动到数据起点
-        m_cursorManager->updateCursors(firstTable.timeData.first(), 1); // 设置初始位置
-        m_cursorManager->updateCursors(firstTable.timeData.first() + getGlobalTimeRange().size() * 0.1, 2);
-
-        // 数据加载完成后自动缩放视图
-        on_actionFitView_triggered();
-    }
-    else
-    {
-        // 如果已有数据，重新缩放以包含新数据
-        on_actionFitView_triggered();
-
-        m_cursorManager->updateAllCursors();
-    }
-    updateReplayManagerRange(); // 设置滑块范围
-}
-
-void MainWindow::populateSignalTree(const FileData &data)
-{
-    QString filename = QFileInfo(data.filePath).fileName();
-
-    QStandardItem *fileItem = new QStandardItem(filename);
-    fileItem->setEditable(false);
-    fileItem->setCheckable(false); // 文件条目本身不可勾选
-    fileItem->setData(filename, FileNameRole);
-    fileItem->setData(true, IsFileItemRole);
-    fileItem->setData(false, IsSignalItemRole);
-    m_signalTreeModel->appendRow(fileItem);
-
-    // 遍历所有表 (对于 CSV，只有一个表)
-    for (int t_idx = 0; t_idx < data.tables.size(); ++t_idx)
-    {
-        const SignalTable &table = data.tables.at(t_idx);
-
-        // 如果只有一个表，并且其名称与文件名相同，则跳过创建表节点
-        bool skipTableNode = (data.tables.size() == 1 && table.name == QFileInfo(filename).completeBaseName());
-
-        QStandardItem *parentItem = fileItem;
-        if (!skipTableNode)
-        {
-            QStandardItem *tableItem = new QStandardItem(table.name);
-            tableItem->setEditable(false);
-            tableItem->setCheckable(false);
-            tableItem->setData(filename, FileNameRole);
-            tableItem->setData(false, IsFileItemRole);
-            tableItem->setData(false, IsSignalItemRole);
-            fileItem->appendRow(tableItem);
-            parentItem = tableItem; // 信号将附加到表条目
-        }
-
-        // 使用表中的 headers
-        for (int i = 0; i < table.headers.count(); ++i)
-        {
-            QString signalName = table.headers[i].trimmed();
-            if (signalName.isEmpty())
-                signalName = tr("Signal %1").arg(i + 1);
-
-            QStandardItem *item = new QStandardItem(signalName);
-            item->setEditable(false);
-            item->setCheckable(true);
-            item->setCheckState(Qt::Unchecked);
-
-            // 新的 UniqueID 格式 "filename/tablename/signalindex"
-            QString uniqueID = QString("%1/%2/%3").arg(filename).arg(table.name).arg(i);
-
-            item->setData(uniqueID, UniqueIdRole);
-            item->setData(false, IsFileItemRole);
-            item->setData(true, IsSignalItemRole);
-            item->setData(filename, FileNameRole);
-
-            if (m_colorList.isEmpty()) // 安全检查
-            {
-                m_colorList << Qt::black;
-            }
-
-            QColor color = m_colorList.at(m_colorIndex);
-            m_colorIndex = (m_colorIndex + 1) % m_colorList.size();
-
-            // 将默认宽度为 2
-            // QPen pen(color, 2); //宽度2绘制密集线段会卡
-            QPen pen(color, 1);
-
-            item->setData(QVariant::fromValue(pen), PenDataRole);
-
-            parentItem->appendRow(item); // <-- 添加到父条目 (文件或表)
-        }
-    }
-}
-
-void MainWindow::onDataLoadFailed(const QString &filePath, const QString &errorString)
-{
-    m_progressDialog->hide();
-    QMessageBox::warning(this, tr("Load Error"), tr("Failed to load %1:\n%2").arg(filePath).arg(errorString));
-}
-
-// --- 恢复 onPlotClicked() 并使用 setActivePlot() ---
-void MainWindow::onPlotClicked()
-{
-    // 这个槽现在只由 mousePress 信号触发，所以 sender() 总是有效的
-    QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
-    if (!clickedPlot)
-        return; // 安全检查
-
-    // 1. 检查点击是否在图线 (plottable) 上
-    // 我们需要获取鼠标位置
-    QPoint pos = clickedPlot->mapFromGlobal(QCursor::pos());
-    QCPAbstractPlottable *plottable = clickedPlot->plottableAt(pos, true);
-
-    // 2. 如果点击在背景上 (不在图线上)
-    if (!plottable)
-    {
-        // 取消此子图上的所有选择
-        clickedPlot->deselectAll();
-    }
-
-    // 3. 如果我们正在切换到 *新* 的子图
-    if (m_activePlot && clickedPlot != m_activePlot)
-    {
-        // 遍历所有 *其他* 子图并取消它们的选择
-        for (QCustomPlot *plot : m_plotWidgets)
-        {
-            if (plot && plot != clickedPlot)
-            {
-                plot->deselectAll();
-                plot->replot(); // 确保旧的子图重绘以显示取消选择
-            }
-        }
-    }
-
-    setActivePlot(clickedPlot); // 调用新的辅助函数
-}
-
-/**
- * @brief 设置活动子图的辅助函数
- * (这个函数包含了上一步 onPlotClicked(QCustomPlot *plot) 的逻辑)
- * @param plot 要激活的子图
- */
-void MainWindow::setActivePlot(QCustomPlot *plot)
-{
-    if (!plot || plot == m_activePlot)
-        return;
-
-    // --- 使用 m_plotWidgetMap 查找索引 ---
-    int plotIndex = m_plotWidgetMap.value(plot, -1);
-    if (plotIndex == -1)
-        return;
-
-    // 取消高亮旧的 active plot
-    if (m_activePlot)
-    {
-        QFrame *oldFrame = m_plotFrameMap.value(m_activePlot);
-        if (oldFrame)
-            oldFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
-    }
-
-    m_activePlot = plot;
-    m_lastMousePlot = plot;
-
-    // 高亮新的 active plot
-    QFrame *frame = m_plotFrameMap.value(m_activePlot);
-    if (frame)
-    {
-        frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
-    }
-
-    // qDebug() << "Active plot set to:" << m_activePlot << "(Index: " << plotIndex << ")";
-    updateSignalTreeChecks();
-    m_signalTree->viewport()->update();
-}
-
-/**
- * @brief 将指定ID的信号添加到指定的子图中
- * (此逻辑从 onSignalItemChanged 提取而来)
- * @param uniqueID 要添加的信号ID
- * @param plot 目标 QCustomPlot
- */
-void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot)
-{
-    int plotIndex = m_plotWidgetMap.value(plot, -1);
-    if (plotIndex == -1)
-        return;
-
-    // 1. 检查是否已存在
-    if (m_plotSignalMap.value(plotIndex).contains(uniqueID))
-    {
-        qWarning() << "Graph" << uniqueID << "already exists on plot" << plot;
-        return;
-    }
-
-    // 2. 查找 QStandardItem (用于获取元数据)
-    QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
-    if (!item)
-    {
-        qWarning() << "addSignalToPlot: Could not find item in tree model for ID" << uniqueID;
-        return;
-    }
-    QString signalName = item->text();
-    QPen pen = item->data(PenDataRole).value<QPen>();
-
-    // 3. 查找信号数据 (与 onSignalItemChanged 中的逻辑相同)
-    QStringList parts = uniqueID.split('/');
-    if (parts.size() < 2)
-        return;
-    QString filename = parts[0];
-    if (!m_fileDataMap.contains(filename))
-        return;
-    const FileData &fileData = m_fileDataMap.value(filename);
-
-    const SignalTable *tableData = nullptr;
-    int signalIndex = -1;
-
-    if (parts.size() == 2) // CSV
-    {
-        if (fileData.tables.isEmpty())
-            return;
-        tableData = &fileData.tables.first();
-        signalIndex = parts[1].toInt();
-    }
-    else if (parts.size() == 3) // MAT
-    {
-        QString tablename = parts[1];
-        signalIndex = parts[2].toInt();
-        for (const auto &table : fileData.tables)
-        {
-            if (table.name == tablename)
-            {
-                tableData = &table;
-                break;
-            }
-        }
-    }
-
-    if (!tableData || signalIndex < 0 || signalIndex >= tableData->valueData.size())
-        return;
-
-    // 4. 创建图表
-    QCPGraph *graph = plot->addGraph();
-    graph->setName(signalName);
-    graph->setData(tableData->timeData, tableData->valueData[signalIndex]);
-    graph->setPen(pen);
-
-    // 5. 应用性能修复 (与 onSignalItemChanged 中的逻辑相同)
-    if (graph->selectionDecorator())
-    {
-        QCPSelectionDecorator *decorator = graph->selectionDecorator();
-        QPen selPen = decorator->pen();
-        selPen.setWidth(pen.width());
-        decorator->setPen(selPen);
-        decorator->setBrush(Qt::NoBrush);
-        decorator->setUsedScatterProperties(QCPScatterStyle::spNone);
-    }
-
-    // 6. 更新映射
-    m_plotGraphMap[plot].insert(uniqueID, graph);
-    m_plotSignalMap[plotIndex].insert(uniqueID);
-
-    // 7. 刷新
-    plot->rescaleAxes();
-    plot->replot();
-
-    // 8. 更新游标 (添加新图形后必须重建游标)
-    m_cursorManager->setupCursors();
-    m_cursorManager->updateAllCursors();
-}
-
-/**
- * @brief 从指定的子图中移除指定ID的信号
- * (此逻辑从 onSignalItemChanged 提取而来)
- * @param uniqueID 要移除的信号ID
- * @param plot 目标 QCustomPlot
- */
-void MainWindow::removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot)
-{
-    int plotIndex = m_plotWidgetMap.value(plot, -1);
-    if (plotIndex == -1)
-        return;
-
-    // 1. 检查是否存在
-    if (!m_plotSignalMap.value(plotIndex).contains(uniqueID))
-    {
-        qWarning() << "Graph" << uniqueID << "does not exist on plot" << plot;
-        return;
-    }
-
-    // 2. 查找图表
-    QCPGraph *graph = getGraph(plot, uniqueID);
-    if (graph)
-    {
-        // 3. 移除
-        plot->removeGraph(graph); // removeGraph 会 delete graph
-
-        // 4. 更新映射
-        m_plotGraphMap[plot].remove(uniqueID);
-        m_plotSignalMap[plotIndex].remove(uniqueID);
-
-        // 5. 刷新
-        plot->replot();
-
-        // 6. 更新游标 (移除图形后必须重建游标)
-        m_cursorManager->setupCursors();
-        m_cursorManager->updateAllCursors();
-    }
-}
-
-void MainWindow::updateSignalTreeChecks()
-{
-    QSignalBlocker blocker(m_signalTreeModel);
-
-    // --- 使用 m_plotSignalMap 和 m_plotWidgetMap ---
-    int activePlotIndex = m_plotWidgetMap.value(m_activePlot, -1);
-    const auto &activeSignals = m_plotSignalMap.value(activePlotIndex); // 获取 QSet<QString>
-
-    // --- 遍历树形结构 (文件 -> 表 -> 信号) ---
-    for (int i = 0; i < m_signalTreeModel->rowCount(); ++i)
-    {
-        QStandardItem *fileItem = m_signalTreeModel->item(i);
-        if (!fileItem)
-            continue;
-        for (int j = 0; j < fileItem->rowCount(); ++j)
-        {
-            QStandardItem *tableItem = fileItem->child(j);
-            if (!tableItem)
-                continue;
-
-            // 检查是表节点还是直接的信号节点
-            if (tableItem->data(IsSignalItemRole).toBool())
-            {
-                // 这是 (CSV) 信号项
-                QString uniqueID = tableItem->data(UniqueIdRole).toString();
-                if (activeSignals.contains(uniqueID))
-                    tableItem->setCheckState(Qt::Checked);
-                else
-                    tableItem->setCheckState(Qt::Unchecked);
-            }
-            else
-            {
-                // 这是 (MAT) 表项，遍历其子信号项
-                for (int k = 0; k < tableItem->rowCount(); ++k)
-                {
-                    QStandardItem *signalItem = tableItem->child(k);
-                    if (signalItem)
-                    {
-                        QString uniqueID = signalItem->data(UniqueIdRole).toString();
-                        if (activeSignals.contains(uniqueID))
-                            signalItem->setCheckState(Qt::Checked);
-                        else
-                            signalItem->setCheckState(Qt::Unchecked);
-                    }
-                }
-            }
-        }
-    }
-}
-
-void MainWindow::onSignalItemChanged(QStandardItem *item)
-{
-    if (!item)
-        return;
-
-    // --- 如果是文件或表条目，则忽略 ---
-    if (!item->data(IsSignalItemRole).toBool())
-    {
-        return;
-    }
-
-    if (m_fileDataMap.isEmpty())
-    {
-        if (item->checkState() == Qt::Checked)
-        {
-            QSignalBlocker blocker(m_signalTreeModel);
-            item->setCheckState(Qt::Unchecked);
-        }
-        return;
-    }
-
-    // --- 使用 m_plotWidgetMap ---
-    int plotIndex = m_plotWidgetMap.value(m_activePlot, -1);
-    if (!m_activePlot || plotIndex == -1) // 检查 m_activePlot 是否为 null 并且索引有效
-    {
-        if (item->checkState() == Qt::Checked)
-        {
-            QSignalBlocker blocker(m_signalTreeModel);
-            item->setCheckState(Qt::Unchecked);
-            QMessageBox::information(this, tr("No Plot Selected"), tr("Please click on a plot to activate it before adding a signal."));
-        }
-        return;
-    }
-
-    // --- 使用 UniqueID ---
-    QString uniqueID = item->data(UniqueIdRole).toString();
-    QString signalName = item->text();
-    if (uniqueID.isEmpty())
-    {
-        qWarning() << "Invalid signal item" << signalName;
-        return;
-    }
-
-    // --- 使用新的辅助函数 ---
-    if (item->checkState() == Qt::Checked)
-    {
-        qDebug() << "Adding signal" << signalName << "(id" << uniqueID << ") to plot" << m_activePlot;
-        addSignalToPlot(uniqueID, m_activePlot);
-    }
-    else // Qt::Unchecked
-    {
-        qDebug() << "Removing signal" << signalName << "from plot" << m_activePlot;
-        removeSignalFromPlot(uniqueID, m_activePlot);
-    }
-}
-
-void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index) // <-- 替换此函数
-{
-    if (!index.isValid())
-        return;
-    QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
-    // --- 1. 检查是否为信号条目 ---
-    if (!item || !item->data(IsSignalItemRole).toBool())
-        return;
-
-    // --- 2. 检查点击位置 ---
-    QPoint localPos = m_signalTree->viewport()->mapFromGlobal(QCursor::pos());
-    QRect itemRect = m_signalTree->visualRect(index);
-
-    // 这些值必须与 SignalTreeDelegate::paint 中的值匹配
-    const int previewWidth = 40;
-    const int margin = 2;
-
-    // 计算预览线本身的可点击区域
-    QRect previewClickRect(
-        itemRect.right() - previewWidth + margin, // 预览区域的左边缘 + 边距
-        itemRect.top(),
-        previewWidth - (2 * margin), // 只在两个边距之间
-        itemRect.height());
-
-    // 如果点击不在预览线区域，则忽略
-    if (!previewClickRect.contains(localPos))
-    {
-        return; // 用户点击了文本，不是预览线
-    }
-
-    // --- 3. 如果点击在预览线上，则打开新对话框 ---
-    QString uniqueID = item->data(UniqueIdRole).toString();
-    QPen currentPen = item->data(PenDataRole).value<QPen>();
-
-    // --- 使用新的自定义对话框 ---
-    SignalPropertiesDialog dialog(currentPen, this);
-    if (dialog.exec() != QDialog::Accepted)
-    {
-        return; // 用户点击了 "Cancel"
-    }
-
-    QPen newPen = dialog.getSelectedPen(); // 获取包含所有属性的新 QPen
-
-    item->setData(QVariant::fromValue(newPen), PenDataRole);
-
-    // 更新所有图表中该信号的画笔
-    for (auto it = m_plotGraphMap.begin(); it != m_plotGraphMap.end(); ++it)
-    {
-        if (it.value().contains(uniqueID))
-        {
-            QCPGraph *graph = it.value().value(uniqueID);
-            if (graph)
-            {
-                graph->setPen(newPen);
-                graph->parentPlot()->replot();
-            }
-        }
-    }
-}
-
-// 信号树的右键菜单槽 ---
-void MainWindow::onSignalTreeContextMenu(const QPoint &pos)
-{
-    QModelIndex index = m_signalTree->indexAt(pos);
-    if (!index.isValid())
-        return;
-
-    QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
-    // --- 只在文件条目上显示菜单 ---
-    if (!item || !item->data(IsFileItemRole).toBool())
-        return; // 只在文件条目上显示菜单
-
-    QString filename = item->data(FileNameRole).toString(); // <-- 使用 FileNameRole
-
-    QMenu contextMenu(this);
-    QAction *deleteAction = contextMenu.addAction(tr("Remove '%1'").arg(filename));
-    deleteAction->setData(filename); // 将文件名存储在动作中
-
-    connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteFileAction);
-    contextMenu.exec(m_signalTree->viewport()->mapToGlobal(pos));
-}
-
-// 删除文件的动作 ---
-void MainWindow::onDeleteFileAction()
-{
-    QAction *action = qobject_cast<QAction *>(sender());
-    if (!action)
-        return;
-    QString filename = action->data().toString();
-    if (filename.isEmpty())
-        return;
-
-    QMessageBox::StandardButton reply;
-    reply = QMessageBox::question(this, tr("Remove File"),
-                                  tr("Are you sure you want to remove all data and graphs from file '%1'?").arg(filename),
-                                  QMessageBox::Yes | QMessageBox::No);
-    if (reply == QMessageBox::Yes)
-    {
-        removeFile(filename);
-    }
-}
-
-// 移除文件的辅助函数 ---
-void MainWindow::removeFile(const QString &filename)
-{
-    // 1. 从数据 map 中移除
-    if (!m_fileDataMap.remove(filename))
-    {
-        qWarning() << "File not found in data map:" << filename;
-        return;
-    }
-
-    // 2. 从图表和持久化 map 中移除
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        if (!m_plotGraphMap.contains(plot))
-            continue;
-
-        int plotIndex = m_plotWidgetMap.value(plot, -1);
-        if (plotIndex == -1)
-            continue;
-
-        QMap<QString, QCPGraph *> &graphMap = m_plotGraphMap[plot];
-        QSet<QString> &signalSet = m_plotSignalMap[plotIndex];
-
-        // 查找所有属于此文件的 unique IDs
-        // --- 新的 ID 格式 ---
-        QString prefix = filename + "/";
-        // --- ------------------ ---
-        QList<QString> idsToRemove;
-        for (const QString &uniqueID : graphMap.keys())
-        {
-            if (uniqueID.startsWith(prefix))
-            {
-                idsToRemove.append(uniqueID);
-            }
-        }
-
-        // 移除图表
-        for (const QString &uniqueID : idsToRemove)
-        {
-            QCPGraph *graph = graphMap.value(uniqueID);
-            if (graph)
-            {
-                plot->removeGraph(graph); // removeGraph 会 delete graph
-            }
-            graphMap.remove(uniqueID);
-            signalSet.remove(uniqueID);
-        }
-        plot->replot();
-    }
-
-    // 3. 从信号树中移除
-    QList<QStandardItem *> items = m_signalTreeModel->findItems(filename);
-    for (QStandardItem *item : items)
-    {
-        // --- 确保我们得到的是顶层文件条目 ---
-        if (item->data(IsFileItemRole).toBool() && item->parent() == nullptr)
-        // --- --------------------------------- ---
-        {
-            m_signalTreeModel->removeRow(item->row());
-            break; // 假设文件名是唯一的
-        }
-    }
-
-    // 4. 清理和更新
-    m_cursorManager->setupCursors();
-    m_cursorManager->updateAllCursors();
-    updateReplayManagerRange();
-
-    on_actionFitView_triggered(); // 重新缩放视图
-}
-
-/**
- * @brief 响应重放按钮切换
- */
-void MainWindow::onReplayActionToggled(bool checked)
-{
-    if (checked && m_cursorManager->getMode() == CursorManager::NoCursor)
-    {
-        // 如果没有游标，自动启用单游标
-        m_cursorSingleAction->setChecked(true);
-        // 手动触发 CursorManager 更新
-        m_cursorManager->setMode(CursorManager::SingleCursor);
-    }
-}
-
-/**
- * @brief  获取全局时间范围
- */
-QCPRange MainWindow::getGlobalTimeRange() const
-{
-    // --- 遍历所有文件 ---
-    if (m_fileDataMap.isEmpty())
-        return QCPRange(0, 1);
-
-    bool first = true;
-    QCPRange totalRange;
-    for (const FileData &data : m_fileDataMap.values())
-    {
-        // 遍历所有表 ---
-        for (const SignalTable &table : data.tables)
-        {
-            if (!table.timeData.isEmpty())
-            {
-                if (first)
-                {
-                    totalRange.lower = table.timeData.first();
-                    totalRange.upper = table.timeData.last();
-                    first = false;
-                }
-                else
-                {
-                    if (table.timeData.first() < totalRange.lower)
-                        totalRange.lower = table.timeData.first();
-                    if (table.timeData.last() > totalRange.upper)
-                        totalRange.upper = table.timeData.last();
-                }
-            }
-        }
-    }
-
-    if (first) // 意味着没有文件有数据
-        return QCPRange(0, 1);
-    else
-        return totalRange;
-}
-
-/**
- * @brief 估算数据时间步
- */
-double MainWindow::getSmallestTimeStep() const
-{
-    // --- 查找所有文件中的最小步长 ---
-    double minStep = -1.0;
-
-    for (const FileData &data : m_fileDataMap.values())
-    {
-        // 遍历所有表 ---
-        for (const SignalTable &table : data.tables)
-        {
-            if (table.timeData.size() >= 2)
-            {
-                double step = table.timeData.at(1) - table.timeData.at(0);
-                if (step > 0 && (minStep == -1.0 || step < minStep))
-                {
-                    minStep = step;
-                }
-            }
-        }
-    }
-
-    return (minStep > 0) ? minStep : 0.01; // 默认步长
-}
-
-/**
- * @brief 辅助函数，用于将数据范围推送到 ReplayManager
- */
-void MainWindow::updateReplayManagerRange()
-{
-    if (m_replayManager)
-    {
-        m_replayManager->updateDataRange(getGlobalTimeRange(), getSmallestTimeStep());
-    }
-}
-
-/**
- * @brief [槽] 适应视图大小 (所有子图, X 和 Y 轴)
- */
-void MainWindow::on_actionFitView_triggered()
-{
-    if (m_plotWidgets.isEmpty())
-        return;
-
-    QCPRange globalXRange;
-    bool hasXRange = false;
-
-    // 第一次遍历：找到全局 X 范围并计算和设置 Y 轴
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        bool hasYRange = false; // 此子图是否有 Y 范围
-        QCPRange plotYRange;    // 此子图的紧密 Y 范围
-
-        if (plot && plot->graphCount() > 0)
-        {
-            // 获取此子图上的图表映射
-            const auto &graphsOnPlot = m_plotGraphMap.value(plot);
-
-            for (QCPGraph *graph : graphsOnPlot.values())
-            {
-                if (graph && !graph->data()->isEmpty())
-                {
-                    bool keyFound = false;
-                    bool valueFound = false;
-
-                    // 1. 获取此图表的 *完整* 键 (X) 范围
-                    QCPRange graphKeyRange = graph->data()->keyRange(keyFound);
-                    if (!keyFound)
-                        continue; // 跳过没有有效键的图表
-
-                    // 2. 获取此图表在 *其完整 X 范围* 内的 *完整* 值 (Y) 范围
-                    QCPRange graphValueRange = graph->getValueRange(valueFound, QCP::sdBoth, graphKeyRange);
-                    if (!valueFound)
-                        continue; // 跳过没有有效值的图表
-
-                    // 3. 扩展全局 X 范围
-                    if (!hasXRange)
-                    {
-                        globalXRange = graphKeyRange;
-                        hasXRange = true;
-                    }
-                    else
-                    {
-                        globalXRange.expand(graphKeyRange);
-                    }
-
-                    // 4. 扩展此子图的 Y 范围
-                    if (!hasYRange)
-                    {
-                        plotYRange = graphValueRange;
-                        hasYRange = true;
-                    }
-                    else
-                    {
-                        plotYRange.expand(graphValueRange);
-                    }
-                }
-            } // 结束 [遍历此子图上的所有图表]
-            // --- ----------------------- ---
-
-            // 5. 现在我们有了此子图的紧密 Y 范围 (plotYRange)，应用 5% 的边距
-            if (hasYRange)
-            {
-                QCPRange yRange = plotYRange; // 使用我们刚找到的紧密范围
-                double size = yRange.size();
-                double margin = size * 0.05;
-
-                // 处理平坦线 (size == 0) 的情况
-                if (qFuzzyCompare(yRange.lower, yRange.upper))
-                {
-                    margin = qAbs(yRange.lower * 0.05); // 5% of the value
-                    if (qFuzzyIsNull(margin))           // 如果值也是 0
-                    {
-                        margin = 0.5; // 添加一个 +/- 0.5 的硬编码边距
-                    }
-                }
-
-                yRange.lower -= margin;
-                yRange.upper += margin;
-
-                plot->yAxis->setRange(yRange); // 设置带边距的 Y 轴
-            }
-            else // 此子图有图表对象，但没有有效数据
-            {
-                plot->yAxis->setRange(0, 1); // 设置默认 Y 轴
-            }
-        }
-        else if (plot) // 是一个空的子图
-        {
-            plot->yAxis->setRange(0, 1); // 设置默认 Y 轴
-        }
-    } // 结束 [遍历所有子图]
-
-    // 第二次遍历：应用全局 X 范围并重绘
-    if (hasXRange)
-    {
-        for (QCustomPlot *plot : m_plotWidgets)
-        {
-            if (plot)
-            {
-                plot->xAxis->setRange(globalXRange);
-                plot->replot();
-            }
-        }
-    }
-    else // 所有子图上都没有找到任何有效数据
-    {
-        for (QCustomPlot *plot : m_plotWidgets)
-        {
-            if (plot)
-            {
-                plot->xAxis->setRange(0, 1); // 设置默认 X 轴
-                plot->replot();
-            }
-        }
-    }
-}
-
-/**
- * @brief [槽] 适应视图大小 (所有子图, 仅 X 轴)
- */
-void MainWindow::on_actionFitViewTime_triggered()
-{
-    if (m_plotWidgets.isEmpty())
-        return;
-
-    // --- 找到全局 X 范围并应用 ---
-    QCPRange globalXRange;
-    bool hasXRange = false;
-
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        if (plot && plot->graphCount() > 0)
-        {
-            plot->xAxis->rescale();
-            if (!hasXRange)
-            {
-                globalXRange = plot->xAxis->range();
-                hasXRange = true;
-            }
-            else
-            {
-                globalXRange.expand(plot->xAxis->range());
-            }
-        }
-    }
-
-    if (hasXRange)
-    {
-        for (QCustomPlot *plot : m_plotWidgets)
-        {
-            if (plot)
-            {
-                plot->xAxis->setRange(globalXRange);
-                plot->replot();
-            }
-        }
-    }
-}
-
-/**
- * @brief [槽] 适应视图大小 (仅活动子图, 仅 Y 轴)
- */
-void MainWindow::on_actionFitViewY_triggered()
-{
-    // --- 仅缩放当前X轴范围内的Y轴 ---
-    if (m_activePlot && m_activePlot->graphCount() > 0)
-    {
-        QCPRange keyRange = m_activePlot->xAxis->range();
-        QCPRange valueRange;
-        bool foundRange = false;
-
-        // 遍历活动子图上的所有图表
-        // --- 使用 m_plotGraphMap ---
-        const auto &graphs = m_plotGraphMap.value(m_activePlot);
-        for (QCPGraph *graph : graphs)
-        // --- ------------------------- ---
-        {
-            bool currentFound = false;
-            // 获取该图表在当前X轴范围内的Y值范围
-            QCPRange graphValueRange = graph->getValueRange(currentFound, QCP::sdBoth, keyRange);
-            if (currentFound)
-            {
-                if (!foundRange)
-                    valueRange = graphValueRange;
-                else
-                    valueRange.expand(graphValueRange);
-                foundRange = true;
-            }
-        }
-
-        // 设置Y轴范围并重绘
-        if (foundRange)
-        {
-            // 添加5%的上下边距
-            double size = valueRange.size();
-            double margin = size * 0.05;
-            valueRange.lower -= margin;
-            valueRange.upper += margin;
-
-            m_activePlot->yAxis->setRange(valueRange);
-            m_activePlot->replot();
-        }
-    }
-}
-
-// X轴同步槽函数实现 ---
-/**
- * @brief [槽] 当一个X轴范围改变时，同步所有其他的X轴
- */
-void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
-{
-    QObject *senderAxis = sender();
-    if (!senderAxis)
-        return;
-
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        // 仅更新 *其他* 图表, 避免信号循环
-        if (plot->xAxis != senderAxis)
-        {
-            // 阻止此 setRange 再次发出 rangeChanged 信号
-            QSignalBlocker blocker(plot->xAxis);
-            plot->xAxis->setRange(newRange);
-
-            // 如果Y轴也需要同步（例如，如果它们是链接的），
-            // 在这里添加逻辑。目前，我们只重绘以更新游标。
-            plot->replot();
-        }
-    }
-
-    // X轴变化时，游标也需要更新
-    if (m_cursorManager->getMode() != CursorManager::NoCursor)
-    {
-        m_cursorManager->updateAllCursors();
-    }
-}
-
-// 辅助函数
-/**
- * @brief  从 m_plotGraphMap 中安全地获取一个 QCPGraph*
- * @param plot QCustomPlot 控件
- * @param uniqueID 信号的唯一ID ("filename/tablename/signalindex")
- * @return 如果找到则返回 QCPGraph*，否则返回 nullptr
- */
-QCPGraph *MainWindow::getGraph(QCustomPlot *plot, const QString &uniqueID) const
-{
-    if (plot && m_plotGraphMap.contains(plot))
-    {
-        return m_plotGraphMap.value(plot).value(uniqueID, nullptr);
-    }
-    return nullptr;
-}
-
-/**
- * @brief  从 QStandardItem 构建 UniqueID
- */
-QString MainWindow::getUniqueID(QStandardItem *item) const
-{
-    if (!item || !item->data(IsSignalItemRole).toBool())
-        return QString();
-
-    // --- UniqueID 现在直接存储在条目中 ---
-    return item->data(UniqueIdRole).toString();
-}
-
-/**
- * @brief [槽] 在布局更改和重绘完成后更新游标位置
- */
-void MainWindow::updateCursorsForLayoutChange()
-{
-    if (m_cursorManager->getMode() != CursorManager::NoCursor)
-    {
-        m_cursorManager->updateAllCursors();
-    }
-}
-
-// ---
-// ---
-// 图例交互槽函数
-// ---
-// ---
-
-/**
- * @brief [槽] 响应图例左键点击，切换信号的可见性
- */
-void MainWindow::onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, QMouseEvent *event)
-{
-    Q_UNUSED(legend);
-    if (event->button() != Qt::LeftButton) // 仅响应左键点击
-        return;
-
-    // 确保我们点击的是一个与 plottable 关联的图例条目
-    if (QCPPlottableLegendItem *plottableItem = qobject_cast<QCPPlottableLegendItem *>(item))
-    {
-        QCPAbstractPlottable *plottable = plottableItem->plottable();
-        if (plottable)
-        {
-            // 切换可见性
-            plottable->setVisible(!plottable->visible());
-
-            // QCustomPlot 会自动更新图例条目的外观（例如，变灰）
-            // 我们只需要重绘图表
-            plottable->parentPlot()->replot();
-        }
-    }
-}
-
-/**
- * @brief [槽] 响应图表区域的右键点击，检查是在图例上、图线上还是在图表背景上
- */
-void MainWindow::onLegendContextMenu(const QPoint &pos)
-{
-    QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
-    if (!plot)
-        return;
-
-    // 首先检查是否点击了图线 (QCPGraph) ---
-    // 我们使用 plottableAt 来查找鼠标位置下的 plottable
-    // "false" 表示我们不关心它是否可选，我们只想知道它是否在那里
-    QCPAbstractPlottable *plottable = plot->plottableAt(pos, false);
-    QCPGraph *graph = qobject_cast<QCPGraph *>(plottable);
-
-    if (graph)
-    {
-        // --- 1. 用户右键点击了 *图线* ---
-        // 找到此 graph 对应的 uniqueID
-        QString uniqueID = m_plotGraphMap.value(plot).key(graph, QString());
-
-        if (uniqueID.isEmpty())
-            return;
-
-        // 创建上下文菜单
-        QMenu contextMenu(this);
-        QAction *deleteAction = contextMenu.addAction(tr("Delete '%1'").arg(graph->name()));
-        deleteAction->setData(uniqueID); // 将 uniqueID 存储在 action 中
-
-        connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSignalAction);
-
-        // 在全局坐标位置显示菜单
-        contextMenu.exec(plot->mapToGlobal(pos));
-        return; // 处理完毕，退出函数
-    }
-
-    // --- 如果没有点击图线，则继续检查图例项或背景 ---
-
-    // 检查点击位置的顶层可布局元素
-    QCPLayoutElement *el = plot->layoutElementAt(pos);
-
-    // 尝试将元素转换为图例条目
-    QCPAbstractLegendItem *legendItem = qobject_cast<QCPAbstractLegendItem *>(el);
-
-    if (QCPPlottableLegendItem *plottableItem = qobject_cast<QCPPlottableLegendItem *>(legendItem))
-    {
-        // --- 2. 用户右键点击了 *图例条目* ---
-        graph = qobject_cast<QCPGraph *>(plottableItem->plottable()); // 复用 graph 变量
-        if (!graph)
-            return;
-
-        // 找到此 graph 对应的 uniqueID
-        QString uniqueID = m_plotGraphMap.value(plot).key(graph, QString());
-
-        if (uniqueID.isEmpty())
-            return;
-
-        // 创建上下文菜单
-        QMenu contextMenu(this);
-        QAction *deleteAction = contextMenu.addAction(tr("Delete '%1'").arg(graph->name()));
-        deleteAction->setData(uniqueID); // 将 uniqueID 存储在 action 中
-
-        connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSignalAction);
-
-        // 在全局坐标位置显示菜单
-        contextMenu.exec(plot->mapToGlobal(pos));
-    }
-    else if (qobject_cast<QCPAxisRect *>(el) || qobject_cast<QCPLegend *>(el))
-    {
-        // --- 3. (不变) 用户右键点击了 *图表背景* (QCPAxisRect) 或 *图例背景* (QCPLegend) ---
-
-        // 找到此 plot 对应的 plotIndex
-        int plotIndex = m_plotWidgetMap.value(plot, -1);
-        if (plotIndex == -1)
-            return;
-
-        QMenu contextMenu(this);
-        QAction *deleteSubplotAction = contextMenu.addAction(tr("Delete Subplot"));
-        deleteSubplotAction->setData(plotIndex); // 将 plotIndex 存储在 action 中
-
-        connect(deleteSubplotAction, &QAction::triggered, this, &MainWindow::onDeleteSubplotAction);
-
-        // 在全局坐标位置显示菜单
-        contextMenu.exec(plot->mapToGlobal(pos));
-    }
-}
-
-/**
- * @brief [槽] 响应图例上下文菜单中的“删除”动作
- */
-void MainWindow::onDeleteSignalAction()
-{
-    QAction *action = qobject_cast<QAction *>(sender());
-    if (!action)
-        return;
-
-    QString uniqueID = action->data().toString();
-    if (uniqueID.isEmpty())
-        return;
-
-    // --- 使用更可靠的 BFS 搜索替换 findItems 循环 ---
-    QStandardItem *itemToUncheck = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
-
-    if (itemToUncheck)
-    {
-        itemToUncheck->setCheckState(Qt::Unchecked);
-    }
-    else
-    {
-        qWarning() << "onDeleteSignalAction: Could not find item in tree model for ID" << uniqueID;
-    }
-}
-
-/**
- * @brief [槽] 响应子图上下文菜单中的“删除子图”动作
- * * 此函数通过取消勾选树中的所有相关条目来移除子图上的所有信号。
- */
-void MainWindow::onDeleteSubplotAction()
-{
-    QAction *action = qobject_cast<QAction *>(sender());
-    if (!action)
-        return;
-
-    int plotIndex = action->data().toInt();
-    if (!m_plotSignalMap.contains(plotIndex))
-        return;
-
-    // 重点：我们必须迭代一个 *副本*，
-    // 因为取消勾选会触发 onSignalItemChanged，
-    // 这将修改原始的 m_plotSignalMap[plotIndex]，
-    // 从而使迭代器失效。
-    const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
-
-    if (signalIDsCopy.isEmpty())
-        return; // 子图上没有信号
-
-    // 我们不在这里阻塞信号，因为我们 *希望* onSignalItemChanged
-    // 为每个被取消勾选的条目触发，以正确执行所有清理逻辑。
-    // QSignalBlocker blocker(m_signalTreeModel); // <-- 不要这样做
-
-    qDebug() << "Clearing subplot index" << plotIndex << "- removing" << signalIDsCopy.size() << "signals.";
-
-    for (const QString &uniqueID : signalIDsCopy)
-    {
-        // 查找树中的条目
-        QStandardItem *itemToUncheck = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
-
-        // 如果找到了，并且它当前被选中，则取消勾选它
-        if (itemToUncheck && itemToUncheck->checkState() == Qt::Checked)
-        {
-            itemToUncheck->setCheckState(Qt::Unchecked);
-            // 这将自动调用 onSignalItemChanged(itemToUncheck)，
-            // 该函数会移除图表、更新 map 并重绘。
-        }
-    }
-
-    // 第一次重绘可能已经由最后一个 onSignalItemChanged 调用触发，
-    // 但为保险起见，我们可以再次调用 replot (如果需要的话)。
-    // 不过，onSignalItemChanged 已经处理了重绘，所以这里通常是多余的。
-    // QCustomPlot *plot = m_plotWidgetMap.key(plotIndex, nullptr);
-    // if (plot)
-    //     plot->replot();
-}
-
-// ---
-// ---
-// 搜索过滤逻辑
-// ---
-// ---
-
-/**
- * @brief [辅助函数] 递归地过滤信号树。
- * @param item 当前要检查的 QStandardItem
- * @param query 小写的搜索查询
- * @return true 如果此项或其任何子项匹配查询，则返回
- */
-bool MainWindow::filterSignalTree(QStandardItem *item, const QString &query)
-{
-    if (!item)
-        return false;
-
-    // 1. 检查此项是否匹配
-    // 我们匹配信号、文件和表名
-    bool selfMatches = item->text().toLower().contains(query);
-
-    // 2. 检查是否有任何子项匹配
-    bool childrenMatch = false;
-    for (int i = 0; i < item->rowCount(); ++i)
-    {
-        if (filterSignalTree(item->child(i), query))
-        {
-            childrenMatch = true;
-        }
-    }
-
-    // 3. 决定可见性
-    bool visible = selfMatches || childrenMatch;
-
-    // 4. 如果查询为空，所有项都可见
-    if (query.isEmpty())
-    {
-        visible = true;
-    }
-
-    // 5. 在视图中设置行隐藏
-    // 根项没有父项，所以使用 QModelIndex()
-    QModelIndex parentIndex = item->parent() ? item->parent()->index() : QModelIndex();
-    m_signalTree->setRowHidden(item->row(), parentIndex, !visible);
-
-    return visible;
-}
-
-/**
- * @brief [槽] 当信号搜索框中的文本更改时调用
- */
-void MainWindow::onSignalSearchChanged(const QString &text)
-{
-    QString query = text.trimmed().toLower();
-    QStandardItem *root = m_signalTreeModel->invisibleRootItem();
-
-    // 递归地遍历所有项并设置它们的隐藏状态
-    for (int i = 0; i < root->rowCount(); ++i)
-    {
-        filterSignalTree(root->child(i), query);
-    }
-
-    // 如果在搜索，展开所有内容以显示匹配项
-    if (!query.isEmpty())
-    {
-        m_signalTree->expandAll();
-    }
-}
-
-/**
- * @brief [辅助] 在信号树中通过信号名称查找条目
- */
-QStandardItem *MainWindow::findItemBySignalName(const QString &name)
-{
-    // 使用静态辅助函数开始从根节点递归搜索
-    return findItemByName_Recursive(m_signalTreeModel->invisibleRootItem(), name);
-}
-
-/**
- * @brief [槽] 当子图中的选择发生用户更改时调用
- */
-void MainWindow::onPlotSelectionChanged()
-{
-    // 1. 获取是哪个 QCustomPlot 发出的信号
-    QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
-    if (!plot)
-        return;
-
-    // 2. 获取该子图上当前选中的图表 (plottables)
-    QList<QCPAbstractPlottable *> selected = plot->selectedPlottables(); //
-    if (selected.isEmpty())
-    {
-        // 如果没有选中的图表 (例如，用户可能点击了空白处以取消所有选择)
-        // 我们可以选择清除树中的当前索引
-        m_signalTree->setCurrentIndex(QModelIndex());
-        return;
-    }
-
-    // 3. 我们只关心第一个被选中的图表
-    QCPGraph *graph = qobject_cast<QCPGraph *>(selected.first());
-    if (!graph)
-        return; // 选中的可能不是 QCPGraph
-
-    // 4. 从我们的映射中反向查找该图表的 UniqueID
-    // m_plotGraphMap 是 QMap<QCustomPlot *, QMap<QString, QCPGraph *>>
-    // QMap::key() 可以高效地通过 value (QCPGraph*) 查找 key (QString)
-    QString uniqueID = m_plotGraphMap.value(plot).key(graph, QString());
-    if (uniqueID.isEmpty())
-        return; // 未在映射中找到
-
-    // 5. 在树模型中查找与该 ID 对应的项
-    QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID); //
-    if (!item)
-        return;
-
-    // 6. 滚动到该项并将其设置为当前选中项
-    // (我们阻塞信号，以防 setCurrentIndex 触发不必要的重绘或逻辑)
-    {
-        QSignalBlocker blocker(m_signalTree);
-        m_signalTree->scrollTo(item->index(), QAbstractItemView::PositionAtCenter);
-        m_signalTree->setCurrentIndex(item->index()); //
-    }
-}
-
-/**
- * @brief 切换所有子图中图例的可见性
- */
-void MainWindow::on_actionToggleLegend_toggled(bool checked)
-{
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        if (plot && plot->legend)
-        {
-            plot->legend->setVisible(checked);
-            plot->replot();
-        }
-    }
-}
-
-// ---
-// ---
-// 事件过滤器
-// ---
-// ---
 
 /**
  * @brief 事件过滤器，用于处理 QCustomPlot 上的拖放事件
@@ -2616,7 +2666,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             }
             dropEvent->acceptProposedAction();
 
-            // 拖放完成后清除树的选择 ---
+            // 拖放完成后清除树的选择
             m_signalTree->clearSelection();
 
             updateSignalTreeChecks(); // 确保树的勾选状态在拖放后正确同步
@@ -2629,259 +2679,115 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 }
 
 /**
- * @brief [辅助] 应用导入的布局和信号设置
- * @param layout 从 sdi_view_meta_data.xml 解析的布局信息
- * @param signalList 从 sdi_checked_signals.xml 解析的信号列表
+ * @brief [槽] 响应图例左键点击，切换信号的可见性
  */
-void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList)
+void MainWindow::onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, QMouseEvent *event)
 {
-    // --- 1. 彻底清除旧状态 (Fix: 必须在 setupPlotLayout 之前执行) ---
-
-    // A. 在 UI 上取消勾选所有信号
-    // 使用 QSignalBlocker 阻止 model 发出 itemChanged 信号
-    // 这样我们可以快速更新 UI 状态，而不触发 onSignalItemChanged 中的复杂逻辑
-    // (因为 onSignalItemChanged 依赖 m_activePlot，不适合这种批量跨子图的清理)
-    {
-        const QSignalBlocker blocker(m_signalTreeModel);
-
-        QList<int> plotIndices = m_plotSignalMap.keys();
-        for (int plotIndex : plotIndices)
-        {
-            const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
-            for (const QString &uniqueID : signalIDsCopy)
-            {
-                QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
-                if (item)
-                {
-                    item->setCheckState(Qt::Unchecked);
-                }
-            }
-        }
-    }
-
-    // B. 强制清空内部映射
-    // 这确保了 setupPlotLayout 被调用时，不会恢复任何旧信号
-    m_plotSignalMap.clear();
-    // m_plotGraphMap 会在 setupPlotLayout -> clearPlotLayout 中被清空
-
-    // --- 2. 设置新布局 ---
-    qDebug() << "Applying layout:" << layout.rows << "rows," << layout.cols << "cols";
-    setupPlotLayout(layout.rows, layout.cols);
-
-    // 确保我们有足够多的子图
-    if (m_plotWidgets.isEmpty())
-    {
-        QMessageBox::warning(this, tr("Import Error"), tr("Failed to create plot layout."));
+    Q_UNUSED(legend);
+    if (event->button() != Qt::LeftButton) // 仅响应左键点击
         return;
-    }
 
-    // --- 3. 遍历信号列表并应用设置 (包含索引转换) ---
-    const int numRows = layout.rows;
-    const int numCols = layout.cols;
-    const int totalPlots = m_plotWidgets.size();
-
-    if (numRows <= 0 || numCols <= 0 || totalPlots == 0)
+    // 确保我们点击的是一个与 plottable 关联的图例条目
+    if (QCPPlottableLegendItem *plottableItem = qobject_cast<QCPPlottableLegendItem *>(item))
     {
-        QMessageBox::warning(this, tr("Import Error"), tr("Invalid layout dimensions."));
-        return;
-    }
-
-    for (const SignalInfo &sig : signalList)
-    {
-        // 3a. 在树中查找信号
-        QStandardItem *item = findItemBySignalName(sig.name);
-        if (!item)
+        QCPAbstractPlottable *plottable = plottableItem->plottable();
+        if (plottable)
         {
-            qWarning() << "Import View: Could not find signal in tree:" << sig.name;
-            continue;
-        }
+            // 切换可见性
+            plottable->setVisible(!plottable->visible());
 
-        QString uniqueID = item->data(UniqueIdRole).toString();
-        if (uniqueID.isEmpty())
-            continue;
-
-        // 3b. 更新颜色
-        QPen currentPen = item->data(PenDataRole).value<QPen>();
-        currentPen.setColor(sig.color);
-        item->setData(QVariant::fromValue(currentPen), PenDataRole);
-
-        // 3c. 遍历该信号应在的子图 ID
-        for (int sdiPlotId : sig.plotIds) // sdiPlotId 是 1-based, 列优先
-        {
-            // --- 索引转换 (Simulink 列优先 -> Qt 行优先) ---
-            // SDI 也是 1-based 索引
-            if (sdiPlotId < 1)
-                sdiPlotId = 1;
-
-            // 假设 SDI 总是基于 8 行的网格逻辑 (或根据实际 XML 逻辑调整)
-            // 这里使用你提供的转换逻辑:
-            int r = (sdiPlotId - 1) % 8 + 1; // 1-based row
-            int c = (sdiPlotId - 1) / 8 + 1; // 1-based col
-
-            // 映射到我们要创建的网格 (row-major, 0-based)
-            int plotIndex = (r - 1) * numCols + (c - 1);
-
-            // 边界检查：如果计算出的行列超出了当前布局
-            if (r > numRows || c > numCols)
-            {
-                // 这种情况下 SDI 可能是在一个很大的虚拟网格上，而我们将布局缩小了
-                // 策略：忽略，或者放到第一个图，或者警告
-                // 这里我们按照你的代码，尝试放入 plotIndex=0 作为 fallback，或者跳过
-                // qWarning() << "Import: Signal" << sig.name << "at SDI(" << r << "," << c << ") is outside current layout(" << numRows << "," << numCols << ")";
-                if (plotIndex >= totalPlots)
-                    plotIndex = 0; // Fallback
-            }
-
-            if (plotIndex >= 0 && plotIndex < totalPlots)
-            {
-                QCustomPlot *targetPlot = m_plotWidgets.at(plotIndex);
-                addSignalToPlot(uniqueID, targetPlot);
-
-                // 既然我们手动添加了信号，也需要手动更新 item 的勾选状态
-                // (因为我们之前 block 了信号，且 addSignalToPlot 不会反向更新 TreeItem)
-                // 注意：如果一个信号在多个图中，CheckState 只能表示"部分选中"或"选中"
-                // 简单起见，只要添加了就设为 Checked
-                {
-                    const QSignalBlocker blocker(m_signalTreeModel);
-                    item->setCheckState(Qt::Checked);
-                }
-            }
+            // QCustomPlot 会自动更新图例条目的外观（例如，变灰）
+            // 我们只需要重绘图表
+            plottable->parentPlot()->replot();
         }
     }
-
-    // 4. 全部完成后，更新树以匹配(新的)活动子图 (处理 PartiallyChecked 等状态)
-    updateSignalTreeChecks();
-
-    // 5. 缩放视图
-    on_actionFitView_triggered();
-    QMessageBox::information(this, tr("Import Successful"), tr("Successfully imported view settings."));
 }
 
 /**
- * @brief [槽] 当 OpenGL 动作被切换时调用
- * @param checked 动作的新勾选状态
+ * @brief [槽] 响应图表区域的右键点击，检查是在图例上、图线上还是在图表背景上
  */
-void MainWindow::onOpenGLActionToggled(bool checked)
+void MainWindow::onLegendContextMenu(const QPoint &pos)
 {
-    // qDebug() << "Setting OpenGL acceleration to:" << checked;
-
-    // 遍历所有当前存在的 QCustomPlot 实例并更新它们
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        if (plot)
-        {
-            plot->setOpenGl(checked);
-            plot->replot(); // 立即重绘以应用更改
-        }
-    }
-}
-
-// 清除所有子图信号的槽函数实现
-void MainWindow::on_actionClearAllPlots_triggered()
-{
-    // 1. 简单的确认对话框 (防止误触)
-    QMessageBox::StandardButton reply;
-    reply = QMessageBox::question(this, tr("Clear All Plots"),
-                                  tr("Are you sure you want to remove all signals from all plots?"),
-                                  QMessageBox::Yes | QMessageBox::No);
-    if (reply == QMessageBox::No)
+    QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
+    if (!plot)
         return;
 
-    // 2. 在 UI 树中取消勾选所有已加载的信号
-    // 使用 QSignalBlocker 阻止每次 setCheckState 都触发 heavy 的逻辑
-    {
-        const QSignalBlocker blocker(m_signalTreeModel);
+    QCPAbstractPlottable *plottable = plot->plottableAt(pos, false);
+    QCPGraph *graph = qobject_cast<QCPGraph *>(plottable);
 
-        // 遍历当前记录在案的所有信号映射
-        for (auto it = m_plotSignalMap.begin(); it != m_plotSignalMap.end(); ++it)
-        {
-            const QSet<QString> &signalIDs = it.value();
-            for (const QString &uniqueID : signalIDs)
-            {
-                QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
-                if (item)
-                {
-                    item->setCheckState(Qt::Unchecked);
-                }
-            }
-        }
+    if (graph)
+    {
+        QString uniqueID = m_plotGraphMap.value(plot).key(graph, QString());
+
+        if (uniqueID.isEmpty())
+            return;
+
+        // 创建上下文菜单
+        QMenu contextMenu(this);
+        QAction *deleteAction = contextMenu.addAction(tr("Delete '%1'").arg(graph->name()));
+        deleteAction->setData(uniqueID); // 将 uniqueID 存储在 action 中
+
+        connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSignalAction);
+
+        // 在全局坐标位置显示菜单
+        contextMenu.exec(plot->mapToGlobal(pos));
+        return; // 处理完毕，退出函数
     }
 
-    // 3. 清空所有子图的 Graph 对象
-    for (QCustomPlot *plot : m_plotWidgets)
+    // 检查点击位置的顶层可布局元素
+    QCPLayoutElement *el = plot->layoutElementAt(pos);
+
+    // 尝试将元素转换为图例条目
+    QCPAbstractLegendItem *legendItem = qobject_cast<QCPAbstractLegendItem *>(el);
+
+    if (QCPPlottableLegendItem *plottableItem = qobject_cast<QCPPlottableLegendItem *>(legendItem))
     {
-        if (plot)
-        {
-            plot->clearGraphs();
-            // 注意：我们只清除 Graph，保留游标辅助项(Item)，它们由 CursorManager 管理
-            plot->legend->setVisible(m_toggleLegendAction->isChecked()); // 保持图例状态但内容会变空
-            plot->replot();
-        }
+        // 2. 用户右键点击了 *图例条目*
+        graph = qobject_cast<QCPGraph *>(plottableItem->plottable()); // 复用 graph 变量
+        if (!graph)
+            return;
+
+        // 找到此 graph 对应的 uniqueID
+        QString uniqueID = m_plotGraphMap.value(plot).key(graph, QString());
+
+        if (uniqueID.isEmpty())
+            return;
+
+        // 创建上下文菜单
+        QMenu contextMenu(this);
+        QAction *deleteAction = contextMenu.addAction(tr("Delete '%1'").arg(graph->name()));
+        deleteAction->setData(uniqueID); // 将 uniqueID 存储在 action 中
+
+        connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSignalAction);
+
+        // 在全局坐标位置显示菜单
+        contextMenu.exec(plot->mapToGlobal(pos));
     }
+    else if (qobject_cast<QCPAxisRect *>(el) || qobject_cast<QCPLegend *>(el))
+    {
+        // 找到此 plot 对应的 plotIndex
+        int plotIndex = m_plotWidgetMap.value(plot, -1);
+        if (plotIndex == -1)
+            return;
 
-    // 4. 清空内部数据映射
-    m_plotGraphMap.clear();
-    m_plotSignalMap.clear();
+        QMenu contextMenu(this);
+        QAction *deleteSubplotAction = contextMenu.addAction(tr("Delete Subplot"));
+        deleteSubplotAction->setData(plotIndex); // 将 plotIndex 存储在 action 中
 
-    // 5. 重置游标 (因为 Graph 指针均已失效)
-    m_cursorManager->setupCursors();     // 重建游标对象
-    m_cursorManager->updateAllCursors(); // 刷新位置
+        connect(deleteSubplotAction, &QAction::triggered, this, &MainWindow::onDeleteSubplotAction);
 
-    qDebug() << "All plots cleared.";
+        // 在全局坐标位置显示菜单
+        contextMenu.exec(plot->mapToGlobal(pos));
+    }
 }
 
-void MainWindow::on_actionFitViewYAll_triggered()
+/**
+ * @brief 辅助函数，用于将数据范围推送到 ReplayManager
+ */
+void MainWindow::updateReplayManagerRange()
 {
-    // 遍历所有子图
-    for (QCustomPlot *plot : m_plotWidgets)
+    if (m_replayManager)
     {
-        if (!plot || plot->graphCount() == 0)
-            continue;
-
-        // 获取当前子图的 X 轴范围
-        QCPRange keyRange = plot->xAxis->range();
-        QCPRange valueRange;
-        bool foundRange = false;
-
-        // 获取该子图上的所有图表
-        const auto &graphs = m_plotGraphMap.value(plot);
-
-        // 遍历图表，计算在当前 X 轴范围内的 Y 轴最大/最小值
-        for (QCPGraph *graph : graphs)
-        {
-            bool currentFound = false;
-            // 获取该图表在当前 X 轴范围内的 Y 值范围
-            QCPRange graphValueRange = graph->getValueRange(currentFound, QCP::sdBoth, keyRange);
-            if (currentFound)
-            {
-                if (!foundRange)
-                    valueRange = graphValueRange;
-                else
-                    valueRange.expand(graphValueRange);
-                foundRange = true;
-            }
-        }
-
-        // 如果找到了有效的 Y 轴范围，应用并重绘
-        if (foundRange)
-        {
-            // 添加 5% 的上下边距，避免线条贴边
-            double size = valueRange.size();
-            double margin = size * 0.05;
-
-            // 处理数值完全相同（一条直线）的情况
-            if (qFuzzyCompare(valueRange.lower, valueRange.upper))
-            {
-                margin = qAbs(valueRange.lower * 0.05);
-                if (qFuzzyIsNull(margin))
-                    margin = 0.5;
-            }
-
-            valueRange.lower -= margin;
-            valueRange.upper += margin;
-
-            plot->yAxis->setRange(valueRange);
-            plot->replot();
-        }
+        m_replayManager->updateDataRange(getGlobalTimeRange(), getSmallestTimeStep());
     }
 }
