@@ -232,6 +232,12 @@ private:
     void loadFile(const QString &filePath);
 
     /**
+     * @brief [新增] 导入视图文件的辅助函数
+     * @param filePath .mldatx 文件路径
+     */
+    void importView(const QString &filePath);
+
+    /**
      * @brief 递归辅助函数，用于过滤信号树
      * @param item 要检查的当前 QStandardItem
      * @param query 小写的搜索查询

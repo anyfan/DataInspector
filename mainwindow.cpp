@@ -933,6 +933,14 @@ void MainWindow::on_actionImportView_triggered()
     if (mldatxFilePath.isEmpty())
         return;
 
+    importView(mldatxFilePath);
+}
+
+void MainWindow::importView(const QString &mldatxFilePath)
+{
+    if (mldatxFilePath.isEmpty())
+        return;
+
     // --- 使用 QuaZip 打开 ---
     QuaZip zip(mldatxFilePath);
     if (!zip.open(QuaZip::mdUnzip))
@@ -1118,7 +1126,8 @@ void MainWindow::dragEnterEvent(QDragEnterEvent *event)
             QString filePath = url.toLocalFile();
             if (filePath.endsWith(".csv", Qt::CaseInsensitive) ||
                 filePath.endsWith(".txt", Qt::CaseInsensitive) ||
-                filePath.endsWith(".mat", Qt::CaseInsensitive))
+                filePath.endsWith(".mat", Qt::CaseInsensitive) ||
+                filePath.endsWith(".mldatx", Qt::CaseInsensitive))
             {
                 event->acceptProposedAction(); // 接受拖动
                 return;
@@ -1148,7 +1157,11 @@ void MainWindow::dropEvent(QDropEvent *event)
                     filePath.endsWith(".txt", Qt::CaseInsensitive) ||
                     filePath.endsWith(".mat", Qt::CaseInsensitive))
                 {
-                    loadFile(filePath); // 调用我们的辅助函数
+                    loadFile(filePath); // 调用数据加载函数
+                }
+                else if (filePath.endsWith(".mldatx", Qt::CaseInsensitive))
+                {
+                    importView(filePath); // 调用视图导入函数
                 }
             }
         }
