@@ -344,6 +344,12 @@ void MainWindow::createActions()
     m_fitViewYAction->setShortcut(QKeySequence(tr("Ctrl+Alt+Y")));
     connect(m_fitViewYAction, &QAction::triggered, this, &MainWindow::on_actionFitViewY_triggered);
 
+    m_fitViewYAllAction = new QAction(tr("Fit View All (Y-Axis)"), this);
+    m_fitViewYAllAction->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
+    m_fitViewYAllAction->setToolTip(tr("适应所有子图视图（Y轴）"));
+    m_fitViewYAllAction->setShortcut(QKeySequence(tr("Ctrl+Shift+Y"))); // 设置快捷键 Ctrl+Shift+Y
+    connect(m_fitViewYAllAction, &QAction::triggered, this, &MainWindow::on_actionFitViewYAll_triggered);
+
     // 视图/游标动作
     m_cursorNoneAction = new QAction(tr("关闭游标"), this);
     m_cursorNoneAction->setCheckable(true);
@@ -422,6 +428,7 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_fitViewAction);
     viewMenu->addAction(m_fitViewTimeAction);
     viewMenu->addAction(m_fitViewYAction);
+    viewMenu->addAction(m_fitViewYAllAction);
 
     // 添加图例切换菜单项
     viewMenu->addSeparator();
@@ -448,6 +455,7 @@ void MainWindow::createToolBars()
     m_viewToolBar->addAction(m_fitViewAction);
     m_viewToolBar->addAction(m_fitViewTimeAction);
     m_viewToolBar->addAction(m_fitViewYAction);
+    m_viewToolBar->addAction(m_fitViewYAllAction);
     m_viewToolBar->addSeparator();
 
     // 添加图例切换按钮
@@ -2820,4 +2828,60 @@ void MainWindow::on_actionClearAllPlots_triggered()
     m_cursorManager->updateAllCursors(); // 刷新位置
 
     qDebug() << "All plots cleared.";
+}
+
+void MainWindow::on_actionFitViewYAll_triggered()
+{
+    // 遍历所有子图
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (!plot || plot->graphCount() == 0)
+            continue;
+
+        // 获取当前子图的 X 轴范围
+        QCPRange keyRange = plot->xAxis->range();
+        QCPRange valueRange;
+        bool foundRange = false;
+
+        // 获取该子图上的所有图表
+        const auto &graphs = m_plotGraphMap.value(plot);
+
+        // 遍历图表，计算在当前 X 轴范围内的 Y 轴最大/最小值
+        for (QCPGraph *graph : graphs)
+        {
+            bool currentFound = false;
+            // 获取该图表在当前 X 轴范围内的 Y 值范围
+            QCPRange graphValueRange = graph->getValueRange(currentFound, QCP::sdBoth, keyRange);
+            if (currentFound)
+            {
+                if (!foundRange)
+                    valueRange = graphValueRange;
+                else
+                    valueRange.expand(graphValueRange);
+                foundRange = true;
+            }
+        }
+
+        // 如果找到了有效的 Y 轴范围，应用并重绘
+        if (foundRange)
+        {
+            // 添加 5% 的上下边距，避免线条贴边
+            double size = valueRange.size();
+            double margin = size * 0.05;
+
+            // 处理数值完全相同（一条直线）的情况
+            if (qFuzzyCompare(valueRange.lower, valueRange.upper))
+            {
+                margin = qAbs(valueRange.lower * 0.05);
+                if (qFuzzyIsNull(margin))
+                    margin = 0.5;
+            }
+
+            valueRange.lower -= margin;
+            valueRange.upper += margin;
+
+            plot->yAxis->setRange(valueRange);
+            plot->replot();
+        }
+    }
 }

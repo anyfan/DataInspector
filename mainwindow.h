@@ -120,6 +120,7 @@ private slots:
     void on_actionFitView_triggered();
     void on_actionFitViewTime_triggered();
     void on_actionFitViewY_triggered();
+    void on_actionFitViewYAll_triggered();
 
     // X轴同步槽
     void onXAxisRangeChanged(const QCPRange &newRange);
@@ -330,6 +331,7 @@ private:
     QAction *m_fitViewAction;
     QAction *m_fitViewTimeAction;
     QAction *m_fitViewYAction;
+    QAction *m_fitViewYAllAction;
 
     // 图例切换动作 ---
     QAction *m_toggleLegendAction;
