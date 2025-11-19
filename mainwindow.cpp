@@ -1819,7 +1819,6 @@ double MainWindow::getSmallestTimeStep() const
     return (minStep > 0) ? minStep : 0.01; // 默认步长
 }
 
-// 辅助函数
 /**
  * @brief  从 m_plotGraphMap 中安全地获取一个 QCPGraph*
  * @param plot QCustomPlot 控件
@@ -2012,9 +2011,6 @@ void MainWindow::on_actionToggleLegend_toggled(bool checked)
  */
 void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList)
 {
-    // 1. 彻底清除旧状态 (Fix: 必须在 setupPlotLayout 之前执行)
-
-    // A. 在 UI 上取消勾选所有信号
 
     {
         const QSignalBlocker blocker(m_signalTreeModel);
@@ -2034,10 +2030,7 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
         }
     }
 
-    // B. 强制清空内部映射
-    // 这确保了 setupPlotLayout 被调用时，不会恢复任何旧信号
     m_plotSignalMap.clear();
-    // m_plotGraphMap 会在 setupPlotLayout -> clearPlotLayout 中被清空
 
     // 2. 设置新布局
     qDebug() << "Applying layout:" << layout.rows << "rows," << layout.cols << "cols";
@@ -2063,7 +2056,7 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
 
     for (const SignalInfo &sig : signalList)
     {
-        // 3a. 在树中查找信号
+        // 在树中查找信号
         QStandardItem *item = findItemBySignalName(sig.name);
         if (!item)
         {
@@ -2075,36 +2068,29 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
         if (uniqueID.isEmpty())
             continue;
 
-        // 3b. 更新颜色
+        // 更新颜色
         QPen currentPen = item->data(PenDataRole).value<QPen>();
         currentPen.setColor(sig.color);
         item->setData(QVariant::fromValue(currentPen), PenDataRole);
 
-        // 3c. 遍历该信号应在的子图 ID
-        for (int sdiPlotId : sig.plotIds) // sdiPlotId 是 1-based, 列优先
+        // 遍历该信号应在的子图 ID
+        for (int sdiPlotId : sig.plotIds)
         {
-            // 索引转换 (Simulink 列优先 -> Qt 行优先)
-            // SDI 也是 1-based 索引
+
             if (sdiPlotId < 1)
                 sdiPlotId = 1;
 
-            // 假设 SDI 总是基于 8 行的网格逻辑 (或根据实际 XML 逻辑调整)
-            // 这里使用你提供的转换逻辑:
+            // sdi 索引转换
             int r = (sdiPlotId - 1) % 8 + 1; // 1-based row
             int c = (sdiPlotId - 1) / 8 + 1; // 1-based col
 
-            // 映射到我们要创建的网格 (row-major, 0-based)
             int plotIndex = (r - 1) * numCols + (c - 1);
 
             // 边界检查：如果计算出的行列超出了当前布局
             if (r > numRows || c > numCols)
             {
-                // 这种情况下 SDI 可能是在一个很大的虚拟网格上，而我们将布局缩小了
-                // 策略：忽略，或者放到第一个图，或者警告
-                // 这里我们按照你的代码，尝试放入 plotIndex=0 作为 fallback，或者跳过
-                // qWarning() << "Import: Signal" << sig.name << "at SDI(" << r << "," << c << ") is outside current layout(" << numRows << "," << numCols << ")";
                 if (plotIndex >= totalPlots)
-                    plotIndex = 0; // Fallback
+                    plotIndex = 0;
             }
 
             if (plotIndex >= 0 && plotIndex < totalPlots)
@@ -2112,10 +2098,6 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
                 QCustomPlot *targetPlot = m_plotWidgets.at(plotIndex);
                 addSignalToPlot(uniqueID, targetPlot);
 
-                // 既然我们手动添加了信号，也需要手动更新 item 的勾选状态
-                // (因为我们之前 block 了信号，且 addSignalToPlot 不会反向更新 TreeItem)
-                // 注意：如果一个信号在多个图中，CheckState 只能表示"部分选中"或"选中"
-                // 简单起见，只要添加了就设为 Checked
                 {
                     const QSignalBlocker blocker(m_signalTreeModel);
                     item->setCheckState(Qt::Checked);
@@ -2124,10 +2106,10 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
         }
     }
 
-    // 4. 全部完成后，更新树以匹配(新的)活动子图 (处理 PartiallyChecked 等状态)
+    // 全部完成后，更新树以匹配(新的)活动子图
     updateSignalTreeChecks();
 
-    // 5. 缩放视图
+    // 缩放视图
     on_actionFitView_triggered();
     QMessageBox::information(this, tr("Import Successful"), tr("Successfully imported view settings."));
 }
@@ -2364,10 +2346,8 @@ void MainWindow::on_actionFitViewY_triggered()
         bool foundRange = false;
 
         // 遍历活动子图上的所有图表
-        // 使用 m_plotGraphMap
         const auto &graphs = m_plotGraphMap.value(m_activePlot);
         for (QCPGraph *graph : graphs)
-        //         -
         {
             bool currentFound = false;
             // 获取该图表在当前X轴范围内的Y值范围
@@ -2449,7 +2429,7 @@ void MainWindow::on_actionLayout2x1_triggered()
 void MainWindow::on_actionLayoutSplitBottom_triggered()
 {
     QList<QRect> geometries;
-    // QRect(col, row, colSpan, rowSpan)
+
     geometries << QRect(0, 0, 2, 1); // Top plot (跨2列)
     geometries << QRect(0, 1, 1, 1); // Bottom-left plot
     geometries << QRect(1, 1, 1, 1); // Bottom-right plot
@@ -2459,7 +2439,7 @@ void MainWindow::on_actionLayoutSplitBottom_triggered()
 void MainWindow::on_actionLayoutSplitTop_triggered()
 {
     QList<QRect> geometries;
-    // QRect(col, row, colSpan, rowSpan)
+
     geometries << QRect(0, 0, 1, 1); // Top-left plot
     geometries << QRect(1, 0, 1, 1); // Top-right plot
     geometries << QRect(0, 1, 2, 1); // Bottom plot (跨2列)
@@ -2469,7 +2449,7 @@ void MainWindow::on_actionLayoutSplitTop_triggered()
 void MainWindow::on_actionLayoutSplitLeft_triggered()
 {
     QList<QRect> geometries;
-    // QRect(col, row, colSpan, rowSpan)
+
     geometries << QRect(0, 0, 1, 2); // Left plot (跨2行)
     geometries << QRect(1, 0, 1, 1); // Top-right plot
     geometries << QRect(1, 1, 1, 1); // Bottom-right plot
@@ -2479,7 +2459,7 @@ void MainWindow::on_actionLayoutSplitLeft_triggered()
 void MainWindow::on_actionLayoutSplitRight_triggered()
 {
     QList<QRect> geometries;
-    // QRect(col, row, colSpan, rowSpan)
+
     geometries << QRect(0, 0, 1, 1); // Top-left plot
     geometries << QRect(0, 1, 1, 1); // Bottom-left plot
     geometries << QRect(1, 0, 1, 2); // Right plot (跨2行)
@@ -2488,7 +2468,7 @@ void MainWindow::on_actionLayoutSplitRight_triggered()
 
 void MainWindow::on_actionLayoutCustom_triggered()
 {
-    // 1. 创建对话框 (一次性)
+    // 1. 创建对话框
     if (!m_customLayoutDialog)
     {
         m_customLayoutDialog = new QDialog(this);
@@ -2615,7 +2595,6 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                     }
                 }
             }
-            // 如果 MimeData 不正确，则忽略事件 (event->ignore() 是默认的)
         }
         // 3. 处理放下事件 (Drop)
         else if (event->type() == QEvent::Drop)
@@ -2651,14 +2630,10 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
 
                         if (item->checkState() == Qt::Unchecked)
                         {
-                            // 设为勾选, 这将触发 onSignalItemChanged,
-                            // 后者调用 addSignalToPlot
                             item->setCheckState(Qt::Checked);
                         }
-                        else // item 已经是勾选状态
+                        else
                         {
-                            // onSignalItemChanged 不会触发,
-                            // 我们必须手动调用 addSignalToPlot
                             addSignalToPlot(uniqueID, targetPlot);
                         }
                     }
@@ -2696,8 +2671,6 @@ void MainWindow::onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, Q
             // 切换可见性
             plottable->setVisible(!plottable->visible());
 
-            // QCustomPlot 会自动更新图例条目的外观（例如，变灰）
-            // 我们只需要重绘图表
             plottable->parentPlot()->replot();
         }
     }
@@ -2731,7 +2704,7 @@ void MainWindow::onLegendContextMenu(const QPoint &pos)
 
         // 在全局坐标位置显示菜单
         contextMenu.exec(plot->mapToGlobal(pos));
-        return; // 处理完毕，退出函数
+        return;
     }
 
     // 检查点击位置的顶层可布局元素
