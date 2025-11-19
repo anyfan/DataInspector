@@ -522,6 +522,16 @@ void MainWindow::createDocks()
 void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 {
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
+
+    plot->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop | Qt::AlignLeft);
+
+    // 4. 优化上方图例的样式
+    plot->legend->setBorderPen(Qt::NoPen);                  // 去除边框
+    plot->legend->setBrush(Qt::NoBrush);                    // 背景透明
+    plot->legend->setFillOrder(QCPLayoutGrid::foRowsFirst); // 水平排列
+    // plot->legend->setWrap(5);                               // 每行最多5个
+    // -------------------------------------
+
     // --- 根据 m_toggleLegendAction 的状态设置图例可见性 ---
     plot->legend->setVisible(m_toggleLegendAction->isChecked());
 
@@ -529,7 +539,7 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     plot->setOpenGl(m_openGLAction->isChecked());
 
     QFont axisFont = plot->font();           // 从绘图控件获取基础字体
-    axisFont.setPointSize(7);                // 将字号设置为 9 (你可以按需调整)
+    axisFont.setPointSize(7);                // 将字号设置为 7
     plot->xAxis->setTickLabelFont(axisFont); // X轴的刻度数字
     plot->xAxis->setLabelFont(axisFont);     // X轴的标签
     plot->yAxis->setTickLabelFont(axisFont); // Y轴的刻度数字
@@ -537,10 +547,10 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 
     // 将图例字体也设置为 7pt
     plot->legend->setFont(axisFont);
-    plot->legend->setIconSize(20, 10);   // 将图标宽度设为20，高度设为10 (默认可能更大)
-    plot->legend->setIconTextPadding(3); // 将图标和文本的间距设为 3 像素 (默认值 5 或 8)
+    plot->legend->setIconSize(10, 10);   // 将图标宽度设为20，高度设为10
+    plot->legend->setIconTextPadding(3); // 将图标和文本的间距设为 3 像素
 
-    // 使用 QCPMarginGroup 进行自动对齐，告诉这个子图的轴矩形，它的左边距由 m_yAxisGroup 管理
+    // 使用 QCPMarginGroup 进行自动对齐
     plot->axisRect()->setMarginGroup(QCP::msLeft, m_yAxisGroup);
 
     connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
@@ -554,25 +564,18 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
     connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
             this, &MainWindow::onXAxisRangeChanged);
 
-    // 连接子图的选择信号，以同步树视图 ---
+    // 连接子图的选择信号
     connect(plot, &QCustomPlot::selectionChangedByUser, this, &MainWindow::onPlotSelectionChanged);
 
     // 设置Y轴的数字格式 ---
-    // (使用 'g' 格式并设置精度，以便大数字自动切换到科学计数法)
-    plot->yAxis->setNumberFormat("g");  // 'g' = 通用格式
-    plot->yAxis->setNumberPrecision(4); // 精度为 4 (例如 90000 -> 9e+4)
+    plot->yAxis->setNumberFormat("g");
+    plot->yAxis->setNumberPrecision(4);
 
     // 允许子图接收拖放并安装事件过滤器 ---
     plot->setAcceptDrops(true);
     plot->installEventFilter(this);
 
     // 连接图例交互信号 ---
-
-    // 1. 连接图例的左键点击信号，用于切换可见性
-    //    这个信号在 QCustomPlot *plot* 上，而不是在 plot->legend 上
-    // connect(plot, &QCustomPlot::legendClick, this, &MainWindow::onLegendClick);
-
-    // 2. 启用并连接图表的上下文菜单（用于图例的右键点击）
     plot->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(plot, &QCustomPlot::customContextMenuRequested, this, &MainWindow::onLegendContextMenu);
 }
