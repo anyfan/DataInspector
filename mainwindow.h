@@ -136,6 +136,11 @@ private slots:
 
     // 用于切换 OpenGL
     void onOpenGLActionToggled(bool checked);
+
+    /**
+     * @brief [槽] 清除所有子图上的所有信号
+     */
+    void on_actionClearAllPlots_triggered();
     // --- ----------------- ---
 
     // 重写拖放事件处理函数 ---
@@ -331,6 +336,9 @@ private:
 
     // OpenGL 启用切换
     QAction *m_openGLAction;
+
+    // 清除所有绘图动作
+    QAction *m_clearAllPlotsAction;
 
     // 自定义布局对话框的控件指针
     QDialog *m_customLayoutDialog;

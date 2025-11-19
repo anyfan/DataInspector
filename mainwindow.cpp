@@ -379,6 +379,12 @@ void MainWindow::createActions()
     m_openGLAction->setCheckable(true);
     m_openGLAction->setChecked(false); // 默认关闭
     connect(m_openGLAction, &QAction::toggled, this, &MainWindow::onOpenGLActionToggled);
+
+    m_clearAllPlotsAction = new QAction(tr("Clear All Plots"), this);
+    m_clearAllPlotsAction->setToolTip(tr("Remove all signals from all plots"));
+    m_clearAllPlotsAction->setIcon(style()->standardIcon(QStyle::SP_DialogDiscardButton)); // 使用系统自带的丢弃/清除图标
+    m_clearAllPlotsAction->setShortcut(QKeySequence(tr("Ctrl+D")));                        // 设置快捷键 Ctrl+D (Delete)
+    connect(m_clearAllPlotsAction, &QAction::triggered, this, &MainWindow::on_actionClearAllPlots_triggered);
 }
 
 void MainWindow::createMenus()
@@ -446,6 +452,8 @@ void MainWindow::createToolBars()
 
     // 添加图例切换按钮
     m_viewToolBar->addAction(m_toggleLegendAction);
+    // 添加清除按钮到工具栏
+    m_viewToolBar->addAction(m_clearAllPlotsAction);
     m_viewToolBar->addSeparator();
 
     // 添加游标动作
@@ -2752,4 +2760,58 @@ void MainWindow::onOpenGLActionToggled(bool checked)
             plot->replot(); // 立即重绘以应用更改
         }
     }
+}
+
+// 清除所有子图信号的槽函数实现
+void MainWindow::on_actionClearAllPlots_triggered()
+{
+    // 1. 简单的确认对话框 (防止误触)
+    QMessageBox::StandardButton reply;
+    reply = QMessageBox::question(this, tr("Clear All Plots"),
+                                  tr("Are you sure you want to remove all signals from all plots?"),
+                                  QMessageBox::Yes | QMessageBox::No);
+    if (reply == QMessageBox::No)
+        return;
+
+    // 2. 在 UI 树中取消勾选所有已加载的信号
+    // 使用 QSignalBlocker 阻止每次 setCheckState 都触发 heavy 的逻辑
+    {
+        const QSignalBlocker blocker(m_signalTreeModel);
+
+        // 遍历当前记录在案的所有信号映射
+        for (auto it = m_plotSignalMap.begin(); it != m_plotSignalMap.end(); ++it)
+        {
+            const QSet<QString> &signalIDs = it.value();
+            for (const QString &uniqueID : signalIDs)
+            {
+                QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+                if (item)
+                {
+                    item->setCheckState(Qt::Unchecked);
+                }
+            }
+        }
+    }
+
+    // 3. 清空所有子图的 Graph 对象
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (plot)
+        {
+            plot->clearGraphs();
+            // 注意：我们只清除 Graph，保留游标辅助项(Item)，它们由 CursorManager 管理
+            plot->legend->setVisible(m_toggleLegendAction->isChecked()); // 保持图例状态但内容会变空
+            plot->replot();
+        }
+    }
+
+    // 4. 清空内部数据映射
+    m_plotGraphMap.clear();
+    m_plotSignalMap.clear();
+
+    // 5. 重置游标 (因为 Graph 指针均已失效)
+    m_cursorManager->setupCursors();     // 重建游标对象
+    m_cursorManager->updateAllCursors(); // 刷新位置
+
+    qDebug() << "All plots cleared.";
 }
