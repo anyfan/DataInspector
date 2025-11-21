@@ -606,50 +606,14 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
             const QSet<QString> &signalIDs = m_plotSignalMap.value(plotIndex);
             for (const QString &uniqueID : signalIDs)
             {
-                QStringList parts = uniqueID.split('/');
-                if (parts.size() < 2)
-                    continue;
+                SignalLocation loc = getSignalDataFromID(uniqueID);
 
-                QString filename = parts[0];
-                if (!m_fileDataMap.contains(filename))
-                    continue;
-                const FileData &fileData = m_fileDataMap.value(filename);
-                const SignalTable *tableData = nullptr;
-                int signalIndex = -1;
-
-                if (parts.size() == 2)
-                {
-                    if (!fileData.tables.isEmpty())
-                    {
-                        tableData = &fileData.tables.first();
-                        signalIndex = parts[1].toInt();
-                    }
-                }
-                else if (parts.size() == 3)
-                {
-                    QString tablename = parts[1];
-                    signalIndex = parts[2].toInt();
-                    for (const auto &table : fileData.tables)
-                    {
-                        if (table.name == tablename)
-                        {
-                            tableData = &table;
-                            break;
-                        }
-                    }
-                }
-
-                if (!tableData || signalIndex < 0 || signalIndex >= tableData->valueData.size())
-                    continue;
-
-                QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
-
-                if (item)
+                if (loc.table && loc.signalIndex >= 0 && loc.signalIndex < loc.table->valueData.size())
                 {
                     QCPGraph *graph = plot->addGraph();
-                    graph->setName(item->text());
-                    graph->setData(tableData->timeData, tableData->valueData[signalIndex]);
-                    graph->setPen(item->data(PenDataRole).value<QPen>());
+                    graph->setName(loc.name);
+                    graph->setData(loc.table->timeData, loc.table->valueData[loc.signalIndex]);
+                    graph->setPen(loc.pen); // 直接使用 SignalLocation 中的 Pen
 
                     graph->setProperty("id", uniqueID);
                 }
