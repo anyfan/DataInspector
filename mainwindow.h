@@ -43,6 +43,14 @@ enum TreeItemRoles
     IsSignalItemRole
 };
 
+struct SignalLocation
+{
+    const SignalTable *table = nullptr;
+    int signalIndex = -1;
+    QString name;
+    QPen pen;
+};
+
 class MainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -170,6 +178,7 @@ private:
     void applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList);
     // 针对单个 Plot 配置图例的辅助函数
     void configurePlotLegend(QCustomPlot *plot, int mode);
+    SignalLocation getSignalDataFromID(const QString &uniqueID) const;
 
     //  成员变量 (分组)
 

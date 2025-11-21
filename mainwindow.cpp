@@ -1154,69 +1154,26 @@ void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot)
 
     // 1. 检查是否已存在
     if (m_plotSignalMap.value(plotIndex).contains(uniqueID))
+        return;
+
+    SignalLocation loc = getSignalDataFromID(uniqueID);
+    if (!loc.table || loc.signalIndex < 0 || loc.signalIndex >= loc.table->valueData.size())
     {
-        qWarning() << "Graph" << uniqueID << "already exists on plot" << plot;
         return;
     }
-
-    // 2. 查找 QStandardItem (用于获取元数据)
-    QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
-    if (!item)
-    {
-        qWarning() << "addSignalToPlot: Could not find item in tree model for ID" << uniqueID;
-        return;
-    }
-    QString signalName = item->text();
-    QPen pen = item->data(PenDataRole).value<QPen>();
-
-    // 3. 查找信号数据 (与 onSignalItemChanged 中的逻辑相同)
-    QStringList parts = uniqueID.split('/');
-    if (parts.size() < 2)
-        return;
-    QString filename = parts[0];
-    if (!m_fileDataMap.contains(filename))
-        return;
-    const FileData &fileData = m_fileDataMap.value(filename);
-
-    const SignalTable *tableData = nullptr;
-    int signalIndex = -1;
-
-    if (parts.size() == 2) // CSV
-    {
-        if (fileData.tables.isEmpty())
-            return;
-        tableData = &fileData.tables.first();
-        signalIndex = parts[1].toInt();
-    }
-    else if (parts.size() == 3) // MAT
-    {
-        QString tablename = parts[1];
-        signalIndex = parts[2].toInt();
-        for (const auto &table : fileData.tables)
-        {
-            if (table.name == tablename)
-            {
-                tableData = &table;
-                break;
-            }
-        }
-    }
-
-    if (!tableData || signalIndex < 0 || signalIndex >= tableData->valueData.size())
-        return;
 
     // 4. 创建图表
     QCPGraph *graph = plot->addGraph();
-    graph->setName(signalName);
-    graph->setData(tableData->timeData, tableData->valueData[signalIndex]);
-    graph->setPen(pen);
+    graph->setName(loc.name);
+    graph->setData(loc.table->timeData, loc.table->valueData[loc.signalIndex]);
+    graph->setPen(loc.pen);
 
     // 5. 应用性能修复 (与 onSignalItemChanged 中的逻辑相同)
     if (graph->selectionDecorator())
     {
         QCPSelectionDecorator *decorator = graph->selectionDecorator();
         QPen selPen = decorator->pen();
-        selPen.setWidth(pen.width());
+        selPen.setWidth(loc.pen.width());
         decorator->setPen(selPen);
         decorator->setBrush(Qt::NoBrush);
         decorator->setUsedScatterProperties(QCPScatterStyle::spNone);
@@ -3037,4 +2994,51 @@ void MainWindow::onLegendPositionChanged(QAction *action)
     {
         configurePlotLegend(plot, mode);
     }
+}
+
+SignalLocation MainWindow::getSignalDataFromID(const QString &uniqueID) const
+{
+    SignalLocation loc;
+
+    // 1. 查找 Tree Item 获取元数据
+    QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
+    if (!item)
+        return loc;
+
+    loc.name = item->text();
+    loc.pen = item->data(PenDataRole).value<QPen>();
+
+    // 2. 解析 ID
+    QStringList parts = uniqueID.split('/');
+    if (parts.size() < 2)
+        return loc;
+
+    QString filename = parts[0];
+    if (!m_fileDataMap.contains(filename))
+        return loc;
+    const FileData &fileData = m_fileDataMap.value(filename);
+
+    if (parts.size() == 2) // CSV: "filename/index"
+    {
+        if (!fileData.tables.isEmpty())
+        {
+            loc.table = &fileData.tables.first();
+            loc.signalIndex = parts[1].toInt();
+        }
+    }
+    else if (parts.size() == 3) // MAT: "filename/tablename/index"
+    {
+        QString tablename = parts[1];
+        int idx = parts[2].toInt();
+        for (const auto &table : fileData.tables)
+        {
+            if (table.name == tablename)
+            {
+                loc.table = &table;
+                loc.signalIndex = idx;
+                break;
+            }
+        }
+    }
+    return loc;
 }
