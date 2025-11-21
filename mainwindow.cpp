@@ -437,12 +437,12 @@ void MainWindow::createActions()
     m_legendPosGroup = new QActionGroup(this);
     m_legendPosOutsideTopAction = new QAction(tr("图表外上方"), this);
     m_legendPosOutsideTopAction->setCheckable(true);
-    m_legendPosOutsideTopAction->setData(0); // 0 代表外上方
+    m_legendPosOutsideTopAction->setData(0);       // 0 代表外上方
+    m_legendPosOutsideTopAction->setChecked(true); // 默认选中
 
     m_legendPosInsideTLAction = new QAction(tr("图表内左上"), this);
     m_legendPosInsideTLAction->setCheckable(true);
-    m_legendPosInsideTLAction->setData(1);       // 1 代表内左上
-    m_legendPosInsideTLAction->setChecked(true); // 默认选中
+    m_legendPosInsideTLAction->setData(1); // 1 代表内左上
 
     m_legendPosInsideTRAction = new QAction(tr("图表内右上"), this);
     m_legendPosInsideTRAction->setCheckable(true);
@@ -2881,7 +2881,6 @@ void MainWindow::updateReplayManagerRange()
     }
 }
 
-
 /**
  * @brief [辅助] 配置单个 Plot 的图例（类型、位置、样式）
  * @param plot 目标 Plot
@@ -2892,8 +2891,6 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
     if (!plot)
         return;
 
-    // [安全修复 1] 必须先检查 axisRect 是否存在。
-    // 如果布局之前崩坏导致 axisRect 丢失，直接返回避免 Crash。
     if (!plot->axisRect())
     {
         qWarning() << "configurePlotLegend: AxisRect is null for plot" << plot;
@@ -2933,6 +2930,7 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
         plot->legend->setFont(axisFont);
         plot->legend->setIconSize(10, 10);
         plot->legend->setIconTextPadding(3);
+        plot->legend->setBorderPen(Qt::NoPen);
         plot->legend->setBrush(Qt::NoBrush);
     }
 
@@ -2949,26 +2947,20 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
             plot->axisRect()->insetLayout()->take(plot->legend);
         }
 
-        // [关键逻辑修改] 根据是否有信号决定是否显示图例占位
+        // 根据是否有信号决定是否显示图例占位
         bool hasGraphs = (plot->graphCount() > 0);
 
         if (hasGraphs)
         {
             // 我们需要布局为: Row 0 = Legend, Row 1 = AxisRect
-
-            // 步骤 1: 检查 AxisRect 是否在 (0,0)，如果是，插入一行把它挤到 (1,0)
-            // [安全修复 2] 检查行列数，避免 "Requested cell is empty"
             if (mainLayout->rowCount() > 0 && mainLayout->columnCount() > 0)
             {
                 if (mainLayout->element(0, 0) == plot->axisRect())
                 {
                     mainLayout->insertRow(0);
-                    // insertRow 会自动把原来的 (0,0) 挤到 (1,0)，无需手动 take/add
                 }
             }
 
-            // 步骤 2: 将图例放入 (0,0)
-            // 如果当前 (0,0) 不是图例 (可能是空的，或者是刚刚腾出来的)
             bool cellZeroIsLegend = false;
             if (mainLayout->rowCount() > 0 && mainLayout->columnCount() > 0)
             {
@@ -2997,12 +2989,9 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
         }
         else
         {
-            // [无信号状态]: 移除图例，让 simplify 自动处理
             if (plot->legend->layout())
                 plot->legend->layout()->take(plot->legend);
 
-            // [安全修复 3] 不再手动移动 AxisRect，而是调用 simplify()
-            // simplify 会移除所有空的行和列，如果 Row 0 变空了，Row 1 的 AxisRect 会自动上移变成 Row 0
             mainLayout->simplify();
         }
     }
@@ -3012,7 +3001,6 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
         if (plot->legend->layout() == mainLayout)
         {
             mainLayout->take(plot->legend);
-            // [新增] 既然移除了外部图例，也应该清理一下留下的空行
             mainLayout->simplify();
         }
 
