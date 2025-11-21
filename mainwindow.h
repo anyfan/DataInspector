@@ -62,10 +62,11 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
-    //  1. 菜单动作槽 (Menu Actions) 
+    //  1. 菜单动作槽 (Menu Actions)
     void on_actionLoadFile_triggered();
     void on_actionImportView_triggered();
     void on_actionToggleLegend_toggled(bool checked);
+    void onLegendPositionChanged(QAction *action);
     void on_actionClearAllPlots_triggered();
     void onOpenGLActionToggled(bool checked);
 
@@ -86,19 +87,19 @@ private slots:
     void on_actionFitViewY_triggered();
     void on_actionFitViewYAll_triggered();
 
-    //  2. 数据加载槽 (Data Loading) 
+    //  2. 数据加载槽 (Data Loading)
     void onDataLoadFinished(const FileData &data);
     void onDataLoadFailed(const QString &filePath, const QString &errorString);
     void showLoadProgress(int percentage);
 
-    //  3. 信号树交互槽 (Signal Tree) 
+    //  3. 信号树交互槽 (Signal Tree)
     void onSignalItemChanged(QStandardItem *item);
     void onSignalItemDoubleClicked(const QModelIndex &index);
     void onSignalSearchChanged(const QString &text);
     void onSignalTreeContextMenu(const QPoint &pos);
     void onDeleteFileAction(); // 树右键删除文件
 
-    //  4. 绘图与交互槽 (Plotting & Interaction) 
+    //  4. 绘图与交互槽 (Plotting & Interaction)
     void onPlotClicked();
     void onPlotSelectionChanged();
     void onXAxisRangeChanged(const QCPRange &newRange);
@@ -114,7 +115,7 @@ private slots:
     void updateCursorsForLayoutChange();
 
 private:
-    //  内部数据结构 
+    //  内部数据结构
     struct LayoutInfo
     {
         int rows = 1;
@@ -129,7 +130,7 @@ private:
         QList<int> plotIds;
     };
 
-    //  初始化函数 
+    //  初始化函数
     void setupDataManagerThread();
     void createActions();
     void createMenus();
@@ -140,7 +141,7 @@ private:
     void setupPlotInteractions(QCustomPlot *plot);
     void clearPlotLayout();
 
-    //  核心逻辑辅助函数 
+    //  核心逻辑辅助函数
     void loadFile(const QString &filePath);
     void importView(const QString &filePath);
     void removeFile(const QString &filename);
@@ -167,8 +168,10 @@ private:
     LayoutInfo parseViewMetaData(const QDomDocument &doc);
     QList<SignalInfo> parseCheckedSignals(const QDomDocument &doc);
     void applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList);
+    // 针对单个 Plot 配置图例的辅助函数
+    void configurePlotLegend(QCustomPlot *plot, int mode);
 
-    //  成员变量 (分组) 
+    //  成员变量 (分组)
 
     // 1. 核心逻辑组件
     QThread *m_dataThread;
@@ -211,6 +214,11 @@ private:
     // 5. 动作 (Actions)
     QAction *m_loadFileAction;
     QAction *m_importViewAction;
+    //  图例位置动作组
+    QActionGroup *m_legendPosGroup;
+    QAction *m_legendPosOutsideTopAction;
+    QAction *m_legendPosInsideTLAction;
+    QAction *m_legendPosInsideTRAction;
     // 布局
     QAction *m_layout1x1Action;
     QAction *m_layout1x2Action;

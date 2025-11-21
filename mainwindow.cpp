@@ -47,6 +47,87 @@
 #include "quazip/quazip.h"
 #include "quazip/quazipfile.h"
 
+// 自定义流式布局图例类
+class FlowLegend : public QCPLegend
+{
+public:
+    explicit FlowLegend() : QCPLegend()
+    {
+        setColumnSpacing(10);
+        setRowSpacing(5);
+    }
+
+    virtual QSize minimumOuterSizeHint() const override
+    {
+        if (itemCount() == 0)
+            return QSize(0, 0);
+
+        int currentWidth = mOuterRect.width();
+        if (currentWidth <= 0)
+            currentWidth = 100;
+
+        // 只计算高度，不应用布局 (apply=false)
+        int requiredHeight = calculateLayout(currentWidth, false);
+
+        return QSize(0, requiredHeight);
+    }
+
+    virtual void updateLayout() override
+    {
+        // 计算并应用布局 (apply=true)
+        calculateLayout(mOuterRect.width(), true);
+    }
+
+private:
+    // [核心逻辑] 统一的布局计算函数
+    // apply: 如果为 true，则实际设置元素位置；如果为 false，仅计算所需高度
+    int calculateLayout(int availWidth, bool apply) const
+    {
+        double x = mMargins.left();
+        double y = mMargins.top();
+        double currentLineHeight = 0;
+
+        QList<QCPLayoutElement *> items;
+        for (int i = 0; i < itemCount(); ++i)
+        {
+            if (QCPAbstractLegendItem *el = item(i))
+            {
+                if (el->realVisibility() && !el->minimumOuterSizeHint().isEmpty())
+                    items.append(el);
+            }
+        }
+
+        if (items.isEmpty())
+            return mMargins.top() + mMargins.bottom();
+
+        for (QCPLayoutElement *el : items)
+        {
+            QSize sz = el->minimumOuterSizeHint();
+
+            // 换行判断
+            if (x + sz.width() + mMargins.right() > availWidth && x > mMargins.left())
+            {
+                x = mMargins.left();
+                y += currentLineHeight + mRowSpacing;
+                currentLineHeight = 0;
+            }
+
+            // 应用位置
+            if (apply)
+            {
+                el->setOuterRect(QRect(mOuterRect.left() + x, mOuterRect.top() + y, sz.width(), sz.height()));
+            }
+
+            x += sz.width() + mColumnSpacing;
+
+            if (sz.height() > currentLineHeight)
+                currentLineHeight = sz.height();
+        }
+
+        return y + currentLineHeight + mMargins.bottom();
+    }
+};
+
 /**
  * @brief [辅助函数] 通过 UniqueIdRole 在模型中迭代查找 QStandardItem (广度优先)
  * @param model 要搜索的 QStandardItemModel
@@ -353,6 +434,25 @@ void MainWindow::createActions()
     m_toggleLegendAction->setToolTip(tr("显示/隐藏图例"));
     connect(m_toggleLegendAction, &QAction::toggled, this, &MainWindow::on_actionToggleLegend_toggled);
 
+    m_legendPosGroup = new QActionGroup(this);
+    m_legendPosOutsideTopAction = new QAction(tr("图表外上方"), this);
+    m_legendPosOutsideTopAction->setCheckable(true);
+    m_legendPosOutsideTopAction->setData(0); // 0 代表外上方
+
+    m_legendPosInsideTLAction = new QAction(tr("图表内左上"), this);
+    m_legendPosInsideTLAction->setCheckable(true);
+    m_legendPosInsideTLAction->setData(1);       // 1 代表内左上
+    m_legendPosInsideTLAction->setChecked(true); // 默认选中
+
+    m_legendPosInsideTRAction = new QAction(tr("图表内右上"), this);
+    m_legendPosInsideTRAction->setCheckable(true);
+    m_legendPosInsideTRAction->setData(2); // 2 代表内右上
+    m_legendPosGroup->addAction(m_legendPosOutsideTopAction);
+    m_legendPosGroup->addAction(m_legendPosInsideTLAction);
+    m_legendPosGroup->addAction(m_legendPosInsideTRAction);
+
+    connect(m_legendPosGroup, &QActionGroup::triggered, this, &MainWindow::onLegendPositionChanged);
+
     // 创建 OpenGL 动作
     m_openGLAction = new QAction(tr("启用 OpenGL 加速"), this);
     m_openGLAction->setToolTip(tr("切换 QCustomPlot 的 OpenGL 渲染。"));
@@ -407,6 +507,12 @@ void MainWindow::createMenus()
     // 添加图例切换菜单项
     viewMenu->addSeparator();
     viewMenu->addAction(m_toggleLegendAction);
+
+    // 添加图例位置子菜单
+    QMenu *legendPosMenu = viewMenu->addMenu(tr("图例位置"));
+    legendPosMenu->addAction(m_legendPosOutsideTopAction);
+    legendPosMenu->addAction(m_legendPosInsideTLAction);
+    legendPosMenu->addAction(m_legendPosInsideTRAction);
 
     // 创建 "设置" 菜单
     QMenu *settingsMenu = menuBar()->addMenu(tr("&设置"));
@@ -817,17 +923,12 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 {
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
 
-    plot->axisRect()->insetLayout()->setInsetAlignment(0, Qt::AlignTop | Qt::AlignLeft);
-
-    // 4. 优化上方图例的样式
-    plot->legend->setBorderPen(Qt::NoPen);                  // 去除边框
-    plot->legend->setBrush(Qt::NoBrush);                    // 背景透明
-    plot->legend->setFillOrder(QCPLayoutGrid::foRowsFirst); // 水平排列
-    // plot->legend->setWrap(5);                               // 每行最多5个
-    //             -
-
-    // 根据 m_toggleLegendAction 的状态设置图例可见性
-    plot->legend->setVisible(m_toggleLegendAction->isChecked());
+    int mode = 1; // 默认: 图表内左上 (InsideTL)
+    if (m_legendPosGroup->checkedAction())
+    {
+        mode = m_legendPosGroup->checkedAction()->data().toInt();
+    }
+    configurePlotLegend(plot, mode);
 
     // 根据 m_openGLAction 的状态设置 OpenGL
     plot->setOpenGl(m_openGLAction->isChecked());
@@ -1150,6 +1251,12 @@ void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot)
 
     // 7. 刷新
     plot->rescaleAxes();
+
+    int legendMode = 1; // 默认为内左上
+    if (m_legendPosGroup->checkedAction())
+        legendMode = m_legendPosGroup->checkedAction()->data().toInt();
+    configurePlotLegend(plot, legendMode);
+
     plot->replot();
 
     // 8. 更新游标 (添加新图形后必须重建游标)
@@ -1186,6 +1293,10 @@ void MainWindow::removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot
         m_plotGraphMap[plot].remove(uniqueID);
         m_plotSignalMap[plotIndex].remove(uniqueID);
 
+        int legendMode = 1;
+        if (m_legendPosGroup->checkedAction())
+            legendMode = m_legendPosGroup->checkedAction()->data().toInt();
+        configurePlotLegend(plot, legendMode);
         // 5. 刷新
         plot->replot();
 
@@ -1362,12 +1473,17 @@ void MainWindow::on_actionClearAllPlots_triggered()
     }
 
     // 3. 清空所有子图的 Graph 对象
+    int legendMode = 1;
+    if (m_legendPosGroup->checkedAction())
+        legendMode = m_legendPosGroup->checkedAction()->data().toInt();
+
     for (QCustomPlot *plot : m_plotWidgets)
     {
         if (plot)
         {
             plot->clearGraphs();
             // 注意：我们只清除 Graph，保留游标辅助项(Item)，它们由 CursorManager 管理
+            configurePlotLegend(plot, legendMode);
             plot->legend->setVisible(m_toggleLegendAction->isChecked()); // 保持图例状态但内容会变空
             plot->replot();
         }
@@ -2762,5 +2878,182 @@ void MainWindow::updateReplayManagerRange()
     if (m_replayManager)
     {
         m_replayManager->updateDataRange(getGlobalTimeRange(), getSmallestTimeStep());
+    }
+}
+
+
+/**
+ * @brief [辅助] 配置单个 Plot 的图例（类型、位置、样式）
+ * @param plot 目标 Plot
+ * @param mode 0: OutsideTop, 1: InsideTL, 2: InsideTR
+ */
+void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
+{
+    if (!plot)
+        return;
+
+    // [安全修复 1] 必须先检查 axisRect 是否存在。
+    // 如果布局之前崩坏导致 axisRect 丢失，直接返回避免 Crash。
+    if (!plot->axisRect())
+    {
+        qWarning() << "configurePlotLegend: AxisRect is null for plot" << plot;
+        return;
+    }
+
+    bool isFlowLegend = (dynamic_cast<FlowLegend *>(plot->legend) != nullptr);
+    bool targetIsOutside = (mode == 0);
+    bool needTypeChange = (targetIsOutside != isFlowLegend);
+    bool legendVisible = m_toggleLegendAction->isChecked();
+
+    // 1. 如果图例类型不匹配，则销毁重建
+    if (needTypeChange)
+    {
+        // 先从旧布局中移除
+        if (plot->legend)
+        {
+            if (QCPLayout *currentParent = plot->legend->layout())
+                currentParent->take(plot->legend);
+            delete plot->legend;
+            plot->legend = nullptr;
+        }
+
+        // 创建新类型
+        if (targetIsOutside)
+            plot->legend = new FlowLegend();
+        else
+            plot->legend = new QCPLegend();
+    }
+
+    // 2. 统一应用样式
+    if (plot->legend) // 再次检查 legend 是否存在
+    {
+        plot->legend->setVisible(legendVisible);
+        QFont axisFont = plot->font();
+        axisFont.setPointSize(7);
+        plot->legend->setFont(axisFont);
+        plot->legend->setIconSize(10, 10);
+        plot->legend->setIconTextPadding(3);
+        plot->legend->setBrush(Qt::NoBrush);
+    }
+
+    // 3. 布局配置
+    QCPLayoutGrid *mainLayout = plot->plotLayout();
+    if (!mainLayout)
+        return;
+
+    if (mode == 0) // 目标：图表外上方 (Outside Top)
+    {
+        // A. 确保不在 Inset Layout 中 (如果之前在内部)
+        if (plot->legend->layout() == plot->axisRect()->insetLayout())
+        {
+            plot->axisRect()->insetLayout()->take(plot->legend);
+        }
+
+        // [关键逻辑修改] 根据是否有信号决定是否显示图例占位
+        bool hasGraphs = (plot->graphCount() > 0);
+
+        if (hasGraphs)
+        {
+            // 我们需要布局为: Row 0 = Legend, Row 1 = AxisRect
+
+            // 步骤 1: 检查 AxisRect 是否在 (0,0)，如果是，插入一行把它挤到 (1,0)
+            // [安全修复 2] 检查行列数，避免 "Requested cell is empty"
+            if (mainLayout->rowCount() > 0 && mainLayout->columnCount() > 0)
+            {
+                if (mainLayout->element(0, 0) == plot->axisRect())
+                {
+                    mainLayout->insertRow(0);
+                    // insertRow 会自动把原来的 (0,0) 挤到 (1,0)，无需手动 take/add
+                }
+            }
+
+            // 步骤 2: 将图例放入 (0,0)
+            // 如果当前 (0,0) 不是图例 (可能是空的，或者是刚刚腾出来的)
+            bool cellZeroIsLegend = false;
+            if (mainLayout->rowCount() > 0 && mainLayout->columnCount() > 0)
+            {
+                cellZeroIsLegend = (mainLayout->element(0, 0) == plot->legend);
+            }
+
+            if (!cellZeroIsLegend)
+            {
+                // 确保图例已从其他地方移除
+                if (plot->legend->layout())
+                    plot->legend->layout()->take(plot->legend);
+
+                // 确保网格至少有 1x1 (防止空网格导致的崩溃)
+                if (mainLayout->rowCount() < 1)
+                    mainLayout->insertRow(0);
+
+                // 添加到 (0,0)
+                mainLayout->addElement(0, 0, plot->legend);
+            }
+
+            // 步骤 3: 设置伸展因子 (图例行小，绘图行大)
+            if (mainLayout->rowCount() > 0)
+                mainLayout->setRowStretchFactor(0, 0.001); // 尽可能小，由 MinimumSize 决定
+            if (mainLayout->rowCount() > 1)
+                mainLayout->setRowStretchFactor(1, 1.0); // 占据剩余空间
+        }
+        else
+        {
+            // [无信号状态]: 移除图例，让 simplify 自动处理
+            if (plot->legend->layout())
+                plot->legend->layout()->take(plot->legend);
+
+            // [安全修复 3] 不再手动移动 AxisRect，而是调用 simplify()
+            // simplify 会移除所有空的行和列，如果 Row 0 变空了，Row 1 的 AxisRect 会自动上移变成 Row 0
+            mainLayout->simplify();
+        }
+    }
+    else // 目标：图表内部 (Inside TL/TR)
+    {
+        // A. 确保不在主 PlotLayout 中 (如果之前在外部)
+        if (plot->legend->layout() == mainLayout)
+        {
+            mainLayout->take(plot->legend);
+            // [新增] 既然移除了外部图例，也应该清理一下留下的空行
+            mainLayout->simplify();
+        }
+
+        // B. 添加到 Inset Layout
+        Qt::Alignment align = Qt::AlignTop | (mode == 1 ? Qt::AlignLeft : Qt::AlignRight);
+
+        if (plot->legend->layout() != plot->axisRect()->insetLayout())
+        {
+            plot->axisRect()->insetLayout()->addElement(plot->legend, align);
+        }
+        else
+        {
+            plot->axisRect()->insetLayout()->setInsetAlignment(0, align);
+        }
+        // 确保在内部时按行优先填充
+        if (isFlowLegend)
+        {
+            // FlowLegend 不需要这个设置，但普通 legend 可能需要
+        }
+    }
+
+    // 恢复图表中所有 Graph 的图例项
+    for (int i = 0; i < plot->graphCount(); ++i)
+    {
+        plot->graph(i)->addToLegend(plot->legend);
+    }
+
+    plot->replot();
+}
+
+/**
+ * @brief  切换图例位置槽函数
+ */
+void MainWindow::onLegendPositionChanged(QAction *action)
+{
+    if (!action)
+        return;
+    int mode = action->data().toInt(); // 0: OutsideTop, 1: InsideTL, 2: InsideTR
+
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        configurePlotLegend(plot, mode);
     }
 }
