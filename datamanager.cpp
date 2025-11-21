@@ -164,6 +164,16 @@ void DataManager::loadCsvFile(const QString &filePath)
     // 2. 初始化 Value 向量
     table.valueData.resize(numValueColumns);
 
+    if (fileSize > 0)
+    {
+        qint64 estimatedRows = fileSize / 50;
+        table.timeData.reserve(estimatedRows);
+        for (int i = 0; i < numValueColumns; ++i)
+        {
+            table.valueData[i].reserve(estimatedRows);
+        }
+    }
+
     // 3. 逐行读取数据
     int lineCount = 1;
     qint64 lastReportedProgress = 0;
