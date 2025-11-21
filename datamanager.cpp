@@ -261,12 +261,22 @@ void DataManager::loadMatFile(const QString &filePath)
         return;
     }
 
-    // 1. 将所有变量读入 QMap 以便快速查找
     QMap<QString, matvar_t *> varMap;
     matvar_t *variable = NULL;
+    QRegularExpression keepRegex("^p\\d+(_title2?)?$"); // 匹配 p1, p1_title, p1_title2
+
     while ((variable = Mat_VarReadNext(matfile)) != NULL)
     {
-        varMap.insert(QString(variable->name), variable);
+        QString name = QString::fromLatin1(variable->name);
+        if (keepRegex.match(name).hasMatch())
+        {
+            varMap.insert(name, variable);
+        }
+        else
+        {
+            // 如果不是我们需要的变量，立即释放以节省内存
+            Mat_VarFree(variable);
+        }
     }
     emit loadProgress(10); // 10% for reading directory
 
@@ -293,13 +303,12 @@ void DataManager::loadMatFile(const QString &filePath)
     // 现在使用排序后的索引列表进行循环
     for (int loop_idx = 0; loop_idx < pIndices.size(); ++loop_idx)
     {
-        int i = pIndices.at(loop_idx); // 获取 p 后面的数字 (例如 1, 2, 5, 998, 999)
+        int i = pIndices.at(loop_idx); // 获取 p 后面的数字
 
         QString pName = QString("p%1").arg(i);
         QString pTitleName = QString("p%1_title").arg(i);
         QString pTitle2Name = QString("p%1_title2").arg(i);
 
-        // 我们已经从 varMap 中确认了 pName 存在 (在上面的 regex 循环中)
         matvar_t *pVar = varMap.value(pName);
 
         if (pVar->data_type != MAT_T_DOUBLE || pVar->rank != 2 || pVar->dims[0] == 0 || pVar->dims[1] < 2)
@@ -327,69 +336,47 @@ void DataManager::loadMatFile(const QString &filePath)
         double *data = static_cast<double *>(pVar->data);
 
         // 6.  验证/调整/组合 headers
-
-        // 检查 titleList1 和 titleList2 是否可能包含时间列
         if (titleList1.size() == numValueCols + 1)
-        {
-            titleList1.removeFirst(); // 移除 "时间"
-        }
+            titleList1.removeFirst();
         if (titleList2.size() == numValueCols + 1)
-        {
-            titleList2.removeFirst(); // 移除 "时间"
-        }
+            titleList2.removeFirst();
 
-        // 根据用户逻辑组合: signal_name[n] = pX_title[n] + pX_title2[n]
         if (titleList1.size() == numValueCols && titleList2.size() == numValueCols)
         {
-            // 组合成功
             for (int j = 0; j < numValueCols; ++j)
-            {
-                // 用户的公式是 `pX_title[n] + pX_title2[n]`，我们按字面意思执行。
                 table.headers.append(titleList2.at(j) + " " + titleList1.at(j));
-            }
         }
-        //  [回退逻辑]
         else if (titleList2.size() == numValueCols)
         {
-            // pX_title 列表无效，但 pX_title2 有效。
-            qWarning() << "DataManager: Mismatch for" << pTitleName << "(size" << titleList1.size() << "). Falling back to" << pTitle2Name << "only.";
             table.headers = titleList2;
         }
         else if (titleList1.size() == numValueCols)
         {
-            // pX_title2 列表无效，但 pX_title 有效。
-            qWarning() << "DataManager: Mismatch for" << pTitle2Name << "(size" << titleList2.size() << "). Falling back to" << pTitleName << "only.";
             table.headers = titleList1;
         }
-        //  [默认值]
-        else // 两个列表都无效，生成默认值
+        else
         {
-            qWarning() << "DataManager: Header count mismatch for" << pTitleName << "(size" << titleList1.size() << ") and" << pTitle2Name << "(size" << titleList2.size() << "). Expected" << numValueCols << ". Generating defaults.";
-            table.headers.clear();
             for (int j = 0; j < numValueCols; ++j)
-            {
                 table.headers.append(QString("%1_Sig%2").arg(pName).arg(j + 1));
-            }
         }
 
-        // 7. 调整值数据的大小
         table.valueData.resize(numValueCols);
-        table.timeData.reserve(rows);
-        for (int j = 0; j < numValueCols; ++j)
-        {
-            table.valueData[j].reserve(rows);
-        }
 
-        // MATLAB/Matio 以列优先顺序存储数据 data[ (col * rows) + row ]
-        for (size_t r = 0; r < rows; ++r)
+        if (rows > 0)
         {
-            // Col 0 是时间
-            table.timeData.append(data[r]); // data[ (0 * rows) + r ]
+            table.timeData.resize(rows);
+            std::copy(data, data + rows, table.timeData.begin());
 
-            // Cols 1...M 是信号
             for (size_t c = 1; c < cols; ++c)
             {
-                table.valueData[c - 1].append(data[(c * rows) + r]);
+                // 预分配内存
+                table.valueData[c - 1].resize(rows);
+
+                // 计算该列在 raw data 中的起始指针
+                const double *colPtr = data + (c * rows);
+
+                // 直接块拷贝
+                std::copy(colPtr, colPtr + rows, table.valueData[c - 1].begin());
             }
         }
 
