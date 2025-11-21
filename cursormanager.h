@@ -32,9 +32,7 @@ public:
         SingleCursor,
         DoubleCursor
     };
-
-    explicit CursorManager(QMap<QCustomPlot *, QMap<QString, QCPGraph *>> *plotGraphMap,
-                           QList<QCustomPlot *> *plotWidgets,
+    explicit CursorManager(QList<QCustomPlot *> *plotWidgets,
                            QObject *parent = nullptr);
     ~CursorManager();
 
@@ -119,29 +117,26 @@ private:
      */
     double snapKeyToData(double key) const;
 
-    //  游标状态
     CursorMode m_cursorMode;
     double m_cursorKey1;
     double m_cursorKey2;
-    bool m_isDraggingCursor1; // 拖拽状态
-    bool m_isDraggingCursor2; // 拖拽状态
+    bool m_isDraggingCursor1;
+    bool m_isDraggingCursor2;
 
     QList<QCPItemLine *> m_cursorLines1;
     QList<QCPItemLine *> m_cursorLines2;
-    QList<QCPItemText *> m_cursorXLabels1; // 用于 X 轴标签
-    QList<QCPItemText *> m_cursorXLabels2; // 用于 X 轴标签
+    QList<QCPItemText *> m_cursorXLabels1;
+    QList<QCPItemText *> m_cursorXLabels2;
 
     // (Graph -> Tracer) 映射
     QMap<QCPGraph *, QCPItemTracer *> m_graphTracers1;
     QMap<QCPGraph *, QCPItemTracer *> m_graphTracers2;
     // (Tracer -> Label) 映射
-    QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels1; // 用于 Y 轴标签
-    QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels2; // 用于 Y 轴标签
+    QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels1;
+    QMap<QCPItemTracer *, QCPItemText *> m_cursorYLabels2;
 
-    //  指向 MainWindow 成员的指针
-    QMap<QCustomPlot *, QMap<QString, QCPGraph *>> *m_plotGraphMap;
+    // 修改：移除了 m_plotGraphMap 和 m_lastMousePlotPtr
     QList<QCustomPlot *> *m_plotWidgets;
-    QCustomPlot **m_lastMousePlotPtr; // 指向 m_lastMousePlot 指针的指针
     QCustomPlot *m_currentActivePlot = nullptr;
 };
 

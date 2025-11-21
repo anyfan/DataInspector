@@ -211,7 +211,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_plotContainer->setLayout(new QGridLayout());
     setCentralWidget(m_plotContainer);
 
-    m_cursorManager = new CursorManager(&m_plotGraphMap, &m_plotWidgets, this);
+    m_cursorManager = new CursorManager(&m_plotWidgets, this);
 
     createActions();
 

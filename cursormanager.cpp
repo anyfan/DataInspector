@@ -5,13 +5,11 @@
 #include <algorithm>
 #include <QFontMetrics>
 
-CursorManager::CursorManager(QMap<QCustomPlot *, QMap<QString, QCPGraph *>> *plotGraphMap,
-                             QList<QCustomPlot *> *plotWidgets,
+CursorManager::CursorManager(QList<QCustomPlot *> *plotWidgets,
                              QObject *parent)
     : QObject(parent),
-      m_plotGraphMap(plotGraphMap),
       m_plotWidgets(plotWidgets),
-      m_currentActivePlot(nullptr) // 初始化
+      m_currentActivePlot(nullptr)
 {
     m_cursorMode = CursorManager::NoCursor;
     m_cursorKey1 = 0;
@@ -227,55 +225,48 @@ void CursorManager::onPlotMouseMove(QMouseEvent *event)
 
     // 1. 从 plot 获取平滑的 x 坐标 (key)
     double smoothKey = plot->xAxis->pixelToCoord(event->pos().x());
-    double snappedKey = smoothKey; // 默认使用平滑键
+    double snappedKey = smoothKey;
 
     //  拖拽逻辑 (在此处实现吸附)
     if (m_isDraggingCursor1 || m_isDraggingCursor2)
     {
-        // 仅在拖动时执行吸附
         double closestKey = smoothKey;
         double minDistance = -1.0;
 
-        // 2. 查找此图(plot)上的所有图表(graph)
-        const auto &graphsOnPlot = m_plotGraphMap->value(plot);
-        if (!graphsOnPlot.isEmpty())
+        // 修改：直接遍历 plot 中的 graph，不再通过 map 查找
+        for (int i = 0; i < plot->graphCount(); ++i)
         {
-            // 3. 遍历此图上的所有图表，找到最近的数据点键
-            for (QCPGraph *graph : graphsOnPlot)
+            QCPGraph *graph = plot->graph(i);
+            if (graph && !graph->data()->isEmpty())
             {
-                if (graph && !graph->data()->isEmpty())
+                // 使用 QCPDataContainer 的 findBegin 进行高效的二分查找
+                auto it = graph->data()->findBegin(smoothKey);
+
+                if (it != graph->data()->constEnd())
                 {
-                    // 使用 QCPDataContainer 的 findBegin 进行高效的二分查找
-                    auto it = graph->data()->findBegin(smoothKey); // 找到第一个 >= smoothKey 的点
-
-                    // 检查找到的点
-                    if (it != graph->data()->constEnd())
+                    double distAt = qAbs(it->key - smoothKey);
+                    if (minDistance < 0 || distAt < minDistance)
                     {
-                        double distAt = qAbs(it->key - smoothKey);
-                        if (minDistance < 0 || distAt < minDistance)
-                        {
-                            minDistance = distAt;
-                            closestKey = it->key;
-                        }
-                    }
-
-                    // 检查找到的点的前一个点
-                    if (it != graph->data()->constBegin())
-                    {
-                        double distBefore = qAbs((it - 1)->key - smoothKey);
-                        if (minDistance < 0 || distBefore < minDistance)
-                        {
-                            minDistance = distBefore;
-                            closestKey = (it - 1)->key;
-                        }
+                        minDistance = distAt;
+                        closestKey = it->key;
                     }
                 }
-            } // 结束 for (graphs)
 
-            if (minDistance >= 0) // 如果找到了一个最近的键
-            {
-                snappedKey = closestKey; // 4. 使用吸附后的键
+                if (it != graph->data()->constBegin())
+                {
+                    double distBefore = qAbs((it - 1)->key - smoothKey);
+                    if (minDistance < 0 || distBefore < minDistance)
+                    {
+                        minDistance = distBefore;
+                        closestKey = (it - 1)->key;
+                    }
+                }
             }
+        }
+
+        if (minDistance >= 0)
+        {
+            snappedKey = closestKey;
         }
     }
 
@@ -405,7 +396,6 @@ void CursorManager::setupCursors()
 
     if (m_cursorMode == CursorManager::NoCursor)
     {
-        // 隐藏所有图表的游标信息
         for (QCustomPlot *plot : *m_plotWidgets)
         {
             plot->replot();
@@ -475,14 +465,13 @@ void CursorManager::setupCursors()
             xLabel2->position->setCoords(0, 5);
             m_cursorXLabels2.append(xLabel2);
         }
-    }
 
-    // 2. 为每个 Graph 创建跟踪器 和 Y轴标签
-    for (auto it = m_plotGraphMap->begin(); it != m_plotGraphMap->end(); ++it)
-    {
-        QCustomPlot *plot = it.key();
-        for (QCPGraph *graph : it.value())
+        for (int i = 0; i < plot->graphCount(); ++i)
         {
+            QCPGraph *graph = plot->graph(i);
+            if (!graph)
+                continue;
+
             //  游标 1 Y标签
             QCPItemTracer *tracer1 = new QCPItemTracer(plot);
             tracer1->setGraph(graph);
@@ -689,7 +678,7 @@ void CursorManager::updateCursors(double key, int cursorIndex)
     }
     else
     {
-        return; // 状态已更新，但此游标当前模式下不可见
+        return;
     }
 
     // 7. 遍历所有 plot，更新它们的游标 (与原函数相同的视觉逻辑)
@@ -697,43 +686,37 @@ void CursorManager::updateCursors(double key, int cursorIndex)
     {
         QCustomPlot *plot = m_plotWidgets->at(i);
         if (i >= lines->size())
-            continue; // 安全检查
+            continue;
 
-        // 用于存储此图上的所有 Y 标签以进行重叠检测
         QList<QCPItemText *> labelsOnThisPlot;
 
-        // A. 更新垂直线 (使用绝对像素坐标)
+        // A. 更新垂直线 (逻辑不变)
         double xPixel = plot->xAxis->coordToPixel(key);
         QCPItemLine *line = lines->at(i);
         line->start->setCoords(xPixel, plot->axisRect()->bottom());
         line->end->setCoords(xPixel, plot->axisRect()->top());
 
-        // B. 更新 X 轴文本标签
+        // B. 更新 X 轴文本标签 (逻辑不变)
         QCPItemText *xLabel = xLabels->at(i);
         xLabel->setText(QString::number(key, 'f', 4));
 
-        // C. 遍历此 plot 上的所有 graph，更新 Y 轴标签
-        if (m_plotGraphMap->contains(plot))
+        // C. 修改：直接遍历 Plot 上的 graph 来更新 Y 轴标签
+        for (int j = 0; j < plot->graphCount(); ++j)
         {
-            for (QCPGraph *graph : m_plotGraphMap->value(plot))
+            QCPGraph *graph = plot->graph(j);
+            if (tracers->contains(graph))
             {
-                if (tracers->contains(graph))
+                QCPItemTracer *tracer = tracers->value(graph);
+                tracer->setGraphKey(key);
+                tracer->updatePosition();
+
+                QCPItemText *yLabel = yLabels->value(tracer, nullptr);
+                if (yLabel)
                 {
-                    QCPItemTracer *tracer = tracers->value(graph);
-                    tracer->setGraphKey(key);
-                    tracer->updatePosition();
-
-                    QCPItemText *yLabel = yLabels->value(tracer, nullptr);
-                    if (yLabel)
-                    {
-                        double value = tracer->position->value();
-                        yLabel->setText(QString::number(value, 'f', 3));
-                        yLabel->setVisible(true);
-
-                        // 将标签添加到列表中以进行后处理
-
-                        labelsOnThisPlot.append(yLabel);
-                    }
+                    double value = tracer->position->value();
+                    yLabel->setText(QString::number(value, 'f', 3));
+                    yLabel->setVisible(true);
+                    labelsOnThisPlot.append(yLabel);
                 }
             }
         }
@@ -758,22 +741,23 @@ double CursorManager::snapKeyToData(double key) const
     if (!plot)
         return key;
 
-    const auto &graphsOnPlot = m_plotGraphMap->value(plot);
-    if (graphsOnPlot.isEmpty())
+    // 修改：直接检查 graphCount
+    if (plot->graphCount() == 0)
         return key;
 
     double closestKey = key;
     double minDistance = std::numeric_limits<double>::max();
     bool foundAny = false;
 
-    for (QCPGraph *graph : graphsOnPlot)
+    // 修改：直接遍历 graph
+    for (int i = 0; i < plot->graphCount(); ++i)
     {
+        QCPGraph *graph = plot->graph(i);
         if (!graph || !graph->visible() || graph->data()->isEmpty())
             continue;
 
         auto it = graph->data()->findBegin(key);
 
-        // 检查当前点 (it)
         if (it != graph->data()->constEnd())
         {
             double dist = qAbs(it->key - key);
@@ -784,8 +768,6 @@ double CursorManager::snapKeyToData(double key) const
                 foundAny = true;
             }
         }
-
-        // 检查前一个点 (it - 1)，防止 key 刚好在两个点中间但更靠近前一个
         if (it != graph->data()->constBegin())
         {
             auto prevIt = it - 1;
@@ -797,9 +779,6 @@ double CursorManager::snapKeyToData(double key) const
                 foundAny = true;
             }
         }
-
-        // 优化点 3: 如果距离已经非常小（例如小于像素容差），可以提前退出循环
-        // 但为了精确吸附到所有信号中最近的那个，通常还是遍历完比较好。
     }
 
     return foundAny ? closestKey : key;
