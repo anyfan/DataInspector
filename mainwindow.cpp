@@ -1455,6 +1455,9 @@ void MainWindow::populateSignalTree(const FileData &data)
             parentItem = tableItem; // 信号将附加到表条目
         }
 
+        // 格式: "filename/tablename/"
+        QString idPrefix = filename + "/" + table.name + "/";
+
         // 使用表中的 headers
         for (int i = 0; i < table.headers.count(); ++i)
         {
@@ -1467,8 +1470,7 @@ void MainWindow::populateSignalTree(const FileData &data)
             item->setCheckable(true);
             item->setCheckState(Qt::Unchecked);
 
-            // 新的 UniqueID 格式 "filename/tablename/signalindex"
-            QString uniqueID = QString("%1/%2/%3").arg(filename).arg(table.name).arg(i);
+            QString uniqueID = idPrefix + QString::number(i);
 
             item->setData(uniqueID, UniqueIdRole);
             item->setData(false, IsFileItemRole);
@@ -1483,8 +1485,7 @@ void MainWindow::populateSignalTree(const FileData &data)
             QColor color = m_colorList.at(m_colorIndex);
             m_colorIndex = (m_colorIndex + 1) % m_colorList.size();
 
-            // 将默认宽度为 2
-            // QPen pen(color, 2); //宽度2绘制密集线段会卡
+            // 将默认宽度为 2  QPen pen(color, 2); 宽度2绘制密集线段会卡
             QPen pen(color, 1);
 
             item->setData(QVariant::fromValue(pen), PenDataRole);
