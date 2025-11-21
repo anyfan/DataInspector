@@ -41,113 +41,61 @@ static QStringList readMatStringArray(matvar_t *variable)
 {
     QStringList result;
     if (variable == NULL || variable->data == NULL || variable->rank != 2)
-    {
         return result;
-    }
 
-    //  检查 MAT_T_UTF8
+    size_t rows = variable->dims[0];
+    size_t cols = variable->dims[1];
+    if (rows == 0 || cols == 0)
+        return result;
+
     if (variable->data_type == MAT_T_UTF8)
     {
+        QVector<QByteArray> buffers(rows);
+
         unsigned char *data_scanner = (unsigned char *)variable->data;
-        size_t rows = variable->dims[0]; // 字符串的数量
-        size_t cols = variable->dims[1]; // 字符串的 *字符* 长度
-        if (rows == 0 || cols == 0)
-        {
-            return result;
-        }
 
-        char **row_buffers = (char **)calloc(rows, sizeof(char *));
-        if (row_buffers == NULL)
-        {
-            return result;
-        }
-
-        size_t *row_pos = (size_t *)calloc(rows, sizeof(size_t));
-        if (row_pos == NULL)
-        {
-            free(row_buffers);
-            return result;
-        }
-
-        for (size_t i = 0; i < rows; i++)
-        {
-            // [关键] 'cols' 是 *字符* 数。最坏情况 (UTF-8) 是每个字符4字节。
-            size_t max_bytes_per_row = (cols * 4) + 1;
-            row_buffers[i] = (char *)malloc(max_bytes_per_row);
-            if (row_buffers[i] != NULL)
-            {
-                row_buffers[i][0] = '\0'; // 初始化为空字符串
-            }
-        }
-
-        //  字符重组
-        int char_len = 0;
+        // MATLAB 是列优先存储，所以外层循环是 cols，内层是 rows
         for (size_t j = 0; j < cols; j++)
         {
             for (size_t i = 0; i < rows; i++)
             {
-                if (data_scanner == NULL)
-                    break; // 安全检查
-                char_len = utf8_char_len(*data_scanner);
-                if (row_buffers[i] != NULL)
-                {
-                    memcpy(row_buffers[i] + row_pos[i], data_scanner, char_len);
-                    row_pos[i] += char_len;
-                }
-                data_scanner += char_len;
+                int len = utf8_char_len(*data_scanner);
+                buffers[i].append((const char *)data_scanner, len);
+                data_scanner += len;
             }
         }
 
-        //  转换并清理
-        for (size_t i = 0; i < rows; i++)
+        // 转换结果
+        result.reserve(rows);
+        for (const QByteArray &buf : buffers)
         {
-            if (row_buffers[i] != NULL)
-            {
-                row_buffers[i][row_pos[i]] = '\0';
-                result.append(QString::fromUtf8(row_buffers[i]).trimmed());
-                // qDebug() << "row_buffers[" << i << "] = " << row_buffers[i];
-                free(row_buffers[i]);
-            }
+            result.append(QString::fromUtf8(buf).trimmed());
         }
-        free(row_buffers);
-        free(row_pos);
-
         return result;
     }
-    //  检查 MAT_T_UINT8
-    else if (variable->data_type == MAT_T_INT8)
+    else if (variable->data_type == MAT_T_INT8 || variable->data_type == MAT_T_UINT8)
     {
-        size_t rows = variable->dims[0]; // 字符串数量
-        size_t cols = variable->dims[1]; // 字符串最大长度
-        if (rows == 0 || cols == 0)
-        {
-            return result;
-        }
+        const char *data = (const char *)variable->data;
+        result.reserve(rows);
 
-        // MAT_T_CHAR 以列优先顺序存储
-        char *data = (char *)variable->data;
         for (size_t i = 0; i < rows; i++)
         {
             QByteArray row_data;
             row_data.reserve(cols);
+            // 列优先读取：第 i 行的第 j 个字符在 index = j * rows + i
             for (size_t j = 0; j < cols; j++)
             {
-                // 访问 data[j*rows + i]
                 char c = data[j * rows + i];
-                if (c == '\0') // 在空终止符处停止
-                {
+                if (c == '\0')
                     break;
-                }
                 row_data.append(c);
             }
-            // Matio 可能会用空格填充，修剪它们
             result.append(QString::fromLocal8Bit(row_data).trimmed());
         }
         return result;
     }
-    //
 
-    return result; // 不支持的类型
+    return result;
 }
 
 /**
