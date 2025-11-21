@@ -147,13 +147,15 @@ private:
     void setupPlotInteractions(QCustomPlot *plot);
     void clearPlotLayout();
 
+    void setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc);
+
     //  核心逻辑辅助函数
     void loadFile(const QString &filePath);
     void importView(const QString &filePath);
     void removeFile(const QString &filename);
 
     // 信号管理
-    void addSignalToPlot(const QString &uniqueID, QCustomPlot *plot);
+    void addSignalToPlot(const QString &uniqueID, QCustomPlot *plot, bool replot = true);
     void removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot);
     void populateSignalTree(const FileData &data);
     void updateSignalTreeChecks();

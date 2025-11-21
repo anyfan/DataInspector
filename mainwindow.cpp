@@ -576,60 +576,48 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
 
     QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotContainer->layout());
     if (!grid)
-    {
         grid = new QGridLayout(m_plotContainer);
-    }
 
     QCPRange sharedXRange;
     bool hasSharedXRange = false;
 
-    // 1. 创建所有新布局的 plot
+    // 1. 创建 Plot 组件
     for (int i = 0; i < geometries.size(); ++i)
     {
         const QRect &geo = geometries[i];
         int plotIndex = i;
 
-        // 创建 Plot
+        // 创建容器 Frame
         QFrame *plotFrame = new QFrame(m_plotContainer);
         plotFrame->setFrameShape(QFrame::NoFrame);
-        plotFrame->setLineWidth(2);
         plotFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
 
         QVBoxLayout *frameLayout = new QVBoxLayout(plotFrame);
         frameLayout->setContentsMargins(0, 0, 0, 0);
 
         QCustomPlot *plot = new QCustomPlot(plotFrame);
-
-        // 创建 Y 轴边距组
+        // 第一次循环创建对齐组
         if (i == 0)
-        {
             m_yAxisGroup = new QCPMarginGroup(plot);
-        }
 
         frameLayout->addWidget(plot);
         grid->addWidget(plotFrame, geo.y(), geo.x(), geo.height(), geo.width());
-
         m_plotWidgets.append(plot);
 
-        // 2. 检查 m_plotSignalMap (持久化映射) 是否包含此索引的信号
+        // 2. 恢复信号 (使用 m_plotSignalMap 持久化数据)
         if (m_plotSignalMap.contains(plotIndex))
         {
             const QSet<QString> &signalIDs = m_plotSignalMap.value(plotIndex);
             for (const QString &uniqueID : signalIDs)
             {
                 SignalLocation loc = getSignalDataFromID(uniqueID);
-
-                if (loc.table && loc.signalIndex >= 0 && loc.signalIndex < loc.table->valueData.size())
+                if (loc.table)
                 {
-                    QCPGraph *graph = plot->addGraph();
-                    graph->setName(loc.name);
-                    graph->setData(loc.table->timeData, loc.table->valueData[loc.signalIndex]);
-                    graph->setPen(loc.pen); // 直接使用 SignalLocation 中的 Pen
-
-                    graph->setProperty("id", uniqueID);
+                    setupGraphInstance(plot, uniqueID, loc);
                 }
             }
 
+            // 恢复轴范围逻辑
             plot->rescaleAxes();
             if (!hasSharedXRange && plot->graphCount() > 0)
             {
@@ -640,45 +628,26 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
             {
                 plot->xAxis->setRange(sharedXRange);
             }
-            plot->replot();
         }
         else if (hasSharedXRange)
         {
             plot->xAxis->setRange(sharedXRange);
         }
-    }
 
-    // 4. 设置交互
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
+        // 3. 设置交互与配置
         setupPlotInteractions(plot);
     }
 
-    // 5. 设置活动子图
+    // 4. 恢复活动子图状态
     if (!m_plotWidgets.isEmpty())
     {
-        int activePlotIndex = (m_activePlot) ? m_plotWidgets.indexOf(m_activePlot) : 0;
-        if (activePlotIndex < 0 || activePlotIndex >= m_plotWidgets.size())
-            activePlotIndex = 0;
+        int activeIdx = 0; // 默认为 0
 
-        QCustomPlot *newActivePlot = m_plotWidgets.at(activePlotIndex);
-        m_activePlot = newActivePlot;
-        m_lastMousePlot = m_activePlot;
-
-        if (QFrame *frame = qobject_cast<QFrame *>(m_activePlot->parentWidget()))
-        {
-            frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
-        }
-        updateSignalTreeChecks();
-        m_signalTree->viewport()->update();
+        setActivePlot(m_plotWidgets.at(activeIdx));
     }
 
-    // 6. 重建游标
-    m_cursorManager->setupCursors();
-    if (m_cursorManager->getMode() != CursorManager::NoCursor)
-    {
-        QTimer::singleShot(0, this, &MainWindow::updateCursorsForLayoutChange);
-    }
+    // 5. 重建游标 (延时调用以确保布局完成)
+    QTimer::singleShot(0, this, &MainWindow::updateCursorsForLayoutChange);
 }
 
 void MainWindow::setupPlotLayout(int rows, int cols)
@@ -991,51 +960,51 @@ void MainWindow::removeFile(const QString &filename)
     if (!m_fileDataMap.remove(filename))
         return;
 
-    // 修改：直接遍历 plot 和 graph
     QString prefix = filename + "/";
+    bool anyPlotChanged = false;
 
+    // 1. 遍历所有子图清理图形
     for (int i = 0; i < m_plotWidgets.size(); ++i)
     {
         QCustomPlot *plot = m_plotWidgets.at(i);
         QSet<QString> &signalSet = m_plotSignalMap[i];
-        bool plotChanged = false;
 
-        for (int j = plot->graphCount() - 1; j >= 0; --j)
+        // 收集需要删除的 Graph，避免在遍历时修改容器
+        QList<QCPGraph *> graphsToDelete;
+        for (int j = 0; j < plot->graphCount(); ++j)
         {
             QCPGraph *graph = plot->graph(j);
-            if (!graph)
-                continue;
-
             QString graphID = graph->property("id").toString();
-
             if (graphID.startsWith(prefix))
             {
-                plot->removeGraph(graph);
-                signalSet.remove(graphID);
-                plotChanged = true;
+                graphsToDelete.append(graph);
+                signalSet.remove(graphID); // 同步清理 ID 映射
             }
         }
 
-        if (plotChanged)
+        if (!graphsToDelete.isEmpty())
         {
-            int legendMode = 1;
-            if (m_legendPosGroup->checkedAction())
-                legendMode = m_legendPosGroup->checkedAction()->data().toInt();
+            for (QCPGraph *g : graphsToDelete)
+                plot->removeGraph(g);
+
+            // 更新图例
+            int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
             configurePlotLegend(plot, legendMode);
             plot->replot();
+            anyPlotChanged = true;
         }
     }
 
+    // 2. 清理 UI 树映射 (使用迭代器安全删除)
     QMutableHashIterator<QString, QStandardItem *> it(m_uniqueIdMap);
     while (it.hasNext())
     {
         it.next();
         if (it.key().startsWith(prefix))
-        {
             it.remove();
-        }
     }
 
+    // 3. 从树模型中移除文件节点
     QList<QStandardItem *> items = m_signalTreeModel->findItems(filename);
     for (QStandardItem *item : items)
     {
@@ -1046,10 +1015,14 @@ void MainWindow::removeFile(const QString &filename)
         }
     }
 
-    m_cursorManager->setupCursors();
-    m_cursorManager->updateAllCursors();
-    updateReplayManagerRange();
-    on_actionFitView_triggered();
+    // 4. 全局刷新
+    if (anyPlotChanged)
+    {
+        m_cursorManager->setupCursors();
+        m_cursorManager->updateAllCursors();
+        updateReplayManagerRange();
+        on_actionFitView_triggered();
+    }
 }
 
 // 删除文件的动作
@@ -1077,52 +1050,43 @@ void MainWindow::onDeleteFileAction()
  * @param uniqueID 要添加的信号ID
  * @param plot 目标 QCustomPlot
  */
-void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot)
+void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot, bool replot)
 {
     int plotIndex = m_plotWidgets.indexOf(plot);
     if (plotIndex == -1)
         return;
 
+    // 检查重复
     if (m_plotSignalMap.value(plotIndex).contains(uniqueID))
         return;
 
     SignalLocation loc = getSignalDataFromID(uniqueID);
+    // 检查数据有效性
     if (!loc.table || loc.signalIndex < 0 || loc.signalIndex >= loc.table->valueData.size())
-    {
         return;
-    }
 
-    QCPGraph *graph = plot->addGraph();
-    graph->setName(loc.name);
-    graph->setData(loc.table->timeData, loc.table->valueData[loc.signalIndex]);
-    graph->setPen(loc.pen);
+    setupGraphInstance(plot, uniqueID, loc);
 
-    graph->setProperty("id", uniqueID);
-
-    // 5. 应用性能修复 (与 onSignalItemChanged 中的逻辑相同)
-    if (graph->selectionDecorator())
-    {
-        QCPSelectionDecorator *decorator = graph->selectionDecorator();
-        QPen selPen = decorator->pen();
-        selPen.setWidth(loc.pen.width());
-        decorator->setPen(selPen);
-        decorator->setBrush(Qt::NoBrush);
-        decorator->setUsedScatterProperties(QCPScatterStyle::spNone);
-    }
-
-    // 更新映射
+    // 2. 更新映射
     m_plotSignalMap[plotIndex].insert(uniqueID);
 
-    plot->rescaleAxes();
-    int legendMode = 1;
-    if (m_legendPosGroup->checkedAction())
-        legendMode = m_legendPosGroup->checkedAction()->data().toInt();
-    configurePlotLegend(plot, legendMode);
+    // 3. 仅在需要时刷新 UI
+    if (replot)
+    {
+        plot->rescaleAxes();
 
-    plot->replot();
+        // 获取当前的图例模式配置
+        int legendMode = 1;
+        if (m_legendPosGroup->checkedAction())
+            legendMode = m_legendPosGroup->checkedAction()->data().toInt();
+        configurePlotLegend(plot, legendMode);
 
-    m_cursorManager->setupCursors();
-    m_cursorManager->updateAllCursors();
+        plot->replot();
+
+        // 更新游标
+        m_cursorManager->setupCursors();
+        m_cursorManager->updateAllCursors();
+    }
 }
 
 /**
@@ -1161,33 +1125,30 @@ void MainWindow::removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot
 
 /**
  * @brief 设置活动子图的辅助函数
- * (这个函数包含了上一步 onPlotClicked(QCustomPlot *plot) 的逻辑)
  * @param plot 要激活的子图
  */
 void MainWindow::setActivePlot(QCustomPlot *plot)
 {
-    if (!plot || plot == m_activePlot)
-        return;
-
-    int plotIndex = m_plotWidgets.indexOf(plot);
-    if (plotIndex == -1)
+    if (!plot)
         return;
 
     // 取消高亮旧的 active plot
     if (m_activePlot)
     {
-        if (QFrame *oldFrame = qobject_cast<QFrame *>(m_activePlot->parentWidget()))
-            oldFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
+        if (QWidget *parent = m_activePlot->parentWidget())
+            parent->setStyleSheet("QFrame { border: 2px solid transparent; }");
     }
 
     m_activePlot = plot;
     m_cursorManager->setActivePlot(plot);
 
     // 高亮新的 active plot
-    if (QFrame *frame = qobject_cast<QFrame *>(m_activePlot->parentWidget()))
+    if (QWidget *parent = m_activePlot->parentWidget())
     {
-        frame->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
+        parent->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
     }
+
+    m_lastMousePlot = plot;
 
     updateSignalTreeChecks();
     m_signalTree->viewport()->update();
@@ -1195,38 +1156,27 @@ void MainWindow::setActivePlot(QCustomPlot *plot)
 
 void MainWindow::onPlotClicked()
 {
-    // 这个槽现在只由 mousePress 信号触发，所以 sender() 总是有效的
     QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
     if (!clickedPlot)
-        return; // 安全检查
+        return;
 
-    // 1. 检查点击是否在图线 (plottable) 上
-    // 我们需要获取鼠标位置
+    // 1. 处理背景点击（取消选中）
     QPoint pos = clickedPlot->mapFromGlobal(QCursor::pos());
-    QCPAbstractPlottable *plottable = clickedPlot->plottableAt(pos, true);
-
-    // 2. 如果点击在背景上 (不在图线上)
-    if (!plottable)
+    if (!clickedPlot->plottableAt(pos, true))
     {
-        // 取消此子图上的所有选择
         clickedPlot->deselectAll();
+        clickedPlot->replot(); // 立即重绘以反馈选中状态消失
     }
 
-    // 3. 如果我们正在切换到 *新* 的子图
+    // 2. 切换活动子图
     if (m_activePlot && clickedPlot != m_activePlot)
     {
-        // 遍历所有 *其他* 子图并取消它们的选择
-        for (QCustomPlot *plot : m_plotWidgets)
-        {
-            if (plot && plot != clickedPlot)
-            {
-                plot->deselectAll();
-                plot->replot(); // 确保旧的子图重绘以显示取消选择
-            }
-        }
+        m_activePlot->deselectAll();
+        m_activePlot->replot();
     }
 
-    setActivePlot(clickedPlot); // 调用新的辅助函数
+    // 3. 设置为新的活动子图
+    setActivePlot(clickedPlot);
 }
 
 /**
@@ -1890,7 +1840,6 @@ bool MainWindow::filterSignalTree(QStandardItem *item, const QString &query)
         return false;
 
     // 1. 检查此项是否匹配
-    // 我们匹配信号、文件和表名
     bool selfMatches = item->text().toLower().contains(query);
 
     // 2. 检查是否有任何子项匹配
@@ -1913,7 +1862,6 @@ bool MainWindow::filterSignalTree(QStandardItem *item, const QString &query)
     }
 
     // 5. 在视图中设置行隐藏
-    // 根项没有父项，所以使用 QModelIndex()
     QModelIndex parentIndex = item->parent() ? item->parent()->index() : QModelIndex();
     m_signalTree->setRowHidden(item->row(), parentIndex, !visible);
 
@@ -2036,7 +1984,7 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
             if (plotIndex >= 0 && plotIndex < totalPlots)
             {
                 QCustomPlot *targetPlot = m_plotWidgets.at(plotIndex);
-                addSignalToPlot(uniqueID, targetPlot);
+                addSignalToPlot(uniqueID, targetPlot, false);
 
                 {
                     const QSignalBlocker blocker(m_signalTreeModel);
@@ -2044,6 +1992,14 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
                 }
             }
         }
+    }
+
+    int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        plot->rescaleAxes();
+        configurePlotLegend(plot, legendMode);
+        plot->replot();
     }
 
     // 全部完成后，更新树以匹配(新的)活动子图
@@ -2732,5 +2688,25 @@ void MainWindow::performFitView(bool fitX, bool fitY, FitTarget target)
     {
         if (!targets.isEmpty())
             onXAxisRangeChanged(targets.first()->xAxis->range());
+    }
+}
+
+void MainWindow::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc)
+{
+    QCPGraph *graph = plot->addGraph();
+    graph->setName(loc.name);
+    graph->setData(loc.table->timeData, loc.table->valueData[loc.signalIndex]);
+    graph->setPen(loc.pen);
+    graph->setProperty("id", uniqueID);
+
+    // 统一应用性能修复和样式设置
+    if (graph->selectionDecorator())
+    {
+        QCPSelectionDecorator *decorator = graph->selectionDecorator();
+        QPen selPen = decorator->pen();
+        selPen.setWidth(loc.pen.width()); // 选中时保持宽度一致
+        decorator->setPen(selPen);
+        decorator->setBrush(Qt::NoBrush);
+        decorator->setUsedScatterProperties(QCPScatterStyle::spNone); // 性能优化
     }
 }
