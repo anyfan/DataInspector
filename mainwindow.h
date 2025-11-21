@@ -130,6 +130,11 @@ private:
         QColor color;
         QList<int> plotIds;
     };
+    enum FitTarget
+    {
+        FitActivePlot, // 仅当前活动子图
+        FitAllPlots    // 所有子图
+    };
 
     //  初始化函数
     void setupDataManagerThread();
@@ -171,7 +176,16 @@ private:
     void applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList);
     // 针对单个 Plot 配置图例的辅助函数
     void configurePlotLegend(QCustomPlot *plot, int mode);
+
     SignalLocation getSignalDataFromID(const QString &uniqueID) const;
+
+    /**
+     * @brief 通用视图自适应函数
+     * @param fitX 是否缩放 X 轴
+     * @param fitY 是否缩放 Y 轴
+     * @param target 目标范围 (仅活动图表 或 所有图表)
+     */
+    void performFitView(bool fitX, bool fitY, FitTarget target);
 
     //  成员变量 (分组)
 
