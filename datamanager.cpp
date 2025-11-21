@@ -99,6 +99,84 @@ static QStringList readMatStringArray(matvar_t *variable)
 }
 
 /**
+ * @brief [辅助函数] 处理一组 MAT 变量 (pX, pX_title, pX_title2) 并构建 SignalTable
+ */
+static bool processMatTable(int index,
+                            const QMap<QString, matvar_t *> &varMap,
+                            SignalTable &table)
+{
+    QString pName = QString("p%1").arg(index);
+    QString pTitleName = QString("p%1_title").arg(index);
+    QString pTitle2Name = QString("p%1_title2").arg(index);
+
+    matvar_t *pVar = varMap.value(pName);
+    if (!pVar)
+        return false;
+
+    // 验证数据有效性
+    if (pVar->data_type != MAT_T_DOUBLE || pVar->rank != 2 || pVar->dims[0] == 0 || pVar->dims[1] < 2)
+    {
+        qWarning() << "DataManager: Skipping variable" << pName << "- invalid format.";
+        return false;
+    }
+
+    table.name = pName;
+
+    // 读取标题
+    matvar_t *titleVar = varMap.value(pTitleName, NULL);
+    matvar_t *title2Var = varMap.value(pTitle2Name, NULL);
+
+    QStringList titleList1 = readMatStringArray(titleVar);
+    QStringList titleList2 = readMatStringArray(title2Var);
+
+    size_t rows = pVar->dims[0];
+    size_t cols = pVar->dims[1];
+    int numValueCols = cols - 1;
+    double *data = static_cast<double *>(pVar->data);
+
+    // 处理 Headers 逻辑
+    if (titleList1.size() == numValueCols + 1)
+        titleList1.removeFirst();
+    if (titleList2.size() == numValueCols + 1)
+        titleList2.removeFirst();
+
+    if (titleList1.size() == numValueCols && titleList2.size() == numValueCols)
+    {
+        for (int j = 0; j < numValueCols; ++j)
+            table.headers.append(titleList2.at(j) + " " + titleList1.at(j));
+    }
+    else if (titleList2.size() == numValueCols)
+    {
+        table.headers = titleList2;
+    }
+    else if (titleList1.size() == numValueCols)
+    {
+        table.headers = titleList1;
+    }
+    else
+    {
+        for (int j = 0; j < numValueCols; ++j)
+            table.headers.append(QString("%1_Sig%2").arg(pName).arg(j + 1));
+    }
+
+    // 拷贝数据
+    table.valueData.resize(numValueCols);
+    if (rows > 0)
+    {
+        table.timeData.resize(rows);
+        std::copy(data, data + rows, table.timeData.begin()); // 第一列是时间
+
+        for (size_t c = 1; c < cols; ++c)
+        {
+            table.valueData[c - 1].resize(rows);
+            const double *colPtr = data + (c * rows);
+            std::copy(colPtr, colPtr + rows, table.valueData[c - 1].begin());
+        }
+    }
+    return true;
+}
+
+/**
  * @brief [辅助函数] 从 matvar_t (MAT_T_UTF8 或 MAT_T_CHAR) 中读取单个字符串
  * * 假设它是一个 [1xN] 或 [Nx1] 的 char 数组
  */
@@ -251,7 +329,6 @@ void DataManager::loadMatFile(const QString &filePath)
     FileData fileData;
     fileData.filePath = filePath;
 
-    // MATIO 需要 const char*，所以我们转换路径
     QByteArray cFilePath = filePath.toUtf8();
     mat_t *matfile = Mat_Open(cFilePath.constData(), MAT_ACC_RDONLY);
 
@@ -261,9 +338,12 @@ void DataManager::loadMatFile(const QString &filePath)
         return;
     }
 
+    // 1. 扫描所有变量
     QMap<QString, matvar_t *> varMap;
     matvar_t *variable = NULL;
-    QRegularExpression keepRegex("^p\\d+(_title2?)?$"); // 匹配 p1, p1_title, p1_title2
+    QRegularExpression keepRegex("^p\\d+(_title2?)?$");
+    QRegularExpression pVarRegex("^p(\\d+)$");
+    QList<int> pIndices;
 
     while ((variable = Mat_VarReadNext(matfile)) != NULL)
     {
@@ -271,129 +351,46 @@ void DataManager::loadMatFile(const QString &filePath)
         if (keepRegex.match(name).hasMatch())
         {
             varMap.insert(name, variable);
+            // 顺便收集索引
+            QRegularExpressionMatch match = pVarRegex.match(name);
+            if (match.hasMatch())
+            {
+                bool ok;
+                int idx = match.captured(1).toInt(&ok);
+                if (ok && idx > 0)
+                    pIndices.append(idx);
+            }
         }
         else
         {
-            // 如果不是我们需要的变量，立即释放以节省内存
             Mat_VarFree(variable);
         }
     }
-    emit loadProgress(10); // 10% for reading directory
+    emit loadProgress(10);
 
-    // 2. 遍历所有找到的变量，查找 "p" + 数字 格式的变量
-    QRegularExpression pVarRegex("^p(\\d+)$");
-    QList<int> pIndices;
-    for (const QString &key : varMap.keys())
-    {
-        QRegularExpressionMatch match = pVarRegex.match(key);
-        if (match.hasMatch())
-        {
-            bool ok;
-            int index = match.captured(1).toInt(&ok);
-            if (ok && index > 0)
-            {
-                pIndices.append(index);
-            }
-        }
-    }
-
-    // 对索引进行数字排序 (例如: p1, p2, p5, p998, p999)
+    // 2. 排序索引
     std::sort(pIndices.begin(), pIndices.end());
 
-    // 现在使用排序后的索引列表进行循环
+    // 3. 处理每个 p 变量
     for (int loop_idx = 0; loop_idx < pIndices.size(); ++loop_idx)
     {
-        int i = pIndices.at(loop_idx); // 获取 p 后面的数字
-
-        QString pName = QString("p%1").arg(i);
-        QString pTitleName = QString("p%1_title").arg(i);
-        QString pTitle2Name = QString("p%1_title2").arg(i);
-
-        matvar_t *pVar = varMap.value(pName);
-
-        if (pVar->data_type != MAT_T_DOUBLE || pVar->rank != 2 || pVar->dims[0] == 0 || pVar->dims[1] < 2)
-        {
-            qWarning() << "DataManager: Skipping variable" << pName << "- not a 2D double matrix or not enough columns.";
-            continue;
-        }
-
+        int i = pIndices.at(loop_idx);
         SignalTable table;
 
-        // 3. 获取表名 (pX)
-        table.name = pName;
-
-        // 4. 获取 pX_title 和 pX_title2
-        matvar_t *titleVar = varMap.value(pTitleName, NULL);
-        matvar_t *title2Var = varMap.value(pTitle2Name, NULL);
-
-        QStringList titleList1 = readMatStringArray(titleVar);
-        QStringList titleList2 = readMatStringArray(title2Var);
-
-        // 5. 读取数值数据 (提前获取列数)
-        size_t rows = pVar->dims[0]; // N 个数据点
-        size_t cols = pVar->dims[1]; // M 个通道 (1 个时间 + M-1 个信号)
-        int numValueCols = cols - 1;
-        double *data = static_cast<double *>(pVar->data);
-
-        // 6.  验证/调整/组合 headers
-        if (titleList1.size() == numValueCols + 1)
-            titleList1.removeFirst();
-        if (titleList2.size() == numValueCols + 1)
-            titleList2.removeFirst();
-
-        if (titleList1.size() == numValueCols && titleList2.size() == numValueCols)
+        // 调用我们提取的辅助函数
+        if (processMatTable(i, varMap, table))
         {
-            for (int j = 0; j < numValueCols; ++j)
-                table.headers.append(titleList2.at(j) + " " + titleList1.at(j));
-        }
-        else if (titleList2.size() == numValueCols)
-        {
-            table.headers = titleList2;
-        }
-        else if (titleList1.size() == numValueCols)
-        {
-            table.headers = titleList1;
-        }
-        else
-        {
-            for (int j = 0; j < numValueCols; ++j)
-                table.headers.append(QString("%1_Sig%2").arg(pName).arg(j + 1));
+            fileData.tables.append(table);
         }
 
-        table.valueData.resize(numValueCols);
-
-        if (rows > 0)
-        {
-            table.timeData.resize(rows);
-            std::copy(data, data + rows, table.timeData.begin());
-
-            for (size_t c = 1; c < cols; ++c)
-            {
-                // 预分配内存
-                table.valueData[c - 1].resize(rows);
-
-                // 计算该列在 raw data 中的起始指针
-                const double *colPtr = data + (c * rows);
-
-                // 直接块拷贝
-                std::copy(colPtr, colPtr + rows, table.valueData[c - 1].begin());
-            }
-        }
-
-        // 8. 将此表添加到 FileData
-        fileData.tables.append(table);
-
-        // (更新进度)
+        // 更新进度
         if (pIndices.size() > 0)
-        {
             emit loadProgress(10 + 80 * (loop_idx + 1) / pIndices.size());
-        }
     }
 
-    // 9. 清理 matvar_t*
+    // 4. 清理
     qDeleteAll(varMap);
     varMap.clear();
-
     Mat_Close(matfile);
 
     if (fileData.tables.isEmpty())
