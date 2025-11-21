@@ -1077,6 +1077,13 @@ void MainWindow::removeFile(const QString &filename)
             graphMap.remove(uniqueID);
             signalSet.remove(uniqueID);
         }
+        int legendMode = 1; // 默认: InsideTL
+        if (m_legendPosGroup->checkedAction())
+        {
+            legendMode = m_legendPosGroup->checkedAction()->data().toInt();
+        }
+        configurePlotLegend(plot, legendMode);
+
         plot->replot();
     }
 
