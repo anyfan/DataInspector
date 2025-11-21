@@ -211,7 +211,7 @@ MainWindow::MainWindow(QWidget *parent)
     m_plotContainer->setLayout(new QGridLayout());
     setCentralWidget(m_plotContainer);
 
-    m_cursorManager = new CursorManager(&m_plotGraphMap, &m_plotWidgets, &m_lastMousePlot, this);
+    m_cursorManager = new CursorManager(&m_plotGraphMap, &m_plotWidgets, this);
 
     createActions();
 
@@ -1300,7 +1300,8 @@ void MainWindow::setActivePlot(QCustomPlot *plot)
     }
 
     m_activePlot = plot;
-    m_lastMousePlot = plot;
+    // m_lastMousePlot = plot;
+    m_cursorManager->setActivePlot(plot);
 
     // 高亮新的 active plot
     QFrame *frame = m_plotFrameMap.value(m_activePlot);

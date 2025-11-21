@@ -33,16 +33,8 @@ public:
         DoubleCursor
     };
 
-    /**
-     * @brief 构造函数
-     * @param plotGraphMap 指向 MainWindow 的图表映射
-     * @param plotWidgets 指向 MainWindow 的子图列表
-     * @param lastMousePlotPtr 指向 MainWindow 的 m_lastMousePlot 指针的指针 (用于同步)
-     * @param parent
-     */
     explicit CursorManager(QMap<QCustomPlot *, QMap<QString, QCPGraph *>> *plotGraphMap,
                            QList<QCustomPlot *> *plotWidgets,
-                           QCustomPlot **lastMousePlotPtr,
                            QObject *parent = nullptr);
     ~CursorManager();
 
@@ -50,6 +42,9 @@ public:
      * @brief 获取当前游标模式
      */
     CursorMode getMode() const;
+
+    // 显式通知当前活动的 Plot
+    void setActivePlot(QCustomPlot *plot);
 
 signals:
     /**
@@ -147,6 +142,7 @@ private:
     QMap<QCustomPlot *, QMap<QString, QCPGraph *>> *m_plotGraphMap;
     QList<QCustomPlot *> *m_plotWidgets;
     QCustomPlot **m_lastMousePlotPtr; // 指向 m_lastMousePlot 指针的指针
+    QCustomPlot *m_currentActivePlot = nullptr;
 };
 
 #endif // CURSORMANAGER_H

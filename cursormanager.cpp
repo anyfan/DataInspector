@@ -7,12 +7,11 @@
 
 CursorManager::CursorManager(QMap<QCustomPlot *, QMap<QString, QCPGraph *>> *plotGraphMap,
                              QList<QCustomPlot *> *plotWidgets,
-                             QCustomPlot **lastMousePlotPtr,
                              QObject *parent)
     : QObject(parent),
       m_plotGraphMap(plotGraphMap),
       m_plotWidgets(plotWidgets),
-      m_lastMousePlotPtr(lastMousePlotPtr)
+      m_currentActivePlot(nullptr) // 初始化
 {
     m_cursorMode = CursorManager::NoCursor;
     m_cursorKey1 = 0;
@@ -30,6 +29,11 @@ CursorManager::~CursorManager()
 CursorManager::CursorMode CursorManager::getMode() const
 {
     return m_cursorMode;
+}
+
+void CursorManager::setActivePlot(QCustomPlot *plot)
+{
+    m_currentActivePlot = plot;
 }
 
 /**
@@ -72,7 +76,7 @@ void CursorManager::setMode(CursorManager::CursorMode mode)
     if (mode != CursorManager::NoCursor)
     {
         // 1. 获取一个有效的 QCustomPlot* 来读取可见范围
-        QCustomPlot *plot = (*m_lastMousePlotPtr); // 尝试 m_lastMousePlot (最后交互过的)
+        QCustomPlot *plot = m_currentActivePlot; // 尝试 m_lastMousePlot (最后交互过的)
         if (!plot && !m_plotWidgets->isEmpty())
         {
             plot = m_plotWidgets->first(); // 后备：使用第一个 plot
@@ -210,12 +214,12 @@ void CursorManager::onPlotMousePress(QMouseEvent *event)
  */
 void CursorManager::onPlotMouseMove(QMouseEvent *event)
 {
-    // (*m_lastMousePlotPtr) 是对 MainWindow::m_lastMousePlot 的解引用
+    // m_currentActivePlot 是对 MainWindow::m_lastMousePlot 的解引用
     QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
     if (plot)
-        (*m_lastMousePlotPtr) = plot; // 记录最后交互的 plot
-    else if ((*m_lastMousePlotPtr))
-        plot = (*m_lastMousePlotPtr); // 后备
+        m_currentActivePlot = plot; // 记录最后交互的 plot
+    else if (m_currentActivePlot)
+        plot = m_currentActivePlot; // 后备
     else if (!m_plotWidgets->isEmpty())
         plot = m_plotWidgets->first(); // 最终后备
     else
@@ -334,7 +338,7 @@ void CursorManager::onPlotMouseRelease(QMouseEvent *event)
     if (m_isDraggingCursor1 || m_isDraggingCursor2)
     {
         // 必须找到正确的 plot 指针，sender() 可能不可靠
-        QCustomPlot *plot = (*m_lastMousePlotPtr);
+        QCustomPlot *plot = m_currentActivePlot;
         if (plot && m_cursorMode != CursorManager::NoCursor)
         {
             // 拖动游标后，重新启用平移
@@ -749,7 +753,7 @@ void CursorManager::updateCursors(double key, int cursorIndex)
 double CursorManager::snapKeyToData(double key) const
 {
     // 1. 获取活动 plot
-    QCustomPlot *plot = (*m_lastMousePlotPtr);
+    QCustomPlot *plot = m_currentActivePlot;
     if (!plot && !m_plotWidgets->isEmpty())
     {
         plot = m_plotWidgets->first();
