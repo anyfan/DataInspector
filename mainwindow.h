@@ -205,18 +205,13 @@ private:
     QCustomPlot *m_activePlot;          // 当前选中的 Plot
     QCustomPlot *m_lastMousePlot;       // 最后交互的 Plot (用于游标吸附)
 
-    // 数据映射 (Plot -> (SignalID -> Graph*))
-    QMap<QCustomPlot *, QMap<QString, QCPGraph *>> m_plotGraphMap;
     // 信号映射 (PlotIndex -> Set<SignalID>) - 用于持久化
     QMap<int, QSet<QString>> m_plotSignalMap;
-    // 索引映射 (Plot -> Index) - 运行时快速查找
-    QMap<QCustomPlot *, int> m_plotWidgetMap;
 
     //  快速查找表
     QHash<QString, QStandardItem *> m_uniqueIdMap;
 
-    QMap<QCustomPlot *, QFrame *> m_plotFrameMap; // 高亮边框
-    QCPMarginGroup *m_yAxisGroup;                 // Y轴对齐
+    QCPMarginGroup *m_yAxisGroup; // Y轴对齐
 
     // 4. 数据缓存
     QMap<QString, FileData> m_fileDataMap;
