@@ -923,6 +923,8 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 {
     plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
 
+    plot->setAutoAddPlottableToLegend(false);
+
     int mode = 1; // 默认: 图表内左上 (InsideTL)
     if (m_legendPosGroup->checkedAction())
     {
@@ -2897,15 +2899,14 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
         return;
     }
 
+    // 1. 确定是否需要更改图例类型
     bool isFlowLegend = (dynamic_cast<FlowLegend *>(plot->legend) != nullptr);
     bool targetIsOutside = (mode == 0);
     bool needTypeChange = (targetIsOutside != isFlowLegend);
-    bool legendVisible = m_toggleLegendAction->isChecked();
 
-    // 1. 如果图例类型不匹配，则销毁重建
+    // 如果类型需要变更，重建图例对象
     if (needTypeChange)
     {
-        // 先从旧布局中移除
         if (plot->legend)
         {
             if (QCPLayout *currentParent = plot->legend->layout())
@@ -2914,7 +2915,6 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
             plot->legend = nullptr;
         }
 
-        // 创建新类型
         if (targetIsOutside)
             plot->legend = new FlowLegend();
         else
@@ -2922,9 +2922,9 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
     }
 
     // 2. 统一应用样式
-    if (plot->legend) // 再次检查 legend 是否存在
+    if (plot->legend)
     {
-        plot->legend->setVisible(legendVisible);
+        plot->legend->setVisible(m_toggleLegendAction->isChecked());
         QFont axisFont = plot->font();
         axisFont.setPointSize(7);
         plot->legend->setFont(axisFont);
@@ -2932,6 +2932,8 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
         plot->legend->setIconTextPadding(3);
         plot->legend->setBorderPen(Qt::NoPen);
         plot->legend->setBrush(Qt::NoBrush);
+        // 紧凑设置：减小图例内容的内边距
+        plot->legend->setMargins(QMargins(2, 2, 2, 2));
     }
 
     // 3. 布局配置
@@ -2941,54 +2943,69 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
 
     if (mode == 0) // 目标：图表外上方 (Outside Top)
     {
-        // A. 确保不在 Inset Layout 中 (如果之前在内部)
+        // A. 确保不在 Inset Layout 中
         if (plot->legend->layout() == plot->axisRect()->insetLayout())
         {
             plot->axisRect()->insetLayout()->take(plot->legend);
         }
 
-        // 根据是否有信号决定是否显示图例占位
+        // B. 核心逻辑：只有当有图形时，才将图例添加到布局中
         bool hasGraphs = (plot->graphCount() > 0);
 
         if (hasGraphs)
         {
-            // 我们需要布局为: Row 0 = Legend, Row 1 = AxisRect
+            // 紧凑设置：将网格布局的行间距设为 0
+            mainLayout->setRowSpacing(0);
+
+            // 检查是否需要插入新行 (检查 (0,0) 是否被 AxisRect 占用)
+            bool cellZeroIsAxisRect = false;
             if (mainLayout->rowCount() > 0 && mainLayout->columnCount() > 0)
             {
-                if (mainLayout->element(0, 0) == plot->axisRect())
-                {
-                    mainLayout->insertRow(0);
-                }
+                if (mainLayout->hasElement(0, 0) && mainLayout->element(0, 0) == plot->axisRect())
+                    cellZeroIsAxisRect = true;
             }
 
+            if (cellZeroIsAxisRect)
+            {
+                mainLayout->insertRow(0);
+            }
+
+            // 检查图例是否已经就位
             bool cellZeroIsLegend = false;
             if (mainLayout->rowCount() > 0 && mainLayout->columnCount() > 0)
             {
-                cellZeroIsLegend = (mainLayout->element(0, 0) == plot->legend);
+                if (mainLayout->hasElement(0, 0) && mainLayout->element(0, 0) == plot->legend)
+                    cellZeroIsLegend = true;
             }
 
             if (!cellZeroIsLegend)
             {
-                // 确保图例已从其他地方移除
                 if (plot->legend->layout())
                     plot->legend->layout()->take(plot->legend);
 
-                // 确保网格至少有 1x1 (防止空网格导致的崩溃)
                 if (mainLayout->rowCount() < 1)
                     mainLayout->insertRow(0);
 
-                // 添加到 (0,0)
                 mainLayout->addElement(0, 0, plot->legend);
             }
 
-            // 步骤 3: 设置伸展因子 (图例行小，绘图行大)
+            // 设置伸展因子
             if (mainLayout->rowCount() > 0)
-                mainLayout->setRowStretchFactor(0, 0.001); // 尽可能小，由 MinimumSize 决定
+                mainLayout->setRowStretchFactor(0, 0.001); // 图例行尽可能小
             if (mainLayout->rowCount() > 1)
-                mainLayout->setRowStretchFactor(1, 1.0); // 占据剩余空间
+                mainLayout->setRowStretchFactor(1, 1.0); // AxisRect 占据剩余空间
+
+            // 修正切换顶部图例留白问题
+            if (plot->axisRect())
+            {
+                // 使用 AxisRect 的当前宽度作为图例宽度的最佳猜测
+                QRect rect = plot->axisRect()->outerRect();
+                plot->legend->setOuterRect(rect);
+            }
         }
         else
         {
+            // 没有图形时，从布局中移除图例
             if (plot->legend->layout())
                 plot->legend->layout()->take(plot->legend);
 
@@ -2997,7 +3014,7 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
     }
     else // 目标：图表内部 (Inside TL/TR)
     {
-        // A. 确保不在主 PlotLayout 中 (如果之前在外部)
+        // A. 确保不在主 PlotLayout 中
         if (plot->legend->layout() == mainLayout)
         {
             mainLayout->take(plot->legend);
@@ -3015,17 +3032,15 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
         {
             plot->axisRect()->insetLayout()->setInsetAlignment(0, align);
         }
-        // 确保在内部时按行优先填充
-        if (isFlowLegend)
-        {
-            // FlowLegend 不需要这个设置，但普通 legend 可能需要
-        }
     }
 
-    // 恢复图表中所有 Graph 的图例项
-    for (int i = 0; i < plot->graphCount(); ++i)
+    // 4. 手动同步图例项
+    if (plot->legend->layout() != nullptr)
     {
-        plot->graph(i)->addToLegend(plot->legend);
+        for (int i = 0; i < plot->graphCount(); ++i)
+        {
+            plot->graph(i)->addToLegend(plot->legend);
+        }
     }
 
     plot->replot();
