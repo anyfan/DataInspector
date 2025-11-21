@@ -203,6 +203,9 @@ private:
     // 索引映射 (Plot -> Index) - 运行时快速查找
     QMap<QCustomPlot *, int> m_plotWidgetMap;
 
+    //  快速查找表
+    QHash<QString, QStandardItem *> m_uniqueIdMap;
+
     QMap<QCustomPlot *, QFrame *> m_plotFrameMap; // 高亮边框
     QCPMarginGroup *m_yAxisGroup;                 // Y轴对齐
 

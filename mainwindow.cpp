@@ -129,51 +129,6 @@ private:
 };
 
 /**
- * @brief [辅助函数] 通过 UniqueIdRole 在模型中迭代查找 QStandardItem (广度优先)
- * @param model 要搜索的 QStandardItemModel
- * @param uniqueID 要查找的 ID
- * @return 找到的 QStandardItem，如果未找到则返回 nullptr
- */
-static QStandardItem *findItemByUniqueID_BFS(QStandardItemModel *model, const QString &uniqueID)
-{
-    if (!model)
-        return nullptr;
-
-    QList<QStandardItem *> itemsToSearch;
-    // 从根项开始
-    QStandardItem *root = model->invisibleRootItem();
-    for (int i = 0; i < root->rowCount(); ++i)
-    {
-        itemsToSearch.append(root->child(i));
-    }
-
-    int head = 0;
-    while (head < itemsToSearch.size())
-    {
-        QStandardItem *currentItem = itemsToSearch.at(head++); // 获取并移除队列头部
-        if (!currentItem)
-            continue;
-
-        // 检查此项
-        if (currentItem->data(UniqueIdRole).toString() == uniqueID)
-        {
-            return currentItem;
-        }
-
-        // 将子项添加到队列尾部
-        if (currentItem->hasChildren())
-        {
-            for (int i = 0; i < currentItem->rowCount(); ++i)
-            {
-                itemsToSearch.append(currentItem->child(i));
-            }
-        }
-    }
-
-    return nullptr; // 未找到
-}
-
-/**
  * @brief [辅助函数] 递归地在 QStandardItemModel 中按名称查找信号条目
  * @param parentItem 开始搜索的父项 (初始调用时传入 invisibleRootItem)
  * @param name 要查找的信号名称 (item->text())
@@ -693,7 +648,7 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
                     continue;
 
                 // 查找 QStandardItem (仅用于获取名称和画笔)
-                QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+                QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
 
                 if (item)
                 {
@@ -1125,6 +1080,19 @@ void MainWindow::removeFile(const QString &filename)
         plot->replot();
     }
 
+    auto it = m_uniqueIdMap.begin();
+    while (it != m_uniqueIdMap.end())
+    {
+        if (it.key().startsWith(filename + "/"))
+        {
+            it = m_uniqueIdMap.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+
     // 3. 从信号树中移除
     QList<QStandardItem *> items = m_signalTreeModel->findItems(filename);
     for (QStandardItem *item : items)
@@ -1185,7 +1153,7 @@ void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot)
     }
 
     // 2. 查找 QStandardItem (用于获取元数据)
-    QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+    QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
     if (!item)
     {
         qWarning() << "addSignalToPlot: Could not find item in tree model for ID" << uniqueID;
@@ -1432,7 +1400,7 @@ void MainWindow::onPlotSelectionChanged()
         return; // 未在映射中找到
 
     // 5. 在树模型中查找与该 ID 对应的项
-    QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID); //
+    QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr); //
     if (!item)
         return;
 
@@ -1465,7 +1433,7 @@ void MainWindow::on_actionClearAllPlots_triggered()
             const QSet<QString> &signalIDs = it.value();
             for (const QString &uniqueID : signalIDs)
             {
-                QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+                QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
                 if (item)
                 {
                     item->setCheckState(Qt::Unchecked);
@@ -1663,6 +1631,8 @@ void MainWindow::populateSignalTree(const FileData &data)
             item->setData(QVariant::fromValue(pen), PenDataRole);
 
             parentItem->appendRow(item); // 添加到父条目 (文件或表)
+
+            m_uniqueIdMap.insert(uniqueID, item);
         }
     }
 }
@@ -1989,7 +1959,7 @@ void MainWindow::onDeleteSignalAction()
         return;
 
     // 使用更可靠的 BFS 搜索替换 findItems 循环
-    QStandardItem *itemToUncheck = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+    QStandardItem *itemToUncheck = m_uniqueIdMap.value(uniqueID, nullptr);
 
     if (itemToUncheck)
     {
@@ -2025,7 +1995,7 @@ void MainWindow::onDeleteSubplotAction()
     for (const QString &uniqueID : signalIDsCopy)
     {
         // 查找树中的条目
-        QStandardItem *itemToUncheck = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+        QStandardItem *itemToUncheck = m_uniqueIdMap.value(uniqueID, nullptr);
 
         // 如果找到了，并且它当前被选中，则取消勾选它
         if (itemToUncheck && itemToUncheck->checkState() == Qt::Checked)
@@ -2139,7 +2109,7 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
             const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
             for (const QString &uniqueID : signalIDsCopy)
             {
-                QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+                QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
                 if (item)
                 {
                     item->setCheckState(Qt::Unchecked);
@@ -2731,7 +2701,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 if (data.contains(UniqueIdRole) && data.value(IsSignalItemRole).toBool())
                 {
                     QString uniqueID = data.value(UniqueIdRole).toString();
-                    QStandardItem *item = findItemByUniqueID_BFS(m_signalTreeModel, uniqueID);
+                    QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
                     if (!item)
                         continue;
                     int targetPlotIndex = m_plotWidgetMap.value(targetPlot, -1);
