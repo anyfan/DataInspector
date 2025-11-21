@@ -1500,48 +1500,24 @@ void MainWindow::updateSignalTreeChecks()
 {
     QSignalBlocker blocker(m_signalTreeModel);
 
-    // 使用 m_plotSignalMap 和 m_plotWidgetMap
+    // 1. 获取当前活动子图的信号集合
     int activePlotIndex = m_plotWidgets.indexOf(m_activePlot);
-    const auto &activeSignals = m_plotSignalMap.value(activePlotIndex);
+    const QSet<QString> &activeSignals = m_plotSignalMap.value(activePlotIndex);
 
-    // 遍历树形结构 (文件 -> 表 -> 信号)
-    for (int i = 0; i < m_signalTreeModel->rowCount(); ++i)
+    // 2. 遍历所有已加载的信号条目
+    for (auto it = m_uniqueIdMap.constBegin(); it != m_uniqueIdMap.constEnd(); ++it)
     {
-        QStandardItem *fileItem = m_signalTreeModel->item(i);
-        if (!fileItem)
-            continue;
-        for (int j = 0; j < fileItem->rowCount(); ++j)
-        {
-            QStandardItem *tableItem = fileItem->child(j);
-            if (!tableItem)
-                continue;
+        QStandardItem *item = it.value();
+        QString uniqueID = it.key();
 
-            // 检查是表节点还是直接的信号节点
-            if (tableItem->data(IsSignalItemRole).toBool())
-            {
-                // 这是 (CSV) 信号项
-                QString uniqueID = tableItem->data(UniqueIdRole).toString();
-                if (activeSignals.contains(uniqueID))
-                    tableItem->setCheckState(Qt::Checked);
-                else
-                    tableItem->setCheckState(Qt::Unchecked);
-            }
-            else
-            {
-                // 这是 (MAT) 表项，遍历其子信号项
-                for (int k = 0; k < tableItem->rowCount(); ++k)
-                {
-                    QStandardItem *signalItem = tableItem->child(k);
-                    if (signalItem)
-                    {
-                        QString uniqueID = signalItem->data(UniqueIdRole).toString();
-                        if (activeSignals.contains(uniqueID))
-                            signalItem->setCheckState(Qt::Checked);
-                        else
-                            signalItem->setCheckState(Qt::Unchecked);
-                    }
-                }
-            }
+        // 3. 检查该信号是否在当前活动子图中
+        bool shouldBeChecked = activeSignals.contains(uniqueID);
+        Qt::CheckState newState = shouldBeChecked ? Qt::Checked : Qt::Unchecked;
+
+        // 4. 仅在状态实际改变时才调用 setCheckState (虽然信号被阻塞，但这能减少 Model 内部的变更标记处理)
+        if (item->checkState() != newState)
+        {
+            item->setCheckState(newState);
         }
     }
 }
