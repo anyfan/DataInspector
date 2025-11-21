@@ -2417,158 +2417,83 @@ void MainWindow::updateReplayManagerRange()
  */
 void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
 {
-    if (!plot)
+    if (!plot || !plot->axisRect())
         return;
 
-    if (!plot->axisRect())
-    {
-        qWarning() << "configurePlotLegend: AxisRect is null for plot" << plot;
-        return;
-    }
-
-    // 1. 确定是否需要更改图例类型
-    bool isFlowLegend = (dynamic_cast<FlowLegend *>(plot->legend) != nullptr);
     bool targetIsOutside = (mode == 0);
-    bool needTypeChange = (targetIsOutside != isFlowLegend);
 
-    // 如果类型需要变更，重建图例对象
-    if (needTypeChange)
+    // 1. 按需重建图例对象 (类型切换时)
+    bool isFlow = (dynamic_cast<FlowLegend *>(plot->legend) != nullptr);
+    if (targetIsOutside != isFlow)
     {
         if (plot->legend)
         {
-            if (QCPLayout *currentParent = plot->legend->layout())
-                currentParent->take(plot->legend);
+            if (plot->legend->layout())
+                plot->legend->layout()->take(plot->legend);
             delete plot->legend;
-            plot->legend = nullptr;
         }
-
-        if (targetIsOutside)
-            plot->legend = new FlowLegend();
-        else
-            plot->legend = new QCPLegend();
+        plot->legend = targetIsOutside ? new FlowLegend() : new QCPLegend();
     }
 
-    // 2. 统一应用样式
-    if (plot->legend)
-    {
-        plot->legend->setVisible(m_toggleLegendAction->isChecked());
-        QFont axisFont = plot->font();
-        axisFont.setPointSize(7);
-        plot->legend->setFont(axisFont);
-        plot->legend->setIconSize(10, 10);
-        plot->legend->setIconTextPadding(3);
-        plot->legend->setBorderPen(Qt::NoPen);
-        plot->legend->setBrush(Qt::NoBrush);
-        // 紧凑设置：减小图例内容的内边距
-        plot->legend->setMargins(QMargins(2, 2, 2, 2));
-    }
+    if (!plot->legend)
+        return;
 
-    // 3. 布局配置
+    // 2. 通用样式设置
+    plot->legend->setVisible(m_toggleLegendAction->isChecked());
+    QFont font = plot->font();
+    font.setPointSize(7);
+    plot->legend->setFont(font);
+    plot->legend->setIconSize(10, 10);
+    plot->legend->setIconTextPadding(3);
+    plot->legend->setBorderPen(Qt::NoPen);
+    plot->legend->setBrush(Qt::NoBrush);
+    plot->legend->setMargins(QMargins(2, 2, 2, 2));
+
+    // 3. 布局逻辑
     QCPLayoutGrid *mainLayout = plot->plotLayout();
     if (!mainLayout)
         return;
 
-    if (mode == 0) // 目标：图表外上方 (Outside Top)
+    // 先将图例从现有布局中移除，简化后续逻辑
+    if (plot->legend->layout())
+        plot->legend->layout()->take(plot->legend);
+
+    if (targetIsOutside)
     {
-        // A. 确保不在 Inset Layout 中
-        if (plot->legend->layout() == plot->axisRect()->insetLayout())
+        // 只有当有内容时才添加到顶部，节省空间
+        if (plot->graphCount() > 0)
         {
-            plot->axisRect()->insetLayout()->take(plot->legend);
-        }
-
-        // B. 核心逻辑：只有当有图形时，才将图例添加到布局中
-        bool hasGraphs = (plot->graphCount() > 0);
-
-        if (hasGraphs)
-        {
-            // 紧凑设置：将网格布局的行间距设为 0
-            mainLayout->setRowSpacing(0);
-
-            // 检查是否需要插入新行 (检查 (0,0) 是否被 AxisRect 占用)
-            bool cellZeroIsAxisRect = false;
-            if (mainLayout->rowCount() > 0 && mainLayout->columnCount() > 0)
-            {
-                if (mainLayout->hasElement(0, 0) && mainLayout->element(0, 0) == plot->axisRect())
-                    cellZeroIsAxisRect = true;
-            }
-
-            if (cellZeroIsAxisRect)
-            {
+            // 确保第0行存在
+            if (mainLayout->rowCount() < 1)
                 mainLayout->insertRow(0);
-            }
 
-            // 检查图例是否已经就位
-            bool cellZeroIsLegend = false;
-            if (mainLayout->rowCount() > 0 && mainLayout->columnCount() > 0)
-            {
-                if (mainLayout->hasElement(0, 0) && mainLayout->element(0, 0) == plot->legend)
-                    cellZeroIsLegend = true;
-            }
+            // 如果第0行被 AxisRect 占用 (旧布局可能)，插入新行
+            if (mainLayout->element(0, 0) == plot->axisRect())
+                mainLayout->insertRow(0);
 
-            if (!cellZeroIsLegend)
-            {
-                if (plot->legend->layout())
-                    plot->legend->layout()->take(plot->legend);
+            mainLayout->addElement(0, 0, plot->legend);
+            mainLayout->setRowSpacing(0);
+            mainLayout->setRowStretchFactor(0, 0.001); // 最小化
 
-                if (mainLayout->rowCount() < 1)
-                    mainLayout->insertRow(0);
-
-                mainLayout->addElement(0, 0, plot->legend);
-            }
-
-            // 设置伸展因子
-            if (mainLayout->rowCount() > 0)
-                mainLayout->setRowStretchFactor(0, 0.001); // 图例行尽可能小
-            if (mainLayout->rowCount() > 1)
-                mainLayout->setRowStretchFactor(1, 1.0); // AxisRect 占据剩余空间
-
-            // 修正切换顶部图例留白问题
-            if (plot->axisRect())
-            {
-                // 使用 AxisRect 的当前宽度作为图例宽度的最佳猜测
-                QRect rect = plot->axisRect()->outerRect();
-                plot->legend->setOuterRect(rect);
-            }
+            // 强制宽度匹配
+            plot->legend->setOuterRect(plot->axisRect()->outerRect());
         }
         else
         {
-            // 没有图形时，从布局中移除图例
-            if (plot->legend->layout())
-                plot->legend->layout()->take(plot->legend);
-
-            mainLayout->simplify();
+            mainLayout->simplify(); // 清理空行
         }
     }
-    else // 目标：图表内部 (Inside TL/TR)
+    else
     {
-        // A. 确保不在主 PlotLayout 中
-        if (plot->legend->layout() == mainLayout)
-        {
-            mainLayout->take(plot->legend);
-            mainLayout->simplify();
-        }
-
-        // B. 添加到 Inset Layout
+        // 添加到 Inset (内部)
+        QCPLayoutInset *insetLayout = plot->axisRect()->insetLayout();
         Qt::Alignment align = Qt::AlignTop | (mode == 1 ? Qt::AlignLeft : Qt::AlignRight);
-
-        if (plot->legend->layout() != plot->axisRect()->insetLayout())
-        {
-            plot->axisRect()->insetLayout()->addElement(plot->legend, align);
-        }
-        else
-        {
-            plot->axisRect()->insetLayout()->setInsetAlignment(0, align);
-        }
+        insetLayout->addElement(plot->legend, align);
     }
 
-    // 4. 手动同步图例项
-    if (plot->legend->layout() != nullptr)
-    {
-        for (int i = 0; i < plot->graphCount(); ++i)
-        {
-            plot->graph(i)->addToLegend(plot->legend);
-        }
-    }
+    // 4. 重新添加图表项
+    for (int i = 0; i < plot->graphCount(); ++i)
+        plot->graph(i)->addToLegend(plot->legend);
 
     plot->replot();
 }
