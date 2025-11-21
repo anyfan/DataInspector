@@ -945,7 +945,6 @@ void MainWindow::onDataLoadFinished(const FileData &data)
         // 如果用户选择 "Yes"，则移除旧文件
         removeFile(filename);
     }
-
     // 1. 缓存数据
     m_fileDataMap.insert(filename, data);
 
@@ -959,24 +958,24 @@ void MainWindow::onDataLoadFinished(const FileData &data)
     // 默认展开所有条目
     m_signalTree->expandAll();
 
-    // 3. 更新重放控件和游标
-    if (m_fileDataMap.size() == 1 && !data.tables.isEmpty() && !data.tables.first().timeData.isEmpty()) // 如果这是加载的第一个文件
-    {
-        const SignalTable &firstTable = data.tables.first();
-        // 将游标 1 移动到数据起点
-        m_cursorManager->updateCursors(firstTable.timeData.first(), 1); // 设置初始位置
-        m_cursorManager->updateCursors(firstTable.timeData.first() + getGlobalTimeRange().size() * 0.1, 2);
+    // // 3. 更新重放控件和游标
+    // if (m_fileDataMap.size() == 1 && !data.tables.isEmpty() && !data.tables.first().timeData.isEmpty()) // 如果这是加载的第一个文件
+    // {
+    //     const SignalTable &firstTable = data.tables.first();
+    //     // 将游标 1 移动到数据起点
+    //     m_cursorManager->updateCursors(firstTable.timeData.first(), 1); // 设置初始位置
+    //     m_cursorManager->updateCursors(firstTable.timeData.first() + getGlobalTimeRange().size() * 0.1, 2);
 
-        // 数据加载完成后自动缩放视图
-        on_actionFitView_triggered();
-    }
-    else
-    {
-        // 如果已有数据，重新缩放以包含新数据
-        on_actionFitView_triggered();
+    //     // 数据加载完成后自动缩放视图
+    //     on_actionFitView_triggered();
+    // }
+    // else
+    // {
+    //     // 如果已有数据，重新缩放以包含新数据
+    //     on_actionFitView_triggered();
 
-        m_cursorManager->updateAllCursors();
-    }
+    //     m_cursorManager->updateAllCursors();
+    // }
     updateReplayManagerRange(); // 设置滑块范围
 }
 
@@ -998,42 +997,43 @@ void MainWindow::removeFile(const QString &filename)
     for (int i = 0; i < m_plotWidgets.size(); ++i)
     {
         QCustomPlot *plot = m_plotWidgets.at(i);
-
-        // 使用持久化 Map 清理意图
         QSet<QString> &signalSet = m_plotSignalMap[i];
-        QList<QString> idsToRemoveFromSet;
-        for (const QString &id : signalSet)
-        {
-            if (id.startsWith(prefix))
-                idsToRemoveFromSet.append(id);
-        }
-        for (const QString &id : idsToRemoveFromSet)
-            signalSet.remove(id);
+        bool plotChanged = false;
 
-        // 清理实际 Graph (倒序遍历以便安全删除)
         for (int j = plot->graphCount() - 1; j >= 0; --j)
         {
             QCPGraph *graph = plot->graph(j);
-            if (graph && graph->property("id").toString().startsWith(prefix))
+            if (!graph)
+                continue;
+
+            QString graphID = graph->property("id").toString();
+
+            if (graphID.startsWith(prefix))
             {
                 plot->removeGraph(graph);
+                signalSet.remove(graphID);
+                plotChanged = true;
             }
         }
 
-        int legendMode = 1;
-        if (m_legendPosGroup->checkedAction())
-            legendMode = m_legendPosGroup->checkedAction()->data().toInt();
-        configurePlotLegend(plot, legendMode);
-        plot->replot();
+        if (plotChanged)
+        {
+            int legendMode = 1;
+            if (m_legendPosGroup->checkedAction())
+                legendMode = m_legendPosGroup->checkedAction()->data().toInt();
+            configurePlotLegend(plot, legendMode);
+            plot->replot();
+        }
     }
 
-    auto it = m_uniqueIdMap.begin();
-    while (it != m_uniqueIdMap.end())
+    QMutableHashIterator<QString, QStandardItem *> it(m_uniqueIdMap);
+    while (it.hasNext())
     {
+        it.next();
         if (it.key().startsWith(prefix))
-            it = m_uniqueIdMap.erase(it);
-        else
-            ++it;
+        {
+            it.remove();
+        }
     }
 
     QList<QStandardItem *> items = m_signalTreeModel->findItems(filename);

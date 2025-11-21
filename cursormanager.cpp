@@ -189,39 +189,7 @@ void CursorManager::onPlotMouseMove(QMouseEvent *event)
     if (draggingIndex != -1)
     {
         double smoothKey = plot->xAxis->pixelToCoord(event->pos().x());
-        double snappedKey = smoothKey;
-
-        // 简单的最近邻查找逻辑 (复用原逻辑，但简化变量)
-        double minDistance = -1.0;
-
-        for (int i = 0; i < plot->graphCount(); ++i)
-        {
-            QCPGraph *graph = plot->graph(i);
-            if (graph && !graph->data()->isEmpty())
-            {
-                auto it = graph->data()->findBegin(smoothKey);
-                if (it != graph->data()->constEnd())
-                {
-                    double dist = qAbs(it->key - smoothKey);
-                    if (minDistance < 0 || dist < minDistance)
-                    {
-                        minDistance = dist;
-                        snappedKey = it->key;
-                    }
-                }
-                if (it != graph->data()->constBegin())
-                {
-                    double dist = qAbs((it - 1)->key - smoothKey);
-                    if (minDistance < 0 || dist < minDistance)
-                    {
-                        minDistance = dist;
-                        snappedKey = (it - 1)->key;
-                    }
-                }
-            }
-        }
-
-        // 更新对应游标
+        double snappedKey = snapKeyToData(smoothKey);
         updateCursors(snappedKey, draggingIndex + 1);
         event->accept();
     }

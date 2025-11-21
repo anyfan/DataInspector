@@ -1,15 +1,10 @@
 #include "signaltreedelegate.h"
+#include "mainwindow.h"
+
 #include <QPainter>
 #include <QPen>
 #include <QVariant>
 #include <QApplication>
-
-// 在 mainwindow.h 中定义
-const int UniqueIdRole = Qt::UserRole + 1;
-const int IsFileItemRole = Qt::UserRole + 2;
-const int PenDataRole = Qt::UserRole + 3;
-const int FileNameRole = Qt::UserRole + 4;
-const int IsSignalItemRole = Qt::UserRole + 5;
 
 SignalTreeDelegate::SignalTreeDelegate(QObject *parent)
     : QStyledItemDelegate(parent)
@@ -20,7 +15,7 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
                                const QModelIndex &index) const
 {
     // 获取是否为信号条目
-    bool isSignalItem = index.data(IsSignalItemRole).toBool();
+    bool isSignalItem = index.data(TreeItemRoles::IsSignalItemRole).toBool();
 
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
@@ -45,7 +40,7 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     // 2. 在预留区域绘制自定义预览线
     if (isSignalItem)
     {
-        QVariant penData = index.data(PenDataRole);
+        QVariant penData = index.data(TreeItemRoles::PenDataRole);
         if (penData.canConvert<QPen>())
         {
             QPen linePen = penData.value<QPen>();

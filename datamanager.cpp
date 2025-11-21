@@ -260,7 +260,7 @@ void DataManager::loadCsvFile(const QString &filePath)
     {
         lineCount++;
         QString line = stream.readLine();
-        if (line.trimmed().isEmpty())
+        if (line.isEmpty() || line.trimmed().isEmpty())
         {
             continue;
         }
@@ -274,7 +274,7 @@ void DataManager::loadCsvFile(const QString &filePath)
             lastReportedProgress = percentage;
         }
 
-        QStringList parts = line.split(',');
+        QVector<QStringRef> parts = line.splitRef(',');
         if (parts.count() != numColumns)
         {
             qWarning() << "Skipping malformed line" << lineCount;
