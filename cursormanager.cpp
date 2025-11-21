@@ -752,64 +752,55 @@ void CursorManager::updateCursors(double key, int cursorIndex)
  */
 double CursorManager::snapKeyToData(double key) const
 {
-    // 1. 获取活动 plot
     QCustomPlot *plot = m_currentActivePlot;
     if (!plot && !m_plotWidgets->isEmpty())
-    {
         plot = m_plotWidgets->first();
-    }
-
     if (!plot)
-    {
-        return key; // 没有 plot 可供吸附
-    }
+        return key;
 
-    // 2. 查找此图(plot)上的所有图表(graph)
     const auto &graphsOnPlot = m_plotGraphMap->value(plot);
     if (graphsOnPlot.isEmpty())
-    {
-        return key; // 此图上没有图表
-    }
+        return key;
 
-    // 3. 遍历图表, 查找最近的键
     double closestKey = key;
-    double minDistance = -1.0;
+    double minDistance = std::numeric_limits<double>::max();
+    bool foundAny = false;
 
     for (QCPGraph *graph : graphsOnPlot)
     {
-        if (graph && !graph->data()->isEmpty())
+        if (!graph || !graph->visible() || graph->data()->isEmpty())
+            continue;
+
+        auto it = graph->data()->findBegin(key);
+
+        // 检查当前点 (it)
+        if (it != graph->data()->constEnd())
         {
-            // 使用 QCPDataContainer 的 findBegin 进行高效的二分查找
-            auto it = graph->data()->findBegin(key); // 找到第一个 >= key 的点
-
-            // 检查找到的点
-            if (it != graph->data()->constEnd())
+            double dist = qAbs(it->key - key);
+            if (dist < minDistance)
             {
-                double distAt = qAbs(it->key - key);
-                if (minDistance < 0 || distAt < minDistance)
-                {
-                    minDistance = distAt;
-                    closestKey = it->key;
-                }
-            }
-
-            // 检查找到的点的前一个点
-            if (it != graph->data()->constBegin())
-            {
-                double distBefore = qAbs((it - 1)->key - key);
-                if (minDistance < 0 || distBefore < minDistance)
-                {
-                    minDistance = distBefore;
-                    closestKey = (it - 1)->key;
-                }
+                minDistance = dist;
+                closestKey = it->key;
+                foundAny = true;
             }
         }
-    } // 结束 for (graphs)
 
-    if (minDistance >= 0) // 如果找到了一个最近的键
-    {
-        return closestKey; // 4. 返回吸附后的键
+        // 检查前一个点 (it - 1)，防止 key 刚好在两个点中间但更靠近前一个
+        if (it != graph->data()->constBegin())
+        {
+            auto prevIt = it - 1;
+            double dist = qAbs(prevIt->key - key);
+            if (dist < minDistance)
+            {
+                minDistance = dist;
+                closestKey = prevIt->key;
+                foundAny = true;
+            }
+        }
+
+        // 优化点 3: 如果距离已经非常小（例如小于像素容差），可以提前退出循环
+        // 但为了精确吸附到所有信号中最近的那个，通常还是遍历完比较好。
     }
 
-    return key; // 没有找到数据点, 返回原始键
+    return foundAny ? closestKey : key;
 }
