@@ -309,28 +309,39 @@ void MainWindow::createActions()
 
     // 替换布局菜单
     m_layout1x1Action = new QAction(tr("1x1 Layout"), this);
-    connect(m_layout1x1Action, &QAction::triggered, this, &MainWindow::on_actionLayout1x1_triggered);
+    m_layout1x1Action->setData(QPoint(1, 1)); // 使用 QPoint 存储 grid 布局
 
     m_layout1x2Action = new QAction(tr("1x2 Layout (Side by Side)"), this);
-    connect(m_layout1x2Action, &QAction::triggered, this, &MainWindow::on_actionLayout1x2_triggered);
+    m_layout1x2Action->setData(QPoint(1, 2));
 
     m_layout2x1Action = new QAction(tr("2x1 Layout (Stacked)"), this);
-    connect(m_layout2x1Action, &QAction::triggered, this, &MainWindow::on_actionLayout2x1_triggered);
+    m_layout2x1Action->setData(QPoint(2, 1));
 
     m_layout2x2Action = new QAction(tr("2x2 Layout"), this);
-    connect(m_layout2x2Action, &QAction::triggered, this, &MainWindow::on_actionLayout2x2_triggered);
+    m_layout2x2Action->setData(QPoint(2, 2));
 
+    // 对于复杂的 Split 布局，我们使用字符串或特殊 ID 作为 Data
     m_layoutSplitBottomAction = new QAction(tr("Bottom Split"), this);
-    connect(m_layoutSplitBottomAction, &QAction::triggered, this, &MainWindow::on_actionLayoutSplitBottom_triggered);
+    m_layoutSplitBottomAction->setData("split_bottom");
 
     m_layoutSplitTopAction = new QAction(tr("Top Split"), this);
-    connect(m_layoutSplitTopAction, &QAction::triggered, this, &MainWindow::on_actionLayoutSplitTop_triggered);
+    m_layoutSplitTopAction->setData("split_top");
 
     m_layoutSplitLeftAction = new QAction(tr("Left Split"), this);
-    connect(m_layoutSplitLeftAction, &QAction::triggered, this, &MainWindow::on_actionLayoutSplitLeft_triggered);
+    m_layoutSplitLeftAction->setData("split_left");
 
     m_layoutSplitRightAction = new QAction(tr("Right Split"), this);
-    connect(m_layoutSplitRightAction, &QAction::triggered, this, &MainWindow::on_actionLayoutSplitRight_triggered);
+    m_layoutSplitRightAction->setData("split_right");
+
+    QList<QAction *> layoutActions = {
+        m_layout1x1Action, m_layout1x2Action, m_layout2x1Action, m_layout2x2Action,
+        m_layoutSplitBottomAction, m_layoutSplitTopAction,
+        m_layoutSplitLeftAction, m_layoutSplitRightAction};
+
+    for (QAction *action : layoutActions)
+    {
+        connect(action, &QAction::triggered, this, &MainWindow::onLayoutActionTriggered);
+    }
 
     m_layoutCustomAction = new QAction(tr("Custom Grid..."), this);
     connect(m_layoutCustomAction, &QAction::triggered, this, &MainWindow::on_actionLayoutCustom_triggered);
@@ -2331,66 +2342,6 @@ void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
     }
 }
 
-void MainWindow::on_actionLayout1x1_triggered()
-{
-    setupPlotLayout(1, 1);
-}
-
-void MainWindow::on_actionLayout2x2_triggered()
-{
-    setupPlotLayout(2, 2);
-}
-
-void MainWindow::on_actionLayout1x2_triggered()
-{
-    setupPlotLayout(1, 2);
-}
-
-void MainWindow::on_actionLayout2x1_triggered()
-{
-    setupPlotLayout(2, 1);
-}
-
-void MainWindow::on_actionLayoutSplitBottom_triggered()
-{
-    QList<QRect> geometries;
-
-    geometries << QRect(0, 0, 2, 1); // Top plot (跨2列)
-    geometries << QRect(0, 1, 1, 1); // Bottom-left plot
-    geometries << QRect(1, 1, 1, 1); // Bottom-right plot
-    setupPlotLayout(geometries);
-}
-
-void MainWindow::on_actionLayoutSplitTop_triggered()
-{
-    QList<QRect> geometries;
-
-    geometries << QRect(0, 0, 1, 1); // Top-left plot
-    geometries << QRect(1, 0, 1, 1); // Top-right plot
-    geometries << QRect(0, 1, 2, 1); // Bottom plot (跨2列)
-    setupPlotLayout(geometries);
-}
-
-void MainWindow::on_actionLayoutSplitLeft_triggered()
-{
-    QList<QRect> geometries;
-
-    geometries << QRect(0, 0, 1, 2); // Left plot (跨2行)
-    geometries << QRect(1, 0, 1, 1); // Top-right plot
-    geometries << QRect(1, 1, 1, 1); // Bottom-right plot
-    setupPlotLayout(geometries);
-}
-
-void MainWindow::on_actionLayoutSplitRight_triggered()
-{
-    QList<QRect> geometries;
-
-    geometries << QRect(0, 0, 1, 1); // Top-left plot
-    geometries << QRect(0, 1, 1, 1); // Bottom-left plot
-    geometries << QRect(1, 0, 1, 2); // Right plot (跨2行)
-    setupPlotLayout(geometries);
-}
-
 void MainWindow::on_actionLayoutCustom_triggered()
 {
     // 1. 创建对话框
@@ -2912,4 +2863,48 @@ SignalLocation MainWindow::getSignalDataFromID(const QString &uniqueID) const
         }
     }
     return loc;
+}
+
+void MainWindow::onLayoutActionTriggered()
+{
+    QAction *action = qobject_cast<QAction *>(sender());
+    if (!action)
+        return;
+
+    QVariant data = action->data();
+
+    // 1. 处理 Grid 布局 (QPoint)
+    if (data.type() == QVariant::Point)
+    {
+        QPoint grid = data.toPoint();
+        setupPlotLayout(grid.x(), grid.y());
+    }
+    // 2. 处理 Split 布局 (String)
+    else if (data.type() == QVariant::String)
+    {
+        QString type = data.toString();
+        QList<QRect> geometries;
+
+        if (type == "split_bottom")
+        {
+            geometries << QRect(0, 0, 2, 1) << QRect(0, 1, 1, 1) << QRect(1, 1, 1, 1);
+        }
+        else if (type == "split_top")
+        {
+            geometries << QRect(0, 0, 1, 1) << QRect(1, 0, 1, 1) << QRect(0, 1, 2, 1);
+        }
+        else if (type == "split_left")
+        {
+            geometries << QRect(0, 0, 1, 2) << QRect(1, 0, 1, 1) << QRect(1, 1, 1, 1);
+        }
+        else if (type == "split_right")
+        {
+            geometries << QRect(0, 0, 1, 1) << QRect(0, 1, 1, 1) << QRect(1, 0, 1, 2);
+        }
+
+        if (!geometries.isEmpty())
+        {
+            setupPlotLayout(geometries);
+        }
+    }
 }

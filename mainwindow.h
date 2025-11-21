@@ -79,14 +79,7 @@ private slots:
     void onOpenGLActionToggled(bool checked);
 
     // 布局动作
-    void on_actionLayout1x1_triggered();
-    void on_actionLayout1x2_triggered();
-    void on_actionLayout2x1_triggered();
-    void on_actionLayout2x2_triggered();
-    void on_actionLayoutSplitBottom_triggered();
-    void on_actionLayoutSplitLeft_triggered();
-    void on_actionLayoutSplitTop_triggered();
-    void on_actionLayoutSplitRight_triggered();
+    void onLayoutActionTriggered();
     void on_actionLayoutCustom_triggered();
 
     // 视图/缩放动作
