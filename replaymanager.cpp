@@ -1,5 +1,6 @@
 #include "replaymanager.h"
-#include "cursormanager.h" // 确保包含完整的定义
+#include "cursormanager.h"
+
 #include <QDockWidget>
 #include <QWidget>
 #include <QPushButton>
@@ -54,9 +55,6 @@ QDockWidget *ReplayManager::getDockWidget() const
     return m_replayDock;
 }
 
-/**
- * @brief 创建底部重放停靠栏 (从 MainWindow 移来)
- */
 void ReplayManager::createReplayDock(QMainWindow *parentWindow)
 {
     QStyle *style = parentWindow->style(); // 从父窗口获取样式
@@ -98,8 +96,8 @@ void ReplayManager::createReplayDock(QMainWindow *parentWindow)
 
     // 连接信号 (连接到 *this* 的槽)
     connect(m_playPauseButton, &QPushButton::clicked, this, &ReplayManager::onPlayPauseClicked);
-    connect(m_stepForwardButton, &QPushButton::clicked, this, &ReplayManager::onStepForwardClicked);
-    connect(m_stepBackwardButton, &QPushButton::clicked, this, &ReplayManager::onStepBackwardClicked);
+    connect(m_stepForwardButton, &QPushButton::clicked, this, &ReplayManager::onStepClicked);
+    connect(m_stepBackwardButton, &QPushButton::clicked, this, &ReplayManager::onStepClicked);
     connect(m_timeSlider, &QSlider::valueChanged, this, &ReplayManager::onTimeSliderChanged);
 }
 
@@ -135,7 +133,6 @@ void ReplayManager::onReplayActionToggled(bool checked)
     if (checked && m_cursorManager->getMode() == CursorManager::NoCursor)
     {
         // 如果没有游标，自动启用单游标
-        // (我们不再需要访问 m_cursorSingleAction)
         m_cursorManager->setMode(CursorManager::SingleCursor);
     }
 }
@@ -158,8 +155,6 @@ void ReplayManager::updateReplayControls()
         m_timeSlider->setValue(relativePos * m_timeSlider->maximum());
     }
 }
-
-//  播放逻辑 (从 MainWindow 移来) 
 
 void ReplayManager::onPlayPauseClicked()
 {
@@ -195,26 +190,31 @@ void ReplayManager::onReplayTimerTimeout()
     m_cursorManager->updateCursors(newKey, 1);
 }
 
-void ReplayManager::onStepForwardClicked()
+void ReplayManager::onStepClicked()
 {
     if (m_replayTimer->isActive())
         return;
 
-    double timeStep = m_minTimeStep;
-    double newKey = m_cursorKey1 + timeStep;
-    m_cursorManager->updateCursors(newKey, 1);
-}
+    QObject *obj = sender();
+    double direction = 0.0;
 
-void ReplayManager::onStepBackwardClicked()
-{
-    if (m_replayTimer->isActive())
+    if (obj == m_stepForwardButton)
+        direction = 1.0;
+    else if (obj == m_stepBackwardButton)
+        direction = -1.0;
+    else
         return;
 
-    double timeStep = m_minTimeStep;
-    double newKey = m_cursorKey1 - timeStep;
+    double newKey = m_cursorKey1 + (m_minTimeStep * direction);
+
+    // 可选：添加循环或边界检查
+    if (newKey < m_globalTimeRange.lower)
+        newKey = m_globalTimeRange.lower;
+    if (newKey > m_globalTimeRange.upper)
+        newKey = m_globalTimeRange.upper;
+
     m_cursorManager->updateCursors(newKey, 1);
 }
-
 void ReplayManager::onTimeSliderChanged(int value)
 {
     if (m_replayTimer->isActive())
