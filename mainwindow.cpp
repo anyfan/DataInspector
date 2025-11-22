@@ -1895,7 +1895,6 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
         // 遍历该信号应在的子图 ID
         for (int sdiPlotId : sig.plotIds)
         {
-
             if (sdiPlotId < 1)
                 sdiPlotId = 1;
 
@@ -1935,7 +1934,7 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
 
     updateSignalTreeChecks();
     on_actionFitView_triggered();
-    QMessageBox::information(this, tr("Import Successful"), tr("Successfully imported view settings."));
+    qDebug() << "Import View finished successfully.";
 }
 
 void MainWindow::on_actionFitViewYAll_triggered()
