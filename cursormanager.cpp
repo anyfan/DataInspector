@@ -495,7 +495,7 @@ void CursorManager::updateCursors(double key, int cursorIndex)
         line->end->setCoords(xPixel, plot->axisRect()->top());
 
         // B. Update X Label
-        cursor.xLabels.at(i)->setText(QString::number(key, 'f', 4));
+        cursor.xLabels.at(i)->setText(QString::number(key, 'g', 10));
 
         // C. Update Tracers and Y Labels
         for (int j = 0; j < plot->graphCount(); ++j)

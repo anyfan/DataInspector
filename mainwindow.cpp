@@ -734,7 +734,6 @@ void MainWindow::importView(const QString &mldatxFilePath)
     bool foundCheckedSignals = false;
 
     QStringList allFiles = zip.getFileNameList();
-    qDebug() << "Found" << allFiles.size() << "files in archive. Looking for view XMLs...";
 
     for (const QString &fileName : allFiles)
     {
@@ -759,7 +758,6 @@ void MainWindow::importView(const QString &mldatxFilePath)
         int errorLine, errorCol;
         if (doc.setContent(xmlData, &errorMsg, &errorLine, &errorCol))
         {
-            qDebug() << "  [Success] Parsed:" << fileName;
             if (fileName == "views/sdi_view_meta_data.xml")
             {
                 viewMetaDataDoc = doc;
@@ -778,18 +776,11 @@ void MainWindow::importView(const QString &mldatxFilePath)
     }
     zip.close();
 
-    if (!foundViewMeta)
+    if (!foundViewMeta || !foundCheckedSignals)
     {
-        QMessageBox::critical(this, tr("Import Error"), tr("Error: Did not find 'views/sdi_view_meta_data.xml' in .mldatx file."));
+        QMessageBox::critical(this, tr("Import Error"), tr("Error: .mldatx file is missing required files."));
         return;
     }
-    if (!foundCheckedSignals)
-    {
-        QMessageBox::critical(this, tr("Import Error"), tr("Error: Did not find 'views/sdi_checked_signals.xml' in .mldatx file."));
-        return;
-    }
-
-    qDebug() << "  Parsing Results  ";
 
     LayoutInfo layout = parseViewMetaData(viewMetaDataDoc);
     QList<SignalInfo> signalList = parseCheckedSignals(checkedSignalsDoc);
@@ -1090,9 +1081,7 @@ void MainWindow::removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot
         return;
 
     if (!m_plotSignalMap.value(plotIndex).contains(uniqueID))
-    {
         return;
-    }
 
     QCPGraph *graph = getGraph(plot, uniqueID);
     if (graph)
