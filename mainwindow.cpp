@@ -199,6 +199,7 @@ MainWindow::MainWindow(QWidget *parent)
       m_cursorSingleAction(nullptr),
       m_cursorDoubleAction(nullptr),
       m_replayAction(nullptr),
+      m_exportAllAction(nullptr),
       m_cursorGroup(nullptr),
       m_fitViewAction(nullptr),
       m_fitViewTimeAction(nullptr),
@@ -310,6 +311,11 @@ void MainWindow::createActions()
     m_loadFileAction = new QAction(tr("&Load File..."), this);
     m_loadFileAction->setShortcut(QKeySequence::Open);
     connect(m_loadFileAction, &QAction::triggered, this, &MainWindow::on_actionLoadFile_triggered);
+
+    m_exportAllAction = new QAction(tr("Export All Views..."), this);
+    m_exportAllAction->setStatusTip(tr("Export the entire view layout as an image"));
+    m_exportAllAction->setShortcut(QKeySequence(tr("Ctrl+E")));
+    connect(m_exportAllAction, &QAction::triggered, this, &MainWindow::on_actionExportAll_triggered);
 
     // 导入视图动作
     m_importViewAction = new QAction(tr("&Import View..."), this);
@@ -446,6 +452,8 @@ void MainWindow::createMenus()
     QMenu *fileMenu = menuBar()->addMenu(tr("&文件"));
     fileMenu->addAction(m_loadFileAction);
     fileMenu->addAction(m_importViewAction);
+    fileMenu->addSeparator();
+    fileMenu->addAction(m_exportAllAction);
 
     QMenu *layoutMenu = menuBar()->addMenu(tr("&布局"));
     layoutMenu->addAction(m_layout1x1Action);
@@ -2261,10 +2269,16 @@ void MainWindow::onLegendContextMenu(const QPoint &pos)
             return;
 
         QMenu contextMenu(this);
+
         QAction *deleteSubplotAction = contextMenu.addAction(tr("Delete Subplot"));
         deleteSubplotAction->setData(plotIndex);
-
         connect(deleteSubplotAction, &QAction::triggered, this, &MainWindow::onDeleteSubplotAction);
+
+        contextMenu.addSeparator();
+
+        QAction *exportAction = contextMenu.addAction(tr("Export Image..."));
+        connect(exportAction, &QAction::triggered, [this, plot]()
+                { this->exportPlot(plot); });
 
         contextMenu.exec(plot->mapToGlobal(pos));
     }
@@ -2617,5 +2631,80 @@ void MainWindow::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, 
         decorator->setPen(selPen);
         decorator->setBrush(Qt::NoBrush);
         decorator->setUsedScatterProperties(QCPScatterStyle::spNone); // 性能优化
+    }
+}
+
+/**
+ * @brief [辅助] 导出单个 Plot 为图片文件
+ */
+void MainWindow::exportPlot(QCustomPlot *plot)
+{
+    if (!plot)
+        return;
+
+    QString filters = tr("PNG Image (*.png);;JPG Image (*.jpg);;BMP Image (*.bmp);;PDF Document (*.pdf)");
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Export Plot"), "", filters);
+
+    if (fileName.isEmpty())
+        return;
+
+    // --- 高清设置 ---
+    double scale = 3.0; // 缩放因子：3.0 表示 3 倍分辨率 (约 300 DPI)
+    int quality = 100;  // JPG 质量 (0-100)
+
+    bool success = false;
+    if (fileName.endsWith(".png", Qt::CaseInsensitive))
+    {
+        success = plot->savePng(fileName, 0, 0, scale, -1);
+    }
+    else if (fileName.endsWith(".jpg", Qt::CaseInsensitive) || fileName.endsWith(".jpeg", Qt::CaseInsensitive))
+    {
+        success = plot->saveJpg(fileName, 0, 0, scale, quality);
+    }
+    else if (fileName.endsWith(".bmp", Qt::CaseInsensitive))
+    {
+        success = plot->saveBmp(fileName, 0, 0, scale);
+    }
+    else if (fileName.endsWith(".pdf", Qt::CaseInsensitive))
+    {
+        success = plot->savePdf(fileName);
+    }
+    else
+    {
+        fileName += ".png";
+        success = plot->savePng(fileName, 0, 0, scale, -1);
+    }
+
+    if (!success)
+    {
+        QMessageBox::warning(this, tr("Export Failed"), tr("Failed to save image to %1").arg(fileName));
+    }
+}
+
+/**
+ * @brief [槽] 导出整个布局视图
+ */
+void MainWindow::on_actionExportAll_triggered()
+{
+    if (!m_plotContainer)
+        return;
+
+    QString filters = tr("PNG Image (*.png);;JPG Image (*.jpg);;BMP Image (*.bmp)");
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Export All Views"), "", filters);
+
+    if (fileName.isEmpty())
+        return;
+
+    if (!fileName.contains('.'))
+    {
+        fileName += ".png";
+    }
+
+    QPixmap pixmap = m_plotContainer->grab();
+    bool success = pixmap.save(fileName, nullptr, 100);
+
+    if (!success)
+    {
+        QMessageBox::warning(this, tr("Export Failed"), tr("Failed to save all views to %1").arg(fileName));
     }
 }

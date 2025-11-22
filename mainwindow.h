@@ -115,6 +115,8 @@ private slots:
     void onReplayActionToggled(bool checked);
     void updateCursorsForLayoutChange();
 
+    void on_actionExportAll_triggered(); // 导出所有视图的槽
+
 private:
     //  内部数据结构
     struct LayoutInfo
@@ -180,6 +182,8 @@ private:
     void configurePlotLegend(QCustomPlot *plot, int mode);
 
     SignalLocation getSignalDataFromID(const QString &uniqueID) const;
+
+    void exportPlot(QCustomPlot *plot); // 导出单个 Plot 的辅助函数
 
     /**
      * @brief 通用视图自适应函数
@@ -259,6 +263,8 @@ private:
     QAction *m_cursorDoubleAction;
     QActionGroup *m_cursorGroup;
     QAction *m_replayAction;
+
+    QAction *m_exportAllAction;
 };
 
 #endif // MAINWINDOW_H
