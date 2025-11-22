@@ -572,7 +572,7 @@ void MainWindow::createDocks()
 
 void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
 {
-    clearPlotLayout(); // 清理旧布局
+    clearPlotLayout();
 
     QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotContainer->layout());
     if (!grid)
@@ -581,22 +581,20 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
     QCPRange sharedXRange;
     bool hasSharedXRange = false;
 
-    // 1. 创建 Plot 组件
+    // 1. 创建组件
     for (int i = 0; i < geometries.size(); ++i)
     {
         const QRect &geo = geometries[i];
         int plotIndex = i;
 
-        // 创建容器 Frame
         QFrame *plotFrame = new QFrame(m_plotContainer);
         plotFrame->setFrameShape(QFrame::NoFrame);
-        plotFrame->setStyleSheet("QFrame { border: 2px solid transparent; }");
+        plotFrame->setStyleSheet("QFrame { border: 2px solid transparent; }"); // 使用样式表管理边框
 
         QVBoxLayout *frameLayout = new QVBoxLayout(plotFrame);
         frameLayout->setContentsMargins(0, 0, 0, 0);
 
         QCustomPlot *plot = new QCustomPlot(plotFrame);
-        // 第一次循环创建对齐组
         if (i == 0)
             m_yAxisGroup = new QCPMarginGroup(plot);
 
@@ -604,7 +602,7 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
         grid->addWidget(plotFrame, geo.y(), geo.x(), geo.height(), geo.width());
         m_plotWidgets.append(plot);
 
-        // 2. 恢复信号 (使用 m_plotSignalMap 持久化数据)
+        // 2. 恢复信号 (持久化数据)
         if (m_plotSignalMap.contains(plotIndex))
         {
             const QSet<QString> &signalIDs = m_plotSignalMap.value(plotIndex);
@@ -617,7 +615,6 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
                 }
             }
 
-            // 恢复轴范围逻辑
             plot->rescaleAxes();
             if (!hasSharedXRange && plot->graphCount() > 0)
             {
@@ -634,19 +631,15 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
             plot->xAxis->setRange(sharedXRange);
         }
 
-        // 3. 设置交互与配置
         setupPlotInteractions(plot);
     }
 
-    // 4. 恢复活动子图状态
+    // 恢复活动状态
     if (!m_plotWidgets.isEmpty())
     {
-        int activeIdx = 0; // 默认为 0
-
-        setActivePlot(m_plotWidgets.at(activeIdx));
+        setActivePlot(m_plotWidgets.first());
     }
 
-    // 5. 重建游标 (延时调用以确保布局完成)
     QTimer::singleShot(0, this, &MainWindow::updateCursorsForLayoutChange);
 }
 
@@ -963,13 +956,12 @@ void MainWindow::removeFile(const QString &filename)
     QString prefix = filename + "/";
     bool anyPlotChanged = false;
 
-    // 1. 遍历所有子图清理图形
+    // 1. 批量清理子图
     for (int i = 0; i < m_plotWidgets.size(); ++i)
     {
         QCustomPlot *plot = m_plotWidgets.at(i);
         QSet<QString> &signalSet = m_plotSignalMap[i];
 
-        // 收集需要删除的 Graph，避免在遍历时修改容器
         QList<QCPGraph *> graphsToDelete;
         for (int j = 0; j < plot->graphCount(); ++j)
         {
@@ -978,7 +970,7 @@ void MainWindow::removeFile(const QString &filename)
             if (graphID.startsWith(prefix))
             {
                 graphsToDelete.append(graph);
-                signalSet.remove(graphID); // 同步清理 ID 映射
+                signalSet.remove(graphID);
             }
         }
 
@@ -987,7 +979,6 @@ void MainWindow::removeFile(const QString &filename)
             for (QCPGraph *g : graphsToDelete)
                 plot->removeGraph(g);
 
-            // 更新图例
             int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
             configurePlotLegend(plot, legendMode);
             plot->replot();
@@ -995,7 +986,7 @@ void MainWindow::removeFile(const QString &filename)
         }
     }
 
-    // 2. 清理 UI 树映射 (使用迭代器安全删除)
+    // 2. 清理内部ID映射
     QMutableHashIterator<QString, QStandardItem *> it(m_uniqueIdMap);
     while (it.hasNext())
     {
@@ -1004,7 +995,7 @@ void MainWindow::removeFile(const QString &filename)
             it.remove();
     }
 
-    // 3. 从树模型中移除文件节点
+    // 3. 移除文件节点
     QList<QStandardItem *> items = m_signalTreeModel->findItems(filename);
     for (QStandardItem *item : items)
     {
@@ -1015,7 +1006,6 @@ void MainWindow::removeFile(const QString &filename)
         }
     }
 
-    // 4. 全局刷新
     if (anyPlotChanged)
     {
         m_cursorManager->setupCursors();
@@ -1056,26 +1046,23 @@ void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot, boo
     if (plotIndex == -1)
         return;
 
-    // 检查重复
     if (m_plotSignalMap.value(plotIndex).contains(uniqueID))
         return;
 
     SignalLocation loc = getSignalDataFromID(uniqueID);
-    // 检查数据有效性
     if (!loc.table || loc.signalIndex < 0 || loc.signalIndex >= loc.table->valueData.size())
         return;
 
     setupGraphInstance(plot, uniqueID, loc);
 
-    // 2. 更新映射
+    // 更新映射
     m_plotSignalMap[plotIndex].insert(uniqueID);
 
-    // 3. 仅在需要时刷新 UI
+    // 仅在需要时刷新
     if (replot)
     {
         plot->rescaleAxes();
 
-        // 获取当前的图例模式配置
         int legendMode = 1;
         if (m_legendPosGroup->checkedAction())
             legendMode = m_legendPosGroup->checkedAction()->data().toInt();
@@ -1083,7 +1070,6 @@ void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot, boo
 
         plot->replot();
 
-        // 更新游标
         m_cursorManager->setupCursors();
         m_cursorManager->updateAllCursors();
     }
@@ -1160,22 +1146,21 @@ void MainWindow::onPlotClicked()
     if (!clickedPlot)
         return;
 
-    // 1. 处理背景点击（取消选中）
+    // 仅当没点中图线时才取消选中，避免误触
     QPoint pos = clickedPlot->mapFromGlobal(QCursor::pos());
     if (!clickedPlot->plottableAt(pos, true))
     {
         clickedPlot->deselectAll();
-        clickedPlot->replot(); // 立即重绘以反馈选中状态消失
+        clickedPlot->replot();
     }
 
-    // 2. 切换活动子图
+    // 切换选中样式
     if (m_activePlot && clickedPlot != m_activePlot)
     {
         m_activePlot->deselectAll();
         m_activePlot->replot();
     }
 
-    // 3. 设置为新的活动子图
     setActivePlot(clickedPlot);
 }
 
@@ -2002,10 +1987,7 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
         plot->replot();
     }
 
-    // 全部完成后，更新树以匹配(新的)活动子图
     updateSignalTreeChecks();
-
-    // 缩放视图
     on_actionFitView_triggered();
     QMessageBox::information(this, tr("Import Successful"), tr("Successfully imported view settings."));
 }
@@ -2410,26 +2392,24 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
     if (!mainLayout)
         return;
 
-    // 先将图例从现有布局中移除，简化后续逻辑
+    // 先将图例从现有布局中移除
     if (plot->legend->layout())
         plot->legend->layout()->take(plot->legend);
 
     if (targetIsOutside)
     {
-        // 只有当有内容时才添加到顶部，节省空间
         if (plot->graphCount() > 0)
         {
             // 确保第0行存在
             if (mainLayout->rowCount() < 1)
                 mainLayout->insertRow(0);
 
-            // 如果第0行被 AxisRect 占用 (旧布局可能)，插入新行
-            if (mainLayout->element(0, 0) == plot->axisRect())
+            if (mainLayout->hasElement(0, 0) && mainLayout->element(0, 0) == plot->axisRect())
                 mainLayout->insertRow(0);
 
             mainLayout->addElement(0, 0, plot->legend);
             mainLayout->setRowSpacing(0);
-            mainLayout->setRowStretchFactor(0, 0.001); // 最小化
+            mainLayout->setRowStretchFactor(0, 0.001);
 
             // 强制宽度匹配
             plot->legend->setOuterRect(plot->axisRect()->outerRect());
@@ -2441,13 +2421,13 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
     }
     else
     {
-        // 添加到 Inset (内部)
+        // 添加到内部
         QCPLayoutInset *insetLayout = plot->axisRect()->insetLayout();
         Qt::Alignment align = Qt::AlignTop | (mode == 1 ? Qt::AlignLeft : Qt::AlignRight);
         insetLayout->addElement(plot->legend, align);
     }
 
-    // 4. 重新添加图表项
+    // 重新添加图表项
     for (int i = 0; i < plot->graphCount(); ++i)
         plot->graph(i)->addToLegend(plot->legend);
 
