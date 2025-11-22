@@ -593,6 +593,10 @@ void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
     if (!grid)
         grid = new QGridLayout(m_plotContainer);
 
+    // 设置边距
+    grid->setSpacing(0);
+    grid->setContentsMargins(0, 0, 0, 0);
+
     QCPRange sharedXRange;
     bool hasSharedXRange = false;
 
