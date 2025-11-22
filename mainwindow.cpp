@@ -936,6 +936,8 @@ void MainWindow::removeFile(const QString &filename)
     if (!m_fileDataMap.remove(filename))
         return;
 
+    m_cursorManager->clearCursors();
+
     QString prefix = filename + "/";
     bool anyPlotChanged = false;
 
@@ -1078,6 +1080,8 @@ void MainWindow::removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot
     QCPGraph *graph = getGraph(plot, uniqueID);
     if (graph)
     {
+        m_cursorManager->clearCursors();
+
         plot->removeGraph(graph);
 
         m_plotSignalMap[plotIndex].remove(uniqueID);
@@ -1205,6 +1209,8 @@ void MainWindow::on_actionClearAllPlots_triggered()
                                                               QMessageBox::Yes | QMessageBox::No);
     if (reply == QMessageBox::No)
         return;
+
+    m_cursorManager->clearCursors();
 
     {
         const QSignalBlocker blocker(m_signalTreeModel);
