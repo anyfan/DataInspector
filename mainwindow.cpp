@@ -164,6 +164,14 @@ static QStandardItem *findItemByName_Recursive(QStandardItem *parentItem, const 
     return nullptr;
 }
 
+static bool isSupportedFile(const QString &filePath)
+{
+    return filePath.endsWith(".csv", Qt::CaseInsensitive) ||
+           filePath.endsWith(".txt", Qt::CaseInsensitive) ||
+           filePath.endsWith(".mat", Qt::CaseInsensitive) ||
+           filePath.endsWith(".mldatx", Qt::CaseInsensitive);
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
       m_dataThread(nullptr),
@@ -309,7 +317,7 @@ void MainWindow::createActions()
 
     // 替换布局菜单
     m_layout1x1Action = new QAction(tr("1x1 Layout"), this);
-    m_layout1x1Action->setData(QPoint(1, 1)); // 使用 QPoint 存储 grid 布局
+    m_layout1x1Action->setData(QPoint(1, 1));
 
     m_layout1x2Action = new QAction(tr("1x2 Layout (Side by Side)"), this);
     m_layout1x2Action->setData(QPoint(1, 2));
@@ -350,7 +358,7 @@ void MainWindow::createActions()
     m_fitViewAction = new QAction(tr("Fit View"), this);
     m_fitViewAction->setIcon(style()->standardIcon(QStyle::SP_DesktopIcon));
     m_fitViewAction->setToolTip(tr("适应视图"));
-    m_fitViewAction->setShortcut(Qt::Key_Space); // 空格快捷键
+    m_fitViewAction->setShortcut(Qt::Key_Space);
     connect(m_fitViewAction, &QAction::triggered, this, &MainWindow::on_actionFitView_triggered);
 
     m_fitViewTimeAction = new QAction(tr("Fit View (Time)"), this);
@@ -395,24 +403,24 @@ void MainWindow::createActions()
     // 图例切换动作
     m_toggleLegendAction = new QAction(tr("切换图例"), this);
     m_toggleLegendAction->setCheckable(true);
-    m_toggleLegendAction->setChecked(true);                                                 // 默认图例是可见的
-    m_toggleLegendAction->setIcon(style()->standardIcon(QStyle::SP_MessageBoxInformation)); // 暂时使用一个占位图标
+    m_toggleLegendAction->setChecked(true);
+    m_toggleLegendAction->setIcon(style()->standardIcon(QStyle::SP_MessageBoxInformation));
     m_toggleLegendAction->setToolTip(tr("显示/隐藏图例"));
     connect(m_toggleLegendAction, &QAction::toggled, this, &MainWindow::on_actionToggleLegend_toggled);
 
     m_legendPosGroup = new QActionGroup(this);
     m_legendPosOutsideTopAction = new QAction(tr("图表外上方"), this);
     m_legendPosOutsideTopAction->setCheckable(true);
-    m_legendPosOutsideTopAction->setData(0);       // 0 代表外上方
+    m_legendPosOutsideTopAction->setData(0);
     m_legendPosOutsideTopAction->setChecked(true); // 默认选中
 
     m_legendPosInsideTLAction = new QAction(tr("图表内左上"), this);
     m_legendPosInsideTLAction->setCheckable(true);
-    m_legendPosInsideTLAction->setData(1); // 1 代表内左上
+    m_legendPosInsideTLAction->setData(1);
 
     m_legendPosInsideTRAction = new QAction(tr("图表内右上"), this);
     m_legendPosInsideTRAction->setCheckable(true);
-    m_legendPosInsideTRAction->setData(2); // 2 代表内右上
+    m_legendPosInsideTRAction->setData(2);
     m_legendPosGroup->addAction(m_legendPosOutsideTopAction);
     m_legendPosGroup->addAction(m_legendPosInsideTLAction);
     m_legendPosGroup->addAction(m_legendPosInsideTRAction);
@@ -428,8 +436,8 @@ void MainWindow::createActions()
 
     m_clearAllPlotsAction = new QAction(tr("Clear All Plots"), this);
     m_clearAllPlotsAction->setToolTip(tr("Remove all signals from all plots"));
-    m_clearAllPlotsAction->setIcon(style()->standardIcon(QStyle::SP_DialogDiscardButton)); // 使用系统自带的丢弃/清除图标
-    m_clearAllPlotsAction->setShortcut(QKeySequence(tr("Ctrl+D")));                        // 设置快捷键 Ctrl+D (Delete)
+    m_clearAllPlotsAction->setIcon(style()->standardIcon(QStyle::SP_DialogDiscardButton));
+    m_clearAllPlotsAction->setShortcut(QKeySequence(tr("Ctrl+D")));
     connect(m_clearAllPlotsAction, &QAction::triggered, this, &MainWindow::on_actionClearAllPlots_triggered);
 }
 
@@ -489,7 +497,6 @@ void MainWindow::createToolBars()
 {
     m_viewToolBar = new QToolBar(tr("View Toolbar"), this);
 
-    // “弹簧”小部件，将所有动作推到右侧
     QWidget *spacer = new QWidget();
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_viewToolBar->addWidget(spacer);
@@ -759,7 +766,6 @@ void MainWindow::importView(const QString &mldatxFilePath)
     }
     zip.close();
 
-    // 检查是否找到了所有需要的文件
     if (!foundViewMeta)
     {
         QMessageBox::critical(this, tr("Import Error"), tr("Error: Did not find 'views/sdi_view_meta_data.xml' in .mldatx file."));
@@ -771,7 +777,6 @@ void MainWindow::importView(const QString &mldatxFilePath)
         return;
     }
 
-    // 4. 调用解析函数
     qDebug() << "  Parsing Results  ";
 
     LayoutInfo layout = parseViewMetaData(viewMetaDataDoc);
@@ -804,12 +809,8 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 
     plot->setAutoAddPlottableToLegend(false);
 
-    int mode = 1; // 默认: 图表内左上 (InsideTL)
-    if (m_legendPosGroup->checkedAction())
-    {
-        mode = m_legendPosGroup->checkedAction()->data().toInt();
-    }
-    configurePlotLegend(plot, mode);
+    int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
+    configurePlotLegend(plot, legendMode);
 
     // 根据 m_openGLAction 的状态设置 OpenGL
     plot->setOpenGl(m_openGLAction->isChecked());
@@ -858,7 +859,6 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 
 void MainWindow::clearPlotLayout()
 {
-    // 清除游标
     m_cursorManager->clearCursors();
 
     if (m_yAxisGroup)
@@ -907,38 +907,21 @@ void MainWindow::onDataLoadFinished(const FileData &data)
         // 如果用户选择 "Yes"，则移除旧文件
         removeFile(filename);
     }
-    // 1. 缓存数据
+
     m_fileDataMap.insert(filename, data);
 
-    // 2. 填充信号树
+    //  填充信号树
     {
         QSignalBlocker blocker(m_signalTreeModel);
-        populateSignalTree(data); //  传入新数据
+        populateSignalTree(data);
     }
-    m_signalTree->reset(); // CSV 和 MAT 都需要
+
+    m_signalTree->reset();
 
     // 默认展开所有条目
     m_signalTree->expandAll();
 
-    // // 3. 更新重放控件和游标
-    // if (m_fileDataMap.size() == 1 && !data.tables.isEmpty() && !data.tables.first().timeData.isEmpty()) // 如果这是加载的第一个文件
-    // {
-    //     const SignalTable &firstTable = data.tables.first();
-    //     // 将游标 1 移动到数据起点
-    //     m_cursorManager->updateCursors(firstTable.timeData.first(), 1); // 设置初始位置
-    //     m_cursorManager->updateCursors(firstTable.timeData.first() + getGlobalTimeRange().size() * 0.1, 2);
-
-    //     // 数据加载完成后自动缩放视图
-    //     on_actionFitView_triggered();
-    // }
-    // else
-    // {
-    //     // 如果已有数据，重新缩放以包含新数据
-    //     on_actionFitView_triggered();
-
-    //     m_cursorManager->updateAllCursors();
-    // }
-    updateReplayManagerRange(); // 设置滑块范围
+    updateReplayManagerRange();
 }
 
 void MainWindow::onDataLoadFailed(const QString &filePath, const QString &errorString)
@@ -1063,15 +1046,16 @@ void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot, boo
     {
         plot->rescaleAxes();
 
-        int legendMode = 1;
-        if (m_legendPosGroup->checkedAction())
-            legendMode = m_legendPosGroup->checkedAction()->data().toInt();
+        int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
         configurePlotLegend(plot, legendMode);
 
         plot->replot();
 
-        m_cursorManager->setupCursors();
-        m_cursorManager->updateAllCursors();
+        if (m_cursorManager->getMode() != CursorManager::NoCursor)
+        {
+            m_cursorManager->setupCursors(); // 暂时保留，作为必须的权衡，但应考虑优化 CursorManager
+            m_cursorManager->updateAllCursors();
+        }
     }
 }
 
@@ -1098,9 +1082,7 @@ void MainWindow::removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot
 
         m_plotSignalMap[plotIndex].remove(uniqueID);
 
-        int legendMode = 1;
-        if (m_legendPosGroup->checkedAction())
-            legendMode = m_legendPosGroup->checkedAction()->data().toInt();
+        int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
         configurePlotLegend(plot, legendMode);
 
         plot->replot();
@@ -1170,15 +1152,12 @@ void MainWindow::onPlotClicked()
  */
 void MainWindow::onOpenGLActionToggled(bool checked)
 {
-    // qDebug() << "Setting OpenGL acceleration to:" << checked;
-
-    // 遍历所有当前存在的 QCustomPlot 实例并更新它们
     for (QCustomPlot *plot : m_plotWidgets)
     {
         if (plot)
         {
             plot->setOpenGl(checked);
-            plot->replot(); // 立即重绘以应用更改
+            plot->replot();
         }
     }
 }
@@ -1221,15 +1200,12 @@ void MainWindow::onPlotSelectionChanged()
 // 清除所有子图信号的槽函数实现
 void MainWindow::on_actionClearAllPlots_triggered()
 {
-    // 1. 简单的确认对话框 (防止误触)
-    QMessageBox::StandardButton reply;
-    reply = QMessageBox::question(this, tr("Clear All Plots"),
-                                  tr("Are you sure you want to remove all signals from all plots?"),
-                                  QMessageBox::Yes | QMessageBox::No);
+    QMessageBox::StandardButton reply = QMessageBox::question(this, tr("Clear All Plots"),
+                                                              tr("Are you sure you want to remove all signals from all plots?"),
+                                                              QMessageBox::Yes | QMessageBox::No);
     if (reply == QMessageBox::No)
         return;
 
-    // 2. 在 UI 树中取消勾选所有已加载的信号
     {
         const QSignalBlocker blocker(m_signalTreeModel);
 
@@ -1249,28 +1225,22 @@ void MainWindow::on_actionClearAllPlots_triggered()
     }
 
     // 3. 清空所有子图的 Graph 对象
-    int legendMode = 1;
-    if (m_legendPosGroup->checkedAction())
-        legendMode = m_legendPosGroup->checkedAction()->data().toInt();
+    int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
 
     for (QCustomPlot *plot : m_plotWidgets)
     {
-        if (plot)
-        {
-            plot->clearGraphs();
-            // 注意：我们只清除 Graph，保留游标辅助项(Item)，它们由 CursorManager 管理
-            configurePlotLegend(plot, legendMode);
-            plot->legend->setVisible(m_toggleLegendAction->isChecked()); // 保持图例状态但内容会变空
-            plot->replot();
-        }
+        if (!plot)
+            continue;
+
+        plot->clearGraphs();
+        configurePlotLegend(plot, legendMode);
+        plot->replot();
     }
 
-    // 4. 清空内部数据映射
     m_plotSignalMap.clear();
 
-    // 5. 重置游标 (因为 Graph 指针均已失效)
-    m_cursorManager->setupCursors();     // 重建游标对象
-    m_cursorManager->updateAllCursors(); // 刷新位置
+    m_cursorManager->setupCursors();
+    m_cursorManager->updateAllCursors();
 
     qDebug() << "All plots cleared.";
 }
@@ -1471,20 +1441,13 @@ void MainWindow::updateSignalTreeChecks()
 
 void MainWindow::onSignalItemChanged(QStandardItem *item)
 {
-    if (!item)
+    if (!item || !item->data(IsSignalItemRole).toBool())
         return;
-
-    // 如果是文件或表条目，则忽略
-    if (!item->data(IsSignalItemRole).toBool())
-    {
-        return;
-    }
 
     if (m_fileDataMap.isEmpty())
     {
         if (item->checkState() == Qt::Checked)
         {
-            QSignalBlocker blocker(m_signalTreeModel);
             item->setCheckState(Qt::Unchecked);
         }
         return;
@@ -1502,24 +1465,16 @@ void MainWindow::onSignalItemChanged(QStandardItem *item)
         return;
     }
 
-    // 使用 UniqueID
     QString uniqueID = item->data(UniqueIdRole).toString();
-    QString signalName = item->text();
     if (uniqueID.isEmpty())
-    {
-        qWarning() << "Invalid signal item" << signalName;
         return;
-    }
 
-    // 使用新的辅助函数
     if (item->checkState() == Qt::Checked)
     {
-        qDebug() << "Adding signal" << signalName << "(id" << uniqueID << ") to plot" << m_activePlot;
         addSignalToPlot(uniqueID, m_activePlot);
     }
-    else // Qt::Unchecked
+    else
     {
-        qDebug() << "Removing signal" << signalName << "from plot" << m_activePlot;
         removeSignalFromPlot(uniqueID, m_activePlot);
     }
 }
@@ -1592,11 +1547,11 @@ void MainWindow::onSignalTreeContextMenu(const QPoint &pos)
         return;
 
     QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
-    // 只在文件条目上显示菜单
+
     if (!item || !item->data(IsFileItemRole).toBool())
         return; // 只在文件条目上显示菜单
 
-    QString filename = item->data(FileNameRole).toString(); //  使用 FileNameRole
+    QString filename = item->data(FileNameRole).toString();
 
     QMenu contextMenu(this);
     QAction *deleteAction = contextMenu.addAction(tr("Remove '%1'").arg(filename));
@@ -1615,7 +1570,6 @@ void MainWindow::onReplayActionToggled(bool checked)
     {
         // 如果没有游标，自动启用单游标
         m_cursorSingleAction->setChecked(true);
-        // 手动触发 CursorManager 更新
         m_cursorManager->setMode(CursorManager::SingleCursor);
     }
 }
@@ -1625,7 +1579,6 @@ void MainWindow::onReplayActionToggled(bool checked)
  */
 QCPRange MainWindow::getGlobalTimeRange() const
 {
-    // 遍历所有文件
     if (m_fileDataMap.isEmpty())
         return QCPRange(0, 1);
 
@@ -1633,7 +1586,6 @@ QCPRange MainWindow::getGlobalTimeRange() const
     QCPRange totalRange;
     for (const FileData &data : m_fileDataMap.values())
     {
-        // 遍历所有表
         for (const SignalTable &table : data.tables)
         {
             if (!table.timeData.isEmpty())
@@ -1655,7 +1607,7 @@ QCPRange MainWindow::getGlobalTimeRange() const
         }
     }
 
-    if (first) // 意味着没有文件有数据
+    if (first)
         return QCPRange(0, 1);
     else
         return totalRange;
@@ -1671,7 +1623,6 @@ double MainWindow::getSmallestTimeStep() const
 
     for (const FileData &data : m_fileDataMap.values())
     {
-        // 遍历所有表
         for (const SignalTable &table : data.tables)
         {
             if (table.timeData.size() >= 2)
@@ -1717,7 +1668,6 @@ QString MainWindow::getUniqueID(QStandardItem *item) const
     if (!item || !item->data(IsSignalItemRole).toBool())
         return QString();
 
-    // UniqueID 现在直接存储在条目中
     return item->data(UniqueIdRole).toString();
 }
 
@@ -1745,7 +1695,6 @@ void MainWindow::onDeleteSignalAction()
     if (uniqueID.isEmpty())
         return;
 
-    // 使用更可靠的 BFS 搜索替换 findItems 循环
     QStandardItem *itemToUncheck = m_uniqueIdMap.value(uniqueID, nullptr);
 
     if (itemToUncheck)
@@ -1775,13 +1724,12 @@ void MainWindow::onDeleteSubplotAction()
     const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
 
     if (signalIDsCopy.isEmpty())
-        return; // 子图上没有信号
+        return;
 
     qDebug() << "Clearing subplot index" << plotIndex << "- removing" << signalIDsCopy.size() << "signals.";
 
     for (const QString &uniqueID : signalIDsCopy)
     {
-        // 查找树中的条目
         QStandardItem *itemToUncheck = m_uniqueIdMap.value(uniqueID, nullptr);
 
         // 如果找到了，并且它当前被选中，则取消勾选它
@@ -1858,7 +1806,6 @@ bool MainWindow::filterSignalTree(QStandardItem *item, const QString &query)
  */
 QStandardItem *MainWindow::findItemBySignalName(const QString &name)
 {
-    // 使用静态辅助函数开始从根节点递归搜索
     return findItemByName_Recursive(m_signalTreeModel->invisibleRootItem(), name);
 }
 
@@ -1884,7 +1831,6 @@ void MainWindow::on_actionToggleLegend_toggled(bool checked)
  */
 void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList)
 {
-
     {
         const QSignalBlocker blocker(m_signalTreeModel);
 
@@ -2096,22 +2042,16 @@ void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 {
     if (event->mimeData()->hasUrls())
     {
-        // 检查是否至少有一个文件是我们支持的类型
         for (const QUrl &url : event->mimeData()->urls())
         {
-            QString filePath = url.toLocalFile();
-            if (filePath.endsWith(".csv", Qt::CaseInsensitive) ||
-                filePath.endsWith(".txt", Qt::CaseInsensitive) ||
-                filePath.endsWith(".mat", Qt::CaseInsensitive) ||
-                filePath.endsWith(".mldatx", Qt::CaseInsensitive))
+            if (isSupportedFile(url.toLocalFile()))
             {
-                event->acceptProposedAction(); // 接受拖动
+                event->acceptProposedAction();
                 return;
             }
         }
     }
-
-    event->ignore(); // 否则, 拒绝拖动
+    event->ignore();
 }
 
 /**
@@ -2122,23 +2062,16 @@ void MainWindow::dropEvent(QDropEvent *event)
     const QMimeData *mimeData = event->mimeData();
     if (mimeData->hasUrls())
     {
-        QList<QUrl> urlList = mimeData->urls();
-        for (const QUrl &url : urlList)
+        for (const QUrl &url : mimeData->urls())
         {
             QString filePath = url.toLocalFile();
-            if (!filePath.isEmpty())
+            if (filePath.endsWith(".mldatx", Qt::CaseInsensitive))
             {
-                // 检查文件扩展名
-                if (filePath.endsWith(".csv", Qt::CaseInsensitive) ||
-                    filePath.endsWith(".txt", Qt::CaseInsensitive) ||
-                    filePath.endsWith(".mat", Qt::CaseInsensitive))
-                {
-                    loadFile(filePath); // 调用数据加载函数
-                }
-                else if (filePath.endsWith(".mldatx", Qt::CaseInsensitive))
-                {
-                    importView(filePath); // 调用视图导入函数
-                }
+                importView(filePath);
+            }
+            else if (isSupportedFile(filePath))
+            {
+                loadFile(filePath);
             }
         }
         event->acceptProposedAction();
@@ -2175,7 +2108,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                     if (data.contains(UniqueIdRole) && data.value(IsSignalItemRole).toBool())
                     {
                         dragEvent->acceptProposedAction();
-                        return true; // 已处理事件
+                        return true;
                     }
                 }
             }
@@ -2210,7 +2143,6 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                     // 2. 如果不在，则添加它
                     if (!alreadyOnPlot)
                     {
-                        // 设为活动子图 (这样 onSignalItemChanged/addSignalToPlot 会自动使用它)
                         setActivePlot(targetPlot);
 
                         if (item->checkState() == Qt::Unchecked)
@@ -2229,8 +2161,8 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             // 拖放完成后清除树的选择
             m_signalTree->clearSelection();
 
-            updateSignalTreeChecks(); // 确保树的勾选状态在拖放后正确同步
-            return true;              // 已处理事件
+            updateSignalTreeChecks();
+            return true;
         }
     }
 
@@ -2282,8 +2214,7 @@ void MainWindow::onLegendContextMenu(const QPoint &pos)
         // 创建上下文菜单
         QMenu contextMenu(this);
         QAction *deleteAction = contextMenu.addAction(tr("Delete '%1'").arg(graph->name()));
-        deleteAction->setData(uniqueID); // 将 uniqueID 存储在 action 中
-
+        deleteAction->setData(uniqueID);
         connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSignalAction);
 
         // 在全局坐标位置显示菜单
@@ -2300,11 +2231,10 @@ void MainWindow::onLegendContextMenu(const QPoint &pos)
     if (QCPPlottableLegendItem *plottableItem = qobject_cast<QCPPlottableLegendItem *>(legendItem))
     {
         // 2. 用户右键点击了 *图例条目*
-        graph = qobject_cast<QCPGraph *>(plottableItem->plottable()); // 复用 graph 变量
+        graph = qobject_cast<QCPGraph *>(plottableItem->plottable());
         if (!graph)
             return;
 
-        // 找到此 graph 对应的 uniqueID
         QString uniqueID = graph->property("id").toString();
         if (uniqueID.isEmpty())
             return;
@@ -2312,11 +2242,10 @@ void MainWindow::onLegendContextMenu(const QPoint &pos)
         // 创建上下文菜单
         QMenu contextMenu(this);
         QAction *deleteAction = contextMenu.addAction(tr("Delete '%1'").arg(graph->name()));
-        deleteAction->setData(uniqueID); // 将 uniqueID 存储在 action 中
+        deleteAction->setData(uniqueID);
 
         connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSignalAction);
 
-        // 在全局坐标位置显示菜单
         contextMenu.exec(plot->mapToGlobal(pos));
     }
     else if (qobject_cast<QCPAxisRect *>(el) || qobject_cast<QCPLegend *>(el))
@@ -2328,11 +2257,10 @@ void MainWindow::onLegendContextMenu(const QPoint &pos)
 
         QMenu contextMenu(this);
         QAction *deleteSubplotAction = contextMenu.addAction(tr("Delete Subplot"));
-        deleteSubplotAction->setData(plotIndex); // 将 plotIndex 存储在 action 中
+        deleteSubplotAction->setData(plotIndex);
 
         connect(deleteSubplotAction, &QAction::triggered, this, &MainWindow::onDeleteSubplotAction);
 
-        // 在全局坐标位置显示菜单
         contextMenu.exec(plot->mapToGlobal(pos));
     }
 }
@@ -2360,9 +2288,11 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
 
     bool targetIsOutside = (mode == 0);
 
-    // 1. 按需重建图例对象 (类型切换时)
+    //  检查当前图例类型是否已经匹配，避免不必要的 delete/new
     bool isFlow = (dynamic_cast<FlowLegend *>(plot->legend) != nullptr);
-    if (targetIsOutside != isFlow)
+    bool needRecreate = (targetIsOutside != isFlow) || (plot->legend == nullptr);
+
+    if (needRecreate)
     {
         if (plot->legend)
         {
@@ -2372,9 +2302,6 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
         }
         plot->legend = targetIsOutside ? new FlowLegend() : new QCPLegend();
     }
-
-    if (!plot->legend)
-        return;
 
     // 2. 通用样式设置
     plot->legend->setVisible(m_toggleLegendAction->isChecked());
@@ -2400,17 +2327,14 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
     {
         if (plot->graphCount() > 0)
         {
-            // 确保第0行存在
-            if (mainLayout->rowCount() < 1)
+            if (mainLayout->rowCount() < 1 || (mainLayout->hasElement(0, 0) && mainLayout->element(0, 0) == plot->axisRect()))
+            {
                 mainLayout->insertRow(0);
-
-            if (mainLayout->hasElement(0, 0) && mainLayout->element(0, 0) == plot->axisRect())
-                mainLayout->insertRow(0);
+            }
 
             mainLayout->addElement(0, 0, plot->legend);
             mainLayout->setRowSpacing(0);
             mainLayout->setRowStretchFactor(0, 0.001);
-
             // 强制宽度匹配
             plot->legend->setOuterRect(plot->axisRect()->outerRect());
         }
@@ -2423,8 +2347,12 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
     {
         // 添加到内部
         QCPLayoutInset *insetLayout = plot->axisRect()->insetLayout();
-        Qt::Alignment align = Qt::AlignTop | (mode == 1 ? Qt::AlignLeft : Qt::AlignRight);
-        insetLayout->addElement(plot->legend, align);
+
+        if (insetLayout->elementCount() == 0 || insetLayout->elementAt(0) != plot->legend)
+        {
+            Qt::Alignment align = Qt::AlignTop | (mode == 1 ? Qt::AlignLeft : Qt::AlignRight);
+            insetLayout->addElement(plot->legend, align);
+        }
     }
 
     // 重新添加图表项
@@ -2453,7 +2381,6 @@ SignalLocation MainWindow::getSignalDataFromID(const QString &uniqueID) const
 {
     SignalLocation loc;
 
-    // 1. 查找 Tree Item 获取元数据
     QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
     if (!item)
         return loc;
@@ -2504,13 +2431,11 @@ void MainWindow::onLayoutActionTriggered()
 
     QVariant data = action->data();
 
-    // 1. 处理 Grid 布局 (QPoint)
     if (data.type() == QVariant::Point)
     {
         QPoint grid = data.toPoint();
         setupPlotLayout(grid.x(), grid.y());
     }
-    // 2. 处理 Split 布局 (String)
     else if (data.type() == QVariant::String)
     {
         QString type = data.toString();
@@ -2563,9 +2488,9 @@ void MainWindow::performFitView(bool fitX, bool fitY, FitTarget target)
     bool hasXRange = false;
 
     if (fitX)
-    {
+    { // 扫描所有图表以获取全局时间
         for (QCustomPlot *plot : m_plotWidgets)
-        { // 扫描所有图表以获取全局时间
+        {
             if (!plot)
                 continue;
             for (int i = 0; i < plot->graphCount(); ++i)
@@ -2590,7 +2515,7 @@ void MainWindow::performFitView(bool fitX, bool fitY, FitTarget target)
                 }
             }
         }
-        // 如果没数据，给个默认
+
         if (!hasXRange)
             globalXRange = QCPRange(0, 10);
     }
@@ -2603,7 +2528,6 @@ void MainWindow::performFitView(bool fitX, bool fitY, FitTarget target)
 
         if (fitX)
         {
-            // 使用 QSignalBlocker 防止频繁触发 rangeChanged 导致递归同步
             QSignalBlocker blocker(plot->xAxis);
             plot->xAxis->setRange(globalXRange);
         }
