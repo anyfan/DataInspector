@@ -817,12 +817,17 @@ void MainWindow::on_actionImportView_triggered()
 
 void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 {
-    plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables);
+    plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables | QCP::iSelectLegend);
 
     plot->setAutoAddPlottableToLegend(false);
 
     int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
     configurePlotLegend(plot, legendMode);
+
+    if (plot->legend)
+    {
+        plot->legend->setSelectableParts(QCPLegend::spItems);
+    }
 
     // 根据 m_openGLAction 的状态设置 OpenGL
     plot->setOpenGl(m_openGLAction->isChecked());
@@ -1187,7 +1192,36 @@ void MainWindow::onPlotSelectionChanged()
     if (!plot)
         return;
 
+    QList<QCPGraph *> selectedGraphs = plot->selectedGraphs();
+    QList<QCPAbstractLegendItem *> selectedLegendItems = plot->legend->selectedItems();
+
+    if (!selectedGraphs.isEmpty() && selectedLegendItems.isEmpty()) // 选中了曲线
+    {
+        for (QCPGraph *graph : selectedGraphs)
+        {
+            if (QCPPlottableLegendItem *item = plot->legend->itemWithPlottable(graph))
+            {
+                item->setSelected(true);
+            }
+        }
+    }
+    else if (!selectedLegendItems.isEmpty() && selectedGraphs.isEmpty()) // 选中了图例
+    {
+        for (QCPAbstractLegendItem *item : selectedLegendItems)
+        {
+            if (QCPPlottableLegendItem *pli = qobject_cast<QCPPlottableLegendItem *>(item))
+            {
+                if (QCPGraph *graph = qobject_cast<QCPGraph *>(pli->plottable()))
+                {
+                    QCPDataSelection selection = QCPDataSelection(graph->data()->dataRange());
+                    graph->setSelection(selection);
+                }
+            }
+        }
+    }
+
     QList<QCPAbstractPlottable *> selected = plot->selectedPlottables();
+
     if (selected.isEmpty())
     {
         m_signalTree->setCurrentIndex(QModelIndex());
@@ -2336,6 +2370,13 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
     plot->legend->setBorderPen(Qt::NoPen);
     plot->legend->setBrush(Qt::NoBrush);
     plot->legend->setMargins(QMargins(2, 2, 2, 2));
+
+    // 允许选择图例项
+    plot->legend->setSelectableParts(QCPLegend::spItems);
+    plot->legend->setSelectedBrush(Qt::NoBrush);
+    plot->legend->setSelectedBorderPen(Qt::NoPen);
+    plot->legend->setSelectedTextColor(plot->legend->textColor());
+    plot->legend->setSelectedFont(plot->legend->font());
 
     // 3. 布局逻辑
     QCPLayoutGrid *mainLayout = plot->plotLayout();
