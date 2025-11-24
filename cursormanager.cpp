@@ -511,7 +511,7 @@ void CursorManager::updateCursors(double key, int cursorIndex)
                 if (yLabel)
                 {
                     double value = tracer->position->value();
-                    yLabel->setText(QString::number(value, 'f', 3));
+                    yLabel->setText(QString::number(value, 'g'));
                     yLabel->setVisible(true);
                     labelsOnThisPlot.append(yLabel);
                 }
