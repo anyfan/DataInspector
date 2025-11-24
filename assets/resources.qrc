@@ -11,5 +11,7 @@
         <file>icon/F7RectangleGrid1x2.svg</file>
         <file>icon/grid.svg</file>
         <file>icon/MdiViewGridPlusOutline.svg</file>
+        <file>icon/fullscreen.svg</file>
+        <file>icon/fullscreen-exit.svg</file>
     </qresource>
 </RCC>

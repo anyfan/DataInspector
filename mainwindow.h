@@ -118,6 +118,7 @@ private slots:
 
     //  子图最大化动作槽
     void on_actionMaximize_triggered();
+    void on_actionFullScreen_triggered();
 
     void onCursorMainButtonToggled(bool checked);
     void onCursorMenuActionTriggered(QAction *action);
@@ -284,6 +285,8 @@ private:
     QMap<int, QSet<QString>> m_savedPlotSignalMap; // 最大化前保存的信号映射
     QList<QRect> m_savedGeometries;                // 最大化前保存的布局几何
     int m_savedActivePlotIndex;                    // 保存激活的子图索引
+
+    QAction *m_fullScreenAction;
 };
 
 #endif // MAINWINDOW_H

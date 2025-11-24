@@ -516,6 +516,12 @@ void MainWindow::createActions()
     m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
     m_maximizeAction->setShortcut(Qt::Key_M); // 设置快捷键 M
     connect(m_maximizeAction, &QAction::triggered, this, &MainWindow::on_actionMaximize_triggered);
+
+    m_fullScreenAction = new QAction(this);
+    m_fullScreenAction->setIcon(QIcon(":/icon/fullscreen.svg")); 
+    m_fullScreenAction->setToolTip(tr("Full Screen"));
+    m_fullScreenAction->setShortcut(Qt::Key_F11);
+    connect(m_fullScreenAction, &QAction::triggered, this, &MainWindow::on_actionFullScreen_triggered);
 }
 
 void MainWindow::createMenus()
@@ -600,6 +606,7 @@ void MainWindow::createToolBars()
 
     m_viewToolBar->addSeparator();
     m_viewToolBar->addAction(m_maximizeAction);
+    m_viewToolBar->addAction(m_fullScreenAction);
 
     m_viewToolBar->addSeparator();
     m_viewToolBar->addAction(m_replayAction);
@@ -2960,5 +2967,21 @@ void MainWindow::onCursorMenuActionTriggered(QAction *action)
     else
     {
         m_cursorManager->setMode(m_currentCursorMode);
+    }
+}
+
+void MainWindow::on_actionFullScreen_triggered()
+{
+    if (isFullScreen())
+    {
+        showNormal();
+        m_fullScreenAction->setIcon(QIcon(":/icon/fullscreen.svg"));
+        m_fullScreenAction->setToolTip(tr("Full Screen"));
+    }
+    else
+    {
+        showFullScreen();
+        m_fullScreenAction->setIcon(QIcon(":/icon/fullscreen-exit.svg"));
+        m_fullScreenAction->setToolTip(tr("Exit Full Screen"));
     }
 }
