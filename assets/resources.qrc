@@ -2,5 +2,7 @@
     <qresource prefix="/">
         <file>icon/plotjuggler.svg</file>
         <file>icon/play-circle.svg</file>
+        <file>icon/arrows-angle-expand.svg</file>
+        <file>icon/arrows-angle-contract.svg</file>
     </qresource>
 </RCC>

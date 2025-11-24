@@ -212,6 +212,8 @@ MainWindow::MainWindow(QWidget *parent)
       m_replayManager(nullptr),
       m_openGLAction(nullptr),
       m_yAxisGroup(nullptr),
+      m_isMaximized(false),
+      m_savedActivePlotIndex(-1),
       m_colorIndex(0)
 {
     setupDataManagerThread();
@@ -446,6 +448,12 @@ void MainWindow::createActions()
     m_clearAllPlotsAction->setIcon(style()->standardIcon(QStyle::SP_DialogDiscardButton));
     m_clearAllPlotsAction->setShortcut(QKeySequence(tr("Ctrl+D")));
     connect(m_clearAllPlotsAction, &QAction::triggered, this, &MainWindow::on_actionClearAllPlots_triggered);
+
+    m_maximizeAction = new QAction(this);
+    m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-expand.svg"));
+    m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
+    m_maximizeAction->setShortcut(Qt::Key_M); // 设置快捷键 M
+    connect(m_maximizeAction, &QAction::triggered, this, &MainWindow::on_actionMaximize_triggered);
 }
 
 void MainWindow::createMenus()
@@ -527,6 +535,10 @@ void MainWindow::createToolBars()
     m_viewToolBar->addAction(m_cursorNoneAction);
     m_viewToolBar->addAction(m_cursorSingleAction);
     m_viewToolBar->addAction(m_cursorDoubleAction);
+
+    m_viewToolBar->addSeparator();
+    m_viewToolBar->addAction(m_maximizeAction);
+
     m_viewToolBar->addSeparator();
     m_viewToolBar->addAction(m_replayAction);
 
@@ -1873,6 +1885,10 @@ void MainWindow::on_actionToggleLegend_toggled(bool checked)
  */
 void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList)
 {
+    m_isMaximized = false;
+    m_maximizeAction->setIcon(style()->standardIcon(QStyle::SP_TitleBarMaxButton));
+    m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
+
     {
         const QSignalBlocker blocker(m_signalTreeModel);
 
@@ -2038,6 +2054,8 @@ void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
 
 void MainWindow::on_actionLayoutCustom_triggered()
 {
+    ensureNormalMode();
+
     // 1. 创建对话框
     if (!m_customLayoutDialog)
     {
@@ -2478,6 +2496,8 @@ SignalLocation MainWindow::getSignalDataFromID(const QString &uniqueID) const
 
 void MainWindow::onLayoutActionTriggered()
 {
+    ensureNormalMode();
+
     QAction *action = qobject_cast<QAction *>(sender());
     if (!action)
         return;
@@ -2740,5 +2760,96 @@ void MainWindow::on_actionExportAll_triggered()
     if (!success)
     {
         QMessageBox::warning(this, tr("Export Failed"), tr("Failed to save all views to %1").arg(fileName));
+    }
+}
+
+// 获取当前 Grid 布局的几何信息
+QList<QRect> MainWindow::captureLayoutGeometries() const
+{
+    QList<QRect> geometries;
+    QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotContainer->layout());
+    if (!grid)
+        return geometries;
+
+    for (int i = 0; i < grid->count(); ++i)
+    {
+        int row, col, rowSpan, colSpan;
+        grid->getItemPosition(i, &row, &col, &rowSpan, &colSpan);
+        // 我们约定 QRect(x, y, w, h) -> (col, row, colSpan, rowSpan)
+        geometries.append(QRect(col, row, colSpan, rowSpan));
+    }
+    return geometries;
+}
+
+// 确保退出最大化模式（用于在最大化时用户点击了其他布局按钮的情况）
+void MainWindow::ensureNormalMode()
+{
+    if (m_isMaximized)
+    {
+        m_plotSignalMap = m_savedPlotSignalMap;
+        m_isMaximized = false;
+        m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-expand.svg"));
+        m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
+        m_maximizeAction->setText(tr("Maximize"));
+    }
+}
+
+// 最大化/还原 槽函数
+void MainWindow::on_actionMaximize_triggered()
+{
+    if (m_isMaximized)
+    {
+        m_plotSignalMap = m_savedPlotSignalMap;
+        setupPlotLayout(m_savedGeometries);
+
+        if (m_savedActivePlotIndex >= 0 && m_savedActivePlotIndex < m_plotWidgets.size())
+        {
+            setActivePlot(m_plotWidgets.at(m_savedActivePlotIndex));
+        }
+
+        m_isMaximized = false;
+
+        // 更新图标为“最大化”
+        m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-expand.svg"));
+        m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
+    }
+    else
+    {
+        if (!m_activePlot)
+        {
+            if (!m_plotWidgets.isEmpty())
+                setActivePlot(m_plotWidgets.first());
+            else
+            {
+                QMessageBox::information(this, tr("Info"), tr("No plots available to maximize."));
+                return;
+            }
+        }
+
+        int activeIdx = m_plotWidgets.indexOf(m_activePlot);
+        if (activeIdx == -1)
+            return;
+
+        // 1. 保存当前状态
+        m_savedPlotSignalMap = m_plotSignalMap;
+        m_savedGeometries = captureLayoutGeometries();
+        m_savedActivePlotIndex = activeIdx;
+
+        // 2. 提取当前活动图表的信号
+        QSet<QString> activeSignals = m_plotSignalMap.value(activeIdx);
+
+        // 清空并设置仅显示当前活动图表
+        m_plotSignalMap.clear();
+        m_plotSignalMap.insert(0, activeSignals);
+
+        // 3. 单图布局
+        setupPlotLayout(1, 1);
+
+        m_isMaximized = true;
+
+        // 更新图标为“还原”
+        m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-contract.svg"));
+        m_maximizeAction->setToolTip(tr("Restore Layout"));
+        m_maximizeAction->setText(tr("Restore"));
     }
 }

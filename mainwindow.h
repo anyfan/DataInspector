@@ -117,6 +117,9 @@ private slots:
 
     void on_actionExportAll_triggered(); // 导出所有视图的槽
 
+    //  子图最大化动作槽
+    void on_actionMaximize_triggered();
+
 private:
     //  内部数据结构
     struct LayoutInfo
@@ -193,7 +196,11 @@ private:
      */
     void performFitView(bool fitX, bool fitY, FitTarget target);
 
-    //  成员变量 (分组)
+    // 获取当前网格布局的所有几何位置
+    QList<QRect> captureLayoutGeometries() const;
+
+    // 如果当前处于最大化模式，恢复数据以便进行其他布局操作
+    void ensureNormalMode();
 
     // 1. 核心逻辑组件
     QThread *m_dataThread;
@@ -265,6 +272,13 @@ private:
     QAction *m_replayAction;
 
     QAction *m_exportAllAction;
+
+    // 最大化功能相关成员
+    QAction *m_maximizeAction;
+    bool m_isMaximized;
+    QMap<int, QSet<QString>> m_savedPlotSignalMap; // 最大化前保存的信号映射
+    QList<QRect> m_savedGeometries;                // 最大化前保存的布局几何
+    int m_savedActivePlotIndex;                    // 保存激活的子图索引
 };
 
 #endif // MAINWINDOW_H
