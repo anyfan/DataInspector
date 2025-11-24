@@ -195,12 +195,8 @@ MainWindow::MainWindow(QWidget *parent)
       m_layoutSplitRightAction(nullptr),
       m_layoutCustomAction(nullptr),
       m_viewToolBar(nullptr),
-      m_cursorNoneAction(nullptr),
-      m_cursorSingleAction(nullptr),
-      m_cursorDoubleAction(nullptr),
       m_replayAction(nullptr),
       m_exportAllAction(nullptr),
-      m_cursorGroup(nullptr),
       m_fitViewAction(nullptr),
       m_fitViewTimeAction(nullptr),
       m_fitViewYAction(nullptr),
@@ -387,22 +383,69 @@ void MainWindow::createActions()
     m_fitViewYAllAction->setShortcut(QKeySequence(tr("Ctrl+Shift+Y"))); // 设置快捷键 Ctrl+Shift+Y
     connect(m_fitViewYAllAction, &QAction::triggered, this, &MainWindow::on_actionFitViewYAll_triggered);
 
-    // 视图/游标动作
-    m_cursorNoneAction = new QAction(tr("关闭游标"), this);
-    m_cursorNoneAction->setCheckable(true);
-    m_cursorNoneAction->setChecked(true);
+    m_cursorActionSingle = new QAction(tr("单游标"), this);
+    m_cursorActionSingle->setCheckable(false);
+    m_cursorActionSingle->setIcon(QIcon(":/icon/cursor_1.svg"));
+    m_cursorActionSingle->setData(QVariant::fromValue(CursorManager::SingleCursor));
 
-    m_cursorSingleAction = new QAction(tr("单游标"), this);
-    m_cursorSingleAction->setCheckable(true);
+    m_cursorActionDouble = new QAction(tr("双游标"), this);
+    m_cursorActionDouble->setCheckable(false);
+    m_cursorActionDouble->setIcon(QIcon(":/icon/cursor_2.svg"));
+    m_cursorActionDouble->setData(QVariant::fromValue(CursorManager::DoubleCursor));
 
-    m_cursorDoubleAction = new QAction(tr("双游标"), this);
-    m_cursorDoubleAction->setCheckable(true);
+    m_cursorMenuGroup = new QActionGroup(this);
+    m_cursorMenuGroup->addAction(m_cursorActionSingle);
+    m_cursorMenuGroup->addAction(m_cursorActionDouble);
 
-    m_cursorGroup = new QActionGroup(this);
-    m_cursorGroup->addAction(m_cursorNoneAction);
-    m_cursorGroup->addAction(m_cursorSingleAction);
-    m_cursorGroup->addAction(m_cursorDoubleAction);
-    connect(m_cursorGroup, &QActionGroup::triggered, m_cursorManager, &CursorManager::onCursorActionTriggered);
+    // 创建工具按钮
+    m_cursorMainBtn = new QToolButton(this);
+    m_cursorMainBtn->setIcon(QIcon(":/icon/cursor_1.svg"));
+    m_cursorMainBtn->setCheckable(true);
+    m_cursorMainBtn->setAutoRaise(true);
+    m_cursorMainBtn->setToolTip(tr("启用/关闭游标"));
+
+    // 设置样式表
+    m_cursorMainBtn->setStyleSheet(
+        "QToolButton {"
+        "    border: none;"
+        "    border-bottom: 3px solid transparent;"
+        "    padding: 3px;"
+        "    border-radius: 0px;"
+        "}"
+        "QToolButton:checked {"
+        "    background-color: transparent;"
+        "    border-bottom: 3px solid #0078d4;"
+        "}"
+        "QToolButton:hover {"
+        "    background-color: rgba(0, 0, 0, 0.05);"
+        "}");
+
+    m_cursorArrowBtn = new QToolButton(this);
+    m_cursorArrowBtn->setArrowType(Qt::DownArrow);
+    m_cursorArrowBtn->setPopupMode(QToolButton::InstantPopup);
+    m_cursorArrowBtn->setAutoRaise(true);
+    m_cursorArrowBtn->setFixedWidth(12);
+    m_cursorArrowBtn->setToolTip(tr("切换游标模式"));
+
+    m_cursorArrowBtn->setStyleSheet(
+        "QToolButton {"
+        "    border: none;"
+        "    padding: 0px;"
+        "    border-radius: 0px;"
+        "}"
+        "QToolButton:hover {"
+        "    background-color: rgba(0, 0, 0, 0.1);"
+        "}"
+        "QToolButton::menu-indicator { image: none; }");
+
+    // 4. 创建菜单并赋值给按钮
+    QMenu *cursorMenu = new QMenu(this);
+    cursorMenu->addAction(m_cursorActionSingle);
+    cursorMenu->addAction(m_cursorActionDouble);
+    m_cursorArrowBtn->setMenu(cursorMenu);
+
+    connect(m_cursorMainBtn, &QToolButton::toggled, this, &MainWindow::onCursorMainButtonToggled);
+    connect(m_cursorMenuGroup, &QActionGroup::triggered, this, &MainWindow::onCursorMenuActionTriggered);
 
     m_replayAction = new QAction(tr("重放"), this);
     m_replayAction->setCheckable(true);
@@ -532,9 +575,13 @@ void MainWindow::createToolBars()
     m_viewToolBar->addSeparator();
 
     // 添加游标动作
-    m_viewToolBar->addAction(m_cursorNoneAction);
-    m_viewToolBar->addAction(m_cursorSingleAction);
-    m_viewToolBar->addAction(m_cursorDoubleAction);
+    QWidget *cursorContainer = new QWidget(m_viewToolBar);
+    QHBoxLayout *hLayout = new QHBoxLayout(cursorContainer);
+    hLayout->setContentsMargins(0, 0, 0, 0);
+    hLayout->setSpacing(0);
+    hLayout->addWidget(m_cursorMainBtn);
+    hLayout->addWidget(m_cursorArrowBtn);
+    m_viewToolBar->addWidget(cursorContainer);
 
     m_viewToolBar->addSeparator();
     m_viewToolBar->addAction(m_maximizeAction);
@@ -1622,9 +1669,10 @@ void MainWindow::onReplayActionToggled(bool checked)
 {
     if (checked && m_cursorManager->getMode() == CursorManager::NoCursor)
     {
-        // 如果没有游标，自动启用单游标
-        m_cursorSingleAction->setChecked(true);
-        m_cursorManager->setMode(CursorManager::SingleCursor);
+        m_cursorActionSingle->setChecked(true);
+        m_currentCursorMode = CursorManager::SingleCursor;
+
+        m_cursorMainBtn->setChecked(true);
     }
 }
 
@@ -2851,5 +2899,53 @@ void MainWindow::on_actionMaximize_triggered()
         m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-contract.svg"));
         m_maximizeAction->setToolTip(tr("Restore Layout"));
         m_maximizeAction->setText(tr("Restore"));
+    }
+}
+
+void MainWindow::onCursorMainButtonToggled(bool checked)
+{
+    if (checked)
+    {
+        m_cursorManager->setMode(m_currentCursorMode);
+
+        if (m_currentCursorMode == CursorManager::SingleCursor)
+        {
+            m_cursorMainBtn->setIcon(QIcon(":/icon/cursor_1.svg"));
+        }
+        else
+        {
+            m_cursorMainBtn->setIcon(QIcon(":/icon/cursor_2.svg"));
+        }
+    }
+    else
+    {
+        m_cursorManager->setMode(CursorManager::NoCursor);
+    }
+}
+
+void MainWindow::onCursorMenuActionTriggered(QAction *action)
+{
+    if (!action)
+        return;
+
+    CursorManager::CursorMode newMode = action->data().value<CursorManager::CursorMode>();
+    m_currentCursorMode = newMode;
+
+    if (newMode == CursorManager::SingleCursor)
+    {
+        m_cursorMainBtn->setIcon(QIcon(":/icon/cursor_1.svg"));
+    }
+    else
+    {
+        m_cursorMainBtn->setIcon(QIcon(":/icon/cursor_2.svg"));
+    }
+
+    if (!m_cursorMainBtn->isChecked())
+    {
+        m_cursorMainBtn->setChecked(true);
+    }
+    else
+    {
+        m_cursorManager->setMode(m_currentCursorMode);
     }
 }

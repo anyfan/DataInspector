@@ -76,4 +76,6 @@ private:
     // --- 优化部分结束 ---
 };
 
+Q_DECLARE_METATYPE(CursorManager::CursorMode)
+
 #endif // CURSORMANAGER_H

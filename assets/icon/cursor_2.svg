@@ -1,0 +1,12 @@
+<svg width="24" height="24" xmlns="http://www.w3.org/2000/svg" stroke-linejoin="round" stroke-linecap="round" stroke-width="2" stroke="currentColor" fill="none">
+ <title>开启双图表游标</title>
+
+ <g>
+  <title>Layer 1</title>
+  <path stroke="null" id="svg_1" d="m1.25004,12.00001c4.00196,-14.62498 8.00392,-14.62498 10.67189,0c2.66797,14.62498 6.66993,14.62498 10.67189,0"/>
+  <line stroke="null" id="svg_2" y2="23.87498" x2="15" y1="0.21831" x1="15"/>
+  <line stroke="null" id="svg_5" y2="24.34445" x2="9" y1="-0.12502" x1="9"/>
+  <path id="svg_14" d="m-29.91305,-22.43135l0.56913,0l0.17587,-0.54067l0.17587,0.54067l0.56913,0l-0.46044,0.33415l0.17588,0.54067l-0.46044,-0.33416l-0.46044,0.33416l0.17588,-0.54067l-0.46044,-0.33415z" stroke="null"/>
+  <path id="svg_18" d="m11.68746,17.0007" opacity="NaN" stroke="null"/>
+ </g>
+</svg>

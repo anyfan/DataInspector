@@ -120,6 +120,9 @@ private slots:
     //  子图最大化动作槽
     void on_actionMaximize_triggered();
 
+    void onCursorMainButtonToggled(bool checked);
+    void onCursorMenuActionTriggered(QAction *action);
+
 private:
     //  内部数据结构
     struct LayoutInfo
@@ -265,10 +268,13 @@ private:
     QAction *m_openGLAction;
     QAction *m_clearAllPlotsAction;
     // 游标
-    QAction *m_cursorNoneAction;
-    QAction *m_cursorSingleAction;
-    QAction *m_cursorDoubleAction;
-    QActionGroup *m_cursorGroup;
+    QToolButton *m_cursorMainBtn;
+    QToolButton *m_cursorArrowBtn;
+    QAction *m_cursorActionSingle;
+    QAction *m_cursorActionDouble;
+    QActionGroup *m_cursorMenuGroup;
+    CursorManager::CursorMode m_currentCursorMode = CursorManager::SingleCursor;
+
     QAction *m_replayAction;
 
     QAction *m_exportAllAction;

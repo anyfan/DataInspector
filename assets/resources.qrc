@@ -4,5 +4,7 @@
         <file>icon/play-circle.svg</file>
         <file>icon/arrows-angle-expand.svg</file>
         <file>icon/arrows-angle-contract.svg</file>
+        <file>icon/cursor_1.svg</file>
+        <file>icon/cursor_2.svg</file>
     </qresource>
 </RCC>
