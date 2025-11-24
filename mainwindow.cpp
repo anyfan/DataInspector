@@ -200,7 +200,6 @@ MainWindow::MainWindow(QWidget *parent)
       m_fitViewAction(nullptr),
       m_fitViewTimeAction(nullptr),
       m_fitViewYAction(nullptr),
-      m_toggleLegendAction(nullptr),
       m_customLayoutDialog(nullptr),
       m_customRowsSpinBox(nullptr),
       m_customColsSpinBox(nullptr),
@@ -473,15 +472,12 @@ void MainWindow::createActions()
     m_replayAction->setIcon(QIcon(":/icon/play-circle.svg"));
     connect(m_replayAction, &QAction::toggled, this, &MainWindow::onReplayActionToggled);
 
-    // 图例切换动作
-    m_toggleLegendAction = new QAction(tr("切换图例"), this);
-    m_toggleLegendAction->setCheckable(true);
-    m_toggleLegendAction->setChecked(true);
-    m_toggleLegendAction->setIcon(style()->standardIcon(QStyle::SP_MessageBoxInformation));
-    m_toggleLegendAction->setToolTip(tr("显示/隐藏图例"));
-    connect(m_toggleLegendAction, &QAction::toggled, this, &MainWindow::on_actionToggleLegend_toggled);
-
     m_legendPosGroup = new QActionGroup(this);
+
+    m_legendPosNoneAction = new QAction(tr("无"), this);
+    m_legendPosNoneAction->setCheckable(true);
+    m_legendPosNoneAction->setData(-1);
+
     m_legendPosOutsideTopAction = new QAction(tr("图表外上方"), this);
     m_legendPosOutsideTopAction->setCheckable(true);
     m_legendPosOutsideTopAction->setData(0);
@@ -494,6 +490,8 @@ void MainWindow::createActions()
     m_legendPosInsideTRAction = new QAction(tr("图表内右上"), this);
     m_legendPosInsideTRAction->setCheckable(true);
     m_legendPosInsideTRAction->setData(2);
+
+    m_legendPosGroup->addAction(m_legendPosNoneAction);
     m_legendPosGroup->addAction(m_legendPosOutsideTopAction);
     m_legendPosGroup->addAction(m_legendPosInsideTLAction);
     m_legendPosGroup->addAction(m_legendPosInsideTRAction);
@@ -559,19 +557,17 @@ void MainWindow::createMenus()
     viewMenu->addAction(m_fitViewYAction);
     viewMenu->addAction(m_fitViewYAllAction);
 
-    // 添加图例切换菜单项
-    viewMenu->addSeparator();
-    viewMenu->addAction(m_toggleLegendAction);
-
-    // 添加图例位置子菜单
-    QMenu *legendPosMenu = viewMenu->addMenu(tr("图例位置"));
-    legendPosMenu->addAction(m_legendPosOutsideTopAction);
-    legendPosMenu->addAction(m_legendPosInsideTLAction);
-    legendPosMenu->addAction(m_legendPosInsideTRAction);
-
     // 创建 "设置" 菜单
     QMenu *settingsMenu = menuBar()->addMenu(tr("&设置"));
     settingsMenu->addAction(m_openGLAction);
+
+    QMenu *legendPosMenu = settingsMenu->addMenu(tr("图例位置"));
+
+    legendPosMenu->addAction(m_legendPosNoneAction);
+    legendPosMenu->addSeparator();
+    legendPosMenu->addAction(m_legendPosOutsideTopAction);
+    legendPosMenu->addAction(m_legendPosInsideTLAction);
+    legendPosMenu->addAction(m_legendPosInsideTRAction);
 }
 
 void MainWindow::createToolBars()
@@ -589,8 +585,6 @@ void MainWindow::createToolBars()
     m_viewToolBar->addAction(m_fitViewYAllAction);
     m_viewToolBar->addSeparator();
 
-    // 添加图例切换按钮
-    m_viewToolBar->addAction(m_toggleLegendAction);
     // 添加清除按钮到工具栏
     m_viewToolBar->addAction(m_clearAllPlotsAction);
     m_viewToolBar->addSeparator();
@@ -1933,21 +1927,6 @@ QStandardItem *MainWindow::findItemBySignalName(const QString &name)
 }
 
 /**
- * @brief 切换所有子图中图例的可见性
- */
-void MainWindow::on_actionToggleLegend_toggled(bool checked)
-{
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        if (plot && plot->legend)
-        {
-            plot->legend->setVisible(checked);
-            plot->replot();
-        }
-    }
-}
-
-/**
  * @brief [辅助] 应用导入的布局和信号设置
  * @param layout 从 sdi_view_meta_data.xml 解析的布局信息
  * @param signalList 从 sdi_checked_signals.xml 解析的信号列表
@@ -2416,7 +2395,20 @@ void MainWindow::updateReplayManagerRange()
  */
 void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
 {
-    if (!plot || !plot->axisRect())
+    if (!plot)
+        return;
+
+    if (mode == -1)
+    {
+        if (plot->legend)
+        {
+            plot->legend->setVisible(false);
+            plot->replot();
+        }
+        return;
+    }
+
+    if (!plot->axisRect())
         return;
 
     bool targetIsOutside = (mode == 0);
@@ -2437,7 +2429,7 @@ void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
     }
 
     // 2. 通用样式设置
-    plot->legend->setVisible(m_toggleLegendAction->isChecked());
+    plot->legend->setVisible(true);
     QFont font = plot->font();
     font.setPointSize(7);
     plot->legend->setFont(font);

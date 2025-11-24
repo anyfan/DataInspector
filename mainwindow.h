@@ -73,7 +73,6 @@ private slots:
     //  1. 菜单动作槽 (Menu Actions)
     void on_actionLoadFile_triggered();
     void on_actionImportView_triggered();
-    void on_actionToggleLegend_toggled(bool checked);
     void onLegendPositionChanged(QAction *action);
     void on_actionClearAllPlots_triggered();
     void onOpenGLActionToggled(bool checked);
@@ -246,6 +245,7 @@ private:
     QAction *m_importViewAction;
     //  图例位置动作组
     QActionGroup *m_legendPosGroup;
+    QAction *m_legendPosNoneAction;
     QAction *m_legendPosOutsideTopAction;
     QAction *m_legendPosInsideTLAction;
     QAction *m_legendPosInsideTRAction;
@@ -264,7 +264,6 @@ private:
     QAction *m_fitViewTimeAction;
     QAction *m_fitViewYAction;
     QAction *m_fitViewYAllAction;
-    QAction *m_toggleLegendAction;
     QAction *m_openGLAction;
     QAction *m_clearAllPlotsAction;
     // 游标
