@@ -10,7 +10,7 @@ int main(int argc, char *argv[])
     QApplication a(argc, argv);
     
     // 设置应用程序图标
-    QIcon appIcon(":/plotjuggler.svg");
+    QIcon appIcon(":/icon/plotjuggler.svg");
     if (!appIcon.isNull()) {
         a.setWindowIcon(appIcon);
     }

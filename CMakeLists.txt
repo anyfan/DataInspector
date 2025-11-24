@@ -58,7 +58,7 @@ set(SOURCES
 )
 
 # --- 3. 目标构建 ---
-add_executable(DataInspector ${SOURCES} resources.qrc DataInspector.rc)
+add_executable(DataInspector ${SOURCES} assets/resources.qrc assets/DataInspector.rc)
 
 target_compile_definitions(DataInspector PRIVATE QUAZIP_STATIC)
 target_include_directories(DataInspector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})

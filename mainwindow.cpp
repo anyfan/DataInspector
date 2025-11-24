@@ -404,6 +404,7 @@ void MainWindow::createActions()
 
     m_replayAction = new QAction(tr("重放"), this);
     m_replayAction->setCheckable(true);
+    m_replayAction->setIcon(QIcon(":/icon/play-circle.svg"));
     connect(m_replayAction, &QAction::toggled, this, &MainWindow::onReplayActionToggled);
 
     // 图例切换动作

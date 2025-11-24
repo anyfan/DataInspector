@@ -1,0 +1,6 @@
+<RCC>
+    <qresource prefix="/">
+        <file>icon/plotjuggler.svg</file>
+        <file>icon/play-circle.svg</file>
+    </qresource>
+</RCC>
