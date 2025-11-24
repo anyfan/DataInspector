@@ -5,6 +5,7 @@
 #include <QPen>
 #include <QVariant>
 #include <QApplication>
+#include <QFont>
 
 SignalTreeDelegate::SignalTreeDelegate(QObject *parent)
     : QStyledItemDelegate(parent)
@@ -20,8 +21,14 @@ void SignalTreeDelegate::paint(QPainter *painter, const QStyleOptionViewItem &op
     QStyleOptionViewItem opt = option;
     initStyleOption(&opt, index);
 
-    // 预留右侧 40 像素用于绘制预览
-    const int previewWidth = 40;
+    // 设置较小的字体
+    QFont font = opt.font;
+    font.setPointSize(font.pointSize() - 1); // 减小1号字体
+    opt.font = font;
+    painter->setFont(font);
+
+    // 预留右侧 32 像素用于绘制预览
+    const int previewWidth = 32;
     const int margin = 2;
 
     QRect previewRect;

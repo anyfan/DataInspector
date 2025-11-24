@@ -1975,7 +1975,6 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
 
     updateSignalTreeChecks();
     on_actionFitView_triggered();
-    qDebug() << "Import View finished successfully.";
 }
 
 void MainWindow::on_actionFitViewYAll_triggered()
