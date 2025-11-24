@@ -6,5 +6,10 @@
         <file>icon/arrows-angle-contract.svg</file>
         <file>icon/cursor_1.svg</file>
         <file>icon/cursor_2.svg</file>
+        <file>icon/grid-split-right.svg</file>
+        <file>icon/IxEditorGridNone.svg</file>
+        <file>icon/F7RectangleGrid1x2.svg</file>
+        <file>icon/grid.svg</file>
+        <file>icon/MdiViewGridPlusOutline.svg</file>
     </qresource>
 </RCC>

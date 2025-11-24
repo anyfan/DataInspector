@@ -322,28 +322,48 @@ void MainWindow::createActions()
     // 替换布局菜单
     m_layout1x1Action = new QAction(tr("1x1 Layout"), this);
     m_layout1x1Action->setData(QPoint(1, 1));
+    m_layout1x1Action->setIcon(QIcon(":/icon/IxEditorGridNone.svg"));
 
     m_layout1x2Action = new QAction(tr("1x2 Layout (Side by Side)"), this);
     m_layout1x2Action->setData(QPoint(1, 2));
+    QPixmap layout1x2Pixmap(":/icon/F7RectangleGrid1x2.svg");
+    QTransform layout1x2Transform;
+    layout1x2Transform.rotate(90);
+    m_layout1x2Action->setIcon(QIcon(QPixmap(layout1x2Pixmap.transformed(layout1x2Transform))));
 
     m_layout2x1Action = new QAction(tr("2x1 Layout (Stacked)"), this);
     m_layout2x1Action->setData(QPoint(2, 1));
+    m_layout2x1Action->setIcon(QIcon(":/icon/F7RectangleGrid1x2.svg"));
 
     m_layout2x2Action = new QAction(tr("2x2 Layout"), this);
     m_layout2x2Action->setData(QPoint(2, 2));
+    m_layout2x2Action->setIcon(QIcon(":/icon/grid.svg"));
 
     // 对于复杂的 Split 布局，我们使用字符串或特殊 ID 作为 Data
     m_layoutSplitBottomAction = new QAction(tr("Bottom Split"), this);
     m_layoutSplitBottomAction->setData("split_bottom");
+    QPixmap bottomSplitPixmap(":/icon/grid-split-right.svg");
+    QTransform bottomSplitTransform;
+    bottomSplitTransform.rotate(90);
+    m_layoutSplitBottomAction->setIcon(QIcon(QPixmap(bottomSplitPixmap.transformed(bottomSplitTransform))));
 
     m_layoutSplitTopAction = new QAction(tr("Top Split"), this);
     m_layoutSplitTopAction->setData("split_top");
+    QPixmap topSplitPixmap(":/icon/grid-split-right.svg");
+    QTransform topSplitTransform;
+    topSplitTransform.rotate(-90);
+    m_layoutSplitTopAction->setIcon(QIcon(QPixmap(topSplitPixmap.transformed(topSplitTransform))));
 
     m_layoutSplitLeftAction = new QAction(tr("Left Split"), this);
     m_layoutSplitLeftAction->setData("split_left");
+    QPixmap leftSplitPixmap(":/icon/grid-split-right.svg");
+    QTransform leftSplitTransform;
+    leftSplitTransform.rotate(180);
+    m_layoutSplitLeftAction->setIcon(QIcon(QPixmap(leftSplitPixmap.transformed(leftSplitTransform))));
 
     m_layoutSplitRightAction = new QAction(tr("Right Split"), this);
     m_layoutSplitRightAction->setData("split_right");
+    m_layoutSplitRightAction->setIcon(QIcon(":/icon/grid-split-right.svg"));
 
     QList<QAction *> layoutActions = {
         m_layout1x1Action, m_layout1x2Action, m_layout2x1Action, m_layout2x2Action,
@@ -356,6 +376,7 @@ void MainWindow::createActions()
     }
 
     m_layoutCustomAction = new QAction(tr("Custom Grid..."), this);
+    m_layoutCustomAction->setIcon(QIcon(":/icon/MdiViewGridPlusOutline.svg"));
     connect(m_layoutCustomAction, &QAction::triggered, this, &MainWindow::on_actionLayoutCustom_triggered);
 
     // 视图缩放动作
@@ -2572,11 +2593,11 @@ void MainWindow::onLayoutActionTriggered()
         }
         else if (type == "split_left")
         {
-            geometries << QRect(0, 0, 1, 2) << QRect(1, 0, 1, 1) << QRect(1, 1, 1, 1);
+            geometries << QRect(0, 0, 1, 1) << QRect(0, 1, 1, 1) << QRect(1, 0, 1, 2);
         }
         else if (type == "split_right")
         {
-            geometries << QRect(0, 0, 1, 1) << QRect(0, 1, 1, 1) << QRect(1, 0, 1, 2);
+            geometries << QRect(0, 0, 1, 2) << QRect(1, 0, 1, 1) << QRect(1, 1, 1, 1);
         }
 
         if (!geometries.isEmpty())
