@@ -57,11 +57,21 @@ public:
      * @brief 在树中选中指定ID的信号并滚动到该位置
      */
     void selectSignal(const QString &uniqueId);
-    
+
     /**
      * @brief 清空所有内容
      */
     void clear();
+
+    /**
+     * @brief 设置新加载信号的默认线宽
+     */
+    void setDefaultPenWidth(int width);
+
+    /**
+     * @brief 获取当前的默认线宽
+     */
+    int defaultPenWidth() const;
 
 signals:
     /**
@@ -100,6 +110,9 @@ private:
     // 颜色管理
     QVector<QColor> m_colorList;
     int m_colorIndex;
+
+    // 默认线宽设置
+    int m_defaultPenWidth;
 };
 
 #endif // SIGNALBROWSER_H

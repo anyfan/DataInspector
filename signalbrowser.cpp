@@ -15,7 +15,8 @@ SignalBrowser::SignalBrowser(QWidget *parent)
       m_searchBox(nullptr),
       m_treeView(nullptr),
       m_model(nullptr),
-      m_colorIndex(0)
+      m_colorIndex(0),
+      m_defaultPenWidth(1) // 初始化默认线宽为 1
 {
     // 初始化颜色列表
     m_colorList << QColor("#0072bd") << QColor("#d95319") << QColor("#edb120")
@@ -113,7 +114,8 @@ void SignalBrowser::loadFileData(const FileData &data)
             QColor color = m_colorList.at(m_colorIndex);
             m_colorIndex = (m_colorIndex + 1) % m_colorList.size();
 
-            QPen pen(color, 1);
+            // 使用 m_defaultPenWidth 替代硬编码的 1
+            QPen pen(color, m_defaultPenWidth);
             item->setData(QVariant::fromValue(pen), PenDataRole);
 
             parentItem->appendRow(item);
@@ -316,7 +318,6 @@ void SignalBrowser::clear()
     m_colorIndex = 0;
 }
 
-// 在文件末尾或适当位置添加实现
 QString SignalBrowser::getSignalName(const QString &uniqueId) const
 {
     QStandardItem *item = m_uniqueIdMap.value(uniqueId, nullptr);
@@ -352,4 +353,15 @@ void SignalBrowser::selectSignal(const QString &uniqueId)
         m_treeView->clearSelection();
         m_treeView->setCurrentIndex(QModelIndex());
     }
+}
+
+void SignalBrowser::setDefaultPenWidth(int width)
+{
+    if (width > 0)
+        m_defaultPenWidth = width;
+}
+
+int SignalBrowser::defaultPenWidth() const
+{
+    return m_defaultPenWidth;
 }

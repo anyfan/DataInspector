@@ -367,6 +367,11 @@ void MainWindow::createActions()
     m_openGLAction->setChecked(false); // 默认关闭
     connect(m_openGLAction, &QAction::toggled, this, &MainWindow::onOpenGLActionToggled);
 
+    // 设置默认线宽动作
+    m_setDefaultPenWidthAction = new QAction(tr("默认线宽"), this);
+    m_setDefaultPenWidthAction->setToolTip(tr("设置新加载信号的默认线宽"));
+    connect(m_setDefaultPenWidthAction, &QAction::triggered, this, &MainWindow::on_actionSetDefaultPenWidth_triggered);
+
     m_clearAllPlotsAction = new QAction(tr("Clear All Plots"), this);
     m_clearAllPlotsAction->setToolTip(tr("Remove all signals from all plots"));
     m_clearAllPlotsAction->setIcon(style()->standardIcon(QStyle::SP_DialogDiscardButton));
@@ -428,6 +433,8 @@ void MainWindow::createMenus()
     // 创建 "设置" 菜单
     QMenu *settingsMenu = menuBar()->addMenu(tr("&设置"));
     settingsMenu->addAction(m_openGLAction);
+
+    settingsMenu->addAction(m_setDefaultPenWidthAction);
 
     QMenu *legendPosMenu = settingsMenu->addMenu(tr("图例位置"));
 
@@ -2478,5 +2485,23 @@ void MainWindow::on_actionFullScreen_triggered()
         showFullScreen();
         m_fullScreenAction->setIcon(QIcon(":/icon/fullscreen-exit.svg"));
         m_fullScreenAction->setToolTip(tr("Exit Full Screen"));
+    }
+}
+
+void MainWindow::on_actionSetDefaultPenWidth_triggered()
+{
+    bool ok;
+    int currentWidth = m_signalBrowser->defaultPenWidth();
+
+    QString labelText = tr("线宽 (px):\n\n"
+                           "注意：\n"
+                           "1. 线宽大于 1 可能会增加 CPU 消耗 (渲染开销变大)。\n"
+                           "2. 此设置将在下次加载文件时生效。");
+
+    int width = QInputDialog::getInt(this, tr("设置默认线宽"),
+                                     labelText, currentWidth, 1, 20, 1, &ok);
+    if (ok)
+    {
+        m_signalBrowser->setDefaultPenWidth(width);
     }
 }
