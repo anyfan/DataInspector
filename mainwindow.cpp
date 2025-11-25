@@ -1,8 +1,7 @@
 #include "mainwindow.h"
 #include "qcustomplot.h"
-#include "signaltreedelegate.h"
-#include "signalpropertiesdialog.h"
 #include "replaymanager.h"
+#include "FlowLegend.h"
 
 #include <QMenuBar>
 #include <QMenu>
@@ -47,123 +46,6 @@
 #include "quazip/quazip.h"
 #include "quazip/quazipfile.h"
 
-// 自定义流式布局图例类
-class FlowLegend : public QCPLegend
-{
-public:
-    explicit FlowLegend() : QCPLegend()
-    {
-        setColumnSpacing(10);
-        setRowSpacing(5);
-    }
-
-    virtual QSize minimumOuterSizeHint() const override
-    {
-        if (itemCount() == 0)
-            return QSize(0, 0);
-
-        int currentWidth = mOuterRect.width();
-        if (currentWidth <= 0)
-            currentWidth = 100;
-
-        // 只计算高度，不应用布局 (apply=false)
-        int requiredHeight = calculateLayout(currentWidth, false);
-
-        return QSize(0, requiredHeight);
-    }
-
-    virtual void updateLayout() override
-    {
-        // 计算并应用布局 (apply=true)
-        calculateLayout(mOuterRect.width(), true);
-    }
-
-private:
-    // [核心逻辑] 统一的布局计算函数
-    // apply: 如果为 true，则实际设置元素位置；如果为 false，仅计算所需高度
-    int calculateLayout(int availWidth, bool apply) const
-    {
-        double x = mMargins.left();
-        double y = mMargins.top();
-        double currentLineHeight = 0;
-
-        QList<QCPLayoutElement *> items;
-        for (int i = 0; i < itemCount(); ++i)
-        {
-            if (QCPAbstractLegendItem *el = item(i))
-            {
-                if (el->realVisibility() && !el->minimumOuterSizeHint().isEmpty())
-                    items.append(el);
-            }
-        }
-
-        if (items.isEmpty())
-            return mMargins.top() + mMargins.bottom();
-
-        for (QCPLayoutElement *el : items)
-        {
-            QSize sz = el->minimumOuterSizeHint();
-
-            // 换行判断
-            if (x + sz.width() + mMargins.right() > availWidth && x > mMargins.left())
-            {
-                x = mMargins.left();
-                y += currentLineHeight + mRowSpacing;
-                currentLineHeight = 0;
-            }
-
-            // 应用位置
-            if (apply)
-            {
-                el->setOuterRect(QRect(mOuterRect.left() + x, mOuterRect.top() + y, sz.width(), sz.height()));
-            }
-
-            x += sz.width() + mColumnSpacing;
-
-            if (sz.height() > currentLineHeight)
-                currentLineHeight = sz.height();
-        }
-
-        return y + currentLineHeight + mMargins.bottom();
-    }
-};
-
-/**
- * @brief [辅助函数] 递归地在 QStandardItemModel 中按名称查找信号条目
- * @param parentItem 开始搜索的父项 (初始调用时传入 invisibleRootItem)
- * @param name 要查找的信号名称 (item->text())
- * @return 找到的 QStandardItem，如果未找到则返回 nullptr
- */
-static QStandardItem *findItemByName_Recursive(QStandardItem *parentItem, const QString &name)
-{
-    if (!parentItem)
-        return nullptr;
-
-    for (int r = 0; r < parentItem->rowCount(); ++r)
-    {
-        QStandardItem *child = parentItem->child(r);
-        if (!child)
-            continue;
-
-        if (child->data(IsSignalItemRole).toBool())
-        {
-            // 是信号条目，检查名称
-            if (child->text() == name)
-            {
-                return child;
-            }
-        }
-        else
-        {
-            // 是文件或表条目，递归搜索其子项
-            QStandardItem *found = findItemByName_Recursive(child, name);
-            if (found)
-                return found;
-        }
-    }
-    return nullptr;
-}
-
 static bool isSupportedFile(const QString &filePath)
 {
     return filePath.endsWith(".csv", Qt::CaseInsensitive) ||
@@ -178,8 +60,6 @@ MainWindow::MainWindow(QWidget *parent)
       m_dataManager(nullptr),
       m_plotContainer(nullptr),
       m_signalDock(nullptr),
-      m_signalTree(nullptr),
-      m_signalTreeModel(nullptr),
       m_progressDialog(nullptr),
       m_activePlot(nullptr),
       m_lastMousePlot(nullptr),
@@ -209,7 +89,7 @@ MainWindow::MainWindow(QWidget *parent)
       m_yAxisGroup(nullptr),
       m_isMaximized(false),
       m_savedActivePlotIndex(-1),
-      m_colorIndex(0)
+      m_signalBrowser(nullptr)
 {
     setupDataManagerThread();
 
@@ -233,24 +113,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 在构造函数中启用拖放
     setAcceptDrops(true);
-
-    // 初始化颜色列表
-    m_colorList << QColor("#0072bd"); // 蓝
-    m_colorList << QColor("#d95319"); // 橙
-    m_colorList << QColor("#edb120"); // 黄
-    m_colorList << QColor("#7e2f8e"); // 紫
-    m_colorList << QColor("#77ac30"); // 绿
-    m_colorList << QColor("#4dbeee"); // 青
-    m_colorList << QColor("#a2142f"); // 红
-
-    // 扩展颜色 (7)
-    m_colorList << QColor("#139fff"); // 亮蓝
-    m_colorList << QColor("#ff6929"); // 亮橙
-    m_colorList << QColor("#b746ff"); // 亮紫
-    m_colorList << QColor("#64d413"); // 亮绿
-    m_colorList << QColor("#ff13a6"); // 亮粉
-    m_colorList << QColor("#fe330a"); // 亮红
-    m_colorList << QColor("#22b573"); // 蓝绿
 
     // 5. 设置初始布局
     setupPlotLayout(2, 1);
@@ -518,7 +380,7 @@ void MainWindow::createActions()
     connect(m_maximizeAction, &QAction::triggered, this, &MainWindow::on_actionMaximize_triggered);
 
     m_fullScreenAction = new QAction(this);
-    m_fullScreenAction->setIcon(QIcon(":/icon/fullscreen.svg")); 
+    m_fullScreenAction->setIcon(QIcon(":/icon/fullscreen.svg"));
     m_fullScreenAction->setToolTip(tr("Full Screen"));
     m_fullScreenAction->setShortcut(Qt::Key_F11);
     connect(m_fullScreenAction, &QAction::triggered, this, &MainWindow::on_actionFullScreen_triggered);
@@ -618,52 +480,78 @@ void MainWindow::createDocks()
 {
     m_signalDock = new QDockWidget(tr("信号"), this);
 
-    // 创建一个容器 QWidget 来存放搜索框和树
-    QWidget *dockWidget = new QWidget(m_signalDock);
-    QVBoxLayout *dockLayout = new QVBoxLayout(dockWidget);
-    dockLayout->setContentsMargins(4, 4, 4, 4); // 紧凑边距
-    dockLayout->setSpacing(4);                  // 控件间距
+    m_signalBrowser = new SignalBrowser(m_signalDock);
 
-    // 创建并添加搜索框
-    m_signalSearchBox = new QLineEdit(dockWidget);
-    m_signalSearchBox->setPlaceholderText(tr("搜索信号..."));
-    m_signalSearchBox->setClearButtonEnabled(true);
-    dockLayout->addWidget(m_signalSearchBox);
+    connect(m_signalBrowser, &SignalBrowser::signalCheckStateChanged, this, &MainWindow::onSignalCheckStateChanged);
+    connect(m_signalBrowser, &SignalBrowser::signalPenChanged, this, &MainWindow::onSignalPenChanged);
+    connect(m_signalBrowser, &SignalBrowser::fileRemoveRequested, this, &MainWindow::onFileRemoveRequested);
 
-    m_signalTree = new QTreeView(dockWidget);
-    m_signalTreeModel = new QStandardItemModel(m_signalDock);
-    m_signalTree->setModel(m_signalTreeModel);
-    m_signalTree->setHeaderHidden(true);
-    m_signalTree->setItemDelegate(new SignalTreeDelegate(m_signalTree));
-
-    // 设置缩进宽度，默认通常为20，这里减小为10以减少层级缩进感
-    m_signalTree->setIndentation(8);
-
-    // 启用从树状视图拖动
-    m_signalTree->setDragEnabled(true);
-    m_signalTree->setDragDropMode(QAbstractItemView::DragOnly);
-    m_signalTree->setSelectionMode(QAbstractItemView::ExtendedSelection); // 允许选择多行进行拖拽
-
-    dockLayout->addWidget(m_signalTree); // 将树添加到布局中
-
-    m_signalDock->setWidget(dockWidget); // 设置容器 QWidget 为 dock 的控件
+    m_signalDock->setWidget(m_signalBrowser);
 
     m_signalDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
     addDockWidget(Qt::LeftDockWidgetArea, m_signalDock);
 
-    connect(m_signalTreeModel, &QStandardItemModel::itemChanged, this, &MainWindow::onSignalItemChanged);
-    connect(m_signalTree, &QTreeView::doubleClicked, this, &MainWindow::onSignalItemDoubleClicked);
-
-    // 连接右键菜单
-    m_signalTree->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(m_signalTree, &QTreeView::customContextMenuRequested, this, &MainWindow::onSignalTreeContextMenu);
-
-    // 连接搜索框信号
-    connect(m_signalSearchBox, &QLineEdit::textChanged, this, &MainWindow::onSignalSearchChanged);
-
     if (m_replayManager && m_replayManager->getDockWidget())
     {
         addDockWidget(Qt::BottomDockWidgetArea, m_replayManager->getDockWidget());
+    }
+}
+
+// 新增槽函数：处理信号勾选
+void MainWindow::onSignalCheckStateChanged(const QString &uniqueId, bool checked)
+{
+    if (m_fileDataMap.isEmpty())
+        return;
+
+    if (!m_activePlot)
+    {
+        // 如果没有活动图表且试图勾选，回滚勾选状态 (防止用户困惑)
+        if (checked)
+        {
+            QMessageBox::information(this, tr("No Plot Selected"), tr("Please click on a plot to activate it before adding a signal."));
+            m_signalBrowser->setSignalChecked(uniqueId, false, true);
+        }
+        return;
+    }
+
+    if (checked)
+    {
+        addSignalToPlot(uniqueId, m_activePlot);
+    }
+    else
+    {
+        removeSignalFromPlot(uniqueId, m_activePlot);
+    }
+}
+
+// 新增槽函数：处理画笔修改
+void MainWindow::onSignalPenChanged(const QString &uniqueId, const QPen &newPen)
+{
+    // 更新所有图表中该信号的画笔
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        for (int i = 0; i < plot->graphCount(); ++i)
+        {
+            QCPGraph *graph = plot->graph(i);
+            if (graph && graph->property("id").toString() == uniqueId)
+            {
+                graph->setPen(newPen);
+                graph->parentPlot()->replot();
+            }
+        }
+    }
+}
+
+// 新增槽函数：处理文件删除请求
+void MainWindow::onFileRemoveRequested(const QString &filename)
+{
+    QMessageBox::StandardButton reply;
+    reply = QMessageBox::question(this, tr("Remove File"),
+                                  tr("Are you sure you want to remove all data and graphs from file '%1'?").arg(filename),
+                                  QMessageBox::Yes | QMessageBox::No);
+    if (reply == QMessageBox::Yes)
+    {
+        removeFile(filename);
     }
 }
 
@@ -1001,15 +889,7 @@ void MainWindow::onDataLoadFinished(const FileData &data)
     m_fileDataMap.insert(filename, data);
 
     //  填充信号树
-    {
-        QSignalBlocker blocker(m_signalTreeModel);
-        populateSignalTree(data);
-    }
-
-    m_signalTree->reset();
-
-    // 默认展开所有条目
-    m_signalTree->expandAll();
+    m_signalBrowser->loadFileData(data);
 
     updateReplayManagerRange();
 }
@@ -1062,24 +942,7 @@ void MainWindow::removeFile(const QString &filename)
     }
 
     // 2. 清理内部ID映射
-    QMutableHashIterator<QString, QStandardItem *> it(m_uniqueIdMap);
-    while (it.hasNext())
-    {
-        it.next();
-        if (it.key().startsWith(prefix))
-            it.remove();
-    }
-
-    // 3. 移除文件节点
-    QList<QStandardItem *> items = m_signalTreeModel->findItems(filename);
-    for (QStandardItem *item : items)
-    {
-        if (item->data(IsFileItemRole).toBool() && item->parent() == nullptr)
-        {
-            m_signalTreeModel->removeRow(item->row());
-            break;
-        }
-    }
+    m_signalBrowser->removeFile(filename);
 
     if (anyPlotChanged)
     {
@@ -1210,8 +1073,12 @@ void MainWindow::setActivePlot(QCustomPlot *plot)
 
     m_lastMousePlot = plot;
 
-    updateSignalTreeChecks();
-    m_signalTree->viewport()->update();
+    int plotIndex = m_plotWidgets.indexOf(m_activePlot);
+    if (plotIndex != -1)
+    {
+        const QSet<QString> &activeSignals = m_plotSignalMap.value(plotIndex);
+        m_signalBrowser->updateChecksForActivePlot(activeSignals);
+    }
 }
 
 void MainWindow::onPlotClicked()
@@ -1295,26 +1162,15 @@ void MainWindow::onPlotSelectionChanged()
 
     if (selected.isEmpty())
     {
-        m_signalTree->setCurrentIndex(QModelIndex());
+        m_signalBrowser->selectSignal(QString());
         return;
     }
 
     QCPGraph *graph = qobject_cast<QCPGraph *>(selected.first());
-    if (!graph)
-        return;
-
-    QString uniqueID = graph->property("id").toString();
-    if (uniqueID.isEmpty())
-        return;
-
-    QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
-    if (!item)
-        return;
-
+    if (graph)
     {
-        QSignalBlocker blocker(m_signalTree);
-        m_signalTree->scrollTo(item->index(), QAbstractItemView::PositionAtCenter);
-        m_signalTree->setCurrentIndex(item->index());
+        QString uniqueID = graph->property("id").toString();
+        m_signalBrowser->selectSignal(uniqueID);
     }
 }
 
@@ -1329,21 +1185,12 @@ void MainWindow::on_actionClearAllPlots_triggered()
 
     m_cursorManager->clearCursors();
 
+    for (auto it = m_plotSignalMap.begin(); it != m_plotSignalMap.end(); ++it)
     {
-        const QSignalBlocker blocker(m_signalTreeModel);
-
-        // 遍历当前记录在案的所有信号映射
-        for (auto it = m_plotSignalMap.begin(); it != m_plotSignalMap.end(); ++it)
+        const QSet<QString> &signalIDs = it.value();
+        for (const QString &uniqueID : signalIDs)
         {
-            const QSet<QString> &signalIDs = it.value();
-            for (const QString &uniqueID : signalIDs)
-            {
-                QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
-                if (item)
-                {
-                    item->setCheckState(Qt::Unchecked);
-                }
-            }
+            m_signalBrowser->setSignalChecked(uniqueID, false, true);
         }
     }
 
@@ -1459,229 +1306,6 @@ QList<MainWindow::SignalInfo> MainWindow::parseCheckedSignals(const QDomDocument
 void MainWindow::showLoadProgress(int percentage)
 {
     m_progressDialog->setValue(percentage);
-}
-
-void MainWindow::populateSignalTree(const FileData &data)
-{
-    QString filename = QFileInfo(data.filePath).fileName();
-
-    QStandardItem *fileItem = new QStandardItem(filename);
-    fileItem->setEditable(false);
-    fileItem->setCheckable(false); // 文件条目本身不可勾选
-    fileItem->setData(filename, FileNameRole);
-    fileItem->setData(true, IsFileItemRole);
-    fileItem->setData(false, IsSignalItemRole);
-    m_signalTreeModel->appendRow(fileItem);
-
-    // 遍历所有表 (对于 CSV，只有一个表)
-    for (int t_idx = 0; t_idx < data.tables.size(); ++t_idx)
-    {
-        const SignalTable &table = data.tables.at(t_idx);
-
-        // 如果只有一个表，并且其名称与文件名相同，则跳过创建表节点
-        bool skipTableNode = (data.tables.size() == 1 && table.name == QFileInfo(filename).completeBaseName());
-
-        QStandardItem *parentItem = fileItem;
-        if (!skipTableNode)
-        {
-            QStandardItem *tableItem = new QStandardItem(table.name);
-            tableItem->setEditable(false);
-            tableItem->setCheckable(false);
-            tableItem->setData(filename, FileNameRole);
-            tableItem->setData(false, IsFileItemRole);
-            tableItem->setData(false, IsSignalItemRole);
-            fileItem->appendRow(tableItem);
-            parentItem = tableItem; // 信号将附加到表条目
-        }
-
-        // 格式: "filename/tablename/"
-        QString idPrefix = filename + "/" + table.name + "/";
-
-        // 使用表中的 headers
-        for (int i = 0; i < table.headers.count(); ++i)
-        {
-            QString signalName = table.headers[i].trimmed();
-            if (signalName.isEmpty())
-                signalName = tr("Signal %1").arg(i + 1);
-
-            QStandardItem *item = new QStandardItem(signalName);
-            item->setEditable(false);
-            item->setCheckable(true);
-            item->setCheckState(Qt::Unchecked);
-
-            QString uniqueID = idPrefix + QString::number(i);
-
-            item->setData(uniqueID, UniqueIdRole);
-            item->setData(false, IsFileItemRole);
-            item->setData(true, IsSignalItemRole);
-            item->setData(filename, FileNameRole);
-
-            if (m_colorList.isEmpty()) // 安全检查
-            {
-                m_colorList << Qt::black;
-            }
-
-            QColor color = m_colorList.at(m_colorIndex);
-            m_colorIndex = (m_colorIndex + 1) % m_colorList.size();
-
-            // 将默认宽度为 2  QPen pen(color, 2); 宽度2绘制密集线段会卡
-            QPen pen(color, 1);
-
-            item->setData(QVariant::fromValue(pen), PenDataRole);
-
-            parentItem->appendRow(item); // 添加到父条目 (文件或表)
-
-            m_uniqueIdMap.insert(uniqueID, item);
-        }
-    }
-}
-
-void MainWindow::updateSignalTreeChecks()
-{
-    QSignalBlocker blocker(m_signalTreeModel);
-
-    // 1. 获取当前活动子图的信号集合
-    int activePlotIndex = m_plotWidgets.indexOf(m_activePlot);
-    const QSet<QString> &activeSignals = m_plotSignalMap.value(activePlotIndex);
-
-    // 2. 遍历所有已加载的信号条目
-    for (auto it = m_uniqueIdMap.constBegin(); it != m_uniqueIdMap.constEnd(); ++it)
-    {
-        QStandardItem *item = it.value();
-        QString uniqueID = it.key();
-
-        // 3. 检查该信号是否在当前活动子图中
-        bool shouldBeChecked = activeSignals.contains(uniqueID);
-        Qt::CheckState newState = shouldBeChecked ? Qt::Checked : Qt::Unchecked;
-
-        // 4. 仅在状态实际改变时才调用 setCheckState (虽然信号被阻塞，但这能减少 Model 内部的变更标记处理)
-        if (item->checkState() != newState)
-        {
-            item->setCheckState(newState);
-        }
-    }
-}
-
-void MainWindow::onSignalItemChanged(QStandardItem *item)
-{
-    if (!item || !item->data(IsSignalItemRole).toBool())
-        return;
-
-    if (m_fileDataMap.isEmpty())
-    {
-        if (item->checkState() == Qt::Checked)
-        {
-            item->setCheckState(Qt::Unchecked);
-        }
-        return;
-    }
-
-    int plotIndex = m_plotWidgets.indexOf(m_activePlot);
-    if (!m_activePlot || plotIndex == -1)
-    {
-        if (item->checkState() == Qt::Checked)
-        {
-            QSignalBlocker blocker(m_signalTreeModel);
-            item->setCheckState(Qt::Unchecked);
-            QMessageBox::information(this, tr("No Plot Selected"), tr("Please click on a plot to activate it before adding a signal."));
-        }
-        return;
-    }
-
-    QString uniqueID = item->data(UniqueIdRole).toString();
-    if (uniqueID.isEmpty())
-        return;
-
-    if (item->checkState() == Qt::Checked)
-    {
-        addSignalToPlot(uniqueID, m_activePlot);
-    }
-    else
-    {
-        removeSignalFromPlot(uniqueID, m_activePlot);
-    }
-}
-
-void MainWindow::onSignalItemDoubleClicked(const QModelIndex &index)
-{
-    if (!index.isValid())
-        return;
-    QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
-    // 1. 检查是否为信号条目
-    if (!item || !item->data(IsSignalItemRole).toBool())
-        return;
-
-    // 2. 检查点击位置
-    QPoint localPos = m_signalTree->viewport()->mapFromGlobal(QCursor::pos());
-    QRect itemRect = m_signalTree->visualRect(index);
-
-    // 这些值必须与 SignalTreeDelegate::paint 中的值匹配
-    const int previewWidth = 40;
-    const int margin = 2;
-
-    // 计算预览线本身的可点击区域
-    QRect previewClickRect(
-        itemRect.right() - previewWidth + margin, // 预览区域的左边缘 + 边距
-        itemRect.top(),
-        previewWidth - (2 * margin), // 只在两个边距之间
-        itemRect.height());
-
-    // 如果点击不在预览线区域，则忽略
-    if (!previewClickRect.contains(localPos))
-    {
-        return; // 用户点击了文本，不是预览线
-    }
-
-    // 3. 如果点击在预览线上，则打开新对话框
-    QString uniqueID = item->data(UniqueIdRole).toString();
-    QPen currentPen = item->data(PenDataRole).value<QPen>();
-
-    // 使用新的自定义对话框
-    SignalPropertiesDialog dialog(currentPen, this);
-    if (dialog.exec() != QDialog::Accepted)
-    {
-        return; // 用户点击了 "Cancel"
-    }
-
-    QPen newPen = dialog.getSelectedPen(); // 获取包含所有属性的新 QPen
-
-    item->setData(QVariant::fromValue(newPen), PenDataRole);
-
-    // 更新所有图表中该信号的画笔
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        for (int i = 0; i < plot->graphCount(); ++i)
-        {
-            QCPGraph *graph = plot->graph(i);
-            if (graph && graph->property("id").toString() == uniqueID)
-            {
-                graph->setPen(newPen);
-                graph->parentPlot()->replot();
-            }
-        }
-    }
-}
-
-// 信号树的右键菜单槽
-void MainWindow::onSignalTreeContextMenu(const QPoint &pos)
-{
-    QModelIndex index = m_signalTree->indexAt(pos);
-    if (!index.isValid())
-        return;
-
-    QStandardItem *item = m_signalTreeModel->itemFromIndex(index);
-
-    if (!item || !item->data(IsFileItemRole).toBool())
-        return; // 只在文件条目上显示菜单
-
-    QString filename = item->data(FileNameRole).toString();
-
-    QMenu contextMenu(this);
-    QAction *deleteAction = contextMenu.addAction(tr("Remove '%1'").arg(filename));
-    deleteAction->setData(filename); // 将文件名存储在动作中
-
-    connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteFileAction);
-    contextMenu.exec(m_signalTree->viewport()->mapToGlobal(pos));
 }
 
 /**
@@ -1816,19 +1440,8 @@ void MainWindow::onDeleteSignalAction()
         return;
 
     QString uniqueID = action->data().toString();
-    if (uniqueID.isEmpty())
-        return;
 
-    QStandardItem *itemToUncheck = m_uniqueIdMap.value(uniqueID, nullptr);
-
-    if (itemToUncheck)
-    {
-        itemToUncheck->setCheckState(Qt::Unchecked);
-    }
-    else
-    {
-        qWarning() << "onDeleteSignalAction: Could not find item in tree model for ID" << uniqueID;
-    }
+    m_signalBrowser->setSignalChecked(uniqueID, false, false);
 }
 
 /**
@@ -1847,90 +1460,10 @@ void MainWindow::onDeleteSubplotAction()
 
     const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
 
-    if (signalIDsCopy.isEmpty())
-        return;
-
-    qDebug() << "Clearing subplot index" << plotIndex << "- removing" << signalIDsCopy.size() << "signals.";
-
     for (const QString &uniqueID : signalIDsCopy)
     {
-        QStandardItem *itemToUncheck = m_uniqueIdMap.value(uniqueID, nullptr);
-
-        // 如果找到了，并且它当前被选中，则取消勾选它
-        if (itemToUncheck && itemToUncheck->checkState() == Qt::Checked)
-        {
-            itemToUncheck->setCheckState(Qt::Unchecked);
-        }
+        m_signalBrowser->setSignalChecked(uniqueID, false, false);
     }
-}
-
-/**
- * @brief [槽] 当信号搜索框中的文本更改时调用
- */
-void MainWindow::onSignalSearchChanged(const QString &text)
-{
-    QString query = text.trimmed().toLower();
-    QStandardItem *root = m_signalTreeModel->invisibleRootItem();
-
-    // 递归地遍历所有项并设置它们的隐藏状态
-    for (int i = 0; i < root->rowCount(); ++i)
-    {
-        filterSignalTree(root->child(i), query);
-    }
-
-    // 如果在搜索，展开所有内容以显示匹配项
-    if (!query.isEmpty())
-    {
-        m_signalTree->expandAll();
-    }
-}
-
-/**
- * @brief [辅助函数] 递归地过滤信号树。
- * @param item 当前要检查的 QStandardItem
- * @param query 小写的搜索查询
- * @return true 如果此项或其任何子项匹配查询，则返回
- */
-bool MainWindow::filterSignalTree(QStandardItem *item, const QString &query)
-{
-    if (!item)
-        return false;
-
-    // 1. 检查此项是否匹配
-    bool selfMatches = item->text().toLower().contains(query);
-
-    // 2. 检查是否有任何子项匹配
-    bool childrenMatch = false;
-    for (int i = 0; i < item->rowCount(); ++i)
-    {
-        if (filterSignalTree(item->child(i), query))
-        {
-            childrenMatch = true;
-        }
-    }
-
-    // 3. 决定可见性
-    bool visible = selfMatches || childrenMatch;
-
-    // 4. 如果查询为空，所有项都可见
-    if (query.isEmpty())
-    {
-        visible = true;
-    }
-
-    // 5. 在视图中设置行隐藏
-    QModelIndex parentIndex = item->parent() ? item->parent()->index() : QModelIndex();
-    m_signalTree->setRowHidden(item->row(), parentIndex, !visible);
-
-    return visible;
-}
-
-/**
- * @brief [辅助] 在信号树中通过信号名称查找条目
- */
-QStandardItem *MainWindow::findItemBySignalName(const QString &name)
-{
-    return findItemByName_Recursive(m_signalTreeModel->invisibleRootItem(), name);
 }
 
 /**
@@ -1944,22 +1477,10 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
     m_maximizeAction->setIcon(style()->standardIcon(QStyle::SP_TitleBarMaxButton));
     m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
 
+    for (auto it = m_plotSignalMap.begin(); it != m_plotSignalMap.end(); ++it)
     {
-        const QSignalBlocker blocker(m_signalTreeModel);
-
-        QList<int> plotIndices = m_plotSignalMap.keys();
-        for (int plotIndex : plotIndices)
-        {
-            const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
-            for (const QString &uniqueID : signalIDsCopy)
-            {
-                QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
-                if (item)
-                {
-                    item->setCheckState(Qt::Unchecked);
-                }
-            }
-        }
+        for (const QString &id : it.value())
+            m_signalBrowser->setSignalChecked(id, false, true);
     }
 
     m_plotSignalMap.clear();
@@ -1989,7 +1510,7 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
     for (const SignalInfo &sig : signalList)
     {
         // 在树中查找信号
-        QStandardItem *item = findItemBySignalName(sig.name);
+        QStandardItem *item = m_signalBrowser->findItemByName(sig.name);
         if (!item)
         {
             qWarning() << "Import View: Could not find signal in tree:" << sig.name;
@@ -1997,13 +1518,11 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
         }
 
         QString uniqueID = item->data(UniqueIdRole).toString();
-        if (uniqueID.isEmpty())
-            continue;
 
         // 更新颜色
-        QPen currentPen = item->data(PenDataRole).value<QPen>();
-        currentPen.setColor(sig.color);
-        item->setData(QVariant::fromValue(currentPen), PenDataRole);
+        // QPen currentPen = item->data(PenDataRole).value<QPen>();
+        // currentPen.setColor(sig.color);
+        // item->setData(QVariant::fromValue(currentPen), PenDataRole);
 
         // 遍历该信号应在的子图 ID
         for (int sdiPlotId : sig.plotIds)
@@ -2029,10 +1548,7 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
                 QCustomPlot *targetPlot = m_plotWidgets.at(plotIndex);
                 addSignalToPlot(uniqueID, targetPlot, false);
 
-                {
-                    const QSignalBlocker blocker(m_signalTreeModel);
-                    item->setCheckState(Qt::Checked);
-                }
+                m_signalBrowser->setSignalChecked(uniqueID, true, true);
             }
         }
     }
@@ -2045,7 +1561,7 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
         plot->replot();
     }
 
-    updateSignalTreeChecks();
+    // updateSignalTreeChecks();
     on_actionFitView_triggered();
 }
 
@@ -2247,9 +1763,6 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                 if (data.contains(UniqueIdRole) && data.value(IsSignalItemRole).toBool())
                 {
                     QString uniqueID = data.value(UniqueIdRole).toString();
-                    QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
-                    if (!item)
-                        continue;
 
                     bool alreadyOnPlot = m_plotSignalMap.value(targetPlotIndex).contains(uniqueID);
 
@@ -2258,23 +1771,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
                     {
                         setActivePlot(targetPlot);
 
-                        if (item->checkState() == Qt::Unchecked)
-                        {
-                            item->setCheckState(Qt::Checked);
-                        }
-                        else
-                        {
-                            addSignalToPlot(uniqueID, targetPlot);
-                        }
+                        m_signalBrowser->setSignalChecked(uniqueID, true, false);
                     }
                 }
             }
             dropEvent->acceptProposedAction();
 
-            // 拖放完成后清除树的选择
-            m_signalTree->clearSelection();
-
-            updateSignalTreeChecks();
             return true;
         }
     }
@@ -2520,12 +2022,8 @@ SignalLocation MainWindow::getSignalDataFromID(const QString &uniqueID) const
 {
     SignalLocation loc;
 
-    QStandardItem *item = m_uniqueIdMap.value(uniqueID, nullptr);
-    if (!item)
-        return loc;
-
-    loc.name = item->text();
-    loc.pen = item->data(PenDataRole).value<QPen>();
+    loc.pen = m_signalBrowser->getSignalPen(uniqueID);
+    loc.name = m_signalBrowser->getSignalName(uniqueID);
 
     // 2. 解析 ID
     QStringList parts = uniqueID.split('/');

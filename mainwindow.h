@@ -13,6 +13,7 @@
 #include "datamanager.h"
 #include "cursormanager.h"
 #include "replaymanager.h"
+#include "signalbrowser.h"
 
 // Forward Declarations
 class QCustomPlot;
@@ -93,10 +94,9 @@ private slots:
     void showLoadProgress(int percentage);
 
     //  3. 信号树交互槽 (Signal Tree)
-    void onSignalItemChanged(QStandardItem *item);
-    void onSignalItemDoubleClicked(const QModelIndex &index);
-    void onSignalSearchChanged(const QString &text);
-    void onSignalTreeContextMenu(const QPoint &pos);
+    void onSignalCheckStateChanged(const QString &uniqueId, bool checked);
+    void onSignalPenChanged(const QString &uniqueId, const QPen &newPen);
+    void onFileRemoveRequested(const QString &filename);
     void onDeleteFileAction(); // 树右键删除文件
 
     //  4. 绘图与交互槽 (Plotting & Interaction)
@@ -165,14 +165,10 @@ private:
     // 信号管理
     void addSignalToPlot(const QString &uniqueID, QCustomPlot *plot, bool replot = true);
     void removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot);
-    void populateSignalTree(const FileData &data);
-    void updateSignalTreeChecks();
-    bool filterSignalTree(QStandardItem *item, const QString &query);
 
     // 绘图管理
     void setActivePlot(QCustomPlot *plot);
     QCPGraph *getGraph(QCustomPlot *plot, const QString &uniqueID) const;
-    QStandardItem *findItemBySignalName(const QString &name);
 
     // 数据辅助
     QCPRange getGlobalTimeRange() const;
@@ -210,13 +206,11 @@ private:
     DataManager *m_dataManager;
     CursorManager *m_cursorManager;
     ReplayManager *m_replayManager;
+    SignalBrowser *m_signalBrowser;
 
     // 2. 主 UI 容器
     QWidget *m_plotContainer;
     QDockWidget *m_signalDock;
-    QTreeView *m_signalTree;
-    QStandardItemModel *m_signalTreeModel;
-    QLineEdit *m_signalSearchBox;
     QProgressDialog *m_progressDialog;
     QToolBar *m_viewToolBar;
     QDialog *m_customLayoutDialog; // 懒加载
@@ -231,15 +225,10 @@ private:
     // 信号映射 (PlotIndex -> Set<SignalID>) - 用于持久化
     QMap<int, QSet<QString>> m_plotSignalMap;
 
-    //  快速查找表
-    QHash<QString, QStandardItem *> m_uniqueIdMap;
-
     QCPMarginGroup *m_yAxisGroup; // Y轴对齐
 
     // 4. 数据缓存
     QMap<QString, FileData> m_fileDataMap;
-    QVector<QColor> m_colorList;
-    int m_colorIndex;
 
     // 5. 动作 (Actions)
     QAction *m_loadFileAction;

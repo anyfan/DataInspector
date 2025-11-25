@@ -55,6 +55,7 @@ set(SOURCES
     replaymanager.cpp
     signaltreedelegate.cpp
     signalpropertiesdialog.cpp
+    signalbrowser.cpp
 )
 
 # --- 3. 目标构建 ---
