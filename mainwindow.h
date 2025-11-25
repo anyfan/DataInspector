@@ -77,6 +77,7 @@ private slots:
     void onLegendPositionChanged(QAction *action);
     void on_actionClearAllPlots_triggered();
     void onOpenGLActionToggled(bool checked);
+    void onAntialiasingActionToggled(bool checked);
     void on_actionSetDefaultPenWidth_triggered();
 
     // 布局动作
@@ -256,6 +257,7 @@ private:
     QAction *m_fitViewYAction;
     QAction *m_fitViewYAllAction;
     QAction *m_openGLAction;
+    QAction *m_antialiasingAction;
     QAction *m_setDefaultPenWidthAction;
     QAction *m_clearAllPlotsAction;
     // 游标

@@ -367,6 +367,12 @@ void MainWindow::createActions()
     m_openGLAction->setChecked(false); // 默认关闭
     connect(m_openGLAction, &QAction::toggled, this, &MainWindow::onOpenGLActionToggled);
 
+    m_antialiasingAction = new QAction(tr("启用曲线抗锯齿"), this);
+    m_antialiasingAction->setToolTip(tr("开启/关闭曲线的抗锯齿渲染。\n关闭抗锯齿可消除陡峭线条的'幽灵线'假象并提高性能，但线条边缘会有锯齿。"));
+    m_antialiasingAction->setCheckable(true);
+    m_antialiasingAction->setChecked(true); // 默认开启 (Qt默认行为)，你可以手动关闭它
+    connect(m_antialiasingAction, &QAction::toggled, this, &MainWindow::onAntialiasingActionToggled);
+
     // 设置默认线宽动作
     m_setDefaultPenWidthAction = new QAction(tr("默认线宽"), this);
     m_setDefaultPenWidthAction->setToolTip(tr("设置新加载信号的默认线宽"));
@@ -433,11 +439,10 @@ void MainWindow::createMenus()
     // 创建 "设置" 菜单
     QMenu *settingsMenu = menuBar()->addMenu(tr("&设置"));
     settingsMenu->addAction(m_openGLAction);
-
     settingsMenu->addAction(m_setDefaultPenWidthAction);
+    settingsMenu->addAction(m_antialiasingAction);
 
     QMenu *legendPosMenu = settingsMenu->addMenu(tr("图例位置"));
-
     legendPosMenu->addAction(m_legendPosNoneAction);
     legendPosMenu->addSeparator();
     legendPosMenu->addAction(m_legendPosOutsideTopAction);
@@ -799,6 +804,15 @@ void MainWindow::setupPlotInteractions(QCustomPlot *plot)
 
     // 根据 m_openGLAction 的状态设置 OpenGL
     plot->setOpenGl(m_openGLAction->isChecked());
+
+    if (m_antialiasingAction->isChecked())
+    {
+        plot->setNotAntialiasedElements(QCP::aeNone); // 全部启用抗锯齿
+    }
+    else
+    {
+        plot->setNotAntialiasedElements(QCP::aePlottables); // 仅禁用曲线抗锯齿 (保留文字抗锯齿)
+    }
 
     QFont axisFont = plot->font();           // 从绘图控件获取基础字体
     axisFont.setPointSize(7);                // 将字号设置为 7
@@ -2161,6 +2175,14 @@ void MainWindow::performFitView(bool fitX, bool fitY, FitTarget target)
 
         if (!hasXRange)
             globalXRange = QCPRange(0, 10);
+
+        // X轴增加 2% 边距
+        if (hasXRange && globalXRange.size() > 0)
+        {
+            double margin = globalXRange.size() * 0.02; // 计算 2% 的边距宽度
+            globalXRange.lower -= margin;               // 左侧扩展
+            globalXRange.upper += margin;               // 右侧扩展
+        }
     }
 
     // 应用 X 并计算/应用 Y
@@ -2503,5 +2525,24 @@ void MainWindow::on_actionSetDefaultPenWidth_triggered()
     if (ok)
     {
         m_signalBrowser->setDefaultPenWidth(width);
+    }
+}
+
+void MainWindow::onAntialiasingActionToggled(bool checked)
+{
+    for (QCustomPlot *plot : m_plotWidgets)
+    {
+        if (checked)
+        {
+            // 启用抗锯齿 (默认)
+            plot->setNotAntialiasedElements(QCP::aeNone);
+        }
+        else
+        {
+            // 禁用 Plottables (曲线/图表) 的抗锯齿，保留坐标轴和文字的抗锯齿
+            // 这样可以解决陡峭线条的模糊/双线问题
+            plot->setNotAntialiasedElements(QCP::aePlottables);
+        }
+        plot->replot();
     }
 }
