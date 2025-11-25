@@ -1474,7 +1474,7 @@ void MainWindow::onDeleteSubplotAction()
 void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList)
 {
     m_isMaximized = false;
-    m_maximizeAction->setIcon(style()->standardIcon(QStyle::SP_TitleBarMaxButton));
+    m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-expand.svg"));
     m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
 
     for (auto it = m_plotSignalMap.begin(); it != m_plotSignalMap.end(); ++it)
@@ -1560,9 +1560,6 @@ void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalI
         configurePlotLegend(plot, legendMode);
         plot->replot();
     }
-
-    // updateSignalTreeChecks();
-    on_actionFitView_triggered();
 }
 
 void MainWindow::on_actionFitViewYAll_triggered()
