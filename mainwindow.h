@@ -74,6 +74,8 @@ signals:
 
     // 通知外部数据已处理完毕且UI已更新
     void dataProcessingFinished(const QString &filePath);
+    void viewImportFinished();
+    void plotUpdated();
 
 protected:
     // Event Overrides
@@ -137,6 +139,9 @@ private slots:
     void onCursorMenuActionTriggered(QAction *action);
 
     void on_actionScriptConsole_triggered();
+
+    void setActivePlotXRange(double min, double max);
+    void setActivePlotYRange(double min, double max);
 
 private:
     //  内部数据结构

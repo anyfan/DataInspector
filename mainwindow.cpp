@@ -782,6 +782,8 @@ void MainWindow::importView(const QString &mldatxFilePath)
 
     // 5. 应用布局
     applyImportedView(layout, signalList);
+
+    emit viewImportFinished();
 }
 
 /**
@@ -2270,6 +2272,30 @@ void MainWindow::performFitView(bool fitX, bool fitY, FitTarget target)
         if (!targets.isEmpty())
             onXAxisRangeChanged(targets.first()->xAxis->range());
     }
+
+    emit plotUpdated();
+}
+
+// 设置活动子图 X 轴范围
+void MainWindow::setActivePlotXRange(double min, double max)
+{
+    if (m_activePlot)
+    {
+        m_activePlot->xAxis->setRange(min, max);
+        m_activePlot->replot();
+    }
+    emit plotUpdated();
+}
+
+//  设置活动子图 Y 轴范围
+void MainWindow::setActivePlotYRange(double min, double max)
+{
+    if (m_activePlot)
+    {
+        m_activePlot->yAxis->setRange(min, max);
+        m_activePlot->replot();
+    }
+    emit plotUpdated();
 }
 
 void MainWindow::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc)

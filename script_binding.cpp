@@ -36,8 +36,6 @@ bool ScriptAPI::load_file(std::string path)
     // 统一路径分隔符，防止因斜杠方向不同导致字符串匹配失败
     QString cleanPath = QFileInfo(qPath).absoluteFilePath();
 
-    log("Loading file: " + path + " ...");
-
     QEventLoop loop;
     bool success = false;
     QString errorMessage;
@@ -75,11 +73,7 @@ bool ScriptAPI::load_file(std::string path)
     QObject::disconnect(connSuccess);
     QObject::disconnect(connFail);
 
-    if (success)
-    {
-        // log("File loaded and UI updated.");
-    }
-    else
+    if (!success)
     {
         log("File load failed: " + errorMessage.toStdString());
     }
@@ -89,12 +83,19 @@ bool ScriptAPI::load_file(std::string path)
 
 void ScriptAPI::import_view(std::string path)
 {
-    if (m_mainWin)
-    {
-        QString qPath = QString::fromStdString(path);
-        m_mainWin->importView(qPath);
-        log("View imported from: " + path);
-    }
+    if (!m_mainWin)
+        return;
+    QString qPath = QString::fromStdString(path);
+
+    QEventLoop loop;
+    // 连接信号
+    QObject::connect(m_mainWin, &MainWindow::viewImportFinished, &loop, &QEventLoop::quit);
+
+    // 使用 Timer 异步触发，确保 loop.exec() 在信号发射前启动
+    QTimer::singleShot(0, m_mainWin, [this, qPath]()
+                       { m_mainWin->importView(qPath); });
+
+    loop.exec();
 }
 
 std::string ScriptAPI::find_id(std::string name)
@@ -120,54 +121,58 @@ std::string ScriptAPI::find_id(std::string name)
 
 void ScriptAPI::set_x_range(double min, double max)
 {
-    if (m_mainWin)
-    {
-        QCustomPlot *plot = m_mainWin->getActivePlot();
-        if (plot)
-        {
-            plot->xAxis->setRange(min, max);
-            plot->replot();
-        }
-        else
-        {
-            log("Warning: No active plot selected.");
-        }
-    }
+    if (!m_mainWin)
+        return;
+
+    QEventLoop loop;
+    QObject::connect(m_mainWin, &MainWindow::plotUpdated, &loop, &QEventLoop::quit);
+
+    QTimer::singleShot(0, m_mainWin, [this, min, max]()
+                       { m_mainWin->setActivePlotXRange(min, max); });
+
+    loop.exec();
 }
 
 void ScriptAPI::set_y_range(double min, double max)
 {
-    if (m_mainWin)
-    {
-        QCustomPlot *plot = m_mainWin->getActivePlot();
-        if (plot)
-        {
-            plot->yAxis->setRange(min, max);
-            plot->replot();
-        }
-        else
-        {
-            log("Warning: No active plot selected.");
-        }
-    }
+    if (!m_mainWin)
+        return;
+
+    QEventLoop loop;
+    QObject::connect(m_mainWin, &MainWindow::plotUpdated, &loop, &QEventLoop::quit);
+
+    QTimer::singleShot(0, m_mainWin, [this, min, max]()
+                       { m_mainWin->setActivePlotYRange(min, max); });
+
+    loop.exec();
 }
 
 void ScriptAPI::autoscale()
 {
-    if (m_mainWin)
-    {
-        m_mainWin->performFitView(true, true, MainWindow::FitActivePlot);
-        // log("Autoscaled active plot.");
-    }
+    if (!m_mainWin)
+        return;
+
+    QEventLoop loop;
+    QObject::connect(m_mainWin, &MainWindow::plotUpdated, &loop, &QEventLoop::quit);
+
+    QTimer::singleShot(0, m_mainWin, [this]()
+                       { m_mainWin->performFitView(true, true, MainWindow::FitActivePlot); });
+
+    loop.exec();
 }
 
 void ScriptAPI::fit_view_y_all()
 {
-    if (m_mainWin)
-    {
-        m_mainWin->performFitView(false, true, MainWindow::FitAllPlots);
-        // log("Applied Global Y-Axis Autoscale.");
-    }
+    if (!m_mainWin)
+        return;
+
+    QEventLoop loop;
+    QObject::connect(m_mainWin, &MainWindow::plotUpdated, &loop, &QEventLoop::quit);
+
+    QTimer::singleShot(0, m_mainWin, [this]()
+                       { m_mainWin->performFitView(false, true, MainWindow::FitAllPlots); });
+
+    loop.exec();
 }
 
 std::vector<double> ScriptAPI::get_data(std::string id)
@@ -190,7 +195,7 @@ std::vector<double> ScriptAPI::get_data(std::string id)
     return {};
 }
 
-// [新增] 获取时间数据实现
+// 获取时间数据实现
 std::vector<double> ScriptAPI::get_time_data(std::string id)
 {
     if (!m_mainWin)
@@ -241,9 +246,7 @@ bool ScriptAPI::export_plot(std::string path)
         success = plot->savePng(qPath, 0, 0, scale);
     }
 
-    if (success)
-        log("Exported plot to: " + qPath.toStdString());
-    else
+    if (!success)
         log("Failed to export plot to: " + qPath.toStdString());
 
     return success;
@@ -263,9 +266,7 @@ bool ScriptAPI::export_view(std::string path)
 
     bool success = pixmap.save(qPath);
 
-    if (success)
-        log("Exported view to: " + qPath.toStdString());
-    else
+    if (!success)
         log("Failed to export view to: " + qPath.toStdString());
 
     return success;
