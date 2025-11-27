@@ -9,6 +9,8 @@
 #include <QEventLoop>     // 用于同步等待
 #include <QTimer>
 #include <QFileInfo>
+#include <QDir>
+#include <QCoreApplication>
 
 namespace py = pybind11;
 
@@ -27,14 +29,21 @@ void ScriptAPI::log(std::string msg)
     }
 }
 
-bool ScriptAPI::load_file(std::string path)
+// 实现 overwrite 逻辑
+bool ScriptAPI::load_file(std::string path, bool overwrite)
 {
     if (!m_mainWin)
         return false;
 
     QString qPath = QString::fromStdString(path);
-    // 统一路径分隔符，防止因斜杠方向不同导致字符串匹配失败
     QString cleanPath = QFileInfo(qPath).absoluteFilePath();
+    QString fileName = QFileInfo(cleanPath).fileName();
+
+    if (overwrite && m_mainWin->m_fileDataMap.contains(fileName))
+    {
+        m_mainWin->removeFile(fileName);
+        log("Overwriting file: " + fileName.toStdString());
+    }
 
     QEventLoop loop;
     bool success = false;
@@ -79,6 +88,25 @@ bool ScriptAPI::load_file(std::string path)
     }
 
     return success;
+}
+
+// 移除文件实现
+bool ScriptAPI::remove_file(std::string filename)
+{
+    if (!m_mainWin)
+        return false;
+
+    QString qName = QString::fromStdString(filename);
+
+    // 检查文件是否存在于内存中
+    if (m_mainWin->m_fileDataMap.contains(qName))
+    {
+        m_mainWin->removeFile(qName);
+        return true;
+    }
+
+    log("Warning: File not found in memory: " + filename);
+    return false;
 }
 
 void ScriptAPI::import_view(std::string path)
@@ -228,7 +256,7 @@ bool ScriptAPI::export_plot(std::string path)
     }
 
     QString qPath = QString::fromStdString(path);
-
+    // 处理默认导出路径
     QFileInfo fileInfo(qPath);
     if (fileInfo.isRelative())
     {
@@ -240,7 +268,7 @@ bool ScriptAPI::export_plot(std::string path)
     }
 
     bool success = false;
-    double scale = 2.0; // 默认 2倍 缩放以获得较好清晰度
+    double scale = 2.0;
 
     if (qPath.endsWith(".png", Qt::CaseInsensitive))
         success = plot->savePng(qPath, 0, 0, scale);
@@ -252,7 +280,6 @@ bool ScriptAPI::export_plot(std::string path)
         success = plot->savePdf(qPath);
     else
     {
-        // 默认添加 png 后缀
         qPath += ".png";
         success = plot->savePng(qPath, 0, 0, scale);
     }
@@ -269,12 +296,12 @@ bool ScriptAPI::export_view(std::string path)
         return false;
 
     QString qPath = QString::fromStdString(path);
-    // 抓取整个绘图容器
     QPixmap pixmap = m_mainWin->m_plotContainer->grab();
 
     if (qPath.isEmpty())
         qPath = "view_export.png";
 
+    // 处理默认导出路径
     QFileInfo fileInfo(qPath);
     if (fileInfo.isRelative())
     {
@@ -282,7 +309,6 @@ bool ScriptAPI::export_view(std::string path)
         QDir dir(exportDir);
         if (!dir.exists())
             dir.mkpath(".");
-
         qPath = dir.filePath(qPath);
     }
 
@@ -301,7 +327,9 @@ PYBIND11_EMBEDDED_MODULE(inspector, m)
     py::class_<ScriptAPI>(m, "API")
         .def(py::init<MainWindow *>())
         .def("log", &ScriptAPI::log, "打印日志到控制台")
-        .def("load_file", &ScriptAPI::load_file, "加载文件 (同步阻塞)，返回 True/False")
+        .def("load_file", &ScriptAPI::load_file, "加载文件 (同步阻塞)，可选参数 overwrite=True/False",
+             py::arg("path"), py::arg("overwrite") = false)
+        .def("remove_file", &ScriptAPI::remove_file, "移除已加载的文件 (参数为文件名，非路径)")
         .def("import_view", &ScriptAPI::import_view, "导入 .mldatx 视图布局")
         .def("find_id", &ScriptAPI::find_id, "根据信号名称查找其唯一 ID")
         .def("set_x_range", &ScriptAPI::set_x_range, "设置当前子图 X 轴范围 (min, max)")

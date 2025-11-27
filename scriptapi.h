@@ -24,7 +24,10 @@ public:
     void log(std::string msg);
 
     // 加载数据文件 (.csv, .mat)
-    bool load_file(std::string path);
+    bool load_file(std::string path, bool overwrite = false);
+
+    // 移除已加载的文件
+    bool remove_file(std::string filename);
 
     // 导入视图布局 (.mldatx)
     void import_view(std::string path);
