@@ -228,6 +228,17 @@ bool ScriptAPI::export_plot(std::string path)
     }
 
     QString qPath = QString::fromStdString(path);
+
+    QFileInfo fileInfo(qPath);
+    if (fileInfo.isRelative())
+    {
+        QString exportDir = QCoreApplication::applicationDirPath() + "/export_file";
+        QDir dir(exportDir);
+        if (!dir.exists())
+            dir.mkpath(".");
+        qPath = dir.filePath(qPath);
+    }
+
     bool success = false;
     double scale = 2.0; // 默认 2倍 缩放以获得较好清晰度
 
@@ -263,6 +274,17 @@ bool ScriptAPI::export_view(std::string path)
 
     if (qPath.isEmpty())
         qPath = "view_export.png";
+
+    QFileInfo fileInfo(qPath);
+    if (fileInfo.isRelative())
+    {
+        QString exportDir = QCoreApplication::applicationDirPath() + "/export_file";
+        QDir dir(exportDir);
+        if (!dir.exists())
+            dir.mkpath(".");
+
+        qPath = dir.filePath(qPath);
+    }
 
     bool success = pixmap.save(qPath);
 

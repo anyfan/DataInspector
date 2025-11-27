@@ -8,7 +8,8 @@
 #include <QTextStream>
 #include <QHBoxLayout>
 #include <QStyle>
-
+#include <QDir>
+#include <QCoreApplication>
 ScriptWindow::ScriptWindow(ScriptAPI *api, QWidget *parent)
     : QMainWindow(parent), m_api(api)
 {
@@ -48,7 +49,7 @@ ScriptWindow::ScriptWindow(ScriptAPI *api, QWidget *parent)
     btnLayout->addWidget(runBtn);
 
     // --- 编辑器区域 ---
-    
+
     // 4. 代码编辑器 (上方)
     m_editor = new QTextEdit(this);
     // 设置等宽字体，看起来更像代码
@@ -111,10 +112,17 @@ void ScriptWindow::appendLog(const QString &msg)
 
 void ScriptWindow::onOpenClicked()
 {
-    QString fileName = QFileDialog::getOpenFileName(this, 
-        tr("Open Python Script"), 
-        "", 
-        tr("Python Scripts (*.py);;All Files (*)"));
+    QString scriptPath = QCoreApplication::applicationDirPath() + "/py_scripts";
+    QDir dir(scriptPath);
+    if (!dir.exists())
+    {
+        dir.mkpath(".");
+    }
+
+    QString fileName = QFileDialog::getOpenFileName(this,
+                                                    tr("Open Python Script"),
+                                                    scriptPath, // 使用默认路径
+                                                    tr("Python Scripts (*.py);;All Files (*)"));
 
     if (fileName.isEmpty())
         return;
@@ -129,16 +137,23 @@ void ScriptWindow::onOpenClicked()
     QTextStream in(&file);
     QString content = in.readAll();
     m_editor->setPlainText(content);
-    
+
     appendLog(tr("Loaded script: %1").arg(fileName));
 }
 
 void ScriptWindow::onSaveClicked()
 {
-    QString fileName = QFileDialog::getSaveFileName(this, 
-        tr("Save Python Script"), 
-        "", 
-        tr("Python Scripts (*.py);;All Files (*)"));
+    QString scriptPath = QCoreApplication::applicationDirPath() + "/py_scripts";
+    QDir dir(scriptPath);
+    if (!dir.exists())
+    {
+        dir.mkpath(".");
+    }
+
+    QString fileName = QFileDialog::getSaveFileName(this,
+                                                    tr("Save Python Script"),
+                                                    scriptPath, // 使用默认路径
+                                                    tr("Python Scripts (*.py);;All Files (*)"));
 
     if (fileName.isEmpty())
         return;

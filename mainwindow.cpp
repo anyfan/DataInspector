@@ -2327,7 +2327,14 @@ void MainWindow::exportPlot(QCustomPlot *plot)
         return;
 
     QString filters = tr("PNG Image (*.png);;JPG Image (*.jpg);;BMP Image (*.bmp);;PDF Document (*.pdf)");
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Export Plot"), "", filters);
+
+    QString exportPath = QCoreApplication::applicationDirPath() + "/export_file";
+    QDir dir(exportPath);
+    if (!dir.exists())
+    {
+        dir.mkpath(".");
+    }
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Export Plot"), exportPath, filters);
 
     if (fileName.isEmpty())
         return;
@@ -2374,7 +2381,14 @@ void MainWindow::on_actionExportAll_triggered()
         return;
 
     QString filters = tr("PNG Image (*.png);;JPG Image (*.jpg);;BMP Image (*.bmp)");
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Export All Views"), "", filters);
+
+    QString exportPath = QCoreApplication::applicationDirPath() + "/export_file";
+    QDir dir(exportPath);
+    if (!dir.exists())
+    {
+        dir.mkpath(".");
+    }
+    QString fileName = QFileDialog::getSaveFileName(this, tr("Export All Views"), exportPath, filters);
 
     if (fileName.isEmpty())
         return;
