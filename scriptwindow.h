@@ -26,10 +26,13 @@ public slots:
     // 供 Python 调用的日志打印函数
     void appendLog(const QString &msg);
 
-    // [新增] 打开脚本文件
+    // 打开脚本文件
     void onOpenClicked();
-    // [新增] 保存脚本文件
+    // 保存脚本文件
     void onSaveClicked();
+
+    // 清理日志槽函数
+    void onClearLogClicked();
 
 private:
     ScriptAPI *m_api;       // API 接口对象

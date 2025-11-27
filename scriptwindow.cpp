@@ -10,6 +10,7 @@
 #include <QStyle>
 #include <QDir>
 #include <QCoreApplication>
+
 ScriptWindow::ScriptWindow(ScriptAPI *api, QWidget *parent)
     : QMainWindow(parent), m_api(api)
 {
@@ -36,7 +37,13 @@ ScriptWindow::ScriptWindow(ScriptAPI *api, QWidget *parent)
     saveBtn->setToolTip(tr("Save current script to file"));
     connect(saveBtn, &QPushButton::clicked, this, &ScriptWindow::onSaveClicked);
 
-    // 3. 运行按钮
+    //  3. 清理日志按钮
+    QPushButton *clearBtn = new QPushButton(tr("Clear Log"), this);
+    clearBtn->setIcon(style()->standardIcon(QStyle::SP_DialogDiscardButton));
+    clearBtn->setToolTip(tr("Clear the output log"));
+    connect(clearBtn, &QPushButton::clicked, this, &ScriptWindow::onClearLogClicked);
+
+    // 4. 运行按钮
     QPushButton *runBtn = new QPushButton(tr("Run (Ctrl+Enter)"), this);
     runBtn->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
     runBtn->setShortcut(QKeySequence(Qt::CTRL + Qt::Key_Return)); // 快捷键 Ctrl+回车
@@ -45,26 +52,26 @@ ScriptWindow::ScriptWindow(ScriptAPI *api, QWidget *parent)
     // 添加到布局
     btnLayout->addWidget(openBtn);
     btnLayout->addWidget(saveBtn);
-    btnLayout->addStretch(); // 中间弹簧，让运行按钮靠右或让按钮左对齐
+    btnLayout->addWidget(clearBtn);
+    btnLayout->addStretch();
     btnLayout->addWidget(runBtn);
 
     // --- 编辑器区域 ---
 
-    // 4. 代码编辑器 (上方)
+    // 代码编辑器 (上方)
     m_editor = new QTextEdit(this);
-    // 设置等宽字体，看起来更像代码
     QFont font("Consolas", 10);
     font.setStyleHint(QFont::Monospace);
     m_editor->setFont(font);
 
-    // 设置默认示例文本，展示新功能
+    // 设置默认示例文本
     m_editor->setText(
         "# Python Script Example\n"
         "import inspector\n"
         "print('Hello from Script Console!')\n"
         "\n"
         "# 1. Load File\n"
-        "# api.load_file('C:/data/test.csv')\n"
+        "# api.load_file('test.csv')\n"
         "\n"
         "# 2. Find and use Signal ID\n"
         "# sig_id = api.find_id('Speed')\n"
@@ -81,7 +88,7 @@ ScriptWindow::ScriptWindow(ScriptAPI *api, QWidget *parent)
         "# api.export_plot('plot_1.png')\n"
         "# api.export_view('full_layout.png')\n");
 
-    // 5. 日志输出 (下方)
+    // 日志输出 (下方)
     m_logOutput = new QTextEdit(this);
     m_logOutput->setReadOnly(true);
     m_logOutput->setStyleSheet("background-color: #f0f0f0; color: #333;");
@@ -106,8 +113,13 @@ ScriptWindow::~ScriptWindow()
 void ScriptWindow::appendLog(const QString &msg)
 {
     m_logOutput->append(msg);
-    // 滚动到底部
     m_logOutput->verticalScrollBar()->setValue(m_logOutput->verticalScrollBar()->maximum());
+}
+
+// 清理日志槽函数实现
+void ScriptWindow::onClearLogClicked()
+{
+    m_logOutput->clear();
 }
 
 void ScriptWindow::onOpenClicked()
@@ -121,7 +133,7 @@ void ScriptWindow::onOpenClicked()
 
     QString fileName = QFileDialog::getOpenFileName(this,
                                                     tr("Open Python Script"),
-                                                    scriptPath, // 使用默认路径
+                                                    scriptPath,
                                                     tr("Python Scripts (*.py);;All Files (*)"));
 
     if (fileName.isEmpty())
@@ -135,10 +147,12 @@ void ScriptWindow::onOpenClicked()
     }
 
     QTextStream in(&file);
+    in.setCodec("UTF-8");
+
     QString content = in.readAll();
     m_editor->setPlainText(content);
 
-    appendLog(tr("Loaded script: %1").arg(fileName));
+    // appendLog(tr("Loaded script: %1").arg(fileName));
 }
 
 void ScriptWindow::onSaveClicked()
@@ -152,7 +166,7 @@ void ScriptWindow::onSaveClicked()
 
     QString fileName = QFileDialog::getSaveFileName(this,
                                                     tr("Save Python Script"),
-                                                    scriptPath, // 使用默认路径
+                                                    scriptPath,
                                                     tr("Python Scripts (*.py);;All Files (*)"));
 
     if (fileName.isEmpty())
@@ -166,10 +180,11 @@ void ScriptWindow::onSaveClicked()
     }
 
     QTextStream out(&file);
+    out.setCodec("UTF-8");
     out << m_editor->toPlainText();
     file.close();
 
-    appendLog(tr("Saved script to: %1").arg(fileName));
+    // appendLog(tr("Saved script to: %1").arg(fileName));
 }
 
 void ScriptWindow::onRunClicked()
@@ -192,7 +207,7 @@ void ScriptWindow::onRunClicked()
             global["api"] = m_api;
         }
 
-        // 重定向 stdout/stderr 到我们的日志窗口，我们在 Python 中定义一个名为 CatchOut 的类，调用 api.log()
+        // 重定向 stdout/stderr 到我们的日志窗口
         py::exec(
             "import sys\n"
             "class CatchOut:\n"
