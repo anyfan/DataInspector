@@ -29,8 +29,14 @@ public:
     // 导入视图布局 (.mldatx)
     void import_view(std::string path);
 
+    // 查找信号ID (通过名称)
+    std::string find_id(std::string name);
+
     // 设置当前活动子图的 X 轴范围
     void set_x_range(double min, double max);
+
+    // 设置当前活动子图的 Y 轴范围
+    void set_y_range(double min, double max);
 
     // 自适应当前视图 (X 和 Y)
     void autoscale();
@@ -40,6 +46,15 @@ public:
 
     // 获取信号数据
     std::vector<double> get_data(std::string id);
+
+    // 获取信号的时间数据
+    std::vector<double> get_time_data(std::string id);
+
+    // 导出当前激活的子图为图片
+    bool export_plot(std::string path);
+
+    // 导出整个视图布局为图片
+    bool export_view(std::string path);
 
 private:
     MainWindow *m_mainWin;

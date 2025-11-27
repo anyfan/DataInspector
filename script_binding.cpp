@@ -1,10 +1,14 @@
 #include "scriptapi.h"
-#include "mainwindow.h"   // 必须包含以访问 MainWindow 的具体实现
-#include "scriptwindow.h" // 包含以访问 ScriptWindow::appendLog
+#include "mainwindow.h"    // 必须包含以访问 MainWindow 的具体实现
+#include "scriptwindow.h"  // 包含以访问 ScriptWindow::appendLog
+#include "signalbrowser.h" // 访问 SignalBrowser
+#include "qcustomplot.h"   // 访问 QCustomPlot
+#include <QStandardItem>   // 访问 Item 数据
 #include <pybind11/embed.h>
 #include <pybind11/stl.h> // 支持 std::vector 到 python list 的自动转换
 #include <QEventLoop>     // 用于同步等待
 #include <QTimer>
+#include <QFileInfo>
 
 namespace py = pybind11;
 
@@ -82,6 +86,7 @@ bool ScriptAPI::load_file(std::string path)
 
     return success;
 }
+
 void ScriptAPI::import_view(std::string path)
 {
     if (m_mainWin)
@@ -92,6 +97,27 @@ void ScriptAPI::import_view(std::string path)
     }
 }
 
+std::string ScriptAPI::find_id(std::string name)
+{
+    if (!m_mainWin || !m_mainWin->m_signalBrowser)
+        return "";
+
+    QString qName = QString::fromStdString(name);
+    // 使用 SignalBrowser 的公共方法查找 Item
+    QStandardItem *item = m_mainWin->m_signalBrowser->findItemByName(qName);
+
+    if (item)
+    {
+        // 提取存储在 UserRole 中的 ID
+        QString id = item->data(TreeItemRoles::UniqueIdRole).toString();
+        // log("Found ID: " + id.toStdString());
+        return id.toStdString();
+    }
+
+    log("Signal name not found: " + name);
+    return "";
+}
+
 void ScriptAPI::set_x_range(double min, double max)
 {
     if (m_mainWin)
@@ -100,6 +126,23 @@ void ScriptAPI::set_x_range(double min, double max)
         if (plot)
         {
             plot->xAxis->setRange(min, max);
+            plot->replot();
+        }
+        else
+        {
+            log("Warning: No active plot selected.");
+        }
+    }
+}
+
+void ScriptAPI::set_y_range(double min, double max)
+{
+    if (m_mainWin)
+    {
+        QCustomPlot *plot = m_mainWin->getActivePlot();
+        if (plot)
+        {
+            plot->yAxis->setRange(min, max);
             plot->replot();
         }
         else
@@ -147,6 +190,87 @@ std::vector<double> ScriptAPI::get_data(std::string id)
     return {};
 }
 
+// [新增] 获取时间数据实现
+std::vector<double> ScriptAPI::get_time_data(std::string id)
+{
+    if (!m_mainWin)
+        return {};
+
+    QString qid = QString::fromStdString(id);
+    // 使用 MainWindow 的辅助函数查找数据位置
+    SignalLocation loc = m_mainWin->getSignalDataFromID(qid);
+
+    // 只要找到了 Table，就可以获取 TimeData
+    if (loc.table)
+    {
+        const QVector<double> &qvec = loc.table->timeData;
+        return std::vector<double>(qvec.begin(), qvec.end());
+    }
+
+    log("Error: Signal ID not found or invalid: " + id);
+    return {};
+}
+
+bool ScriptAPI::export_plot(std::string path)
+{
+    if (!m_mainWin)
+        return false;
+    QCustomPlot *plot = m_mainWin->getActivePlot();
+    if (!plot)
+    {
+        log("Error: No active plot to export.");
+        return false;
+    }
+
+    QString qPath = QString::fromStdString(path);
+    bool success = false;
+    double scale = 2.0; // 默认 2倍 缩放以获得较好清晰度
+
+    if (qPath.endsWith(".png", Qt::CaseInsensitive))
+        success = plot->savePng(qPath, 0, 0, scale);
+    else if (qPath.endsWith(".jpg", Qt::CaseInsensitive))
+        success = plot->saveJpg(qPath, 0, 0, scale, 95);
+    else if (qPath.endsWith(".bmp", Qt::CaseInsensitive))
+        success = plot->saveBmp(qPath, 0, 0, scale);
+    else if (qPath.endsWith(".pdf", Qt::CaseInsensitive))
+        success = plot->savePdf(qPath);
+    else
+    {
+        // 默认添加 png 后缀
+        qPath += ".png";
+        success = plot->savePng(qPath, 0, 0, scale);
+    }
+
+    if (success)
+        log("Exported plot to: " + qPath.toStdString());
+    else
+        log("Failed to export plot to: " + qPath.toStdString());
+
+    return success;
+}
+
+bool ScriptAPI::export_view(std::string path)
+{
+    if (!m_mainWin || !m_mainWin->m_plotContainer)
+        return false;
+
+    QString qPath = QString::fromStdString(path);
+    // 抓取整个绘图容器
+    QPixmap pixmap = m_mainWin->m_plotContainer->grab();
+
+    if (qPath.isEmpty())
+        qPath = "view_export.png";
+
+    bool success = pixmap.save(qPath);
+
+    if (success)
+        log("Exported view to: " + qPath.toStdString());
+    else
+        log("Failed to export view to: " + qPath.toStdString());
+
+    return success;
+}
+
 // --- Python 绑定定义 ---
 
 PYBIND11_EMBEDDED_MODULE(inspector, m)
@@ -156,8 +280,13 @@ PYBIND11_EMBEDDED_MODULE(inspector, m)
         .def("log", &ScriptAPI::log, "打印日志到控制台")
         .def("load_file", &ScriptAPI::load_file, "加载文件 (同步阻塞)，返回 True/False")
         .def("import_view", &ScriptAPI::import_view, "导入 .mldatx 视图布局")
+        .def("find_id", &ScriptAPI::find_id, "根据信号名称查找其唯一 ID")
         .def("set_x_range", &ScriptAPI::set_x_range, "设置当前子图 X 轴范围 (min, max)")
+        .def("set_y_range", &ScriptAPI::set_y_range, "设置当前子图 Y 轴范围 (min, max)")
         .def("autoscale", &ScriptAPI::autoscale, "自适应当前子图")
         .def("fit_view_y_all", &ScriptAPI::fit_view_y_all, "所有子图 Y 轴自适应")
-        .def("get_data", &ScriptAPI::get_data, "获取信号数据数组，参数为信号ID");
+        .def("get_data", &ScriptAPI::get_data, "获取信号数据数组，参数为信号ID")
+        .def("get_time_data", &ScriptAPI::get_time_data, "获取信号时间数组，参数为信号ID")
+        .def("export_plot", &ScriptAPI::export_plot, "导出当前激活子图为图片 (png, jpg, pdf)")
+        .def("export_view", &ScriptAPI::export_view, "导出整个主界面视图布局为图片");
 }
