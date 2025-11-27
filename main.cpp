@@ -1,5 +1,8 @@
 #include "mainwindow.h"
 #include <QApplication>
+#include <pybind11/embed.h>
+
+namespace py = pybind11;
 
 int main(int argc, char *argv[])
 {
@@ -7,16 +10,19 @@ int main(int argc, char *argv[])
     QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
     QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
 
+    // 初始化 Python 解释器
+    py::scoped_interpreter guard{};
+
     QApplication a(argc, argv);
-    
-    // 设置应用程序图标
+
     QIcon appIcon(":/icon/plotjuggler.svg");
-    if (!appIcon.isNull()) {
+    if (!appIcon.isNull())
+    {
         a.setWindowIcon(appIcon);
     }
 
     MainWindow w;
-    w.resize(1024, 768); // 设置一个默认大小
+    w.resize(1024, 768);
     w.show();
 
     return a.exec();

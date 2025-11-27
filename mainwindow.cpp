@@ -2,6 +2,7 @@
 #include "qcustomplot.h"
 #include "replaymanager.h"
 #include "FlowLegend.h"
+#include "scriptwindow.h"
 
 #include <QMenuBar>
 #include <QMenu>
@@ -133,6 +134,15 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_cursorManager, &CursorManager::cursorKeyChanged,
             m_replayManager, &ReplayManager::onCursorKeyChanged);
+
+    m_scriptAPI = new ScriptAPI(this);
+
+    // 创建菜单动作
+    m_scriptConsoleAction = new QAction(tr("Script Console"), this);
+    m_scriptConsoleAction->setShortcut(QKeySequence(Qt::Key_F12)); // 快捷键 F12
+    connect(m_scriptConsoleAction, &QAction::triggered, this, &MainWindow::on_actionScriptConsole_triggered);
+    QMenu *toolsMenu = menuBar()->addMenu(tr("&Tools"));
+    toolsMenu->addAction(m_scriptConsoleAction);
 }
 
 MainWindow::~MainWindow()
@@ -913,6 +923,8 @@ void MainWindow::onDataLoadFinished(const FileData &data)
     m_signalBrowser->loadFileData(data);
 
     updateReplayManagerRange();
+
+    emit dataProcessingFinished(data.filePath);
 }
 
 void MainWindow::onDataLoadFailed(const QString &filePath, const QString &errorString)
@@ -2539,10 +2551,22 @@ void MainWindow::onAntialiasingActionToggled(bool checked)
         }
         else
         {
-            // 禁用 Plottables (曲线/图表) 的抗锯齿，保留坐标轴和文字的抗锯齿
-            // 这样可以解决陡峭线条的模糊/双线问题
             plot->setNotAntialiasedElements(QCP::aePlottables);
         }
         plot->replot();
     }
+}
+
+void MainWindow::on_actionScriptConsole_triggered()
+{
+    if (!m_scriptWindow)
+    {
+        m_scriptWindow = new ScriptWindow(m_scriptAPI, this);
+        m_scriptAPI->setScriptWindow(m_scriptWindow);
+    }
+
+    // 显示并置顶
+    m_scriptWindow->show();
+    m_scriptWindow->raise();
+    m_scriptWindow->activateWindow();
 }

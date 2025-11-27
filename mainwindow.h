@@ -9,6 +9,8 @@
 #include <QSet>
 #include <QDomDocument>
 
+#include "scriptapi.h"
+
 // Local Headers
 #include "datamanager.h"
 #include "cursormanager.h"
@@ -33,6 +35,8 @@ class QProgressDialog;
 class QLineEdit;
 class QSpinBox;
 class QThread;
+
+class ScriptWindow;
 
 // Custom Roles
 enum TreeItemRoles
@@ -60,9 +64,16 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
+    QCustomPlot *getActivePlot() const { return m_activePlot; }
+
+    friend class ScriptAPI;
+
 signals:
     void requestLoadCsv(const QString &filePath);
     void requestLoadMat(const QString &filePath);
+
+    // 通知外部数据已处理完毕且UI已更新
+    void dataProcessingFinished(const QString &filePath);
 
 protected:
     // Event Overrides
@@ -124,6 +135,8 @@ private slots:
 
     void onCursorMainButtonToggled(bool checked);
     void onCursorMenuActionTriggered(QAction *action);
+
+    void on_actionScriptConsole_triggered();
 
 private:
     //  内部数据结构
@@ -280,6 +293,10 @@ private:
     int m_savedActivePlotIndex;                    // 保存激活的子图索引
 
     QAction *m_fullScreenAction;
+
+    ScriptAPI *m_scriptAPI = nullptr;
+    ScriptWindow *m_scriptWindow = nullptr;
+    QAction *m_scriptConsoleAction = nullptr;
 };
 
 #endif // MAINWINDOW_H

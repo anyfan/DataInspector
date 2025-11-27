@@ -3,6 +3,7 @@ project(DataInspector LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
@@ -46,6 +47,13 @@ find_package(Qt5 REQUIRED COMPONENTS Core Xml Gui Widgets PrintSupport OpenGL)
 find_package(OpenGL REQUIRED)
 target_link_libraries(qcustomplot Qt5::Core Qt5::PrintSupport Qt5::OpenGL ${OPENGL_LIBRARIES})
 
+include(FetchContent)
+FetchContent_Declare(
+  pybind11
+  URL      ${CMAKE_SOURCE_DIR}/third_libs/pybind11-3.0.1.zip
+)
+FetchContent_MakeAvailable(pybind11)
+
 # --- 2. 源文件列表 ---
 set(SOURCES
     main.cpp
@@ -56,6 +64,8 @@ set(SOURCES
     signaltreedelegate.cpp
     signalpropertiesdialog.cpp
     signalbrowser.cpp
+    script_binding.cpp
+    scriptwindow.cpp
 )
 
 # --- 3. 目标构建 ---
@@ -67,4 +77,5 @@ target_include_directories(DataInspector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(DataInspector
     Qt5::Core Qt5::Xml Qt5::Gui Qt5::Widgets Qt5::OpenGL
     matio qcustomplot quazip ${OPENGL_LIBRARIES}
+    pybind11::embed
 )
