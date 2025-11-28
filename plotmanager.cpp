@@ -248,8 +248,6 @@ void PlotManager::configurePlotLegend(QCustomPlot *plot)
     plot->legend->clearItems();
     for (int i = 0; i < plot->graphCount(); ++i)
         plot->graph(i)->addToLegend(plot->legend);
-
-    plot->replot();
 }
 
 void PlotManager::onPlotClicked()
@@ -272,7 +270,7 @@ void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, 
     if (plotIndex == -1)
         return;
 
-    // 防止重复添加（逻辑保持之前的修复：只有当Graph真不存在时才添加）
+    // 防止重复添加
     if (m_plotSignalMap[plotIndex].contains(uniqueId))
     {
         if (getGraph(targetPlot, uniqueId))
@@ -285,9 +283,11 @@ void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, 
     // 触发图例更新
     configurePlotLegend(targetPlot);
 
-    // 只有在需要时才 Replot
     if (replot)
+    {
+        emit plotUpdated();
         targetPlot->replot();
+    }
 }
 
 void PlotManager::removeSignal(const QString &uniqueId, QCustomPlot *targetPlot)
@@ -309,13 +309,13 @@ void PlotManager::removeSignal(const QString &uniqueId, QCustomPlot *targetPlot)
             targetPlot->removeGraph(graph);
             m_plotSignalMap[plotIndex].remove(uniqueId);
 
-            configurePlotLegend(targetPlot); // 刷新图例 (如果变成0条曲线，会移除顶栏)
-            targetPlot->replot();
+            configurePlotLegend(targetPlot);
             emit plotUpdated();
+
+            targetPlot->replot();
         }
     }
 }
-
 void PlotManager::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc)
 {
     if (!loc.table)

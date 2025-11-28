@@ -1117,14 +1117,7 @@ void MainWindow::onActivePlotChanged(QCustomPlot *plot)
 
 void MainWindow::onPlotManagerUpdated()
 {
-    // 图表更新后(比如Layout变化)，刷新数据
-    // 1. 如果是从 Maximize 恢复，我们需要重新填充信号
-    if (!m_plotManager->isMaximized())
-    {
-        // 遍历所有 Plot，恢复其信号 (逻辑略复杂，需 PlotManager 配合)
-        // 简化版本：PlotManager 内部其实已经尽量保留了 Structure
-        // 这里的重点是游标更新
-    }
+    m_cursorManager->setupCursors();
 
     QTimer::singleShot(0, m_cursorManager, &CursorManager::updateAllCursors);
 }
