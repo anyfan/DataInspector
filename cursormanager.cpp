@@ -287,7 +287,7 @@ void CursorManager::setupCursors()
     if (m_cursorMode == CursorManager::NoCursor)
     {
         for (QCustomPlot *plot : *m_plotWidgets)
-            plot->replot();
+            plot->layer("overlay")->replot();
         return;
     }
 
@@ -321,6 +321,7 @@ void CursorManager::setupCursors()
 
             // 1. 创建 Line
             QCPItemLine *line = new QCPItemLine(plot);
+            line->setLayer("overlay");
             line->setPen(linePen);
             line->setSelectable(true);
 
@@ -355,6 +356,7 @@ void CursorManager::setupCursors()
                     continue;
 
                 QCPItemTracer *tracer = new QCPItemTracer(plot);
+                tracer->setLayer("overlay");
                 tracer->setGraph(graph);
                 tracer->setInterpolating(false);
                 tracer->setVisible(true);
@@ -381,7 +383,7 @@ void CursorManager::setupCursors()
     }
 
     for (QCustomPlot *plot : *m_plotWidgets)
-        plot->replot();
+        plot->layer("overlay")->replot();
 }
 
 /**
@@ -528,7 +530,7 @@ void CursorManager::updateCursors(double key, int cursorIndex)
             }
         }
         resolveLabelOverlaps(labelsOnThisPlot);
-        plot->replot();
+        plot->layer("overlay")->replot();
     }
 }
 
