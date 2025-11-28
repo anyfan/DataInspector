@@ -679,6 +679,13 @@ void PlotManager::onCustomContextMenu(const QPoint &pos)
                 {
              int idx = m_plots.indexOf(plot);
              if(idx >=0) emit removeSubplotRequested(idx); });
+
+        menu.addSeparator();
+
+        QAction *exportAction = menu.addAction(tr("Export Plot..."));
+        connect(exportAction, &QAction::triggered, [this, plot]()
+                { exportPlot(plot); });
+
         menu.exec(plot->mapToGlobal(pos));
     }
 }
@@ -801,7 +808,12 @@ void PlotManager::exportAllViews(const QString &path)
 
 void PlotManager::exportActivePlot(const QString &path)
 {
-    if (!m_activePlot)
+    exportPlot(m_activePlot, path);
+}
+
+void PlotManager::exportPlot(QCustomPlot *plot, const QString &path)
+{
+    if (!plot)
         return;
 
     QString filters = tr("PNG Image (*.png);;JPG Image (*.jpg);;BMP Image (*.bmp);;PDF Document (*.pdf)");
@@ -816,7 +828,8 @@ void PlotManager::exportActivePlot(const QString &path)
             dir.mkpath(".");
         }
 
-        exportPath = QFileDialog::getSaveFileName(nullptr, tr("Export Plot"), exportPath, filters);
+        // 使用 nullptr 作为父对象，或者是 m_container，避免模态框问题
+        exportPath = QFileDialog::getSaveFileName(m_container, tr("Export Plot"), exportPath, filters);
     }
 
     if (exportPath.isEmpty())
@@ -828,29 +841,29 @@ void PlotManager::exportActivePlot(const QString &path)
     bool success = false;
     if (exportPath.endsWith(".png", Qt::CaseInsensitive))
     {
-        success = m_activePlot->savePng(exportPath, 0, 0, scale, -1);
+        success = plot->savePng(exportPath, 0, 0, scale, -1);
     }
     else if (exportPath.endsWith(".jpg", Qt::CaseInsensitive) || exportPath.endsWith(".jpeg", Qt::CaseInsensitive))
     {
-        success = m_activePlot->saveJpg(exportPath, 0, 0, scale, quality);
+        success = plot->saveJpg(exportPath, 0, 0, scale, quality);
     }
     else if (exportPath.endsWith(".bmp", Qt::CaseInsensitive))
     {
-        success = m_activePlot->saveBmp(exportPath, 0, 0, scale);
+        success = plot->saveBmp(exportPath, 0, 0, scale);
     }
     else if (exportPath.endsWith(".pdf", Qt::CaseInsensitive))
     {
-        success = m_activePlot->savePdf(exportPath);
+        success = plot->savePdf(exportPath);
     }
     else
     {
         exportPath += ".png";
-        success = m_activePlot->savePng(exportPath, 0, 0, scale, -1);
+        success = plot->savePng(exportPath, 0, 0, scale, -1);
     }
 
     if (!success)
     {
-        QMessageBox::warning(nullptr, tr("Export Failed"), tr("Failed to save image to %1").arg(exportPath));
+        QMessageBox::warning(m_container, tr("Export Failed"), tr("Failed to save image to %1").arg(exportPath));
     }
 }
 

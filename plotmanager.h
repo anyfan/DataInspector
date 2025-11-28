@@ -54,6 +54,7 @@ public:
 
     // --- 导出 ---
     void exportActivePlot(const QString &path);
+    void exportPlot(QCustomPlot *plot, const QString &path = QString());
     void exportAllViews(const QString &path);
 
     // 最大化/还原
