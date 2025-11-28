@@ -151,8 +151,6 @@ void ScriptWindow::onOpenClicked()
 
     QString content = in.readAll();
     m_editor->setPlainText(content);
-
-    // appendLog(tr("Loaded script: %1").arg(fileName));
 }
 
 void ScriptWindow::onSaveClicked()
@@ -183,8 +181,6 @@ void ScriptWindow::onSaveClicked()
     out.setCodec("UTF-8");
     out << m_editor->toPlainText();
     file.close();
-
-    // appendLog(tr("Saved script to: %1").arg(fileName));
 }
 
 void ScriptWindow::onRunClicked()

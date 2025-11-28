@@ -17,7 +17,7 @@ PlotManager::PlotManager(QWidget *parentContainer, QObject *parent)
       m_yAxisGroup(nullptr),
       m_openGL(false),
       m_antialiasing(true),
-      m_legendMode(0), // Default Outside Top
+      m_legendMode(0),
       m_isMaximized(false),
       m_savedActivePlotIndex(-1)
 {
@@ -113,8 +113,7 @@ void PlotManager::setupLayout(const QList<QRect> &geometries)
 
     if (!m_plots.isEmpty())
     {
-        // 默认激活第一个
-        onPlotClicked(); // 模拟点击逻辑以激活
+        onPlotClicked(); // 默认激活第一个
     }
 
     emit layoutChanged();
@@ -158,7 +157,7 @@ void PlotManager::setupPlotInteractions(QCustomPlot *plot)
 
     // 拖放支持
     plot->setAcceptDrops(true);
-    plot->installEventFilter(this); // 安装事件过滤器处理拖放
+    plot->installEventFilter(this);
 }
 
 void PlotManager::configurePlotLegend(QCustomPlot *plot)
@@ -321,7 +320,6 @@ void PlotManager::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID,
 
     QCPGraph *graph = plot->addGraph();
     graph->setName(loc.name);
-    // 注意：这里我们假设 loc.table 的数据在 DataManager 管理下生命周期有效
     graph->setData(loc.table->timeData, loc.table->valueData[loc.signalIndex]);
     graph->setPen(loc.pen);
     graph->setProperty("id", uniqueID);
@@ -346,7 +344,7 @@ void PlotManager::clearAllPlots()
     for (QCustomPlot *plot : m_plots)
     {
         plot->clearGraphs();
-        configurePlotLegend(plot); // 0 Graphs -> Legend removed -> Layout simplified
+        configurePlotLegend(plot);
         plot->replot();
     }
     m_plotSignalMap.clear();
@@ -535,7 +533,7 @@ void PlotManager::onPlotSelectionChanged()
     if (!plot)
         return;
 
-    // 处理图例和曲线的同步选择逻辑 (保留原代码逻辑)
+    // 处理图例和曲线的同步选择逻辑
     QList<QCPGraph *> selectedGraphs = plot->selectedGraphs();
     QList<QCPAbstractLegendItem *> selectedLegendItems = plot->legend->selectedItems();
 
@@ -734,10 +732,8 @@ void PlotManager::toggleMaximizeActive()
 {
     if (m_isMaximized)
     {
-        // Restore
         m_plotSignalMap = m_savedPlotSignalMap;
         setupLayout(m_savedGeometries);
-        // 恢复信号内容需要外部配合或更复杂的逻辑
         m_isMaximized = false;
 
         if (m_savedActivePlotIndex >= 0 && m_savedActivePlotIndex < m_plots.size())
@@ -763,7 +759,7 @@ void PlotManager::toggleMaximizeActive()
         m_isMaximized = true;
     }
     emit layoutChanged();
-    emit plotUpdated(); // MainWindow should catch this and refill signals based on m_plotSignalMap
+    emit plotUpdated();
 }
 
 void PlotManager::exportAllViews(const QString &path)
@@ -826,8 +822,7 @@ void PlotManager::exportActivePlot(const QString &path)
     if (exportPath.isEmpty())
         return;
 
-    // --- 高清设置 ---
-    double scale = 3.0; // 缩放因子：3.0 表示 3 倍分辨率 (约 300 DPI)
+    double scale = 3.0; // 3 倍分辨率
     int quality = 100;  // JPG 质量 (0-100)
 
     bool success = false;

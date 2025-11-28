@@ -67,14 +67,9 @@ private:
     };
 
     CursorMode m_cursorMode;
-
-    // 使用 Vector 替代散乱的 1/2 变量
-    // Index 0 -> Cursor 1, Index 1 -> Cursor 2
     QVector<CursorData> m_cursors;
-
     QList<QCustomPlot *> *m_plotWidgets;
     QCustomPlot *m_currentActivePlot = nullptr;
-    // --- 优化部分结束 ---
 };
 
 Q_DECLARE_METATYPE(CursorManager::CursorMode)

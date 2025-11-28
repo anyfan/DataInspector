@@ -32,11 +32,9 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-    // 供 ScriptAPI 使用
     PlotManager *getPlotManager() const { return m_plotManager; }
     DataManager *getDataManager() const { return m_dataManager; }
 
-    // 供 ScriptAPI 查找数据
     SignalLocation getSignalDataFromID(const QString &uniqueID) const;
     void removeFile(const QString &filename);
 
@@ -47,7 +45,7 @@ signals:
     void requestLoadMat(const QString &filePath);
     void dataProcessingFinished(const QString &filePath);
     void viewImportFinished();
-    void plotUpdated(); // Forwarded from PlotManager
+    void plotUpdated();
 
 protected:
     void dragEnterEvent(QDragEnterEvent *event) override;
@@ -90,7 +88,7 @@ private slots:
 
     // PlotManager 回调
     void onActivePlotChanged(QCustomPlot *plot);
-    void onPlotManagerUpdated(); // 布局变动后，需刷新游标等
+    void onPlotManagerUpdated();
     void onLayoutChanged();
     void onSignalDropRequested(const QString &uniqueId, QCustomPlot *plot);
     void onSignalSelectionChanged(const QString &id);
@@ -139,7 +137,7 @@ private:
     // --- 成员变量 ---
     QThread *m_dataThread;
     DataManager *m_dataManager;
-    PlotManager *m_plotManager; // 核心管理类
+    PlotManager *m_plotManager;
     CursorManager *m_cursorManager;
     ReplayManager *m_replayManager;
     SignalBrowser *m_signalBrowser;
@@ -183,7 +181,7 @@ private:
     QAction *m_legendPosOutsideTopAction;
     QAction *m_legendPosInsideTLAction;
     QAction *m_legendPosInsideTRAction;
-    
+
     QAction *m_setDefaultPenWidthAction;
 
     QAction *m_maximizeAction;

@@ -42,7 +42,7 @@ MainWindow::MainWindow(QWidget *parent)
       m_customLayoutDialog(nullptr),
       m_scriptAPI(nullptr),
       m_scriptWindow(nullptr),
-      m_legendPosGroup(nullptr) // 初始化指针
+      m_legendPosGroup(nullptr)
 {
     setupDataManagerThread();
 
@@ -55,12 +55,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     // 3. 动作与菜单
     createActions();
-    createDocks(); // 创建 SignalBrowser
+    createDocks();
     createToolBars();
     createMenus();
 
     // 4. 初始化 CursorManager
-    // 注意：CursorManager 需要访问 plots 列表，我们提供 PlotManager 的引用列表
     m_cursorManager = new CursorManager(&m_plotManager->getPlots(), this);
     m_currentCursorMode = CursorManager::SingleCursor;
 
@@ -81,7 +80,6 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_plotManager, &PlotManager::signalSelectionChanged, this, &MainWindow::onSignalSelectionChanged);
     connect(m_plotManager, &PlotManager::removeSubplotRequested, this, &MainWindow::onRemoveSubplotRequested);
     connect(m_plotManager, &PlotManager::removeSignalRequested, this, &MainWindow::onRemoveSignalRequested);
-    // 转发 plotUpdated 信号给 API
     connect(m_plotManager, &PlotManager::plotUpdated, this, &MainWindow::plotUpdated);
 
     setWindowTitle(tr("Data Inspector (Refactored)"));
@@ -91,8 +89,7 @@ MainWindow::MainWindow(QWidget *parent)
     // 7. 初始布局
     m_plotManager->setupLayout(2, 1);
 
-    // [修复] 确保图例模式与 Action 状态同步，避免布局错乱
-    // 默认 OutsideTop (0)
+    // 初始化图例在顶部
     m_plotManager->setLegendPosition(0);
 
     // 8. 进度条
@@ -165,7 +162,6 @@ void MainWindow::createActions()
     m_layout2x2Action->setData(QPoint(2, 2));
     m_layout2x2Action->setIcon(QIcon(":/icon/grid.svg"));
 
-    // 对于复杂的 Split 布局，我们使用字符串或特殊 ID 作为 Data
     m_layoutSplitBottomAction = new QAction(tr("Bottom Split"), this);
     m_layoutSplitBottomAction->setData("split_bottom");
     QPixmap bottomSplitPixmap(":/icon/grid-split-right.svg");
@@ -227,7 +223,7 @@ void MainWindow::createActions()
     m_fitViewYAllAction = new QAction(tr("Fit View All (Y-Axis)"), this);
     m_fitViewYAllAction->setIcon(style()->standardIcon(QStyle::SP_DialogApplyButton));
     m_fitViewYAllAction->setToolTip(tr("适应所有子图视图（Y轴）"));
-    m_fitViewYAllAction->setShortcut(QKeySequence(tr("Ctrl+Shift+Y"))); // 设置快捷键 Ctrl+Shift+Y
+    m_fitViewYAllAction->setShortcut(QKeySequence(tr("Ctrl+Shift+Y")));
     connect(m_fitViewYAllAction, &QAction::triggered, this, &MainWindow::on_actionFitViewYAll_triggered);
 
     m_cursorActionSingle = new QAction(tr("单游标"), this);
@@ -336,7 +332,7 @@ void MainWindow::createActions()
     m_antialiasingAction = new QAction(tr("启用曲线抗锯齿"), this);
     m_antialiasingAction->setToolTip(tr("开启/关闭曲线的抗锯齿渲染。\n关闭抗锯齿可消除陡峭线条的'幽灵线'假象并提高性能，但线条边缘会有锯齿。"));
     m_antialiasingAction->setCheckable(true);
-    m_antialiasingAction->setChecked(true); // 默认开启 (Qt默认行为)，你可以手动关闭它
+    m_antialiasingAction->setChecked(true); // 默认开启
     connect(m_antialiasingAction, &QAction::toggled, this, &MainWindow::onAntialiasingActionToggled);
 
     // 设置默认线宽动作
@@ -353,7 +349,7 @@ void MainWindow::createActions()
     m_maximizeAction = new QAction(this);
     m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-expand.svg"));
     m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
-    m_maximizeAction->setShortcut(Qt::Key_M); // 设置快捷键 M
+    m_maximizeAction->setShortcut(Qt::Key_M);
     connect(m_maximizeAction, &QAction::triggered, this, &MainWindow::on_actionMaximize_triggered);
 
     m_fullScreenAction = new QAction(this);
@@ -464,7 +460,7 @@ void MainWindow::createToolBars()
 
 void MainWindow::createDocks()
 {
-    m_signalDock = new QDockWidget(tr("Signals"), this);
+    m_signalDock = new QDockWidget(tr("信号"), this);
     m_signalBrowser = new SignalBrowser(m_signalDock);
     connect(m_signalBrowser, &SignalBrowser::signalCheckStateChanged, this, &MainWindow::onSignalCheckStateChanged);
     connect(m_signalBrowser, &SignalBrowser::signalPenChanged, this, &MainWindow::onSignalPenChanged);
@@ -478,7 +474,6 @@ void MainWindow::onSignalCheckStateChanged(const QString &uniqueId, bool checked
     if (m_fileDataMap.isEmpty())
         return;
 
-    // 如果没有任何子图，或者用户没选子图，PlotManager会处理默认逻辑(active plot)
     if (checked)
     {
         SignalLocation loc = getSignalDataFromID(uniqueId);
@@ -501,7 +496,7 @@ void MainWindow::onSignalPenChanged(const QString &uniqueId, const QPen &newPen)
             if (graph && graph->property("id").toString() == uniqueId)
             {
                 graph->setPen(newPen);
-                // 性能优化：如果有 selection decorator，也需更新宽度
+
                 if (graph->selectionDecorator())
                 {
                     QPen selPen = graph->selectionDecorator()->pen();
@@ -550,7 +545,6 @@ void MainWindow::importView(const QString &path)
     if (path.isEmpty())
         return;
 
-    // 使用 QuaZip 打开
     QuaZip zip(path);
     if (!zip.open(QuaZip::mdUnzip))
     {
@@ -568,7 +562,6 @@ void MainWindow::importView(const QString &path)
 
     for (const QString &fileName : allFiles)
     {
-        // 我们只关心目标文件
         if (fileName != "views/sdi_view_meta_data.xml" && fileName != "views/sdi_checked_signals.xml")
         {
             continue;
@@ -714,7 +707,7 @@ void MainWindow::removeFile(const QString &filename)
         return;
     m_cursorManager->clearCursors();
 
-    // 让 PlotManager 移除所有相关曲线
+    // 移除所有相关曲线
     m_plotManager->removeFileSignals(filename);
     m_signalBrowser->removeFile(filename);
 
@@ -1194,7 +1187,7 @@ void MainWindow::on_actionExportAll_triggered() { m_plotManager->exportAllViews(
 
 void MainWindow::onLayoutChanged()
 {
-    // 1. 恢复信号
+    // 重新添加所有信号
     for (QCustomPlot *plot : m_plotManager->getPlots())
     {
         int idx = m_plotManager->getPlots().indexOf(plot);
@@ -1207,15 +1200,12 @@ void MainWindow::onLayoutChanged()
                 SignalLocation loc = getSignalDataFromID(id);
                 if (loc.table)
                 {
-                    // [关键优化] 最后一个参数传 false，禁止内部 replot
                     m_plotManager->addSignal(id, loc, plot, false);
                 }
             }
         }
-        // 每个 Plot 恢复完所有信号后，只重绘一次
         plot->replot();
     }
 
-    // 2. 重置游标管理器
     m_cursorManager->reset();
 }

@@ -11,11 +11,6 @@
 class CursorManager;
 class QGridLayout;
 
-/**
- * @brief 图表管理器
- * * 负责管理 QCustomPlot 的布局、创建、交互以及信号曲线的绘制。
- * * 从 MainWindow 中剥离出来的核心绘图逻辑。
- */
 class PlotManager : public QObject
 {
     Q_OBJECT
@@ -30,8 +25,7 @@ public:
     QList<QRect> captureLayoutGeometries() const;
     void clearLayout(); // 清除所有图表
 
-    // --- 访问器 ---
-    QList<QCustomPlot *> &getPlots() { return m_plots; } // 供 CursorManager 使用
+    QList<QCustomPlot *> &getPlots() { return m_plots; }
     QCustomPlot *getActivePlot() const { return m_activePlot; }
     QWidget *getContainer() const { return m_container; }
 
@@ -113,7 +107,7 @@ private:
     // 状态缓存
     bool m_openGL;
     bool m_antialiasing;
-    int m_legendMode; // 0: OutsideTop (Default)
+    int m_legendMode;
 
     // 最大化相关
     bool m_isMaximized;

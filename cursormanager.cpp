@@ -18,8 +18,6 @@ CursorManager::CursorManager(QList<QCustomPlot *> *plotWidgets,
 
 CursorManager::~CursorManager()
 {
-    // clearCursors 会删除所有 QCPItems
-    // 我们不需要手动删除，因为 QCustomPlot 会管理它们
 }
 
 CursorManager::CursorMode CursorManager::getMode() const
@@ -417,19 +415,16 @@ void CursorManager::resolveLabelOverlaps(QList<QCPItemText *> &labelsOnPlot)
         return false; });
 
     // 2. 迭代，检查重叠并应用垂直偏移
-    // (我们假设所有标签字体和内边距都相同)
     QFontMetrics fm(labelsOnPlot.first()->font());
     const int labelHeight = fm.height() + labelsOnPlot.first()->padding().top() + labelsOnPlot.first()->padding().bottom();
     const int verticalGap = 2;      // 标签之间的垂直间隙
     const int horizontalOffset = 5; // 默认水平偏移
-
-    // 'lastBottomY' 存储上一个标签放置后的*屏幕* Y 像素坐标 (底部边缘)
-    double lastBottomY = -1e9; // 初始化为一个非常小的值
+    double lastBottomY = -1e9;      // 初始化为一个非常小的值
 
     for (QCPItemText *label : labelsOnPlot)
     {
 
-        QCPItemPosition *anchor = static_cast<QCPItemPosition *>(label->position->parentAnchor()); // Tracer
+        QCPItemPosition *anchor = static_cast<QCPItemPosition *>(label->position->parentAnchor());
 
         if (!anchor)
             continue;
@@ -444,8 +439,7 @@ void CursorManager::resolveLabelOverlaps(QList<QCPItemText *> &labelsOnPlot)
         // 检查是否与上一个标签重叠
         if (idealTopY < lastBottomY + verticalGap)
         {
-            //  重叠：向下推
-            // 新的顶部边缘应位于上一个标签的底部 + 间隙
+            //  重叠：向下推 新的顶部边缘应位于上一个标签的底部 + 间隙
             double newTopY = lastBottomY + verticalGap;
 
             // 计算新的中心点
@@ -551,7 +545,6 @@ double CursorManager::snapKeyToData(double key) const
     if (!plot)
         return key;
 
-    // 修改：直接检查 graphCount
     if (plot->graphCount() == 0)
         return key;
 
@@ -559,7 +552,6 @@ double CursorManager::snapKeyToData(double key) const
     double minDistance = std::numeric_limits<double>::max();
     bool foundAny = false;
 
-    // 修改：直接遍历 graph
     for (int i = 0; i < plot->graphCount(); ++i)
     {
         QCPGraph *graph = plot->graph(i);
@@ -614,6 +606,6 @@ void CursorManager::reset()
     }
 
     // 3. 重新创建游标视觉元素
-    setupCursors(); // 这里面会调用 plot->clearItems() 确保干净
+    setupCursors();
     updateAllCursors();
 }

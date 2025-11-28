@@ -120,7 +120,6 @@ std::string ScriptAPI::find_id(std::string name)
     {
         // 提取存储在 UserRole 中的 ID
         QString id = item->data(TreeItemRoles::UniqueIdRole).toString();
-        // log("Found ID: " + id.toStdString());
         return id.toStdString();
     }
 
