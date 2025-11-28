@@ -224,8 +224,6 @@ void PlotManager::configurePlotLegend(QCustomPlot *plot)
             mainLayout->setRowSpacing(0);
             mainLayout->setRowStretchFactor(0, 0.001); // 让图例行尽可能小，只占用必要空间
 
-            // FlowLegend 需要知道边界来换行
-            plot->legend->setOuterRect(plot->axisRect()->outerRect());
             plot->legend->setVisible(true);
         }
         else
@@ -601,8 +599,7 @@ bool PlotManager::eventFilter(QObject *watched, QEvent *event)
                 // 激活目标图表
                 if (m_activePlot != targetPlot)
                 {
-                    m_activePlot = targetPlot;
-                    emit activePlotChanged(m_activePlot);
+                    activatePlot(targetPlot);
                 }
                 // 请求数据添加
                 emit signalDropRequested(uniqueID, targetPlot);
@@ -620,8 +617,17 @@ void PlotManager::onCustomContextMenu(const QPoint &pos)
     if (!plot)
         return;
 
+    bool skipLegendCheck = false;
+    if (m_legendMode == 0 && plot->axisRect())
+    {
+        if (plot->axisRect()->outerRect().contains(pos))
+        {
+            skipLegendCheck = true;
+        }
+    }
+
     // 1. 优先检查是否点击了图例项
-    if (plot->legend && plot->legend->visible())
+    if (!skipLegendCheck && plot->legend && plot->legend->visible())
     {
         if (plot->legend->selectTest(pos, false) < plot->selectionTolerance())
         {
@@ -646,7 +652,7 @@ void PlotManager::onCustomContextMenu(const QPoint &pos)
                                                          { emit removeSignalRequested(uniqueId); }); });
 
                             menu.exec(plot->mapToGlobal(pos));
-                            return;
+                            return; // 找到并处理了图例项，直接返回
                         }
                     }
                 }

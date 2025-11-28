@@ -611,6 +611,19 @@ void MainWindow::importView(const QString &path)
     qDebug().noquote() << QString("Layout Info: %1x%2 %3").arg(layout.rows).arg(layout.cols).arg(layout.layoutType);
     qDebug().noquote() << QString("Signal Info: Found %1 signals").arg(signalList.count());
 
+    // 清除 PlotManager 中的所有信号记录
+    int currentPlotCount = m_plotManager->getPlots().size();
+    for (int i = 0; i < currentPlotCount; ++i)
+    {
+        QSet<QString> activeIds = m_plotManager->getPlotSignalIDs(i);
+        for (const QString &id : activeIds)
+        {
+            m_signalBrowser->setSignalChecked(id, false, true);
+        }
+    }
+
+    m_plotManager->clearAllPlots();
+
     m_plotManager->setupLayout(layout.rows, layout.cols);
 
     // 添加信号
@@ -623,7 +636,10 @@ void MainWindow::importView(const QString &path)
         // 在树中查找以获取 uniqueID
         QStandardItem *item = m_signalBrowser->findItemByName(sig.name);
         if (!item)
+        {
+            qWarning() << "Import View: Could not find signal in tree:" << sig.name;
             continue;
+        }
         QString uniqueID = item->data(TreeItemRoles::UniqueIdRole).toString();
 
         // 遍历该信号应在的子图 ID
