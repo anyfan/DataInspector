@@ -117,6 +117,7 @@ void PlotManager::setupLayout(const QList<QRect> &geometries)
         onPlotClicked(); // 模拟点击逻辑以激活
     }
 
+    emit layoutChanged();
     emit plotUpdated();
 }
 
@@ -279,7 +280,7 @@ void PlotManager::onPlotClicked()
     emit activePlotChanged(m_activePlot);
 }
 
-void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot)
+void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot, bool replot)
 {
     if (!targetPlot)
         targetPlot = m_activePlot;
@@ -290,16 +291,22 @@ void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, 
     if (plotIndex == -1)
         return;
 
-    // 防止重复添加
+    // 防止重复添加（逻辑保持之前的修复：只有当Graph真不存在时才添加）
     if (m_plotSignalMap[plotIndex].contains(uniqueId))
-        return;
+    {
+        if (getGraph(targetPlot, uniqueId))
+            return;
+    }
 
     setupGraphInstance(targetPlot, uniqueId, loc);
     m_plotSignalMap[plotIndex].insert(uniqueId);
 
-    // 触发图例更新 (因为 graphCount 变了)
+    // 触发图例更新
     configurePlotLegend(targetPlot);
-    targetPlot->replot();
+
+    // 只有在需要时才 Replot
+    if (replot)
+        targetPlot->replot();
 }
 
 void PlotManager::removeSignal(const QString &uniqueId, QCustomPlot *targetPlot)
@@ -730,6 +737,7 @@ void PlotManager::toggleMaximizeActive()
         setupLayout(1, 1);
         m_isMaximized = true;
     }
+    emit layoutChanged();
     emit plotUpdated(); // MainWindow should catch this and refill signals based on m_plotSignalMap
 }
 

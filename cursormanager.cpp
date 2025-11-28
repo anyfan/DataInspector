@@ -273,7 +273,18 @@ void CursorManager::clearCursors()
  */
 void CursorManager::setupCursors()
 {
-    clearCursors();
+    for (QCustomPlot *plot : *m_plotWidgets)
+    {
+        plot->clearItems();
+    }
+
+    for (int i = 0; i < m_cursors.size(); ++i)
+    {
+        m_cursors[i].lines.clear();
+        m_cursors[i].xLabels.clear();
+        m_cursors[i].graphTracers.clear();
+        m_cursors[i].yLabels.clear();
+    }
 
     if (m_cursorMode == CursorManager::NoCursor)
     {
@@ -576,4 +587,28 @@ double CursorManager::snapKeyToData(double key) const
     }
 
     return foundAny ? closestKey : key;
+}
+
+void CursorManager::reset()
+{
+    for (int i = 0; i < m_cursors.size(); ++i)
+    {
+        m_cursors[i].lines.clear();
+        m_cursors[i].xLabels.clear();
+        m_cursors[i].graphTracers.clear();
+        m_cursors[i].yLabels.clear();
+        m_cursors[i].isDragging = false;
+    }
+
+    // 2. 重新连接新 Plot 的鼠标信号
+    for (QCustomPlot *plot : *m_plotWidgets)
+    {
+        connect(plot, &QCustomPlot::mousePress, this, &CursorManager::onPlotMousePress, Qt::UniqueConnection);
+        connect(plot, &QCustomPlot::mouseMove, this, &CursorManager::onPlotMouseMove, Qt::UniqueConnection);
+        connect(plot, &QCustomPlot::mouseRelease, this, &CursorManager::onPlotMouseRelease, Qt::UniqueConnection);
+    }
+
+    // 3. 重新创建游标视觉元素
+    setupCursors(); // 这里面会调用 plot->clearItems() 确保干净
+    updateAllCursors();
 }

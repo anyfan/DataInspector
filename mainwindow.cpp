@@ -75,6 +75,7 @@ MainWindow::MainWindow(QWidget *parent)
     // 6. 连接 PlotManager 信号
     connect(m_plotManager, &PlotManager::activePlotChanged, this, &MainWindow::onActivePlotChanged);
     connect(m_plotManager, &PlotManager::plotUpdated, this, &MainWindow::onPlotManagerUpdated);
+    connect(m_plotManager, &PlotManager::layoutChanged, this, &MainWindow::onLayoutChanged);
     connect(m_plotManager, &PlotManager::signalDropRequested, this, &MainWindow::onSignalDropRequested);
     connect(m_plotManager, &PlotManager::signalSelectionChanged, this, &MainWindow::onSignalSelectionChanged);
     connect(m_plotManager, &PlotManager::removeSubplotRequested, this, &MainWindow::onRemoveSubplotRequested);
@@ -1164,3 +1165,31 @@ void MainWindow::on_actionClearAllPlots_triggered()
     }
 }
 void MainWindow::on_actionExportAll_triggered() { m_plotManager->exportAllViews(QFileDialog::getSaveFileName(this, tr("Save Image"))); }
+
+void MainWindow::onLayoutChanged()
+{
+    // 1. 恢复信号
+    for (QCustomPlot *plot : m_plotManager->getPlots())
+    {
+        int idx = m_plotManager->getPlots().indexOf(plot);
+        QSet<QString> ids = m_plotManager->getPlotSignalIDs(idx);
+
+        for (const QString &id : ids)
+        {
+            if (!m_plotManager->getGraph(plot, id))
+            {
+                SignalLocation loc = getSignalDataFromID(id);
+                if (loc.table)
+                {
+                    // [关键优化] 最后一个参数传 false，禁止内部 replot
+                    m_plotManager->addSignal(id, loc, plot, false);
+                }
+            }
+        }
+        // 每个 Plot 恢复完所有信号后，只重绘一次
+        plot->replot();
+    }
+
+    // 2. 重置游标管理器
+    m_cursorManager->reset();
+}

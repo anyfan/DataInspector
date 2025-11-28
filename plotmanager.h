@@ -1,4 +1,3 @@
-
 #ifndef PLOTMANAGER_H
 #define PLOTMANAGER_H
 
@@ -36,8 +35,10 @@ public:
     QCustomPlot *getActivePlot() const { return m_activePlot; }
     QWidget *getContainer() const { return m_container; }
 
+    QCPGraph *getGraph(QCustomPlot *plot, const QString &uniqueID) const;
+
     // --- 信号操作 ---
-    void addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot = nullptr);
+    void addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot = nullptr, bool replot = true);
     void removeSignal(const QString &uniqueId, QCustomPlot *targetPlot = nullptr);
     void clearAllPlots();
     void removeFileSignals(const QString &filenamePrefix);
@@ -68,6 +69,10 @@ public:
 signals:
     void activePlotChanged(QCustomPlot *plot);
     void plotUpdated();
+
+    // 当布局发生结构性变化（图表被重建）时发出
+    void layoutChanged();
+
     // 当用户把信号拖入图表时发出，请求 MainWindow 提供数据
     void signalDropRequested(const QString &uniqueId, QCustomPlot *targetPlot);
     // 当图表上的信号被选中时
@@ -92,8 +97,6 @@ private:
     void setupPlotInteractions(QCustomPlot *plot);
     void configurePlotLegend(QCustomPlot *plot);
     void setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc);
-    QCPGraph *getGraph(QCustomPlot *plot, const QString &uniqueID) const;
-
     QWidget *m_container;
     QList<QCustomPlot *> m_plots;
     QCustomPlot *m_activePlot;

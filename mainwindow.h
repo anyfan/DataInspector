@@ -91,6 +91,7 @@ private slots:
     // PlotManager 回调
     void onActivePlotChanged(QCustomPlot *plot);
     void onPlotManagerUpdated(); // 布局变动后，需刷新游标等
+    void onLayoutChanged();
     void onSignalDropRequested(const QString &uniqueId, QCustomPlot *plot);
     void onSignalSelectionChanged(const QString &id);
     void onRemoveSubplotRequested(int index);

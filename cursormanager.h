@@ -44,6 +44,7 @@ public slots:
     void updateCursors(double key, int cursorIndex = 1);
     void clearCursors();
     void setupCursors();
+    void reset();
 
     // QCustomPlot 信号槽
     void onPlotMousePress(QMouseEvent *event);
