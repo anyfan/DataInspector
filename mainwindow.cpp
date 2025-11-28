@@ -360,6 +360,10 @@ void MainWindow::createActions()
     m_fullScreenAction->setToolTip(tr("Full Screen"));
     m_fullScreenAction->setShortcut(Qt::Key_F11);
     connect(m_fullScreenAction, &QAction::triggered, this, &MainWindow::on_actionFullScreen_triggered);
+
+    m_scriptConsoleAction = new QAction(tr("Script Console"), this);
+    m_scriptConsoleAction->setShortcut(QKeySequence(Qt::Key_F12)); // 快捷键 F12
+    connect(m_scriptConsoleAction, &QAction::triggered, this, &MainWindow::on_actionScriptConsole_triggered);
 }
 
 void MainWindow::createMenus()
@@ -414,6 +418,9 @@ void MainWindow::createMenus()
     legendPosMenu->addAction(m_legendPosOutsideTopAction);
     legendPosMenu->addAction(m_legendPosInsideTLAction);
     legendPosMenu->addAction(m_legendPosInsideTRAction);
+
+    QMenu *toolsMenu = menuBar()->addMenu(tr("&Tools"));
+    toolsMenu->addAction(m_scriptConsoleAction);
 }
 
 void MainWindow::createToolBars()
@@ -1166,13 +1173,22 @@ void MainWindow::on_actionClearAllPlots_triggered()
 {
     if (QMessageBox::question(this, "Clear", "Clear all?") == QMessageBox::Yes)
     {
+        if (m_cursorManager)
+        {
+            m_cursorManager->clearCursors();
+        }
+
         m_plotManager->clearAllPlots();
-        // [修复] 当全部清除时，取消勾选树中所有项目
-        // 这里需要 SignalBrowser 支持 uncheckAll，或者通过重新加载模型等方式
-        // 简单方式：我们现在状态不一致了，建议触发一次重置
-        // TODO: 可以在 SignalBrowser 增加一个 uncheckAll() 接口
+
+        if (m_signalBrowser)
+        {
+            m_signalBrowser->uncheckAll();
+        }
+
+        updateReplayManagerRange();
     }
 }
+
 void MainWindow::on_actionExportAll_triggered() { m_plotManager->exportAllViews(QFileDialog::getSaveFileName(this, tr("Save Image"))); }
 
 void MainWindow::onLayoutChanged()

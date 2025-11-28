@@ -355,6 +355,25 @@ void SignalBrowser::selectSignal(const QString &uniqueId)
     }
 }
 
+void SignalBrowser::uncheckAll()
+{
+    // 暂时断开信号连接，防止循环调用或不必要的逻辑处理
+    disconnect(m_model, &QStandardItemModel::itemChanged, this, &SignalBrowser::onItemChanged);
+
+    QHashIterator<QString, QStandardItem *> i(m_uniqueIdMap);
+    while (i.hasNext())
+    {
+        i.next();
+        if (i.value()->checkState() != Qt::Unchecked)
+        {
+            i.value()->setCheckState(Qt::Unchecked);
+        }
+    }
+
+    // 恢复信号连接
+    connect(m_model, &QStandardItemModel::itemChanged, this, &SignalBrowser::onItemChanged);
+}
+
 void SignalBrowser::setDefaultPenWidth(int width)
 {
     if (width > 0)

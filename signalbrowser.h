@@ -58,6 +58,7 @@ public:
      */
     void selectSignal(const QString &uniqueId);
 
+    void uncheckAll();
     /**
      * @brief 清空所有内容
      */
