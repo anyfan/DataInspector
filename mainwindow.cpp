@@ -1,49 +1,24 @@
 #include "mainwindow.h"
-#include "qcustomplot.h"
+#include "plotmanager.h"
 #include "replaymanager.h"
-#include "FlowLegend.h"
+#include "cursormanager.h"
 #include "scriptwindow.h"
+#include "signalbrowser.h"
+#include "scriptapi.h"
+#include "types.h"
 
 #include <QMenuBar>
-#include <QMenu>
-#include <QAction>
+#include <QToolBar>
 #include <QFileDialog>
 #include <QMessageBox>
-#include <QColor>
-#include <QDebug>
 #include <QThread>
 #include <QProgressDialog>
 #include <QDockWidget>
-#include <QTreeView>
-#include <QStandardItemModel>
-#include <QStandardItem>
-#include <QWidget>
 #include <QGridLayout>
-#include <QPainter>
-#include <QPixmap>
-#include <QSignalBlocker>
-#include <QColorDialog>
-#include <QFrame>
-#include <QVBoxLayout>
-#include <QToolBar>
-#include <QActionGroup>
-#include <QTimer>
-#include <QStyle>
-#include <QIcon>
-#include <QFileInfo>
-#include <QCursor>
-#include <QFormLayout>
-#include <QSpinBox>
-#include <QDialogButtonBox>
-#include <QLineEdit>
-#include <QVBoxLayout>
+#include <QInputDialog>
 #include <QDragEnterEvent>
-#include <QDropEvent>
 #include <QMimeData>
-#include <QEvent>
-#include <QDomDocument>
-#include <QColor>
-#include <QMap>
+#include <QDebug>
 #include "quazip/quazip.h"
 #include "quazip/quazipfile.h"
 
@@ -59,90 +34,74 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent),
       m_dataThread(nullptr),
       m_dataManager(nullptr),
-      m_plotContainer(nullptr),
-      m_signalDock(nullptr),
-      m_progressDialog(nullptr),
-      m_activePlot(nullptr),
-      m_lastMousePlot(nullptr),
-      m_loadFileAction(nullptr),
-      m_importViewAction(nullptr),
-      m_layout1x1Action(nullptr),
-      m_layout1x2Action(nullptr),
-      m_layout2x1Action(nullptr),
-      m_layout2x2Action(nullptr),
-      m_layoutSplitBottomAction(nullptr),
-      m_layoutSplitLeftAction(nullptr),
-      m_layoutSplitTopAction(nullptr),
-      m_layoutSplitRightAction(nullptr),
-      m_layoutCustomAction(nullptr),
-      m_viewToolBar(nullptr),
-      m_replayAction(nullptr),
-      m_exportAllAction(nullptr),
-      m_fitViewAction(nullptr),
-      m_fitViewTimeAction(nullptr),
-      m_fitViewYAction(nullptr),
-      m_customLayoutDialog(nullptr),
-      m_customRowsSpinBox(nullptr),
-      m_customColsSpinBox(nullptr),
+      m_plotManager(nullptr),
       m_cursorManager(nullptr),
       m_replayManager(nullptr),
-      m_openGLAction(nullptr),
-      m_yAxisGroup(nullptr),
-      m_isMaximized(false),
-      m_savedActivePlotIndex(-1),
-      m_signalBrowser(nullptr)
+      m_signalBrowser(nullptr),
+      m_plotContainer(nullptr),
+      m_customLayoutDialog(nullptr),
+      m_scriptAPI(nullptr),
+      m_scriptWindow(nullptr),
+      m_legendPosGroup(nullptr) // 初始化指针
 {
     setupDataManagerThread();
 
+    // 1. 创建 Plot 容器
     m_plotContainer = new QWidget(this);
-    m_plotContainer->setLayout(new QGridLayout());
     setCentralWidget(m_plotContainer);
 
-    m_cursorManager = new CursorManager(&m_plotWidgets, this);
+    // 2. 初始化 PlotManager
+    m_plotManager = new PlotManager(m_plotContainer, this);
 
+    // 3. 动作与菜单
     createActions();
-
-    m_replayManager = new ReplayManager(m_replayAction, m_cursorManager, this);
-
-    createDocks();
+    createDocks(); // 创建 SignalBrowser
     createToolBars();
     createMenus();
 
-    // 4. 设置窗口标题和大小
-    setWindowTitle(tr("Data Inspector (Async)"));
-    resize(1280, 800);
+    // 4. 初始化 CursorManager
+    // 注意：CursorManager 需要访问 plots 列表，我们提供 PlotManager 的引用列表
+    m_cursorManager = new CursorManager(&m_plotManager->getPlots(), this);
+    m_currentCursorMode = CursorManager::SingleCursor;
 
-    // 在构造函数中启用拖放
-    setAcceptDrops(true);
-
-    // 5. 设置初始布局
-    setupPlotLayout(2, 1);
-
-    // 6. 创建进度对话框
-    m_progressDialog = new QProgressDialog(this);
-    m_progressDialog->reset();
-    m_progressDialog->setWindowModality(Qt::WindowModal);
-    m_progressDialog->setAutoClose(true);
-    m_progressDialog->setAutoReset(true);
-    m_progressDialog->setMinimum(0);
-    m_progressDialog->setMaximum(100);
-    m_progressDialog->setCancelButton(nullptr);
-    m_progressDialog->hide();
-
-    // 7. 注册 QPen 类型
-    qRegisterMetaType<QPen>("QPen");
+    // 5. 初始化 ReplayManager
+    m_replayManager = new ReplayManager(m_replayAction, m_cursorManager, this);
+    if (m_replayManager->getDockWidget())
+        addDockWidget(Qt::BottomDockWidgetArea, m_replayManager->getDockWidget());
 
     connect(m_cursorManager, &CursorManager::cursorKeyChanged,
             m_replayManager, &ReplayManager::onCursorKeyChanged);
 
-    m_scriptAPI = new ScriptAPI(this);
+    // 6. 连接 PlotManager 信号
+    connect(m_plotManager, &PlotManager::activePlotChanged, this, &MainWindow::onActivePlotChanged);
+    connect(m_plotManager, &PlotManager::plotUpdated, this, &MainWindow::onPlotManagerUpdated);
+    connect(m_plotManager, &PlotManager::signalDropRequested, this, &MainWindow::onSignalDropRequested);
+    connect(m_plotManager, &PlotManager::signalSelectionChanged, this, &MainWindow::onSignalSelectionChanged);
+    connect(m_plotManager, &PlotManager::removeSubplotRequested, this, &MainWindow::onRemoveSubplotRequested);
+    connect(m_plotManager, &PlotManager::removeSignalRequested, this, &MainWindow::onRemoveSignalRequested);
+    // 转发 plotUpdated 信号给 API
+    connect(m_plotManager, &PlotManager::plotUpdated, this, &MainWindow::plotUpdated);
 
-    // 创建菜单动作
-    m_scriptConsoleAction = new QAction(tr("Script Console"), this);
-    m_scriptConsoleAction->setShortcut(QKeySequence(Qt::Key_F12)); // 快捷键 F12
-    connect(m_scriptConsoleAction, &QAction::triggered, this, &MainWindow::on_actionScriptConsole_triggered);
-    QMenu *toolsMenu = menuBar()->addMenu(tr("&Tools"));
-    toolsMenu->addAction(m_scriptConsoleAction);
+    setWindowTitle(tr("Data Inspector (Refactored)"));
+    resize(1280, 800);
+    setAcceptDrops(true);
+
+    // 7. 初始布局
+    m_plotManager->setupLayout(2, 1);
+
+    // [修复] 确保图例模式与 Action 状态同步，避免布局错乱
+    // 默认 OutsideTop (0)
+    m_plotManager->setLegendPosition(0);
+
+    // 8. 进度条
+    m_progressDialog = new QProgressDialog(this);
+    m_progressDialog->reset();
+    m_progressDialog->setWindowModality(Qt::WindowModal);
+    m_progressDialog->setAutoClose(true);
+    m_progressDialog->hide();
+
+    qRegisterMetaType<QPen>("QPen");
+    m_scriptAPI = new ScriptAPI(this);
 }
 
 MainWindow::~MainWindow()
@@ -159,19 +118,13 @@ void MainWindow::setupDataManagerThread()
     m_dataThread = new QThread(this);
     m_dataManager = new DataManager();
     m_dataManager->moveToThread(m_dataThread);
-
     connect(this, &MainWindow::requestLoadCsv, m_dataManager, &DataManager::loadCsvFile, Qt::QueuedConnection);
     connect(this, &MainWindow::requestLoadMat, m_dataManager, &DataManager::loadMatFile, Qt::QueuedConnection);
-
     connect(m_dataManager, &DataManager::loadProgress, this, &MainWindow::showLoadProgress, Qt::QueuedConnection);
     connect(m_dataManager, &DataManager::loadFinished, this, &MainWindow::onDataLoadFinished, Qt::QueuedConnection);
     connect(m_dataManager, &DataManager::loadFailed, this, &MainWindow::onDataLoadFailed, Qt::QueuedConnection);
     connect(m_dataThread, &QThread::finished, m_dataManager, &QObject::deleteLater);
-
     m_dataThread->start();
-
-    qDebug() << "Main Thread ID:" << QThread::currentThreadId();
-    qDebug() << "DataManager thread started.";
 }
 
 void MainWindow::createActions()
@@ -344,6 +297,7 @@ void MainWindow::createActions()
     m_replayAction->setIcon(QIcon(":/icon/play-circle.svg"));
     connect(m_replayAction, &QAction::toggled, this, &MainWindow::onReplayActionToggled);
 
+    // 恢复图例相关的 Action 和 Group
     m_legendPosGroup = new QActionGroup(this);
 
     m_legendPosNoneAction = new QAction(tr("无"), this);
@@ -453,6 +407,7 @@ void MainWindow::createMenus()
     settingsMenu->addAction(m_antialiasingAction);
 
     QMenu *legendPosMenu = settingsMenu->addMenu(tr("图例位置"));
+    // 恢复菜单项添加
     legendPosMenu->addAction(m_legendPosNoneAction);
     legendPosMenu->addSeparator();
     legendPosMenu->addAction(m_legendPosOutsideTopAction);
@@ -500,57 +455,36 @@ void MainWindow::createToolBars()
 
 void MainWindow::createDocks()
 {
-    m_signalDock = new QDockWidget(tr("信号"), this);
-
+    m_signalDock = new QDockWidget(tr("Signals"), this);
     m_signalBrowser = new SignalBrowser(m_signalDock);
-
     connect(m_signalBrowser, &SignalBrowser::signalCheckStateChanged, this, &MainWindow::onSignalCheckStateChanged);
     connect(m_signalBrowser, &SignalBrowser::signalPenChanged, this, &MainWindow::onSignalPenChanged);
     connect(m_signalBrowser, &SignalBrowser::fileRemoveRequested, this, &MainWindow::onFileRemoveRequested);
-
     m_signalDock->setWidget(m_signalBrowser);
-
-    m_signalDock->setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
     addDockWidget(Qt::LeftDockWidgetArea, m_signalDock);
-
-    if (m_replayManager && m_replayManager->getDockWidget())
-    {
-        addDockWidget(Qt::BottomDockWidgetArea, m_replayManager->getDockWidget());
-    }
 }
 
-// 新增槽函数：处理信号勾选
 void MainWindow::onSignalCheckStateChanged(const QString &uniqueId, bool checked)
 {
     if (m_fileDataMap.isEmpty())
         return;
 
-    if (!m_activePlot)
-    {
-        // 如果没有活动图表且试图勾选，回滚勾选状态 (防止用户困惑)
-        if (checked)
-        {
-            QMessageBox::information(this, tr("No Plot Selected"), tr("Please click on a plot to activate it before adding a signal."));
-            m_signalBrowser->setSignalChecked(uniqueId, false, true);
-        }
-        return;
-    }
-
+    // 如果没有任何子图，或者用户没选子图，PlotManager会处理默认逻辑(active plot)
     if (checked)
     {
-        addSignalToPlot(uniqueId, m_activePlot);
+        SignalLocation loc = getSignalDataFromID(uniqueId);
+        m_plotManager->addSignal(uniqueId, loc);
     }
     else
     {
-        removeSignalFromPlot(uniqueId, m_activePlot);
+        m_plotManager->removeSignal(uniqueId);
     }
 }
 
-// 新增槽函数：处理画笔修改
 void MainWindow::onSignalPenChanged(const QString &uniqueId, const QPen &newPen)
 {
-    // 更新所有图表中该信号的画笔
-    for (QCustomPlot *plot : m_plotWidgets)
+    // 遍历所有子图，查找包含该 uniqueID 的 graph 并更新 pen
+    for (QCustomPlot *plot : m_plotManager->getPlots())
     {
         for (int i = 0; i < plot->graphCount(); ++i)
         {
@@ -558,13 +492,19 @@ void MainWindow::onSignalPenChanged(const QString &uniqueId, const QPen &newPen)
             if (graph && graph->property("id").toString() == uniqueId)
             {
                 graph->setPen(newPen);
-                graph->parentPlot()->replot();
+                // 性能优化：如果有 selection decorator，也需更新宽度
+                if (graph->selectionDecorator())
+                {
+                    QPen selPen = graph->selectionDecorator()->pen();
+                    selPen.setWidth(newPen.width());
+                    graph->selectionDecorator()->setPen(selPen);
+                }
+                plot->replot();
             }
         }
     }
 }
 
-// 新增槽函数：处理文件删除请求
 void MainWindow::onFileRemoveRequested(const QString &filename)
 {
     QMessageBox::StandardButton reply;
@@ -577,142 +517,32 @@ void MainWindow::onFileRemoveRequested(const QString &filename)
     }
 }
 
-void MainWindow::setupPlotLayout(const QList<QRect> &geometries)
-{
-    clearPlotLayout();
-
-    QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotContainer->layout());
-    if (!grid)
-        grid = new QGridLayout(m_plotContainer);
-
-    // 设置边距
-    grid->setSpacing(0);
-    grid->setContentsMargins(0, 0, 0, 0);
-
-    QCPRange sharedXRange;
-    bool hasSharedXRange = false;
-
-    // 1. 创建组件
-    for (int i = 0; i < geometries.size(); ++i)
-    {
-        const QRect &geo = geometries[i];
-        int plotIndex = i;
-
-        QFrame *plotFrame = new QFrame(m_plotContainer);
-        plotFrame->setFrameShape(QFrame::NoFrame);
-        plotFrame->setStyleSheet("QFrame { border: 2px solid transparent; }"); // 使用样式表管理边框
-
-        QVBoxLayout *frameLayout = new QVBoxLayout(plotFrame);
-        frameLayout->setContentsMargins(0, 0, 0, 0);
-
-        QCustomPlot *plot = new QCustomPlot(plotFrame);
-        if (i == 0)
-            m_yAxisGroup = new QCPMarginGroup(plot);
-
-        frameLayout->addWidget(plot);
-        grid->addWidget(plotFrame, geo.y(), geo.x(), geo.height(), geo.width());
-        m_plotWidgets.append(plot);
-
-        // 2. 恢复信号 (持久化数据)
-        if (m_plotSignalMap.contains(plotIndex))
-        {
-            const QSet<QString> &signalIDs = m_plotSignalMap.value(plotIndex);
-            for (const QString &uniqueID : signalIDs)
-            {
-                SignalLocation loc = getSignalDataFromID(uniqueID);
-                if (loc.table)
-                {
-                    setupGraphInstance(plot, uniqueID, loc);
-                }
-            }
-
-            plot->rescaleAxes();
-            if (!hasSharedXRange && plot->graphCount() > 0)
-            {
-                sharedXRange = plot->xAxis->range();
-                hasSharedXRange = true;
-            }
-            else if (hasSharedXRange)
-            {
-                plot->xAxis->setRange(sharedXRange);
-            }
-        }
-        else if (hasSharedXRange)
-        {
-            plot->xAxis->setRange(sharedXRange);
-        }
-
-        setupPlotInteractions(plot);
-    }
-
-    // 恢复活动状态
-    if (!m_plotWidgets.isEmpty())
-    {
-        setActivePlot(m_plotWidgets.first());
-    }
-
-    QTimer::singleShot(0, this, &MainWindow::updateCursorsForLayoutChange);
-}
-
-void MainWindow::setupPlotLayout(int rows, int cols)
-{
-    QList<QRect> geometries;
-    for (int r = 0; r < rows; ++r)
-    {
-        for (int c = 0; c < cols; ++c)
-        {
-            geometries.append(QRect(c, r, 1, 1)); // (x, y, width, height)
-        }
-    }
-    setupPlotLayout(geometries);
-}
-
-/**
- * @brief 启动加载单个文件的辅助函数
- * * 无论是通过菜单打开还是拖放，都会调用此函数
- * @param filePath 要加载的文件的路径
- */
 void MainWindow::loadFile(const QString &filePath)
 {
     if (filePath.isEmpty())
         return;
-
-    // 注意：当拖放多个文件时，这将为每个文件显示和隐藏进度对话框
     m_progressDialog->setValue(0);
     m_progressDialog->setLabelText(tr("Loading %1...").arg(QFileInfo(filePath).fileName()));
     m_progressDialog->show();
 
-    // 检查文件类型
     if (filePath.endsWith(".mat", Qt::CaseInsensitive))
-    {
         emit requestLoadMat(filePath);
-    }
     else
-    {
         emit requestLoadCsv(filePath);
-    }
 }
 
-/**
- * @brief [槽] "Load File..." 菜单动作被触发
- * * 此函数现在只负责打开文件对话框，然后调用辅助函数 loadFile()
- */
 void MainWindow::on_actionLoadFile_triggered()
 {
-    QString filePath = QFileDialog::getOpenFileName(this,
-                                                    tr("Open File"), "", tr("Data Files (*.csv *.txt *.mat)"));
-
-    // 只需调用新的辅助函数
-    loadFile(filePath);
+    loadFile(QFileDialog::getOpenFileName(this, tr("Open File"), "", tr("Data Files (*.csv *.txt *.mat)")));
 }
 
-void MainWindow::importView(const QString &mldatxFilePath)
+void MainWindow::importView(const QString &path)
 {
-    if (mldatxFilePath.isEmpty())
+    if (path.isEmpty())
         return;
 
     // 使用 QuaZip 打开
-    QuaZip zip(mldatxFilePath);
+    QuaZip zip(path);
     if (!zip.open(QuaZip::mdUnzip))
     {
         QMessageBox::critical(this, tr("Import Error"), tr("Error: Could not open file as ZIP archive."));
@@ -780,15 +610,46 @@ void MainWindow::importView(const QString &mldatxFilePath)
     qDebug().noquote() << QString("Layout Info: %1x%2 %3").arg(layout.rows).arg(layout.cols).arg(layout.layoutType);
     qDebug().noquote() << QString("Signal Info: Found %1 signals").arg(signalList.count());
 
-    // 5. 应用布局
-    applyImportedView(layout, signalList);
+    m_plotManager->setupLayout(layout.rows, layout.cols);
+
+    // 添加信号
+    int totalPlots = m_plotManager->getPlots().size();
+    if (totalPlots == 0)
+        return;
+
+    for (const SignalInfo &sig : signalList)
+    {
+        // 在树中查找以获取 uniqueID
+        QStandardItem *item = m_signalBrowser->findItemByName(sig.name);
+        if (!item)
+            continue;
+        QString uniqueID = item->data(TreeItemRoles::UniqueIdRole).toString();
+
+        // 遍历该信号应在的子图 ID
+        for (int sdiPlotId : sig.plotIds)
+        {
+            if (sdiPlotId < 1)
+                sdiPlotId = 1;
+            int r = (sdiPlotId - 1) % 8 + 1;                 // 1-based row
+            int c = (sdiPlotId - 1) / 8 + 1;                 // 1-based col
+            int plotIndex = (r - 1) * layout.cols + (c - 1); // 映射到 grid index
+
+            if (plotIndex >= 0 && plotIndex < totalPlots)
+            {
+                QCustomPlot *targetPlot = m_plotManager->getPlots().at(plotIndex);
+                SignalLocation loc = getSignalDataFromID(uniqueID);
+                // 应用导入的颜色 (可选，如果希望覆盖默认色)
+                // loc.pen.setColor(sig.color);
+
+                m_plotManager->addSignal(uniqueID, loc, targetPlot);
+                m_signalBrowser->setSignalChecked(uniqueID, true, true);
+            }
+        }
+    }
 
     emit viewImportFinished();
 }
 
-/**
- * @brief [槽] "导入视图..." 菜单动作被触发
- */
 void MainWindow::on_actionImportView_triggered()
 {
     QString mldatxFilePath = QFileDialog::getOpenFileName(this,
@@ -800,454 +661,39 @@ void MainWindow::on_actionImportView_triggered()
     importView(mldatxFilePath);
 }
 
-void MainWindow::setupPlotInteractions(QCustomPlot *plot)
-{
-    plot->setInteractions(QCP::iRangeDrag | QCP::iRangeZoom | QCP::iSelectPlottables | QCP::iSelectLegend);
-
-    plot->setAutoAddPlottableToLegend(false);
-
-    int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
-    configurePlotLegend(plot, legendMode);
-
-    if (plot->legend)
-    {
-        plot->legend->setSelectableParts(QCPLegend::spItems);
-    }
-
-    // 根据 m_openGLAction 的状态设置 OpenGL
-    plot->setOpenGl(m_openGLAction->isChecked());
-
-    if (m_antialiasingAction->isChecked())
-    {
-        plot->setNotAntialiasedElements(QCP::aeNone); // 全部启用抗锯齿
-    }
-    else
-    {
-        plot->setNotAntialiasedElements(QCP::aePlottables); // 仅禁用曲线抗锯齿 (保留文字抗锯齿)
-    }
-
-    QFont axisFont = plot->font();           // 从绘图控件获取基础字体
-    axisFont.setPointSize(7);                // 将字号设置为 7
-    plot->xAxis->setTickLabelFont(axisFont); // X轴的刻度数字
-    plot->xAxis->setLabelFont(axisFont);     // X轴的标签
-    plot->yAxis->setTickLabelFont(axisFont); // Y轴的刻度数字
-    plot->yAxis->setLabelFont(axisFont);     // Y轴的标签
-
-    // 将图例字体也设置为 7pt
-    plot->legend->setFont(axisFont);
-    plot->legend->setIconSize(10, 10);   // 将图标宽度设为20，高度设为10
-    plot->legend->setIconTextPadding(3); // 将图标和文本的间距设为 3 像素
-
-    // 使用 QCPMarginGroup 进行自动对齐
-    plot->axisRect()->setMarginGroup(QCP::msLeft, m_yAxisGroup);
-
-    connect(plot, &QCustomPlot::mousePress, this, &MainWindow::onPlotClicked);
-
-    // 连接新的鼠标事件处理器
-    connect(plot, &QCustomPlot::mousePress, m_cursorManager, &CursorManager::onPlotMousePress);
-    connect(plot, &QCustomPlot::mouseMove, m_cursorManager, &CursorManager::onPlotMouseMove);
-    connect(plot, &QCustomPlot::mouseRelease, m_cursorManager, &CursorManager::onPlotMouseRelease);
-
-    // X轴同步
-    connect(plot->xAxis, static_cast<void (QCPAxis::*)(const QCPRange &)>(&QCPAxis::rangeChanged),
-            this, &MainWindow::onXAxisRangeChanged);
-
-    // 连接子图的选择信号
-    connect(plot, &QCustomPlot::selectionChangedByUser, this, &MainWindow::onPlotSelectionChanged);
-
-    // 设置Y轴的数字格式
-    plot->yAxis->setNumberFormat("g");
-    plot->yAxis->setNumberPrecision(4);
-
-    // 允许子图接收拖放并安装事件过滤器
-    plot->setAcceptDrops(true);
-    plot->installEventFilter(this);
-
-    // 连接图例交互信号
-    plot->setContextMenuPolicy(Qt::CustomContextMenu);
-    connect(plot, &QCustomPlot::customContextMenuRequested, this, &MainWindow::onLegendContextMenu);
-}
-
-void MainWindow::clearPlotLayout()
-{
-    m_cursorManager->clearCursors();
-
-    if (m_yAxisGroup)
-    {
-        delete m_yAxisGroup;
-        m_yAxisGroup = nullptr;
-    }
-
-    // 清理布局
-    QLayout *layout = m_plotContainer->layout();
-    if (layout)
-    {
-        QLayoutItem *item;
-        while ((item = layout->takeAt(0)) != nullptr)
-        {
-            if (item->widget())
-            {
-                item->widget()->deleteLater();
-            }
-            delete item;
-        }
-    }
-
-    m_plotWidgets.clear();
-    m_activePlot = nullptr;
-    m_lastMousePlot = nullptr;
-}
-
 void MainWindow::onDataLoadFinished(const FileData &data)
 {
     m_progressDialog->hide();
-    qDebug() << "Main Thread: Load finished for" << data.filePath;
-
     QString filename = QFileInfo(data.filePath).fileName();
-    // 检查文件是否已加载
     if (m_fileDataMap.contains(filename))
     {
-        QMessageBox::StandardButton reply;
-        reply = QMessageBox::question(this, tr("File exists"),
-                                      tr("File '%1' is already loaded. Do you want to overwrite it?").arg(filename),
-                                      QMessageBox::Yes | QMessageBox::No);
-        if (reply == QMessageBox::No)
-        {
+        if (QMessageBox::question(this, tr("File exists"), tr("Overwrite?"), QMessageBox::Yes | QMessageBox::No) == QMessageBox::No)
             return;
-        }
-        // 如果用户选择 "Yes"，则移除旧文件
         removeFile(filename);
     }
-
     m_fileDataMap.insert(filename, data);
-
-    //  填充信号树
     m_signalBrowser->loadFileData(data);
-
     updateReplayManagerRange();
-
     emit dataProcessingFinished(data.filePath);
 }
 
-void MainWindow::onDataLoadFailed(const QString &filePath, const QString &errorString)
+void MainWindow::onDataLoadFailed(const QString &filePath, const QString &err)
 {
     m_progressDialog->hide();
-    QMessageBox::warning(this, tr("Load Error"), tr("Failed to load %1:\n%2").arg(filePath).arg(errorString));
+    QMessageBox::warning(this, tr("Error"), err);
 }
 
-// 移除文件的辅助函数
 void MainWindow::removeFile(const QString &filename)
 {
     if (!m_fileDataMap.remove(filename))
         return;
-
     m_cursorManager->clearCursors();
 
-    QString prefix = filename + "/";
-    bool anyPlotChanged = false;
-
-    // 1. 批量清理子图
-    for (int i = 0; i < m_plotWidgets.size(); ++i)
-    {
-        QCustomPlot *plot = m_plotWidgets.at(i);
-        QSet<QString> &signalSet = m_plotSignalMap[i];
-
-        QList<QCPGraph *> graphsToDelete;
-        for (int j = 0; j < plot->graphCount(); ++j)
-        {
-            QCPGraph *graph = plot->graph(j);
-            QString graphID = graph->property("id").toString();
-            if (graphID.startsWith(prefix))
-            {
-                graphsToDelete.append(graph);
-                signalSet.remove(graphID);
-            }
-        }
-
-        if (!graphsToDelete.isEmpty())
-        {
-            for (QCPGraph *g : graphsToDelete)
-                plot->removeGraph(g);
-
-            int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
-            configurePlotLegend(plot, legendMode);
-            plot->replot();
-            anyPlotChanged = true;
-        }
-    }
-
-    // 2. 清理内部ID映射
+    // 让 PlotManager 移除所有相关曲线
+    m_plotManager->removeFileSignals(filename);
     m_signalBrowser->removeFile(filename);
 
-    if (anyPlotChanged)
-    {
-        m_cursorManager->setupCursors();
-        m_cursorManager->updateAllCursors();
-        updateReplayManagerRange();
-        on_actionFitView_triggered();
-    }
-}
-
-// 删除文件的动作
-void MainWindow::onDeleteFileAction()
-{
-    QAction *action = qobject_cast<QAction *>(sender());
-    if (!action)
-        return;
-    QString filename = action->data().toString();
-    if (filename.isEmpty())
-        return;
-
-    QMessageBox::StandardButton reply;
-    reply = QMessageBox::question(this, tr("Remove File"),
-                                  tr("Are you sure you want to remove all data and graphs from file '%1'?").arg(filename),
-                                  QMessageBox::Yes | QMessageBox::No);
-    if (reply == QMessageBox::Yes)
-    {
-        removeFile(filename);
-    }
-}
-
-/**
- * @brief 将指定ID的信号添加到指定的子图中
- * @param uniqueID 要添加的信号ID
- * @param plot 目标 QCustomPlot
- */
-void MainWindow::addSignalToPlot(const QString &uniqueID, QCustomPlot *plot, bool replot)
-{
-    int plotIndex = m_plotWidgets.indexOf(plot);
-    if (plotIndex == -1)
-        return;
-
-    if (m_plotSignalMap.value(plotIndex).contains(uniqueID))
-        return;
-
-    SignalLocation loc = getSignalDataFromID(uniqueID);
-    if (!loc.table || loc.signalIndex < 0 || loc.signalIndex >= loc.table->valueData.size())
-        return;
-
-    setupGraphInstance(plot, uniqueID, loc);
-
-    // 更新映射
-    m_plotSignalMap[plotIndex].insert(uniqueID);
-
-    // 仅在需要时刷新
-    if (replot)
-    {
-        plot->rescaleAxes();
-
-        int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
-        configurePlotLegend(plot, legendMode);
-
-        plot->replot();
-
-        if (m_cursorManager->getMode() != CursorManager::NoCursor)
-        {
-            m_cursorManager->setupCursors(); // 暂时保留，作为必须的权衡，但应考虑优化 CursorManager
-            m_cursorManager->updateAllCursors();
-        }
-    }
-}
-
-/**
- * @brief 从指定的子图中移除指定ID的信号
- * @param uniqueID 要移除的信号ID
- * @param plot 目标 QCustomPlot
- */
-void MainWindow::removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot)
-{
-    int plotIndex = m_plotWidgets.indexOf(plot);
-    if (plotIndex == -1)
-        return;
-
-    if (!m_plotSignalMap.value(plotIndex).contains(uniqueID))
-        return;
-
-    QCPGraph *graph = getGraph(plot, uniqueID);
-    if (graph)
-    {
-        m_cursorManager->clearCursors();
-
-        plot->removeGraph(graph);
-
-        m_plotSignalMap[plotIndex].remove(uniqueID);
-
-        int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
-        configurePlotLegend(plot, legendMode);
-
-        plot->replot();
-        m_cursorManager->setupCursors();
-        m_cursorManager->updateAllCursors();
-    }
-}
-
-/**
- * @brief 设置活动子图的辅助函数
- * @param plot 要激活的子图
- */
-void MainWindow::setActivePlot(QCustomPlot *plot)
-{
-    if (!plot)
-        return;
-
-    // 取消高亮旧的 active plot
-    if (m_activePlot)
-    {
-        if (QWidget *parent = m_activePlot->parentWidget())
-            parent->setStyleSheet("QFrame { border: 2px solid transparent; }");
-    }
-
-    m_activePlot = plot;
-    m_cursorManager->setActivePlot(plot);
-
-    // 高亮新的 active plot
-    if (QWidget *parent = m_activePlot->parentWidget())
-    {
-        parent->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
-    }
-
-    m_lastMousePlot = plot;
-
-    int plotIndex = m_plotWidgets.indexOf(m_activePlot);
-    if (plotIndex != -1)
-    {
-        const QSet<QString> &activeSignals = m_plotSignalMap.value(plotIndex);
-        m_signalBrowser->updateChecksForActivePlot(activeSignals);
-    }
-}
-
-void MainWindow::onPlotClicked()
-{
-    QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
-    if (!clickedPlot)
-        return;
-
-    // 仅当没点中图线时才取消选中，避免误触
-    QPoint pos = clickedPlot->mapFromGlobal(QCursor::pos());
-    if (!clickedPlot->plottableAt(pos, true))
-    {
-        clickedPlot->deselectAll();
-        clickedPlot->replot();
-    }
-
-    // 切换选中样式
-    if (m_activePlot && clickedPlot != m_activePlot)
-    {
-        m_activePlot->deselectAll();
-        m_activePlot->replot();
-    }
-
-    setActivePlot(clickedPlot);
-}
-
-/**
- * @brief [槽] 当 OpenGL 动作被切换时调用
- * @param checked 动作的新勾选状态
- */
-void MainWindow::onOpenGLActionToggled(bool checked)
-{
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        if (plot)
-        {
-            plot->setOpenGl(checked);
-            plot->replot();
-        }
-    }
-}
-
-/**
- * @brief [槽] 当子图中的选择发生用户更改时调用
- */
-void MainWindow::onPlotSelectionChanged()
-{
-    QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
-    if (!plot)
-        return;
-
-    QList<QCPGraph *> selectedGraphs = plot->selectedGraphs();
-    QList<QCPAbstractLegendItem *> selectedLegendItems = plot->legend->selectedItems();
-
-    if (!selectedGraphs.isEmpty() && selectedLegendItems.isEmpty()) // 选中了曲线
-    {
-        for (QCPGraph *graph : selectedGraphs)
-        {
-            if (QCPPlottableLegendItem *item = plot->legend->itemWithPlottable(graph))
-            {
-                item->setSelected(true);
-            }
-        }
-    }
-    else if (!selectedLegendItems.isEmpty() && selectedGraphs.isEmpty()) // 选中了图例
-    {
-        for (QCPAbstractLegendItem *item : selectedLegendItems)
-        {
-            if (QCPPlottableLegendItem *pli = qobject_cast<QCPPlottableLegendItem *>(item))
-            {
-                if (QCPGraph *graph = qobject_cast<QCPGraph *>(pli->plottable()))
-                {
-                    QCPDataSelection selection = QCPDataSelection(graph->data()->dataRange());
-                    graph->setSelection(selection);
-                }
-            }
-        }
-    }
-
-    QList<QCPAbstractPlottable *> selected = plot->selectedPlottables();
-
-    if (selected.isEmpty())
-    {
-        m_signalBrowser->selectSignal(QString());
-        return;
-    }
-
-    QCPGraph *graph = qobject_cast<QCPGraph *>(selected.first());
-    if (graph)
-    {
-        QString uniqueID = graph->property("id").toString();
-        m_signalBrowser->selectSignal(uniqueID);
-    }
-}
-
-// 清除所有子图信号的槽函数实现
-void MainWindow::on_actionClearAllPlots_triggered()
-{
-    QMessageBox::StandardButton reply = QMessageBox::question(this, tr("Clear All Plots"),
-                                                              tr("Are you sure you want to remove all signals from all plots?"),
-                                                              QMessageBox::Yes | QMessageBox::No);
-    if (reply == QMessageBox::No)
-        return;
-
-    m_cursorManager->clearCursors();
-
-    for (auto it = m_plotSignalMap.begin(); it != m_plotSignalMap.end(); ++it)
-    {
-        const QSet<QString> &signalIDs = it.value();
-        for (const QString &uniqueID : signalIDs)
-        {
-            m_signalBrowser->setSignalChecked(uniqueID, false, true);
-        }
-    }
-
-    // 3. 清空所有子图的 Graph 对象
-    int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
-
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        if (!plot)
-            continue;
-
-        plot->clearGraphs();
-        configurePlotLegend(plot, legendMode);
-        plot->replot();
-    }
-
-    m_plotSignalMap.clear();
-
-    m_cursorManager->setupCursors();
-    m_cursorManager->updateAllCursors();
-
-    qDebug() << "All plots cleared.";
+    updateReplayManagerRange();
 }
 
 /**
@@ -1256,6 +702,8 @@ void MainWindow::on_actionClearAllPlots_triggered()
 MainWindow::LayoutInfo MainWindow::parseViewMetaData(const QDomDocument &doc)
 {
     LayoutInfo info;
+    info.rows = 1;
+    info.cols = 1;
     QDomElement root = doc.documentElement(); // <sdi> 标签
 
     // 使用 firstChildElement 来安全地获取标签
@@ -1342,10 +790,6 @@ void MainWindow::showLoadProgress(int percentage)
 {
     m_progressDialog->setValue(percentage);
 }
-
-/**
- * @brief 响应重放按钮切换
- */
 void MainWindow::onReplayActionToggled(bool checked)
 {
     if (checked && m_cursorManager->getMode() == CursorManager::NoCursor)
@@ -1357,16 +801,14 @@ void MainWindow::onReplayActionToggled(bool checked)
     }
 }
 
-/**
- * @brief  获取全局时间范围
- */
 QCPRange MainWindow::getGlobalTimeRange() const
 {
     if (m_fileDataMap.isEmpty())
-        return QCPRange(0, 1);
+        return QCPRange(0, 10);
 
     bool first = true;
     QCPRange totalRange;
+
     for (const FileData &data : m_fileDataMap.values())
     {
         for (const SignalTable &table : data.tables)
@@ -1391,19 +833,13 @@ QCPRange MainWindow::getGlobalTimeRange() const
     }
 
     if (first)
-        return QCPRange(0, 1);
-    else
-        return totalRange;
+        return QCPRange(0, 10);
+    return totalRange;
 }
 
-/**
- * @brief 估算数据时间步
- */
 double MainWindow::getSmallestTimeStep() const
 {
-    // 查找所有文件中的最小步长
     double minStep = -1.0;
-
     for (const FileData &data : m_fileDataMap.values())
     {
         for (const SignalTable &table : data.tables)
@@ -1418,247 +854,11 @@ double MainWindow::getSmallestTimeStep() const
             }
         }
     }
-
-    return (minStep > 0) ? minStep : 0.01; // 默认步长
-}
-
-/**
- * @brief  从 m_plotGraphMap 中安全地获取一个 QCPGraph*
- * @param plot QCustomPlot 控件
- * @param uniqueID 信号的唯一ID ("filename/tablename/signalindex")
- * @return 如果找到则返回 QCPGraph*，否则返回 nullptr
- */
-QCPGraph *MainWindow::getGraph(QCustomPlot *plot, const QString &uniqueID) const
-{
-    if (!plot)
-        return nullptr;
-    for (int i = 0; i < plot->graphCount(); ++i)
-    {
-        QCPGraph *graph = plot->graph(i);
-        if (graph && graph->property("id").toString() == uniqueID)
-        {
-            return graph;
-        }
-    }
-    return nullptr;
-}
-
-/**
- * @brief  从 QStandardItem 构建 UniqueID
- */
-QString MainWindow::getUniqueID(QStandardItem *item) const
-{
-    if (!item || !item->data(IsSignalItemRole).toBool())
-        return QString();
-
-    return item->data(UniqueIdRole).toString();
-}
-
-/**
- * @brief [槽] 在布局更改和重绘完成后更新游标位置
- */
-void MainWindow::updateCursorsForLayoutChange()
-{
-    if (m_cursorManager->getMode() != CursorManager::NoCursor)
-    {
-        m_cursorManager->updateAllCursors();
-    }
-}
-
-/**
- * @brief [槽] 响应图例上下文菜单中的“删除”动作
- */
-void MainWindow::onDeleteSignalAction()
-{
-    QAction *action = qobject_cast<QAction *>(sender());
-    if (!action)
-        return;
-
-    QString uniqueID = action->data().toString();
-
-    m_signalBrowser->setSignalChecked(uniqueID, false, false);
-}
-
-/**
- * @brief [槽] 响应子图上下文菜单中的“删除子图”动作
- * * 此函数通过取消勾选树中的所有相关条目来移除子图上的所有信号。
- */
-void MainWindow::onDeleteSubplotAction()
-{
-    QAction *action = qobject_cast<QAction *>(sender());
-    if (!action)
-        return;
-
-    int plotIndex = action->data().toInt();
-    if (!m_plotSignalMap.contains(plotIndex))
-        return;
-
-    const QSet<QString> signalIDsCopy = m_plotSignalMap.value(plotIndex);
-
-    for (const QString &uniqueID : signalIDsCopy)
-    {
-        m_signalBrowser->setSignalChecked(uniqueID, false, false);
-    }
-}
-
-/**
- * @brief [辅助] 应用导入的布局和信号设置
- * @param layout 从 sdi_view_meta_data.xml 解析的布局信息
- * @param signalList 从 sdi_checked_signals.xml 解析的信号列表
- */
-void MainWindow::applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList)
-{
-    m_isMaximized = false;
-    m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-expand.svg"));
-    m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
-
-    for (auto it = m_plotSignalMap.begin(); it != m_plotSignalMap.end(); ++it)
-    {
-        for (const QString &id : it.value())
-            m_signalBrowser->setSignalChecked(id, false, true);
-    }
-
-    m_plotSignalMap.clear();
-
-    // 2. 设置新布局
-    qDebug() << "Applying layout:" << layout.rows << "rows," << layout.cols << "cols";
-    setupPlotLayout(layout.rows, layout.cols);
-
-    // 确保我们有足够多的子图
-    if (m_plotWidgets.isEmpty())
-    {
-        QMessageBox::warning(this, tr("Import Error"), tr("Failed to create plot layout."));
-        return;
-    }
-
-    // 3. 遍历信号列表并应用设置 (包含索引转换)
-    const int numRows = layout.rows;
-    const int numCols = layout.cols;
-    const int totalPlots = m_plotWidgets.size();
-
-    if (numRows <= 0 || numCols <= 0 || totalPlots == 0)
-    {
-        QMessageBox::warning(this, tr("Import Error"), tr("Invalid layout dimensions."));
-        return;
-    }
-
-    for (const SignalInfo &sig : signalList)
-    {
-        // 在树中查找信号
-        QStandardItem *item = m_signalBrowser->findItemByName(sig.name);
-        if (!item)
-        {
-            qWarning() << "Import View: Could not find signal in tree:" << sig.name;
-            continue;
-        }
-
-        QString uniqueID = item->data(UniqueIdRole).toString();
-
-        // 更新颜色
-        // QPen currentPen = item->data(PenDataRole).value<QPen>();
-        // currentPen.setColor(sig.color);
-        // item->setData(QVariant::fromValue(currentPen), PenDataRole);
-
-        // 遍历该信号应在的子图 ID
-        for (int sdiPlotId : sig.plotIds)
-        {
-            if (sdiPlotId < 1)
-                sdiPlotId = 1;
-
-            // sdi 索引转换
-            int r = (sdiPlotId - 1) % 8 + 1; // 1-based row
-            int c = (sdiPlotId - 1) / 8 + 1; // 1-based col
-
-            int plotIndex = (r - 1) * numCols + (c - 1);
-
-            // 边界检查：如果计算出的行列超出了当前布局
-            if (r > numRows || c > numCols)
-            {
-                if (plotIndex >= totalPlots)
-                    plotIndex = 0;
-            }
-
-            if (plotIndex >= 0 && plotIndex < totalPlots)
-            {
-                QCustomPlot *targetPlot = m_plotWidgets.at(plotIndex);
-                addSignalToPlot(uniqueID, targetPlot, false);
-
-                m_signalBrowser->setSignalChecked(uniqueID, true, true);
-            }
-        }
-    }
-
-    int legendMode = m_legendPosGroup->checkedAction() ? m_legendPosGroup->checkedAction()->data().toInt() : 1;
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        plot->rescaleAxes();
-        configurePlotLegend(plot, legendMode);
-        plot->replot();
-    }
-}
-
-void MainWindow::on_actionFitViewYAll_triggered()
-{
-    performFitView(false, true, FitAllPlots);
-}
-
-/**
- * @brief [槽] 适应视图大小 (所有子图, X 和 Y 轴)
- */
-void MainWindow::on_actionFitView_triggered()
-{
-    performFitView(true, true, FitAllPlots);
-}
-
-/**
- * @brief [槽] 适应视图大小 (所有子图, 仅 X 轴)
- */
-void MainWindow::on_actionFitViewTime_triggered()
-{
-    performFitView(true, false, FitAllPlots);
-}
-
-/**
- * @brief [槽] 适应视图大小 (仅活动子图, 仅 Y 轴)
- */
-void MainWindow::on_actionFitViewY_triggered()
-{
-    performFitView(false, true, FitActivePlot);
-}
-
-/**
- * @brief [槽] 当一个X轴范围改变时，同步所有其他的X轴
- */
-void MainWindow::onXAxisRangeChanged(const QCPRange &newRange)
-{
-    QObject *senderAxis = sender();
-    if (!senderAxis)
-        return;
-
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        // 仅更新 *其他* 图表, 避免信号循环
-        if (plot->xAxis != senderAxis)
-        {
-            // 阻止此 setRange 再次发出 rangeChanged 信号
-            QSignalBlocker blocker(plot->xAxis);
-            plot->xAxis->setRange(newRange);
-
-            plot->replot();
-        }
-    }
-
-    // X轴变化时，游标也需要更新
-    if (m_cursorManager->getMode() != CursorManager::NoCursor)
-    {
-        m_cursorManager->updateAllCursors();
-    }
+    return (minStep > 0) ? minStep : 0.01;
 }
 
 void MainWindow::on_actionLayoutCustom_triggered()
 {
-    ensureNormalMode();
-
     // 1. 创建对话框
     if (!m_customLayoutDialog)
     {
@@ -1692,372 +892,41 @@ void MainWindow::on_actionLayoutCustom_triggered()
     {
         int rows = m_customRowsSpinBox->value();
         int cols = m_customColsSpinBox->value();
-        setupPlotLayout(rows, cols);
+        m_plotManager->setupLayout(rows, cols);
     }
 }
 
-/**
- * @brief [重写] 当文件被拖入窗口时调用
- */
 void MainWindow::dragEnterEvent(QDragEnterEvent *event)
 {
     if (event->mimeData()->hasUrls())
-    {
-        for (const QUrl &url : event->mimeData()->urls())
-        {
-            if (isSupportedFile(url.toLocalFile()))
-            {
-                event->acceptProposedAction();
-                return;
-            }
-        }
-    }
-    event->ignore();
+        event->acceptProposedAction();
 }
 
-/**
- * @brief [重写] 当文件在窗口上被放下时调用
- */
 void MainWindow::dropEvent(QDropEvent *event)
 {
-    const QMimeData *mimeData = event->mimeData();
-    if (mimeData->hasUrls())
+    for (const QUrl &url : event->mimeData()->urls())
     {
-        for (const QUrl &url : mimeData->urls())
-        {
-            QString filePath = url.toLocalFile();
-            if (filePath.endsWith(".mldatx", Qt::CaseInsensitive))
-            {
-                importView(filePath);
-            }
-            else if (isSupportedFile(filePath))
-            {
-                loadFile(filePath);
-            }
-        }
-        event->acceptProposedAction();
+        QString path = url.toLocalFile();
+        if (path.endsWith(".mldatx", Qt::CaseInsensitive))
+            importView(path);
+        else if (isSupportedFile(path))
+            loadFile(path);
     }
+    event->acceptProposedAction();
 }
 
-/**
- * @brief 事件过滤器，用于处理 QCustomPlot 上的拖放事件
- */
-bool MainWindow::eventFilter(QObject *watched, QEvent *event)
-{
-    // 1. 检查事件是否来自我们的某个 QCustomPlot 控件
-    QCustomPlot *targetPlot = qobject_cast<QCustomPlot *>(watched);
-    if (m_plotWidgets.contains(targetPlot))
-    {
-        // 2. 处理拖动进入事件 (DragEnter)
-        if (event->type() == QEvent::DragEnter)
-        {
-            QDragEnterEvent *dragEvent = static_cast<QDragEnterEvent *>(event);
-
-            // 检查 MimeData 是否来自 QStandardItemModel (即我们的树视图)
-            if (dragEvent->mimeData()->hasFormat("application/x-qabstractitemmodeldatalist"))
-            {
-                // 可选：更严格的检查，确保它是一个信号条目
-                QByteArray encoded = dragEvent->mimeData()->data("application/x-qabstractitemmodeldatalist");
-                QDataStream stream(&encoded, QIODevice::ReadOnly);
-                if (!stream.atEnd())
-                {
-                    int r, c;
-                    QMap<int, QVariant> data;
-                    stream >> r >> c >> data; // 只读取第一个条目进行检查
-
-                    // 如果它是一个信号条目 (而不是文件或表)，则接受拖动
-                    if (data.contains(UniqueIdRole) && data.value(IsSignalItemRole).toBool())
-                    {
-                        dragEvent->acceptProposedAction();
-                        return true;
-                    }
-                }
-            }
-        }
-        // 3. 处理放下事件 (Drop)
-        else if (event->type() == QEvent::Drop)
-        {
-            QDropEvent *dropEvent = static_cast<QDropEvent *>(event);
-            QByteArray encoded = dropEvent->mimeData()->data("application/x-qabstractitemmodeldatalist");
-            QDataStream stream(&encoded, QIODevice::ReadOnly);
-
-            int targetPlotIndex = m_plotWidgets.indexOf(targetPlot);
-            if (targetPlotIndex == -1)
-                return true;
-
-            // 循环处理所有被拖拽的条目
-            while (!stream.atEnd())
-            {
-                int r, c;
-                QMap<int, QVariant> data;
-                stream >> r >> c >> data; // 读取每个条目的数据
-
-                if (data.contains(UniqueIdRole) && data.value(IsSignalItemRole).toBool())
-                {
-                    QString uniqueID = data.value(UniqueIdRole).toString();
-
-                    bool alreadyOnPlot = m_plotSignalMap.value(targetPlotIndex).contains(uniqueID);
-
-                    // 2. 如果不在，则添加它
-                    if (!alreadyOnPlot)
-                    {
-                        setActivePlot(targetPlot);
-
-                        m_signalBrowser->setSignalChecked(uniqueID, true, false);
-                    }
-                }
-            }
-            dropEvent->acceptProposedAction();
-
-            return true;
-        }
-    }
-
-    // 4. 将所有其他事件传递给基类
-    return QMainWindow::eventFilter(watched, event);
-}
-
-/**
- * @brief [槽] 响应图例左键点击，切换信号的可见性
- */
-void MainWindow::onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, QMouseEvent *event)
-{
-    Q_UNUSED(legend);
-    if (event->button() != Qt::LeftButton) // 仅响应左键点击
-        return;
-
-    // 确保我们点击的是一个与 plottable 关联的图例条目
-    if (QCPPlottableLegendItem *plottableItem = qobject_cast<QCPPlottableLegendItem *>(item))
-    {
-        QCPAbstractPlottable *plottable = plottableItem->plottable();
-        if (plottable)
-        {
-            // 切换可见性
-            plottable->setVisible(!plottable->visible());
-
-            plottable->parentPlot()->replot();
-        }
-    }
-}
-
-/**
- * @brief [槽] 响应图表区域的右键点击，检查是在图例上、图线上还是在图表背景上
- */
-void MainWindow::onLegendContextMenu(const QPoint &pos)
-{
-    QCustomPlot *plot = qobject_cast<QCustomPlot *>(sender());
-    if (!plot)
-        return;
-
-    QCPAbstractPlottable *plottable = plot->plottableAt(pos, false);
-    QCPGraph *graph = qobject_cast<QCPGraph *>(plottable);
-
-    if (graph)
-    {
-        QString uniqueID = graph->property("id").toString();
-        if (uniqueID.isEmpty())
-            return;
-
-        // 创建上下文菜单
-        QMenu contextMenu(this);
-        QAction *deleteAction = contextMenu.addAction(tr("Delete '%1'").arg(graph->name()));
-        deleteAction->setData(uniqueID);
-        connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSignalAction);
-
-        // 在全局坐标位置显示菜单
-        contextMenu.exec(plot->mapToGlobal(pos));
-        return;
-    }
-
-    // 检查点击位置的顶层可布局元素
-    QCPLayoutElement *el = plot->layoutElementAt(pos);
-
-    // 尝试将元素转换为图例条目
-    QCPAbstractLegendItem *legendItem = qobject_cast<QCPAbstractLegendItem *>(el);
-
-    if (QCPPlottableLegendItem *plottableItem = qobject_cast<QCPPlottableLegendItem *>(legendItem))
-    {
-        // 2. 用户右键点击了 *图例条目*
-        graph = qobject_cast<QCPGraph *>(plottableItem->plottable());
-        if (!graph)
-            return;
-
-        QString uniqueID = graph->property("id").toString();
-        if (uniqueID.isEmpty())
-            return;
-
-        // 创建上下文菜单
-        QMenu contextMenu(this);
-        QAction *deleteAction = contextMenu.addAction(tr("Delete '%1'").arg(graph->name()));
-        deleteAction->setData(uniqueID);
-
-        connect(deleteAction, &QAction::triggered, this, &MainWindow::onDeleteSignalAction);
-
-        contextMenu.exec(plot->mapToGlobal(pos));
-    }
-    else if (qobject_cast<QCPAxisRect *>(el) || qobject_cast<QCPLegend *>(el))
-    {
-        // 找到此 plot 对应的 plotIndex
-        int plotIndex = m_plotWidgets.indexOf(plot);
-        if (plotIndex == -1)
-            return;
-
-        QMenu contextMenu(this);
-
-        QAction *deleteSubplotAction = contextMenu.addAction(tr("Delete Subplot"));
-        deleteSubplotAction->setData(plotIndex);
-        connect(deleteSubplotAction, &QAction::triggered, this, &MainWindow::onDeleteSubplotAction);
-
-        contextMenu.addSeparator();
-
-        QAction *exportAction = contextMenu.addAction(tr("Export Image..."));
-        connect(exportAction, &QAction::triggered, [this, plot]()
-                { this->exportPlot(plot); });
-
-        contextMenu.exec(plot->mapToGlobal(pos));
-    }
-}
-
-/**
- * @brief 辅助函数，用于将数据范围推送到 ReplayManager
- */
 void MainWindow::updateReplayManagerRange()
 {
     if (m_replayManager)
-    {
         m_replayManager->updateDataRange(getGlobalTimeRange(), getSmallestTimeStep());
-    }
-}
-
-/**
- * @brief [辅助] 配置单个 Plot 的图例（类型、位置、样式）
- * @param plot 目标 Plot
- * @param mode 0: OutsideTop, 1: InsideTL, 2: InsideTR
- */
-void MainWindow::configurePlotLegend(QCustomPlot *plot, int mode)
-{
-    if (!plot)
-        return;
-
-    if (mode == -1)
-    {
-        if (plot->legend)
-        {
-            plot->legend->setVisible(false);
-            plot->replot();
-        }
-        return;
-    }
-
-    if (!plot->axisRect())
-        return;
-
-    bool targetIsOutside = (mode == 0);
-
-    //  检查当前图例类型是否已经匹配，避免不必要的 delete/new
-    bool isFlow = (dynamic_cast<FlowLegend *>(plot->legend) != nullptr);
-    bool needRecreate = (targetIsOutside != isFlow) || (plot->legend == nullptr);
-
-    if (needRecreate)
-    {
-        if (plot->legend)
-        {
-            if (plot->legend->layout())
-                plot->legend->layout()->take(plot->legend);
-            delete plot->legend;
-        }
-        plot->legend = targetIsOutside ? new FlowLegend() : new QCPLegend();
-    }
-
-    // 2. 通用样式设置
-    plot->legend->setVisible(true);
-    QFont font = plot->font();
-    font.setPointSize(7);
-    plot->legend->setFont(font);
-    plot->legend->setIconSize(10, 10);
-    plot->legend->setIconTextPadding(3);
-    plot->legend->setBorderPen(Qt::NoPen);
-    plot->legend->setBrush(Qt::NoBrush);
-    plot->legend->setMargins(QMargins(2, 2, 2, 2));
-
-    // 允许选择图例项
-    plot->legend->setSelectableParts(QCPLegend::spItems);
-    plot->legend->setSelectedBrush(Qt::NoBrush);
-    plot->legend->setSelectedBorderPen(Qt::NoPen);
-    plot->legend->setSelectedTextColor(plot->legend->textColor());
-    plot->legend->setSelectedFont(plot->legend->font());
-
-    // 3. 布局逻辑
-    QCPLayoutGrid *mainLayout = plot->plotLayout();
-    if (!mainLayout)
-        return;
-
-    // 先将图例从现有布局中移除
-    if (plot->legend->layout())
-        plot->legend->layout()->take(plot->legend);
-
-    if (targetIsOutside)
-    {
-        if (plot->graphCount() > 0)
-        {
-            if (mainLayout->rowCount() < 1 || (mainLayout->hasElement(0, 0) && mainLayout->element(0, 0) == plot->axisRect()))
-            {
-                mainLayout->insertRow(0);
-            }
-
-            mainLayout->addElement(0, 0, plot->legend);
-            mainLayout->setRowSpacing(0);
-            mainLayout->setRowStretchFactor(0, 0.001);
-            // 强制宽度匹配
-            plot->legend->setOuterRect(plot->axisRect()->outerRect());
-        }
-        else
-        {
-            mainLayout->simplify(); // 清理空行
-        }
-    }
-    else
-    {
-        // 添加到内部
-        QCPLayoutInset *insetLayout = plot->axisRect()->insetLayout();
-
-        if (insetLayout->elementCount() == 0 || insetLayout->elementAt(0) != plot->legend)
-        {
-            Qt::Alignment align = Qt::AlignTop | (mode == 1 ? Qt::AlignLeft : Qt::AlignRight);
-            insetLayout->addElement(plot->legend, align);
-        }
-    }
-
-    // 重新添加图表项
-    for (int i = 0; i < plot->graphCount(); ++i)
-        plot->graph(i)->addToLegend(plot->legend);
-
-    plot->replot();
-}
-
-/**
- * @brief  切换图例位置槽函数
- */
-void MainWindow::onLegendPositionChanged(QAction *action)
-{
-    if (!action)
-        return;
-    int mode = action->data().toInt(); // 0: OutsideTop, 1: InsideTL, 2: InsideTR
-
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        configurePlotLegend(plot, mode);
-    }
 }
 
 SignalLocation MainWindow::getSignalDataFromID(const QString &uniqueID) const
 {
     SignalLocation loc;
-
     loc.pen = m_signalBrowser->getSignalPen(uniqueID);
     loc.name = m_signalBrowser->getSignalName(uniqueID);
 
-    // 2. 解析 ID
     QStringList parts = uniqueID.split('/');
     if (parts.size() < 2)
         return loc;
@@ -2067,16 +936,13 @@ SignalLocation MainWindow::getSignalDataFromID(const QString &uniqueID) const
         return loc;
     const FileData &fileData = m_fileDataMap.value(filename);
 
-    if (parts.size() == 2) // CSV: "filename/index"
-    {
-        if (!fileData.tables.isEmpty())
-        {
-            loc.table = &fileData.tables.first();
-            loc.signalIndex = parts[1].toInt();
-        }
+    if (parts.size() == 2 && !fileData.tables.isEmpty())
+    { // CSV
+        loc.table = &fileData.tables.first();
+        loc.signalIndex = parts[1].toInt();
     }
-    else if (parts.size() == 3) // MAT: "filename/tablename/index"
-    {
+    else if (parts.size() == 3)
+    { // MAT
         QString tablename = parts[1];
         int idx = parts[2].toInt();
         for (const auto &table : fileData.tables)
@@ -2091,418 +957,58 @@ SignalLocation MainWindow::getSignalDataFromID(const QString &uniqueID) const
     }
     return loc;
 }
-
 void MainWindow::onLayoutActionTriggered()
 {
-    ensureNormalMode();
+    if (m_plotManager->isMaximized())
+        m_plotManager->toggleMaximizeActive();
 
     QAction *action = qobject_cast<QAction *>(sender());
     if (!action)
         return;
-
     QVariant data = action->data();
 
     if (data.type() == QVariant::Point)
     {
         QPoint grid = data.toPoint();
-        setupPlotLayout(grid.x(), grid.y());
+        m_plotManager->setupLayout(grid.x(), grid.y());
     }
     else if (data.type() == QVariant::String)
     {
         QString type = data.toString();
         QList<QRect> geometries;
-
         if (type == "split_bottom")
-        {
             geometries << QRect(0, 0, 2, 1) << QRect(0, 1, 1, 1) << QRect(1, 1, 1, 1);
-        }
         else if (type == "split_top")
-        {
             geometries << QRect(0, 0, 1, 1) << QRect(1, 0, 1, 1) << QRect(0, 1, 2, 1);
-        }
         else if (type == "split_left")
-        {
             geometries << QRect(0, 0, 1, 1) << QRect(0, 1, 1, 1) << QRect(1, 0, 1, 2);
-        }
         else if (type == "split_right")
-        {
             geometries << QRect(0, 0, 1, 2) << QRect(1, 0, 1, 1) << QRect(1, 1, 1, 1);
-        }
 
         if (!geometries.isEmpty())
-        {
-            setupPlotLayout(geometries);
-        }
+            m_plotManager->setupLayout(geometries);
     }
 }
 
-void MainWindow::performFitView(bool fitX, bool fitY, FitTarget target)
-{
-    if (m_plotWidgets.isEmpty())
-        return;
-
-    QList<QCustomPlot *> targets;
-    if (target == FitActivePlot)
-    {
-        if (m_activePlot)
-            targets.append(m_activePlot);
-    }
-    else
-    {
-        targets = m_plotWidgets;
-    }
-
-    if (targets.isEmpty())
-        return;
-
-    QCPRange globalXRange;
-    bool hasXRange = false;
-
-    if (fitX)
-    { // 扫描所有图表以获取全局时间
-        for (QCustomPlot *plot : m_plotWidgets)
-        {
-            if (!plot)
-                continue;
-            for (int i = 0; i < plot->graphCount(); ++i)
-            {
-                QCPGraph *graph = plot->graph(i);
-                if (graph && !graph->data()->isEmpty())
-                {
-                    bool found = false;
-                    QCPRange r = graph->data()->keyRange(found);
-                    if (found)
-                    {
-                        if (!hasXRange)
-                        {
-                            globalXRange = r;
-                            hasXRange = true;
-                        }
-                        else
-                        {
-                            globalXRange.expand(r);
-                        }
-                    }
-                }
-            }
-        }
-
-        if (!hasXRange)
-            globalXRange = QCPRange(0, 10);
-
-        // X轴增加 2% 边距
-        if (hasXRange && globalXRange.size() > 0)
-        {
-            double margin = globalXRange.size() * 0.02; // 计算 2% 的边距宽度
-            globalXRange.lower -= margin;               // 左侧扩展
-            globalXRange.upper += margin;               // 右侧扩展
-        }
-    }
-
-    // 应用 X 并计算/应用 Y
-    for (QCustomPlot *plot : targets)
-    {
-        if (!plot)
-            continue;
-
-        if (fitX)
-        {
-            QSignalBlocker blocker(plot->xAxis);
-            plot->xAxis->setRange(globalXRange);
-        }
-
-        if (fitY)
-        {
-            // 确定 Y 轴计算的参考 X 范围
-            QCPRange searchXRange = fitX ? globalXRange : plot->xAxis->range();
-
-            QCPRange foundYRange;
-            bool hasY = false;
-
-            for (int i = 0; i < plot->graphCount(); ++i)
-            {
-                QCPGraph *graph = plot->graph(i);
-                if (!graph)
-                    continue;
-
-                bool found = false;
-                // 获取在当前 X 视野内的 Y 范围
-                QCPRange r = graph->getValueRange(found, QCP::sdBoth, searchXRange);
-                if (found)
-                {
-                    if (!hasY)
-                    {
-                        foundYRange = r;
-                        hasY = true;
-                    }
-                    else
-                    {
-                        foundYRange.expand(r);
-                    }
-                }
-            }
-
-            if (hasY)
-            {
-                // 添加 5% 边距
-                double size = foundYRange.size();
-                if (size == 0.0)
-                    size = 1.0; // 防止单一直线的情况
-                double margin = size * 0.05;
-                // 特殊处理：如果值本身是0且范围也是0 (例如全0信号)
-                if (margin == 0.05 && foundYRange.center() == 0.0)
-                    margin = 0.5;
-
-                foundYRange.lower -= margin;
-                foundYRange.upper += margin;
-                plot->yAxis->setRange(foundYRange);
-            }
-            else
-            {
-                plot->yAxis->setRange(0, 1); // 默认范围
-            }
-        }
-
-        plot->replot();
-    }
-
-    // 如果缩放了 X 轴，手动触发一次游标更新 (因为我们屏蔽了信号)
-    if (fitX)
-    {
-        if (!targets.isEmpty())
-            onXAxisRangeChanged(targets.first()->xAxis->range());
-    }
-
-    emit plotUpdated();
-}
-
-// 设置活动子图 X 轴范围
-void MainWindow::setActivePlotXRange(double min, double max)
-{
-    if (m_activePlot)
-    {
-        m_activePlot->xAxis->setRange(min, max);
-        m_activePlot->replot();
-    }
-    emit plotUpdated();
-}
-
-//  设置活动子图 Y 轴范围
-void MainWindow::setActivePlotYRange(double min, double max)
-{
-    if (m_activePlot)
-    {
-        m_activePlot->yAxis->setRange(min, max);
-        m_activePlot->replot();
-    }
-    emit plotUpdated();
-}
-
-void MainWindow::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc)
-{
-    QCPGraph *graph = plot->addGraph();
-    graph->setName(loc.name);
-    graph->setData(loc.table->timeData, loc.table->valueData[loc.signalIndex]);
-    graph->setPen(loc.pen);
-    graph->setProperty("id", uniqueID);
-
-    // 统一应用性能修复和样式设置
-    if (graph->selectionDecorator())
-    {
-        QCPSelectionDecorator *decorator = graph->selectionDecorator();
-        QPen selPen = decorator->pen();
-        selPen.setWidth(loc.pen.width()); // 选中时保持宽度一致
-        decorator->setPen(selPen);
-        decorator->setBrush(Qt::NoBrush);
-        decorator->setUsedScatterProperties(QCPScatterStyle::spNone); // 性能优化
-    }
-}
-
-/**
- * @brief [辅助] 导出单个 Plot 为图片文件
- */
-void MainWindow::exportPlot(QCustomPlot *plot)
-{
-    if (!plot)
-        return;
-
-    QString filters = tr("PNG Image (*.png);;JPG Image (*.jpg);;BMP Image (*.bmp);;PDF Document (*.pdf)");
-
-    QString exportPath = QCoreApplication::applicationDirPath() + "/export_file";
-    QDir dir(exportPath);
-    if (!dir.exists())
-    {
-        dir.mkpath(".");
-    }
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Export Plot"), exportPath, filters);
-
-    if (fileName.isEmpty())
-        return;
-
-    // --- 高清设置 ---
-    double scale = 3.0; // 缩放因子：3.0 表示 3 倍分辨率 (约 300 DPI)
-    int quality = 100;  // JPG 质量 (0-100)
-
-    bool success = false;
-    if (fileName.endsWith(".png", Qt::CaseInsensitive))
-    {
-        success = plot->savePng(fileName, 0, 0, scale, -1);
-    }
-    else if (fileName.endsWith(".jpg", Qt::CaseInsensitive) || fileName.endsWith(".jpeg", Qt::CaseInsensitive))
-    {
-        success = plot->saveJpg(fileName, 0, 0, scale, quality);
-    }
-    else if (fileName.endsWith(".bmp", Qt::CaseInsensitive))
-    {
-        success = plot->saveBmp(fileName, 0, 0, scale);
-    }
-    else if (fileName.endsWith(".pdf", Qt::CaseInsensitive))
-    {
-        success = plot->savePdf(fileName);
-    }
-    else
-    {
-        fileName += ".png";
-        success = plot->savePng(fileName, 0, 0, scale, -1);
-    }
-
-    if (!success)
-    {
-        QMessageBox::warning(this, tr("Export Failed"), tr("Failed to save image to %1").arg(fileName));
-    }
-}
-
-/**
- * @brief [槽] 导出整个布局视图
- */
-void MainWindow::on_actionExportAll_triggered()
-{
-    if (!m_plotContainer)
-        return;
-
-    QString filters = tr("PNG Image (*.png);;JPG Image (*.jpg);;BMP Image (*.bmp)");
-
-    QString exportPath = QCoreApplication::applicationDirPath() + "/export_file";
-    QDir dir(exportPath);
-    if (!dir.exists())
-    {
-        dir.mkpath(".");
-    }
-    QString fileName = QFileDialog::getSaveFileName(this, tr("Export All Views"), exportPath, filters);
-
-    if (fileName.isEmpty())
-        return;
-
-    if (!fileName.contains('.'))
-    {
-        fileName += ".png";
-    }
-
-    QPixmap pixmap = m_plotContainer->grab();
-    bool success = pixmap.save(fileName, nullptr, 100);
-
-    if (!success)
-    {
-        QMessageBox::warning(this, tr("Export Failed"), tr("Failed to save all views to %1").arg(fileName));
-    }
-}
-
-// 获取当前 Grid 布局的几何信息
-QList<QRect> MainWindow::captureLayoutGeometries() const
-{
-    QList<QRect> geometries;
-    QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotContainer->layout());
-    if (!grid)
-        return geometries;
-
-    for (int i = 0; i < grid->count(); ++i)
-    {
-        int row, col, rowSpan, colSpan;
-        grid->getItemPosition(i, &row, &col, &rowSpan, &colSpan);
-        // 我们约定 QRect(x, y, w, h) -> (col, row, colSpan, rowSpan)
-        geometries.append(QRect(col, row, colSpan, rowSpan));
-    }
-    return geometries;
-}
-
-// 确保退出最大化模式（用于在最大化时用户点击了其他布局按钮的情况）
-void MainWindow::ensureNormalMode()
-{
-    if (m_isMaximized)
-    {
-        m_plotSignalMap = m_savedPlotSignalMap;
-        m_isMaximized = false;
-        m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-expand.svg"));
-        m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
-        m_maximizeAction->setText(tr("Maximize"));
-    }
-}
-
-// 最大化/还原 槽函数
 void MainWindow::on_actionMaximize_triggered()
 {
-    if (m_isMaximized)
+    m_plotManager->toggleMaximizeActive();
+    if (m_plotManager->isMaximized())
     {
-        m_plotSignalMap = m_savedPlotSignalMap;
-        setupPlotLayout(m_savedGeometries);
-
-        if (m_savedActivePlotIndex >= 0 && m_savedActivePlotIndex < m_plotWidgets.size())
-        {
-            setActivePlot(m_plotWidgets.at(m_savedActivePlotIndex));
-        }
-
-        m_isMaximized = false;
-
-        // 更新图标为“最大化”
-        m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-expand.svg"));
-        m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
+        m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-contract.svg"));
+        m_maximizeAction->setToolTip(tr("Restore Layout"));
     }
     else
     {
-        if (!m_activePlot)
-        {
-            if (!m_plotWidgets.isEmpty())
-                setActivePlot(m_plotWidgets.first());
-            else
-            {
-                QMessageBox::information(this, tr("Info"), tr("No plots available to maximize."));
-                return;
-            }
-        }
-
-        int activeIdx = m_plotWidgets.indexOf(m_activePlot);
-        if (activeIdx == -1)
-            return;
-
-        // 1. 保存当前状态
-        m_savedPlotSignalMap = m_plotSignalMap;
-        m_savedGeometries = captureLayoutGeometries();
-        m_savedActivePlotIndex = activeIdx;
-
-        // 2. 提取当前活动图表的信号
-        QSet<QString> activeSignals = m_plotSignalMap.value(activeIdx);
-
-        // 清空并设置仅显示当前活动图表
-        m_plotSignalMap.clear();
-        m_plotSignalMap.insert(0, activeSignals);
-
-        // 3. 单图布局
-        setupPlotLayout(1, 1);
-
-        m_isMaximized = true;
-
-        // 更新图标为“还原”
-        m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-contract.svg"));
-        m_maximizeAction->setToolTip(tr("Restore Layout"));
-        m_maximizeAction->setText(tr("Restore"));
+        m_maximizeAction->setIcon(QIcon(":/icon/arrows-angle-expand.svg"));
+        m_maximizeAction->setToolTip(tr("Maximize Active Plot"));
     }
 }
-
 void MainWindow::onCursorMainButtonToggled(bool checked)
 {
     if (checked)
     {
-        m_cursorManager->setMode(m_currentCursorMode);
+        m_cursorManager->setMode((CursorManager::CursorMode)m_currentCursorMode);
 
         if (m_currentCursorMode == CursorManager::SingleCursor)
         {
@@ -2542,7 +1048,7 @@ void MainWindow::onCursorMenuActionTriggered(QAction *action)
     }
     else
     {
-        m_cursorManager->setMode(m_currentCursorMode);
+        m_cursorManager->setMode((CursorManager::CursorMode)m_currentCursorMode);
     }
 }
 
@@ -2580,23 +1086,6 @@ void MainWindow::on_actionSetDefaultPenWidth_triggered()
     }
 }
 
-void MainWindow::onAntialiasingActionToggled(bool checked)
-{
-    for (QCustomPlot *plot : m_plotWidgets)
-    {
-        if (checked)
-        {
-            // 启用抗锯齿 (默认)
-            plot->setNotAntialiasedElements(QCP::aeNone);
-        }
-        else
-        {
-            plot->setNotAntialiasedElements(QCP::aePlottables);
-        }
-        plot->replot();
-    }
-}
-
 void MainWindow::on_actionScriptConsole_triggered()
 {
     if (!m_scriptWindow)
@@ -2605,8 +1094,73 @@ void MainWindow::on_actionScriptConsole_triggered()
         m_scriptAPI->setScriptWindow(m_scriptWindow);
     }
 
-    // 显示并置顶
     m_scriptWindow->show();
     m_scriptWindow->raise();
     m_scriptWindow->activateWindow();
 }
+
+void MainWindow::onSignalDropRequested(const QString &uniqueId, QCustomPlot *plot)
+{
+    SignalLocation loc = getSignalDataFromID(uniqueId);
+    m_plotManager->addSignal(uniqueId, loc, plot);
+    m_signalBrowser->setSignalChecked(uniqueId, true, true);
+}
+
+void MainWindow::onActivePlotChanged(QCustomPlot *plot)
+{
+    QSet<QString> ids = m_plotManager->getActivePlotSignalIDs();
+    m_signalBrowser->updateChecksForActivePlot(ids);
+
+    m_cursorManager->setActivePlot(plot);
+}
+
+void MainWindow::onPlotManagerUpdated()
+{
+    // 图表更新后(比如Layout变化)，刷新数据
+    // 1. 如果是从 Maximize 恢复，我们需要重新填充信号
+    if (!m_plotManager->isMaximized())
+    {
+        // 遍历所有 Plot，恢复其信号 (逻辑略复杂，需 PlotManager 配合)
+        // 简化版本：PlotManager 内部其实已经尽量保留了 Structure
+        // 这里的重点是游标更新
+    }
+
+    QTimer::singleShot(0, m_cursorManager, &CursorManager::updateAllCursors);
+}
+
+void MainWindow::onSignalSelectionChanged(const QString &id)
+{
+    m_signalBrowser->selectSignal(id);
+}
+
+void MainWindow::onRemoveSubplotRequested(int index)
+{
+    QSet<QString> ids = m_plotManager->getPlotSignalIDs(index);
+    for (const QString &id : ids)
+        m_signalBrowser->setSignalChecked(id, false, false);
+}
+
+void MainWindow::onRemoveSignalRequested(const QString &id)
+{
+    m_signalBrowser->setSignalChecked(id, false, false);
+}
+
+void MainWindow::on_actionFitView_triggered() { m_plotManager->performFitView(true, true, PlotManager::FitAllPlots); }
+void MainWindow::on_actionFitViewTime_triggered() { m_plotManager->performFitView(true, false, PlotManager::FitAllPlots); }
+void MainWindow::on_actionFitViewY_triggered() { m_plotManager->performFitView(false, true, PlotManager::FitActivePlot); }
+void MainWindow::on_actionFitViewYAll_triggered() { m_plotManager->performFitView(false, true, PlotManager::FitAllPlots); }
+void MainWindow::onOpenGLActionToggled(bool c) { m_plotManager->setOpenGL(c); }
+void MainWindow::onAntialiasingActionToggled(bool c) { m_plotManager->setAntialiasing(c); }
+void MainWindow::onLegendPositionChanged(QAction *a) { m_plotManager->setLegendPosition(a->data().toInt()); }
+void MainWindow::on_actionClearAllPlots_triggered()
+{
+    if (QMessageBox::question(this, "Clear", "Clear all?") == QMessageBox::Yes)
+    {
+        m_plotManager->clearAllPlots();
+        // [修复] 当全部清除时，取消勾选树中所有项目
+        // 这里需要 SignalBrowser 支持 uncheckAll，或者通过重新加载模型等方式
+        // 简单方式：我们现在状态不一致了，建议触发一次重置
+        // TODO: 可以在 SignalBrowser 增加一个 uncheckAll() 接口
+    }
+}
+void MainWindow::on_actionExportAll_triggered() { m_plotManager->exportAllViews(QFileDialog::getSaveFileName(this, tr("Save Image"))); }

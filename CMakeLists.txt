@@ -51,6 +51,7 @@ include(FetchContent)
 FetchContent_Declare(
   pybind11
   URL      ${CMAKE_SOURCE_DIR}/third_libs/pybind11-3.0.1.zip
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(pybind11)
 
@@ -58,6 +59,7 @@ FetchContent_MakeAvailable(pybind11)
 set(SOURCES
     main.cpp
     mainwindow.cpp
+    plotmanager.cpp
     datamanager.cpp
     cursormanager.cpp
     replaymanager.cpp

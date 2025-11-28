@@ -1,7 +1,7 @@
 #include "signalbrowser.h"
 #include "signaltreedelegate.h"
 #include "signalpropertiesdialog.h"
-#include "mainwindow.h" // 需要 TreeItemRoles 枚举
+#include "types.h"
 
 #include <QHeaderView>
 #include <QMenu>

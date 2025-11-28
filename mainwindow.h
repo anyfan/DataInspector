@@ -1,60 +1,28 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
-// Qt Headers
 #include <QMainWindow>
 #include <QList>
 #include <QMap>
-#include <QVector>
 #include <QSet>
 #include <QDomDocument>
 
-#include "scriptapi.h"
-
-// Local Headers
 #include "datamanager.h"
-#include "cursormanager.h"
-#include "replaymanager.h"
-#include "signalbrowser.h"
+#include "plotmanager.h"
 
 // Forward Declarations
-class QCustomPlot;
-class QCPGraph;
-class QCPRange;
-class QCPLegend;
-class QCPAbstractLegendItem;
-class QCPMarginGroup;
-class QCPItemLine;
-class QCPItemText;
-class QCPItemTracer;
-class QStandardItemModel;
 class QStandardItem;
-class QTreeView;
 class QDockWidget;
 class QProgressDialog;
-class QLineEdit;
 class QSpinBox;
 class QThread;
+class QActionGroup;
 
 class ScriptWindow;
-
-// Custom Roles
-enum TreeItemRoles
-{
-    UniqueIdRole = Qt::UserRole + 1, // "filename/tablename/signalindex"
-    IsFileItemRole,
-    PenDataRole,
-    FileNameRole,
-    IsSignalItemRole
-};
-
-struct SignalLocation
-{
-    const SignalTable *table = nullptr;
-    int signalIndex = -1;
-    QString name;
-    QPen pen;
-};
+class ScriptAPI;
+class ReplayManager;
+class CursorManager;
+class SignalBrowser;
 
 class MainWindow : public QMainWindow
 {
@@ -64,202 +32,134 @@ public:
     explicit MainWindow(QWidget *parent = nullptr);
     ~MainWindow();
 
-    QCustomPlot *getActivePlot() const { return m_activePlot; }
+    // 供 ScriptAPI 使用
+    PlotManager *getPlotManager() const { return m_plotManager; }
+    DataManager *getDataManager() const { return m_dataManager; }
+
+    // 供 ScriptAPI 查找数据
+    SignalLocation getSignalDataFromID(const QString &uniqueID) const;
+    void removeFile(const QString &filename);
 
     friend class ScriptAPI;
 
 signals:
     void requestLoadCsv(const QString &filePath);
     void requestLoadMat(const QString &filePath);
-
-    // 通知外部数据已处理完毕且UI已更新
     void dataProcessingFinished(const QString &filePath);
     void viewImportFinished();
-    void plotUpdated();
+    void plotUpdated(); // Forwarded from PlotManager
 
 protected:
-    // Event Overrides
     void dragEnterEvent(QDragEnterEvent *event) override;
     void dropEvent(QDropEvent *event) override;
-    bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
-    //  1. 菜单动作槽 (Menu Actions)
+    // --- 菜单动作 ---
     void on_actionLoadFile_triggered();
     void on_actionImportView_triggered();
-    void onLegendPositionChanged(QAction *action);
+    void on_actionExportAll_triggered();
     void on_actionClearAllPlots_triggered();
-    void onOpenGLActionToggled(bool checked);
-    void onAntialiasingActionToggled(bool checked);
-    void on_actionSetDefaultPenWidth_triggered();
 
-    // 布局动作
+    // 布局与视图
     void onLayoutActionTriggered();
     void on_actionLayoutCustom_triggered();
+    void on_actionMaximize_triggered();
+    void on_actionFullScreen_triggered();
 
-    // 视图/缩放动作
+    // 设置
+    void onOpenGLActionToggled(bool checked);
+    void onAntialiasingActionToggled(bool checked);
+    void onLegendPositionChanged(QAction *action);
+    void on_actionSetDefaultPenWidth_triggered();
+
+    // 自适应
     void on_actionFitView_triggered();
     void on_actionFitViewTime_triggered();
     void on_actionFitViewY_triggered();
     void on_actionFitViewYAll_triggered();
 
-    //  2. 数据加载槽 (Data Loading)
+    // --- 数据回调 ---
     void onDataLoadFinished(const FileData &data);
     void onDataLoadFailed(const QString &filePath, const QString &errorString);
     void showLoadProgress(int percentage);
 
-    //  3. 信号树交互槽 (Signal Tree)
+    // --- 交互回调 ---
     void onSignalCheckStateChanged(const QString &uniqueId, bool checked);
     void onSignalPenChanged(const QString &uniqueId, const QPen &newPen);
     void onFileRemoveRequested(const QString &filename);
-    void onDeleteFileAction(); // 树右键删除文件
 
-    //  4. 绘图与交互槽 (Plotting & Interaction)
-    void onPlotClicked();
-    void onPlotSelectionChanged();
-    void onXAxisRangeChanged(const QCPRange &newRange);
+    // PlotManager 回调
+    void onActivePlotChanged(QCustomPlot *plot);
+    void onPlotManagerUpdated(); // 布局变动后，需刷新游标等
+    void onSignalDropRequested(const QString &uniqueId, QCustomPlot *plot);
+    void onSignalSelectionChanged(const QString &id);
+    void onRemoveSubplotRequested(int index);
+    void onRemoveSignalRequested(const QString &id);
 
-    // 图例与图表右键
-    void onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, QMouseEvent *event);
-    void onLegendContextMenu(const QPoint &pos);
-    void onDeleteSignalAction();
-    void onDeleteSubplotAction();
-
-    // 游标与重放
+    // 游标与工具
     void onReplayActionToggled(bool checked);
-    void updateCursorsForLayoutChange();
-
-    void on_actionExportAll_triggered(); // 导出所有视图的槽
-
-    //  子图最大化动作槽
-    void on_actionMaximize_triggered();
-    void on_actionFullScreen_triggered();
-
     void onCursorMainButtonToggled(bool checked);
     void onCursorMenuActionTriggered(QAction *action);
-
     void on_actionScriptConsole_triggered();
 
-    void setActivePlotXRange(double min, double max);
-    void setActivePlotYRange(double min, double max);
-
 private:
-    //  内部数据结构
-    struct LayoutInfo
-    {
-        int rows = 1;
-        int cols = 1;
-        QString layoutType = "grid";
-    };
-    struct SignalInfo
-    {
-        QString name;
-        int id = 0;
-        QColor color;
-        QList<int> plotIds;
-    };
-    enum FitTarget
-    {
-        FitActivePlot, // 仅当前活动子图
-        FitAllPlots    // 所有子图
-    };
-
-    //  初始化函数
     void setupDataManagerThread();
     void createActions();
     void createMenus();
     void createToolBars();
     void createDocks();
-    void setupPlotLayout(int rows, int cols);
-    void setupPlotLayout(const QList<QRect> &geometries);
-    void setupPlotInteractions(QCustomPlot *plot);
-    void clearPlotLayout();
 
-    void setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc);
-
-    //  核心逻辑辅助函数
     void loadFile(const QString &filePath);
     void importView(const QString &filePath);
-    void removeFile(const QString &filename);
 
-    // 信号管理
-    void addSignalToPlot(const QString &uniqueID, QCustomPlot *plot, bool replot = true);
-    void removeSignalFromPlot(const QString &uniqueID, QCustomPlot *plot);
-
-    // 绘图管理
-    void setActivePlot(QCustomPlot *plot);
-    QCPGraph *getGraph(QCustomPlot *plot, const QString &uniqueID) const;
-
-    // 数据辅助
+    // 辅助
     QCPRange getGlobalTimeRange() const;
     double getSmallestTimeStep() const;
     void updateReplayManagerRange();
-    QString getUniqueID(QStandardItem *item) const;
 
-    // 导入辅助
+    // XML 解析
+    struct LayoutInfo
+    {
+        int rows;
+        int cols;
+        QString layoutType;
+    };
+    struct SignalInfo
+    {
+        QString name;
+        int id;
+        QColor color;
+        QList<int> plotIds;
+    };
     LayoutInfo parseViewMetaData(const QDomDocument &doc);
     QList<SignalInfo> parseCheckedSignals(const QDomDocument &doc);
     void applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList);
-    // 针对单个 Plot 配置图例的辅助函数
-    void configurePlotLegend(QCustomPlot *plot, int mode);
 
-    SignalLocation getSignalDataFromID(const QString &uniqueID) const;
-
-    void exportPlot(QCustomPlot *plot); // 导出单个 Plot 的辅助函数
-
-    /**
-     * @brief 通用视图自适应函数
-     * @param fitX 是否缩放 X 轴
-     * @param fitY 是否缩放 Y 轴
-     * @param target 目标范围 (仅活动图表 或 所有图表)
-     */
-    void performFitView(bool fitX, bool fitY, FitTarget target);
-
-    // 获取当前网格布局的所有几何位置
-    QList<QRect> captureLayoutGeometries() const;
-
-    // 如果当前处于最大化模式，恢复数据以便进行其他布局操作
-    void ensureNormalMode();
-
-    // 1. 核心逻辑组件
+    // --- 成员变量 ---
     QThread *m_dataThread;
     DataManager *m_dataManager;
+    PlotManager *m_plotManager; // 核心管理类
     CursorManager *m_cursorManager;
     ReplayManager *m_replayManager;
     SignalBrowser *m_signalBrowser;
 
-    // 2. 主 UI 容器
     QWidget *m_plotContainer;
     QDockWidget *m_signalDock;
     QProgressDialog *m_progressDialog;
     QToolBar *m_viewToolBar;
-    QDialog *m_customLayoutDialog; // 懒加载
+
+    QDialog *m_customLayoutDialog;
     QSpinBox *m_customRowsSpinBox;
     QSpinBox *m_customColsSpinBox;
 
-    // 3. 绘图状态管理
-    QList<QCustomPlot *> m_plotWidgets; // 所有 Plot 列表
-    QCustomPlot *m_activePlot;          // 当前选中的 Plot
-    QCustomPlot *m_lastMousePlot;       // 最后交互的 Plot (用于游标吸附)
-
-    // 信号映射 (PlotIndex -> Set<SignalID>) - 用于持久化
-    QMap<int, QSet<QString>> m_plotSignalMap;
-
-    QCPMarginGroup *m_yAxisGroup; // Y轴对齐
-
-    // 4. 数据缓存
+    // 数据缓存
     QMap<QString, FileData> m_fileDataMap;
 
-    // 5. 动作 (Actions)
+    // Actions
     QAction *m_loadFileAction;
     QAction *m_importViewAction;
-    //  图例位置动作组
-    QActionGroup *m_legendPosGroup;
-    QAction *m_legendPosNoneAction;
-    QAction *m_legendPosOutsideTopAction;
-    QAction *m_legendPosInsideTLAction;
-    QAction *m_legendPosInsideTRAction;
-    // 布局
+    QAction *m_exportAllAction;
+    QAction *m_clearAllPlotsAction;
     QAction *m_layout1x1Action;
     QAction *m_layout1x2Action;
     QAction *m_layout2x1Action;
@@ -269,39 +169,37 @@ private:
     QAction *m_layoutSplitTopAction;
     QAction *m_layoutSplitRightAction;
     QAction *m_layoutCustomAction;
-    // 视图 & 工具
+
     QAction *m_fitViewAction;
     QAction *m_fitViewTimeAction;
     QAction *m_fitViewYAction;
     QAction *m_fitViewYAllAction;
+
     QAction *m_openGLAction;
     QAction *m_antialiasingAction;
+    QActionGroup *m_legendPosGroup;
+    QAction *m_legendPosNoneAction;
+    QAction *m_legendPosOutsideTopAction;
+    QAction *m_legendPosInsideTLAction;
+    QAction *m_legendPosInsideTRAction;
+    
     QAction *m_setDefaultPenWidthAction;
-    QAction *m_clearAllPlotsAction;
-    // 游标
+
+    QAction *m_maximizeAction;
+    QAction *m_fullScreenAction;
+
     QToolButton *m_cursorMainBtn;
     QToolButton *m_cursorArrowBtn;
     QAction *m_cursorActionSingle;
     QAction *m_cursorActionDouble;
     QActionGroup *m_cursorMenuGroup;
-    CursorManager::CursorMode m_currentCursorMode = CursorManager::SingleCursor;
+    int m_currentCursorMode;
 
     QAction *m_replayAction;
+    QAction *m_scriptConsoleAction;
 
-    QAction *m_exportAllAction;
-
-    // 最大化功能相关成员
-    QAction *m_maximizeAction;
-    bool m_isMaximized;
-    QMap<int, QSet<QString>> m_savedPlotSignalMap; // 最大化前保存的信号映射
-    QList<QRect> m_savedGeometries;                // 最大化前保存的布局几何
-    int m_savedActivePlotIndex;                    // 保存激活的子图索引
-
-    QAction *m_fullScreenAction;
-
-    ScriptAPI *m_scriptAPI = nullptr;
-    ScriptWindow *m_scriptWindow = nullptr;
-    QAction *m_scriptConsoleAction = nullptr;
+    ScriptAPI *m_scriptAPI;
+    ScriptWindow *m_scriptWindow;
 };
 
 #endif // MAINWINDOW_H

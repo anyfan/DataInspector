@@ -1,5 +1,5 @@
 #include "signaltreedelegate.h"
-#include "mainwindow.h"
+#include "types.h"
 
 #include <QPainter>
 #include <QPen>

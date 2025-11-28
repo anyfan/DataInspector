@@ -1,20 +1,15 @@
 #include "scriptapi.h"
-#include "mainwindow.h"    // 必须包含以访问 MainWindow 的具体实现
-#include "scriptwindow.h"  // 包含以访问 ScriptWindow::appendLog
-#include "signalbrowser.h" // 访问 SignalBrowser
-#include "qcustomplot.h"   // 访问 QCustomPlot
-#include <QStandardItem>   // 访问 Item 数据
+#include "mainwindow.h"
+#include "scriptwindow.h"
+#include "signalbrowser.h"
+#include "qcustomplot.h"
+#include "plotmanager.h"
+#include "types.h"
+#include <QStandardItem>
 #include <pybind11/embed.h>
-#include <pybind11/stl.h> // 支持 std::vector 到 python list 的自动转换
-#include <QEventLoop>     // 用于同步等待
-#include <QTimer>
-#include <QFileInfo>
-#include <QDir>
-#include <QCoreApplication>
+#include <pybind11/stl.h>
 
 namespace py = pybind11;
-
-// --- ScriptAPI 实现 ---
 
 ScriptAPI::ScriptAPI(MainWindow *mainWin) : m_mainWin(mainWin), m_scriptWin(nullptr) {}
 
@@ -22,14 +17,10 @@ void ScriptAPI::setScriptWindow(ScriptWindow *win) { m_scriptWin = win; }
 
 void ScriptAPI::log(std::string msg)
 {
-    QString qmsg = QString::fromStdString(msg);
     if (m_scriptWin)
-    {
-        m_scriptWin->appendLog(qmsg);
-    }
+        m_scriptWin->appendLog(QString::fromStdString(msg));
 }
 
-// 实现 overwrite 逻辑
 bool ScriptAPI::load_file(std::string path, bool overwrite)
 {
     if (!m_mainWin)
@@ -90,23 +81,13 @@ bool ScriptAPI::load_file(std::string path, bool overwrite)
     return success;
 }
 
-// 移除文件实现
 bool ScriptAPI::remove_file(std::string filename)
 {
     if (!m_mainWin)
         return false;
-
     QString qName = QString::fromStdString(filename);
-
-    // 检查文件是否存在于内存中
-    if (m_mainWin->m_fileDataMap.contains(qName))
-    {
-        m_mainWin->removeFile(qName);
-        return true;
-    }
-
-    log("Warning: File not found in memory: " + filename);
-    return false;
+    m_mainWin->removeFile(qName);
+    return true;
 }
 
 void ScriptAPI::import_view(std::string path)
@@ -149,60 +130,35 @@ std::string ScriptAPI::find_id(std::string name)
 
 void ScriptAPI::set_x_range(double min, double max)
 {
-    if (!m_mainWin)
+    if (!m_mainWin || !m_mainWin->getPlotManager()->getActivePlot())
         return;
-
-    QEventLoop loop;
-    QObject::connect(m_mainWin, &MainWindow::plotUpdated, &loop, &QEventLoop::quit);
-
-    QTimer::singleShot(0, m_mainWin, [this, min, max]()
-                       { m_mainWin->setActivePlotXRange(min, max); });
-
-    loop.exec();
+    QCustomPlot *plot = m_mainWin->getPlotManager()->getActivePlot();
+    plot->xAxis->setRange(min, max);
+    plot->replot();
 }
 
 void ScriptAPI::set_y_range(double min, double max)
 {
-    if (!m_mainWin)
+    if (!m_mainWin || !m_mainWin->getPlotManager()->getActivePlot())
         return;
-
-    QEventLoop loop;
-    QObject::connect(m_mainWin, &MainWindow::plotUpdated, &loop, &QEventLoop::quit);
-
-    QTimer::singleShot(0, m_mainWin, [this, min, max]()
-                       { m_mainWin->setActivePlotYRange(min, max); });
-
-    loop.exec();
+    QCustomPlot *plot = m_mainWin->getPlotManager()->getActivePlot();
+    plot->yAxis->setRange(min, max);
+    plot->replot();
 }
 
 void ScriptAPI::autoscale()
 {
     if (!m_mainWin)
         return;
-
-    QEventLoop loop;
-    QObject::connect(m_mainWin, &MainWindow::plotUpdated, &loop, &QEventLoop::quit);
-
-    QTimer::singleShot(0, m_mainWin, [this]()
-                       { m_mainWin->performFitView(true, true, MainWindow::FitActivePlot); });
-
-    loop.exec();
+    m_mainWin->getPlotManager()->performFitView(true, true, PlotManager::FitActivePlot);
 }
 
 void ScriptAPI::fit_view_y_all()
 {
     if (!m_mainWin)
         return;
-
-    QEventLoop loop;
-    QObject::connect(m_mainWin, &MainWindow::plotUpdated, &loop, &QEventLoop::quit);
-
-    QTimer::singleShot(0, m_mainWin, [this]()
-                       { m_mainWin->performFitView(false, true, MainWindow::FitAllPlots); });
-
-    loop.exec();
+    m_mainWin->getPlotManager()->performFitView(false, true, PlotManager::FitAllPlots);
 }
-
 std::vector<double> ScriptAPI::get_data(std::string id)
 {
     if (!m_mainWin)
@@ -248,79 +204,17 @@ bool ScriptAPI::export_plot(std::string path)
 {
     if (!m_mainWin)
         return false;
-    QCustomPlot *plot = m_mainWin->getActivePlot();
-    if (!plot)
-    {
-        log("Error: No active plot to export.");
-        return false;
-    }
-
-    QString qPath = QString::fromStdString(path);
-    // 处理默认导出路径
-    QFileInfo fileInfo(qPath);
-    if (fileInfo.isRelative())
-    {
-        QString exportDir = QCoreApplication::applicationDirPath() + "/export_file";
-        QDir dir(exportDir);
-        if (!dir.exists())
-            dir.mkpath(".");
-        qPath = dir.filePath(qPath);
-    }
-
-    bool success = false;
-    double scale = 2.0;
-
-    if (qPath.endsWith(".png", Qt::CaseInsensitive))
-        success = plot->savePng(qPath, 0, 0, scale);
-    else if (qPath.endsWith(".jpg", Qt::CaseInsensitive))
-        success = plot->saveJpg(qPath, 0, 0, scale, 95);
-    else if (qPath.endsWith(".bmp", Qt::CaseInsensitive))
-        success = plot->saveBmp(qPath, 0, 0, scale);
-    else if (qPath.endsWith(".pdf", Qt::CaseInsensitive))
-        success = plot->savePdf(qPath);
-    else
-    {
-        qPath += ".png";
-        success = plot->savePng(qPath, 0, 0, scale);
-    }
-
-    if (!success)
-        log("Failed to export plot to: " + qPath.toStdString());
-
-    return success;
+    m_mainWin->getPlotManager()->exportActivePlot(QString::fromStdString(path));
+    return true;
 }
 
 bool ScriptAPI::export_view(std::string path)
 {
-    if (!m_mainWin || !m_mainWin->m_plotContainer)
+    if (!m_mainWin)
         return false;
-
-    QString qPath = QString::fromStdString(path);
-    QPixmap pixmap = m_mainWin->m_plotContainer->grab();
-
-    if (qPath.isEmpty())
-        qPath = "view_export.png";
-
-    // 处理默认导出路径
-    QFileInfo fileInfo(qPath);
-    if (fileInfo.isRelative())
-    {
-        QString exportDir = QCoreApplication::applicationDirPath() + "/export_file";
-        QDir dir(exportDir);
-        if (!dir.exists())
-            dir.mkpath(".");
-        qPath = dir.filePath(qPath);
-    }
-
-    bool success = pixmap.save(qPath);
-
-    if (!success)
-        log("Failed to export view to: " + qPath.toStdString());
-
-    return success;
+    m_mainWin->getPlotManager()->exportAllViews(QString::fromStdString(path));
+    return true;
 }
-
-// --- Python 绑定定义 ---
 
 PYBIND11_EMBEDDED_MODULE(inspector, m)
 {
