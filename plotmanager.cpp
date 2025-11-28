@@ -511,7 +511,7 @@ void PlotManager::performFitView(bool fitX, bool fitY, FitTarget target)
     if (fitX && !m_plots.isEmpty())
         onXAxisRangeChanged(m_plots.first()->xAxis->range());
 
-    emit plotUpdated();
+    emit viewChanged();
 }
 
 void PlotManager::onXAxisRangeChanged(const QCPRange &newRange)
@@ -526,7 +526,7 @@ void PlotManager::onXAxisRangeChanged(const QCPRange &newRange)
             plot->replot();
         }
     }
-    emit plotUpdated();
+    emit viewChanged();
 }
 
 void PlotManager::onPlotSelectionChanged()

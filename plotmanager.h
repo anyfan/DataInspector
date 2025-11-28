@@ -70,6 +70,9 @@ signals:
     void activePlotChanged(QCustomPlot *plot);
     void plotUpdated();
 
+    // 视图范围变化
+    void viewChanged();
+
     // 当布局发生结构性变化（图表被重建）时发出
     void layoutChanged();
 

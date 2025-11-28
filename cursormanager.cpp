@@ -325,8 +325,14 @@ void CursorManager::setupCursors()
             QCPItemLine *line = new QCPItemLine(plot);
             line->setPen(linePen);
             line->setSelectable(true);
-            line->start->setType(QCPItemPosition::ptAbsolute);
-            line->end->setType(QCPItemPosition::ptAbsolute);
+
+            // 使用混合坐标系：X轴跟随数据(PlotCoords)，Y轴跟随视口比例(AxisRectRatio)
+            line->start->setTypeX(QCPItemPosition::ptPlotCoords);
+            line->start->setTypeY(QCPItemPosition::ptAxisRectRatio);
+
+            line->end->setTypeX(QCPItemPosition::ptPlotCoords);
+            line->end->setTypeY(QCPItemPosition::ptAxisRectRatio);
+
             line->setClipToAxisRect(true);
             cursor.lines.append(line);
 
@@ -500,10 +506,9 @@ void CursorManager::updateCursors(double key, int cursorIndex)
         QList<QCPItemText *> labelsOnThisPlot;
 
         // A. Update Line
-        double xPixel = plot->xAxis->coordToPixel(key);
         QCPItemLine *line = cursor.lines.at(i);
-        line->start->setCoords(xPixel, plot->axisRect()->bottom());
-        line->end->setCoords(xPixel, plot->axisRect()->top());
+        line->start->setCoords(key, 1);
+        line->end->setCoords(key, 0);
 
         // B. Update X Label
         cursor.xLabels.at(i)->setText(QString::number(key, 'g', 10));

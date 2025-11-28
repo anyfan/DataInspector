@@ -75,6 +75,7 @@ MainWindow::MainWindow(QWidget *parent)
     // 6. 连接 PlotManager 信号
     connect(m_plotManager, &PlotManager::activePlotChanged, this, &MainWindow::onActivePlotChanged);
     connect(m_plotManager, &PlotManager::plotUpdated, this, &MainWindow::onPlotManagerUpdated);
+    connect(m_plotManager, &PlotManager::viewChanged, m_cursorManager, &CursorManager::updateAllCursors);
     connect(m_plotManager, &PlotManager::layoutChanged, this, &MainWindow::onLayoutChanged);
     connect(m_plotManager, &PlotManager::signalDropRequested, this, &MainWindow::onSignalDropRequested);
     connect(m_plotManager, &PlotManager::signalSelectionChanged, this, &MainWindow::onSignalSelectionChanged);
