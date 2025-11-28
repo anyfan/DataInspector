@@ -97,6 +97,8 @@ private:
     void setupPlotInteractions(QCustomPlot *plot);
     void configurePlotLegend(QCustomPlot *plot);
     void setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc);
+    void activatePlot(QCustomPlot *plot);
+
     QWidget *m_container;
     QList<QCustomPlot *> m_plots;
     QCustomPlot *m_activePlot;

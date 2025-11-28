@@ -166,7 +166,6 @@ void PlotManager::configurePlotLegend(QCustomPlot *plot)
     if (m_legendMode == -1)
     {
         plot->legend->setVisible(false);
-        // 如果之前有布局占用，这里也应该 simplify，但通常 -1 不涉及复杂布局
         return;
     }
 
@@ -183,7 +182,7 @@ void PlotManager::configurePlotLegend(QCustomPlot *plot)
             delete plot->legend;
         }
         plot->legend = outside ? new FlowLegend() : new QCPLegend();
-        // 连接点击事件 (如果是新创建的)
+        // 连接点击事件
         connect(plot, &QCustomPlot::legendClick, this, &PlotManager::onLegendClick);
     }
 
@@ -204,12 +203,6 @@ void PlotManager::configurePlotLegend(QCustomPlot *plot)
     plot->legend->setSelectedTextColor(plot->legend->textColor());
     plot->legend->setSelectedFont(plot->legend->font());
 
-    // 重新添加项
-    plot->legend->clearItems();
-    for (int i = 0; i < plot->graphCount(); ++i)
-        plot->graph(i)->addToLegend(plot->legend);
-
-    // 3. 布局逻辑
     QCPLayoutGrid *mainLayout = plot->plotLayout();
 
     // 先从现有布局中移除，确保状态干净
@@ -244,8 +237,6 @@ void PlotManager::configurePlotLegend(QCustomPlot *plot)
     }
     else
     {
-        // 内部图例逻辑
-        // 如果之前是 outside 模式留下了空行，simplify 会清理它
         mainLayout->simplify();
 
         QCPLayoutInset *insetLayout = plot->axisRect()->insetLayout();
@@ -253,6 +244,10 @@ void PlotManager::configurePlotLegend(QCustomPlot *plot)
         insetLayout->addElement(plot->legend, align);
         plot->legend->setVisible(true);
     }
+
+    plot->legend->clearItems();
+    for (int i = 0; i < plot->graphCount(); ++i)
+        plot->graph(i)->addToLegend(plot->legend);
 
     plot->replot();
 }
@@ -262,22 +257,8 @@ void PlotManager::onPlotClicked()
     QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
     if (!clickedPlot && !m_plots.isEmpty())
         clickedPlot = m_plots.first();
-    if (!clickedPlot)
-        return;
 
-    if (m_activePlot && m_activePlot != clickedPlot)
-    {
-        m_activePlot->deselectAll();
-        m_activePlot->replot();
-        if (QWidget *w = m_activePlot->parentWidget())
-            w->setStyleSheet("QFrame { border: 2px solid transparent; }");
-    }
-
-    m_activePlot = clickedPlot;
-    if (QWidget *w = m_activePlot->parentWidget())
-        w->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
-
-    emit activePlotChanged(m_activePlot);
+    activatePlot(clickedPlot);
 }
 
 void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot, bool replot)
@@ -639,6 +620,41 @@ void PlotManager::onCustomContextMenu(const QPoint &pos)
     if (!plot)
         return;
 
+    // 1. 优先检查是否点击了图例项
+    if (plot->legend && plot->legend->visible())
+    {
+        if (plot->legend->selectTest(pos, false) < plot->selectionTolerance())
+        {
+            // 进一步检查具体点到了哪个图例项
+            for (int i = 0; i < plot->legend->itemCount(); ++i)
+            {
+                QCPAbstractLegendItem *item = plot->legend->item(i);
+                if (item->selectTest(pos, false) < plot->selectionTolerance())
+                {
+                    // 找到了被点击的图例项
+                    if (QCPPlottableLegendItem *pli = qobject_cast<QCPPlottableLegendItem *>(item))
+                    {
+                        if (pli->plottable())
+                        {
+                            QMenu menu;
+                            QString name = pli->plottable()->name();
+                            QAction *delAction = menu.addAction(tr("Delete '%1'").arg(name));
+
+                            QString uniqueId = pli->plottable()->property("id").toString();
+                            connect(delAction, &QAction::triggered, [this, uniqueId]()
+                                    { QTimer::singleShot(0, this, [this, uniqueId]()
+                                                         { emit removeSignalRequested(uniqueId); }); });
+
+                            menu.exec(plot->mapToGlobal(pos));
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. 检查是否点击了曲线 (Plottable)
     QCPAbstractPlottable *plottable = plot->plottableAt(pos, false);
     QCPGraph *graph = qobject_cast<QCPGraph *>(plottable);
 
@@ -652,7 +668,7 @@ void PlotManager::onCustomContextMenu(const QPoint &pos)
     }
     else
     {
-        // 子图菜单
+        // 3. 点击空白处：子图菜单
         QMenu menu;
         QAction *del = menu.addAction(tr("Clear Subplot"));
         connect(del, &QAction::triggered, [this, plot]()
@@ -662,15 +678,19 @@ void PlotManager::onCustomContextMenu(const QPoint &pos)
         menu.exec(plot->mapToGlobal(pos));
     }
 }
-
 void PlotManager::onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, QMouseEvent *event)
 {
-    if (QCPPlottableLegendItem *pli = qobject_cast<QCPPlottableLegendItem *>(item))
+    Q_UNUSED(legend);
+
+    if (event->button() == Qt::LeftButton)
     {
-        if (pli->plottable())
+        if (QCPPlottableLegendItem *pli = qobject_cast<QCPPlottableLegendItem *>(item))
         {
-            pli->plottable()->setVisible(!pli->plottable()->visible());
-            pli->plottable()->parentPlot()->replot();
+            if (pli->plottable())
+            {
+                pli->plottable()->setVisible(!pli->plottable()->visible());
+                pli->plottable()->parentPlot()->replot();
+            }
         }
     }
 }
@@ -713,11 +733,10 @@ void PlotManager::toggleMaximizeActive()
         setupLayout(m_savedGeometries);
         // 恢复信号内容需要外部配合或更复杂的逻辑
         m_isMaximized = false;
+
         if (m_savedActivePlotIndex >= 0 && m_savedActivePlotIndex < m_plots.size())
         {
-            onPlotClicked();
-            m_activePlot = m_plots[m_savedActivePlotIndex];
-            emit activePlotChanged(m_activePlot);
+            activatePlot(m_plots[m_savedActivePlotIndex]);
         }
     }
     else
@@ -832,4 +851,27 @@ void PlotManager::exportActivePlot(const QString &path)
     {
         QMessageBox::warning(nullptr, tr("Export Failed"), tr("Failed to save image to %1").arg(exportPath));
     }
+}
+
+void PlotManager::activatePlot(QCustomPlot *plot)
+{
+    if (!plot)
+        return;
+
+    // 1. 取消旧子图的激活状态
+    if (m_activePlot && m_activePlot != plot)
+    {
+        m_activePlot->deselectAll();
+        m_activePlot->replot();
+        if (QWidget *w = m_activePlot->parentWidget())
+            w->setStyleSheet("QFrame { border: 2px solid transparent; }");
+    }
+
+    // 2. 设置新子图为激活状态
+    m_activePlot = plot;
+    if (QWidget *w = m_activePlot->parentWidget())
+        w->setStyleSheet("QFrame { border: 2px solid #0078d4; }");
+
+    // 3. 发出信号
+    emit activePlotChanged(m_activePlot);
 }
