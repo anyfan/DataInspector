@@ -32,9 +32,10 @@ public:
     QCPGraph *getGraph(QCustomPlot *plot, const QString &uniqueID) const;
 
     // --- 信号操作 ---
-    void addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot = nullptr, bool replot = true, bool autoScale = true);
+    void addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot = nullptr, bool replot = true, bool autoScale = true, bool updateLegend = true);
     void removeSignal(const QString &uniqueId, QCustomPlot *targetPlot = nullptr);
     void clearAllPlots();
+    void updateLegends();
     void removeFileSignals(const QString &filenamePrefix);
 
     // 查询某图表包含哪些信号ID

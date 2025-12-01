@@ -268,7 +268,7 @@ void PlotManager::onPlotClicked(QMouseEvent *event)
     }
 }
 
-void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot, bool replot, bool autoScale)
+void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot, bool replot, bool autoScale, bool updateLegend)
 {
     if (!targetPlot)
         targetPlot = m_activePlot;
@@ -286,11 +286,14 @@ void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, 
             return;
     }
 
+    // 传递 autoScale 给 setupGraphInstance
     setupGraphInstance(targetPlot, uniqueId, loc, autoScale);
     m_plotSignalMap[plotIndex].insert(uniqueId);
 
-    // 触发图例更新
-    configurePlotLegend(targetPlot);
+    if (updateLegend)
+    {
+        configurePlotLegend(targetPlot);
+    }
 
     if (replot)
     {
@@ -325,6 +328,7 @@ void PlotManager::removeSignal(const QString &uniqueId, QCustomPlot *targetPlot)
         }
     }
 }
+
 void PlotManager::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc, bool autoScale)
 {
     if (!loc.table)
@@ -336,10 +340,6 @@ void PlotManager::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID,
     graph->setPen(loc.pen);
     graph->setProperty("id", uniqueID);
 
-    // 同步图例
-    configurePlotLegend(plot);
-
-    // 只有当 autoScale 为 true 时，才执行自动缩放逻辑
     if (autoScale)
     {
         int totalGraphCount = 0;
@@ -348,16 +348,22 @@ void PlotManager::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID,
 
         if (totalGraphCount == 1)
         {
-            // 全局第一个信号：对所有子图进行全适应
             performFitView(true, true, FitAllPlots);
         }
         else
         {
-            // 后续信号：仅对当前 plot 进行 Y 轴适应
             QList<QCustomPlot *> target;
             target << plot;
             performFitView(target, false, true);
         }
+    }
+}
+
+void PlotManager::updateLegends()
+{
+    for (QCustomPlot *plot : m_plots)
+    {
+        configurePlotLegend(plot);
     }
 }
 

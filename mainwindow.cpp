@@ -1200,14 +1200,19 @@ void MainWindow::onLayoutChanged()
                 SignalLocation loc = getSignalDataFromID(id);
                 if (loc.table)
                 {
-                    m_plotManager->addSignal(id, loc, plot, false, false);
+                    m_plotManager->addSignal(id, loc, plot, false, false, false);
                 }
             }
         }
     }
 
+    // 1. 统一构建一次图例 (极大地减少开销)
+    m_plotManager->updateLegends();
+
+    // 2. 进行一次 Y 轴全适应
     m_plotManager->performFitView(false, true, PlotManager::FitAllPlots);
 
+    // 3. 统一重绘所有子图
     for (QCustomPlot *plot : m_plotManager->getPlots())
     {
         plot->replot();
