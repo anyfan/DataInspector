@@ -1,24 +1,18 @@
 #include "replaymanager.h"
-#include "cursormanager.h"
 
 #include <QDockWidget>
-#include <QWidget>
 #include <QPushButton>
 #include <QSlider>
 #include <QLabel>
 #include <QDoubleSpinBox>
 #include <QTimer>
 #include <QAction>
-#include <QMainWindow>
-#include <QStyle>
 #include <QHBoxLayout>
 #include <QSignalBlocker>
 
 ReplayManager::ReplayManager(QAction *replayAction,
-                             CursorManager *cursorManager,
                              QMainWindow *parentWindow)
     : QObject(parentWindow),
-      m_cursorManager(cursorManager),
       m_replayDock(nullptr),
       m_replayWidget(nullptr),
       m_playPauseButton(nullptr),
@@ -31,24 +25,18 @@ ReplayManager::ReplayManager(QAction *replayAction,
       m_minTimeStep(0.01),
       m_cursorKey1(0)
 {
-    // 1. 创建 UI
     createReplayDock(parentWindow);
 
-    // 2. 创建定时器
     m_replayTimer = new QTimer(this);
     connect(m_replayTimer, &QTimer::timeout, this, &ReplayManager::onReplayTimerTimeout);
 
-    // 3. 连接外部动作
     if (replayAction)
     {
         connect(replayAction, &QAction::toggled, this, &ReplayManager::onReplayActionToggled);
     }
 }
 
-ReplayManager::~ReplayManager()
-{
-    // QObject 的父子关系会自动处理 m_replayDock 及其子控件的删除
-}
+ReplayManager::~ReplayManager() {}
 
 QDockWidget *ReplayManager::getDockWidget() const
 {
@@ -128,13 +116,8 @@ void ReplayManager::onCursorKeyChanged(double key, int cursorIndex)
  */
 void ReplayManager::onReplayActionToggled(bool checked)
 {
-    m_replayDock->setVisible(checked);
-
-    if (checked && m_cursorManager->getMode() == CursorManager::NoCursor)
-    {
-        // 如果没有游标，自动启用单游标
-        m_cursorManager->setMode(CursorManager::SingleCursor);
-    }
+    if (m_replayDock)
+        m_replayDock->setVisible(checked);
 }
 
 /**
@@ -161,13 +144,15 @@ void ReplayManager::onPlayPauseClicked()
     if (m_replayTimer->isActive())
     {
         m_replayTimer->stop();
-        m_playPauseButton->setIcon(m_playPauseButton->style()->standardIcon(QStyle::SP_MediaPlay));
+        if (m_playPauseButton)
+            m_playPauseButton->setIcon(m_playPauseButton->style()->standardIcon(QStyle::SP_MediaPlay));
     }
     else
     {
-        m_replayTimer->setInterval(33); // 约 30fps
+        m_replayTimer->setInterval(33);
         m_replayTimer->start();
-        m_playPauseButton->setIcon(m_playPauseButton->style()->standardIcon(QStyle::SP_MediaPause));
+        if (m_playPauseButton)
+            m_playPauseButton->setIcon(m_playPauseButton->style()->standardIcon(QStyle::SP_MediaPause));
     }
 }
 
@@ -179,15 +164,14 @@ void ReplayManager::onReplayTimerTimeout()
     if (timeStep <= 0 || speed <= 0)
         return;
 
-    double newKey = m_cursorKey1 + timeStep; // 使用本地 m_cursorKey1
+    double newKey = m_cursorKey1 + timeStep;
 
     if (newKey > m_globalTimeRange.upper)
     {
-        newKey = m_globalTimeRange.lower; // 循环
+        newKey = m_globalTimeRange.lower;
     }
 
-    // 命令 CursorManager 更新
-    m_cursorManager->updateCursors(newKey, 1);
+    emit replayTimeChanged(newKey, 1);
 }
 
 void ReplayManager::onStepClicked()
@@ -197,7 +181,6 @@ void ReplayManager::onStepClicked()
 
     QObject *obj = sender();
     double direction = 0.0;
-
     if (obj == m_stepForwardButton)
         direction = 1.0;
     else if (obj == m_stepBackwardButton)
@@ -207,24 +190,23 @@ void ReplayManager::onStepClicked()
 
     double newKey = m_cursorKey1 + (m_minTimeStep * direction);
 
-    // 可选：添加循环或边界检查
     if (newKey < m_globalTimeRange.lower)
         newKey = m_globalTimeRange.lower;
     if (newKey > m_globalTimeRange.upper)
         newKey = m_globalTimeRange.upper;
 
-    m_cursorManager->updateCursors(newKey, 1);
+    emit replayTimeChanged(newKey, 1);
 }
+
 void ReplayManager::onTimeSliderChanged(int value)
 {
     if (m_replayTimer->isActive())
-        return; // 播放时，定时器优先
-
+        return;
     if (m_globalTimeRange.size() <= 0)
         return;
 
     double relativePos = (double)value / m_timeSlider->maximum();
     double newKey = m_globalTimeRange.lower + relativePos * m_globalTimeRange.size();
 
-    m_cursorManager->updateCursors(newKey, 1);
+    emit replayTimeChanged(newKey, 1);
 }

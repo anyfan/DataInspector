@@ -6,6 +6,7 @@
 #include "signalbrowser.h"
 #include "scriptapi.h"
 #include "types.h"
+#include "viewloader.h"
 
 #include <QMenuBar>
 #include <QToolBar>
@@ -64,9 +65,12 @@ MainWindow::MainWindow(QWidget *parent)
     m_currentCursorMode = CursorManager::SingleCursor;
 
     // 5. 初始化 ReplayManager
-    m_replayManager = new ReplayManager(m_replayAction, m_cursorManager, this);
+    m_replayManager = new ReplayManager(m_replayAction, this);
     if (m_replayManager->getDockWidget())
         addDockWidget(Qt::BottomDockWidgetArea, m_replayManager->getDockWidget());
+
+    connect(m_replayManager, &ReplayManager::replayTimeChanged,
+            m_cursorManager, &CursorManager::updateCursors);
 
     connect(m_cursorManager, &CursorManager::cursorKeyChanged,
             m_replayManager, &ReplayManager::onCursorKeyChanged);
