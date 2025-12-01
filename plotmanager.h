@@ -84,7 +84,7 @@ protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
-    void onPlotClicked();
+    void onPlotClicked(QMouseEvent *event = nullptr);
     void onPlotSelectionChanged();
     void onXAxisRangeChanged(const QCPRange &newRange);
     void onLegendClick(QCPLegend *legend, QCPAbstractLegendItem *item, QMouseEvent *event);

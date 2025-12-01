@@ -247,13 +247,25 @@ void PlotManager::configurePlotLegend(QCustomPlot *plot)
         plot->graph(i)->addToLegend(plot->legend);
 }
 
-void PlotManager::onPlotClicked()
+void PlotManager::onPlotClicked(QMouseEvent *event)
 {
     QCustomPlot *clickedPlot = qobject_cast<QCustomPlot *>(sender());
     if (!clickedPlot && !m_plots.isEmpty())
         clickedPlot = m_plots.first();
 
+    if (!clickedPlot)
+        return;
+
     activatePlot(clickedPlot);
+
+    if (event)
+    {
+        if (!clickedPlot->plottableAt(event->pos(), false))
+        {
+            clickedPlot->deselectAll();
+            clickedPlot->replot();
+        }
+    }
 }
 
 void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot, bool replot)
