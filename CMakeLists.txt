@@ -27,7 +27,7 @@ set_target_properties(matio PROPERTIES
 target_link_libraries(matio INTERFACE hdf5)
 
 # QCustomPlot
-add_definitions(-DQCUSTOMPLOT_USE_OPENGL) # 启用 OpenGL
+add_definitions(-DQCUSTOMPLOT_USE_OPENGL)
 add_library(qcustomplot "${CMAKE_SOURCE_DIR}/third_libs/qcustomplot-2.1.1/qcustomplot.cpp")
 set_target_properties(qcustomplot PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_libs/qcustomplot-2.1.1")
 
@@ -49,29 +49,46 @@ target_link_libraries(qcustomplot Qt5::Core Qt5::PrintSupport Qt5::OpenGL ${OPEN
 
 include(FetchContent)
 FetchContent_Declare(
-  pybind11
-  URL      ${CMAKE_SOURCE_DIR}/third_libs/pybind11-3.0.1.zip
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    pybind11
+    URL ${CMAKE_SOURCE_DIR}/third_libs/pybind11-3.0.1.zip
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable(pybind11)
 
-# --- 2. 源文件列表 ---
-set(SOURCES
-    main.cpp
-    mainwindow.cpp
-    plotmanager.cpp
-    datamanager.cpp
-    cursormanager.cpp
-    replaymanager.cpp
-    signaltreedelegate.cpp
-    signalpropertiesdialog.cpp
-    signalbrowser.cpp
-    script_binding.cpp
-    scriptwindow.cpp
-    viewloader.cpp
+include_directories(
+    ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/src/core
+    ${CMAKE_SOURCE_DIR}/src/data
+    ${CMAKE_SOURCE_DIR}/src/plot
+    ${CMAKE_SOURCE_DIR}/src/ui
+    ${CMAKE_SOURCE_DIR}/src/script
 )
 
-# --- 3. 目标构建 ---
+set(SOURCES
+    src/main.cpp
+
+    # Core
+    src/core/mainwindow.cpp
+
+    # Data
+    src/data/datamanager.cpp
+    src/data/viewloader.cpp
+
+    # Plot
+    src/plot/plotmanager.cpp
+    src/plot/cursormanager.cpp
+    src/plot/replaymanager.cpp
+
+    # UI
+    src/ui/signaltreedelegate.cpp
+    src/ui/signalpropertiesdialog.cpp
+    src/ui/signalbrowser.cpp
+
+    # Script
+    src/script/script_binding.cpp
+    src/script/scriptwindow.cpp
+)
+
 add_executable(DataInspector ${SOURCES} assets/resources.qrc assets/DataInspector.rc)
 
 target_compile_definitions(DataInspector PRIVATE QUAZIP_STATIC)
