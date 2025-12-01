@@ -820,17 +820,38 @@ void PlotManager::exportAllViews(const QString &path)
 
     QString filters = tr("PNG Image (*.png);;JPG Image (*.jpg);;BMP Image (*.bmp)");
 
+    // 定义默认的基础导出目录
+    QString defaultBaseDir = QCoreApplication::applicationDirPath() + "/export_file";
     QString exportPath = path;
+
     if (exportPath.isEmpty())
     {
-        exportPath = QCoreApplication::applicationDirPath() + "/export_file";
-        QDir dir(exportPath);
+        // 1. 交互模式 (UI 触发)
+        QDir dir(defaultBaseDir);
         if (!dir.exists())
         {
             dir.mkpath(".");
         }
 
-        exportPath = QFileDialog::getSaveFileName(nullptr, tr("Export All Views"), exportPath, filters);
+        exportPath = QFileDialog::getSaveFileName(nullptr, tr("Export All Views"), defaultBaseDir, filters);
+    }
+    else
+    {
+        // 2. API 模式 (脚本触发)
+        QFileInfo info(exportPath);
+        if (info.isRelative())
+        {
+            // 如果是相对路径 (例如 "view.png")，则拼接到默认目录下
+            exportPath = defaultBaseDir + "/" + exportPath;
+        }
+
+        // 确保目标目录存在 (防止 API 指定了不存在的子目录)
+        QFileInfo finalInfo(exportPath);
+        QDir finalDir = finalInfo.absoluteDir();
+        if (!finalDir.exists())
+        {
+            finalDir.mkpath(".");
+        }
     }
 
     if (exportPath.isEmpty())
@@ -862,18 +883,39 @@ void PlotManager::exportPlot(QCustomPlot *plot, const QString &path)
 
     QString filters = tr("PNG Image (*.png);;JPG Image (*.jpg);;BMP Image (*.bmp);;PDF Document (*.pdf)");
 
+    // 定义默认的基础导出目录
+    QString defaultBaseDir = QCoreApplication::applicationDirPath() + "/export_file";
     QString exportPath = path;
+
     if (exportPath.isEmpty())
     {
-        exportPath = QCoreApplication::applicationDirPath() + "/export_file";
-        QDir dir(exportPath);
+        // 1. 交互模式
+        QDir dir(defaultBaseDir);
         if (!dir.exists())
         {
             dir.mkpath(".");
         }
 
         // 使用 nullptr 作为父对象，或者是 m_container，避免模态框问题
-        exportPath = QFileDialog::getSaveFileName(m_container, tr("Export Plot"), exportPath, filters);
+        exportPath = QFileDialog::getSaveFileName(m_container, tr("Export Plot"), defaultBaseDir, filters);
+    }
+    else
+    {
+        // 2. API 模式
+        QFileInfo info(exportPath);
+        if (info.isRelative())
+        {
+            // 如果是相对路径，拼接到默认 export_file 目录
+            exportPath = defaultBaseDir + "/" + exportPath;
+        }
+
+        // 确保目录存在
+        QFileInfo finalInfo(exportPath);
+        QDir finalDir = finalInfo.absoluteDir();
+        if (!finalDir.exists())
+        {
+            finalDir.mkpath(".");
+        }
     }
 
     if (exportPath.isEmpty())
