@@ -68,6 +68,7 @@ set(SOURCES
     signalbrowser.cpp
     script_binding.cpp
     scriptwindow.cpp
+    viewloader.cpp
 )
 
 # --- 3. 目标构建 ---

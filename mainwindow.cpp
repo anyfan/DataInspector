@@ -542,75 +542,19 @@ void MainWindow::on_actionLoadFile_triggered()
 
 void MainWindow::importView(const QString &path)
 {
-    if (path.isEmpty())
-        return;
+    ViewData viewData;
+    bool success = ViewLoader::loadFromZip(path, viewData);
 
-    QuaZip zip(path);
-    if (!zip.open(QuaZip::mdUnzip))
+    if (!success)
     {
-        QMessageBox::critical(this, tr("Import Error"), tr("Error: Could not open file as ZIP archive."));
-        return;
-    }
-
-    // 查找并解析关键 XML
-    QDomDocument viewMetaDataDoc;
-    QDomDocument checkedSignalsDoc;
-    bool foundViewMeta = false;
-    bool foundCheckedSignals = false;
-
-    QStringList allFiles = zip.getFileNameList();
-
-    for (const QString &fileName : allFiles)
-    {
-        if (fileName != "views/sdi_view_meta_data.xml" && fileName != "views/sdi_checked_signals.xml")
-        {
-            continue;
-        }
-
-        if (!zip.setCurrentFile(fileName))
-            continue;
-
-        QuaZipFile zFile(&zip);
-        if (!zFile.open(QIODevice::ReadOnly))
-            continue;
-
-        QByteArray xmlData = zFile.readAll();
-        zFile.close();
-
-        QDomDocument doc;
-        QString errorMsg;
-        int errorLine, errorCol;
-        if (doc.setContent(xmlData, &errorMsg, &errorLine, &errorCol))
-        {
-            if (fileName == "views/sdi_view_meta_data.xml")
-            {
-                viewMetaDataDoc = doc;
-                foundViewMeta = true;
-            }
-            else if (fileName == "views/sdi_checked_signals.xml")
-            {
-                checkedSignalsDoc = doc;
-                foundCheckedSignals = true;
-            }
-        }
-        else
-        {
-            qWarning() << "  [Failed] Could not parse XML:" << fileName << "Error:" << errorMsg << "at line" << errorLine;
-        }
-    }
-    zip.close();
-
-    if (!foundViewMeta || !foundCheckedSignals)
-    {
-        QMessageBox::critical(this, tr("Import Error"), tr("Error: .mldatx file is missing required files."));
+        QMessageBox::critical(this, tr("Import Error"), tr("Failed to load view file or missing required data."));
         return;
     }
 
-    LayoutInfo layout = parseViewMetaData(viewMetaDataDoc);
-    QList<SignalInfo> signalList = parseCheckedSignals(checkedSignalsDoc);
-
-    qDebug().noquote() << QString("Layout Info: %1x%2 %3").arg(layout.rows).arg(layout.cols).arg(layout.layoutType);
-    qDebug().noquote() << QString("Signal Info: Found %1 signals").arg(signalList.count());
+    qDebug().noquote() << QString("Layout Info: %1x%2 %3")
+                              .arg(viewData.layout.rows)
+                              .arg(viewData.layout.cols)
+                              .arg(viewData.layout.layoutType);
 
     // 清除 PlotManager 中的所有信号记录
     int currentPlotCount = m_plotManager->getPlots().size();
@@ -624,15 +568,14 @@ void MainWindow::importView(const QString &path)
     }
 
     m_plotManager->clearAllPlots();
-
-    m_plotManager->setupLayout(layout.rows, layout.cols);
+    m_plotManager->setupLayout(viewData.layout.rows, viewData.layout.cols);
 
     // 添加信号
     int totalPlots = m_plotManager->getPlots().size();
     if (totalPlots == 0)
         return;
 
-    for (const SignalInfo &sig : signalList)
+    for (const ViewSignalInfo &sig : viewData.signalList)
     {
         // 在树中查找以获取 uniqueID
         QStandardItem *item = m_signalBrowser->findItemByName(sig.name);
@@ -648,15 +591,15 @@ void MainWindow::importView(const QString &path)
         {
             if (sdiPlotId < 1)
                 sdiPlotId = 1;
-            int r = (sdiPlotId - 1) % 8 + 1;                 // 1-based row
-            int c = (sdiPlotId - 1) / 8 + 1;                 // 1-based col
-            int plotIndex = (r - 1) * layout.cols + (c - 1); // 映射到 grid index
+            int r = (sdiPlotId - 1) % 8 + 1;                          // 1-based row
+            int c = (sdiPlotId - 1) / 8 + 1;                          // 1-based col
+            int plotIndex = (r - 1) * viewData.layout.cols + (c - 1); // 映射到 grid index
 
             if (plotIndex >= 0 && plotIndex < totalPlots)
             {
                 QCustomPlot *targetPlot = m_plotManager->getPlots().at(plotIndex);
                 SignalLocation loc = getSignalDataFromID(uniqueID);
-                // 应用导入的颜色 (可选，如果希望覆盖默认色)
+                // 应用导入的颜色 (可选)
                 // loc.pen.setColor(sig.color);
 
                 m_plotManager->addSignal(uniqueID, loc, targetPlot);
@@ -712,96 +655,6 @@ void MainWindow::removeFile(const QString &filename)
     m_signalBrowser->removeFile(filename);
 
     updateReplayManagerRange();
-}
-
-/**
- * @brief [辅助] 解析 sdi_view_meta_data.xml 的 QDomDocument
- */
-MainWindow::LayoutInfo MainWindow::parseViewMetaData(const QDomDocument &doc)
-{
-    LayoutInfo info;
-    info.rows = 1;
-    info.cols = 1;
-    QDomElement root = doc.documentElement(); // <sdi> 标签
-
-    // 使用 firstChildElement 来安全地获取标签
-    QDomElement rowsEl = root.firstChildElement("SubPlotRows");
-    if (!rowsEl.isNull())
-    {
-        info.rows = rowsEl.text().toInt();
-    }
-
-    QDomElement colsEl = root.firstChildElement("SubPlotCols");
-    if (!colsEl.isNull())
-    {
-        info.cols = colsEl.text().toInt();
-    }
-
-    QDomElement layoutEl = root.firstChildElement("LayoutType");
-    if (!layoutEl.isNull())
-    {
-        info.layoutType = layoutEl.text();
-    }
-
-    return info;
-}
-
-/**
- * @brief [辅助] 解析 sdi_checked_signals.xml 的 QDomDocument
- */
-QList<MainWindow::SignalInfo> MainWindow::parseCheckedSignals(const QDomDocument &doc)
-{
-    QList<SignalInfo> signalList;
-    QDomElement root = doc.documentElement(); // <sdi> 标签
-
-    // 1. 找到 <Signals> 标签
-    QDomElement signalsNode = root.firstChildElement("Signals");
-    if (signalsNode.isNull())
-    {
-        qWarning() << "Could not find <Signals> tag in sdi_checked_signals.xml";
-        return signalList;
-    }
-
-    // 2. 遍历 <Signals> 下的所有子节点 (Sig1, Sig2, ...)
-    QDomElement sigEl = signalsNode.firstChildElement(); // 从第一个 <Sig*> 开始
-    while (!sigEl.isNull())
-    {
-        SignalInfo sigInfo;
-
-        // 3. 提取普通文本标签
-        sigInfo.name = sigEl.firstChildElement("SignalName").text();
-        sigInfo.id = sigEl.firstChildElement("ID").text().toInt();
-
-        // 4. 提取颜色
-        QDomElement colorEl = sigEl.firstChildElement("Color");
-        if (!colorEl.isNull())
-        {
-            qreal r = colorEl.firstChildElement("r").text().toDouble();
-            qreal g = colorEl.firstChildElement("g").text().toDouble();
-            qreal b = colorEl.firstChildElement("b").text().toDouble();
-            // QColor::fromRgbF 用于 0.0-1.0 范围的浮点数
-            sigInfo.color = QColor::fromRgbF(r, g, b);
-        }
-
-        // 5. 提取子图 ID (<Plots><Element>2</Element></Plots>)
-        QDomElement plotsEl = sigEl.firstChildElement("Plots");
-        if (!plotsEl.isNull())
-        {
-            // 找到所有名为 "Element" 的子标签
-            QDomNodeList plotIdNodes = plotsEl.elementsByTagName("Element");
-            for (int i = 0; i < plotIdNodes.count(); ++i)
-            {
-                sigInfo.plotIds.append(plotIdNodes.at(i).toElement().text().toInt());
-            }
-        }
-
-        signalList.append(sigInfo);
-
-        // 移动到下一个兄弟节点 (例如: 从 <Sig1> 到 <Sig2>)
-        sigEl = sigEl.nextSiblingElement();
-    }
-
-    return signalList;
 }
 
 void MainWindow::showLoadProgress(int percentage)

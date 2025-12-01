@@ -116,24 +116,6 @@ private:
     double getSmallestTimeStep() const;
     void updateReplayManagerRange();
 
-    // XML 解析
-    struct LayoutInfo
-    {
-        int rows;
-        int cols;
-        QString layoutType;
-    };
-    struct SignalInfo
-    {
-        QString name;
-        int id;
-        QColor color;
-        QList<int> plotIds;
-    };
-    LayoutInfo parseViewMetaData(const QDomDocument &doc);
-    QList<SignalInfo> parseCheckedSignals(const QDomDocument &doc);
-    void applyImportedView(const LayoutInfo &layout, const QList<SignalInfo> &signalList);
-
     // --- 成员变量 ---
     QThread *m_dataThread;
     DataManager *m_dataManager;
