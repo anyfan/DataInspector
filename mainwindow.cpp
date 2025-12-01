@@ -1200,10 +1200,16 @@ void MainWindow::onLayoutChanged()
                 SignalLocation loc = getSignalDataFromID(id);
                 if (loc.table)
                 {
-                    m_plotManager->addSignal(id, loc, plot, false);
+                    m_plotManager->addSignal(id, loc, plot, false, false);
                 }
             }
         }
+    }
+
+    m_plotManager->performFitView(false, true, PlotManager::FitAllPlots);
+
+    for (QCustomPlot *plot : m_plotManager->getPlots())
+    {
         plot->replot();
     }
 

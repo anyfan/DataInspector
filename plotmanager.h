@@ -32,7 +32,7 @@ public:
     QCPGraph *getGraph(QCustomPlot *plot, const QString &uniqueID) const;
 
     // --- 信号操作 ---
-    void addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot = nullptr, bool replot = true);
+    void addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot = nullptr, bool replot = true, bool autoScale = true);
     void removeSignal(const QString &uniqueId, QCustomPlot *targetPlot = nullptr);
     void clearAllPlots();
     void removeFileSignals(const QString &filenamePrefix);
@@ -95,7 +95,7 @@ private:
     void createPlot(int index, const QRect &geometry);
     void setupPlotInteractions(QCustomPlot *plot);
     void configurePlotLegend(QCustomPlot *plot);
-    void setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc);
+    void setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc, bool autoScale);
     void activatePlot(QCustomPlot *plot);
 
     QWidget *m_container;

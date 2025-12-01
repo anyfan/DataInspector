@@ -268,7 +268,7 @@ void PlotManager::onPlotClicked(QMouseEvent *event)
     }
 }
 
-void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot, bool replot)
+void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, QCustomPlot *targetPlot, bool replot, bool autoScale)
 {
     if (!targetPlot)
         targetPlot = m_activePlot;
@@ -286,7 +286,7 @@ void PlotManager::addSignal(const QString &uniqueId, const SignalLocation &loc, 
             return;
     }
 
-    setupGraphInstance(targetPlot, uniqueId, loc);
+    setupGraphInstance(targetPlot, uniqueId, loc, autoScale);
     m_plotSignalMap[plotIndex].insert(uniqueId);
 
     // 触发图例更新
@@ -325,7 +325,7 @@ void PlotManager::removeSignal(const QString &uniqueId, QCustomPlot *targetPlot)
         }
     }
 }
-void PlotManager::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc)
+void PlotManager::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID, const SignalLocation &loc, bool autoScale)
 {
     if (!loc.table)
         return;
@@ -339,21 +339,25 @@ void PlotManager::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID,
     // 同步图例
     configurePlotLegend(plot);
 
-    int totalGraphCount = 0;
-    for (QCustomPlot *p : m_plots)
+    // 只有当 autoScale 为 true 时，才执行自动缩放逻辑
+    if (autoScale)
     {
-        totalGraphCount += p->graphCount();
-    }
+        int totalGraphCount = 0;
+        for (QCustomPlot *p : m_plots)
+            totalGraphCount += p->graphCount();
 
-    if (totalGraphCount == 1)
-    {
-        performFitView(true, true, FitAllPlots);
-    }
-    else
-    {
-        QList<QCustomPlot *> target;
-        target << plot;
-        performFitView(target, false, true);
+        if (totalGraphCount == 1)
+        {
+            // 全局第一个信号：对所有子图进行全适应
+            performFitView(true, true, FitAllPlots);
+        }
+        else
+        {
+            // 后续信号：仅对当前 plot 进行 Y 轴适应
+            QList<QCustomPlot *> target;
+            target << plot;
+            performFitView(target, false, true);
+        }
     }
 }
 
