@@ -579,6 +579,8 @@ void MainWindow::importView(const QString &path)
     if (totalPlots == 0)
         return;
 
+    m_signalBrowser->setUpdatesEnabled(false);
+
     for (const ViewSignalInfo &sig : viewData.signalList)
     {
         // 在树中查找以获取 uniqueID
@@ -606,11 +608,14 @@ void MainWindow::importView(const QString &path)
                 // 应用导入的颜色 (可选)
                 // loc.pen.setColor(sig.color);
 
-                m_plotManager->addSignal(uniqueID, loc, targetPlot);
+                m_plotManager->addSignal(uniqueID, loc, targetPlot, false, false, false);
                 m_signalBrowser->setSignalChecked(uniqueID, true, true);
             }
         }
     }
+
+    m_signalBrowser->setUpdatesEnabled(true);
+    m_plotManager->updateLegends();
 
     emit viewImportFinished();
 }
@@ -1068,12 +1073,6 @@ void MainWindow::onLayoutChanged()
 
     // 2. 进行一次 Y 轴全适应
     m_plotManager->performFitView(false, true, PlotManager::FitAllPlots);
-
-    // 3. 统一重绘所有子图
-    for (QCustomPlot *plot : m_plotManager->getPlots())
-    {
-        plot->replot();
-    }
 
     m_cursorManager->reset();
 }
