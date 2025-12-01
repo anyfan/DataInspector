@@ -326,7 +326,8 @@ void PlotManager::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID,
 
     // 同步图例
     configurePlotLegend(plot);
-    plot->rescaleAxes();
+
+    graph->rescaleValueAxis(false, false);
 }
 
 QCPGraph *PlotManager::getGraph(QCustomPlot *plot, const QString &uniqueID) const
