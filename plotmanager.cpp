@@ -339,7 +339,22 @@ void PlotManager::setupGraphInstance(QCustomPlot *plot, const QString &uniqueID,
     // 同步图例
     configurePlotLegend(plot);
 
-    graph->rescaleValueAxis(false, false);
+    int totalGraphCount = 0;
+    for (QCustomPlot *p : m_plots)
+    {
+        totalGraphCount += p->graphCount();
+    }
+
+    if (totalGraphCount == 1)
+    {
+        performFitView(true, true, FitAllPlots);
+    }
+    else
+    {
+        QList<QCustomPlot *> target;
+        target << plot;
+        performFitView(target, false, true);
+    }
 }
 
 QCPGraph *PlotManager::getGraph(QCustomPlot *plot, const QString &uniqueID) const
@@ -430,13 +445,18 @@ void PlotManager::performFitView(bool fitX, bool fitY, FitTarget target)
     else if (target == FitAllPlots)
         targets = m_plots;
 
+    performFitView(targets, fitX, fitY);
+}
+
+void PlotManager::performFitView(const QList<QCustomPlot *> &targets, bool fitX, bool fitY)
+{
     if (targets.isEmpty())
         return;
 
     QCPRange globalX;
     bool hasX = false;
 
-    // 1. 计算全局X
+    // 1. 计算全局X (基于所有 m_plots，保持全局时间轴一致)
     if (fitX)
     {
         for (auto p : m_plots)
@@ -486,6 +506,7 @@ void PlotManager::performFitView(bool fitX, bool fitY, FitTarget target)
             for (int i = 0; i < p->graphCount(); ++i)
             {
                 bool found = false;
+                // 注意：这里使用了 sdBoth，确保搜索整个可见范围
                 QCPRange r = p->graph(i)->getValueRange(found, QCP::sdBoth, searchX);
                 if (found)
                 {
@@ -518,7 +539,7 @@ void PlotManager::performFitView(bool fitX, bool fitY, FitTarget target)
         p->replot();
     }
 
-    // 同步 X 轴
+    // 同步 X 轴 (如果进行了 X 轴适应)
     if (fitX && !m_plots.isEmpty())
         onXAxisRangeChanged(m_plots.first()->xAxis->range());
 

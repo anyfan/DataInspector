@@ -48,6 +48,7 @@ public:
         FitAllPlots
     };
     void performFitView(bool fitX, bool fitY, FitTarget target);
+    void performFitView(const QList<QCustomPlot *> &targets, bool fitX, bool fitY);
     void setOpenGL(bool enabled);
     void setAntialiasing(bool enabled);
     void setLegendPosition(int mode); // 0: OutsideTop, 1: InsideTL, 2: InsideTR, -1: None
