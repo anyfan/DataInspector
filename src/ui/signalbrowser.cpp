@@ -382,3 +382,8 @@ int SignalBrowser::defaultPenWidth() const
 {
     return m_defaultPenWidth;
 }
+
+QStringList SignalBrowser::getAllSignalIDs() const
+{
+    return m_uniqueIdMap.keys();
+}

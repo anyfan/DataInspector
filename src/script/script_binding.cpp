@@ -127,31 +127,6 @@ std::string ScriptAPI::find_id(std::string name)
     return "";
 }
 
-void ScriptAPI::set_x_range(double min, double max)
-{
-    if (!m_mainWin || !m_mainWin->getPlotManager()->getActivePlot())
-        return;
-    QCustomPlot *plot = m_mainWin->getPlotManager()->getActivePlot();
-    plot->xAxis->setRange(min, max);
-    plot->replot();
-}
-
-void ScriptAPI::set_y_range(double min, double max)
-{
-    if (!m_mainWin || !m_mainWin->getPlotManager()->getActivePlot())
-        return;
-    QCustomPlot *plot = m_mainWin->getPlotManager()->getActivePlot();
-    plot->yAxis->setRange(min, max);
-    plot->replot();
-}
-
-void ScriptAPI::autoscale()
-{
-    if (!m_mainWin)
-        return;
-    m_mainWin->getPlotManager()->performFitView(true, true, PlotManager::FitActivePlot);
-}
-
 void ScriptAPI::fit_view_y_all()
 {
     if (!m_mainWin)
@@ -215,22 +190,245 @@ bool ScriptAPI::export_view(std::string path)
     return true;
 }
 
+QCustomPlot *ScriptAPI::getTargetPlot(int view_index)
+{
+    if (!m_mainWin || !m_mainWin->getPlotManager())
+        return nullptr;
+
+    // 如果 index 为 -1，使用当前激活的 Plot
+    if (view_index < 0)
+        return m_mainWin->getPlotManager()->getActivePlot();
+
+    // 否则按索引获取
+    auto &plots = m_mainWin->getPlotManager()->getPlots();
+    if (view_index >= 0 && view_index < plots.size())
+        return plots[view_index];
+
+    return nullptr;
+}
+
+// 获取所有信号ID
+std::vector<std::string> ScriptAPI::get_all_signal_ids()
+{
+    std::vector<std::string> result;
+    if (m_mainWin && m_mainWin->m_signalBrowser)
+    {
+        QStringList ids = m_mainWin->m_signalBrowser->getAllSignalIDs();
+        for (const QString &s : ids)
+            result.push_back(s.toStdString());
+    }
+    return result;
+}
+
+// 设置布局
+void ScriptAPI::set_layout(int rows, int cols)
+{
+    if (m_mainWin && m_mainWin->getPlotManager())
+        m_mainWin->getPlotManager()->setupLayout(rows, cols);
+}
+
+// 获取视图数量
+int ScriptAPI::get_view_count()
+{
+    if (m_mainWin && m_mainWin->getPlotManager())
+        return m_mainWin->getPlotManager()->getPlotCount();
+    return 0;
+}
+
+//  获取激活视图索引
+int ScriptAPI::get_active_view_index()
+{
+    if (m_mainWin && m_mainWin->getPlotManager())
+        return m_mainWin->getPlotManager()->getActivePlotIndex();
+    return -1;
+}
+
+//  设置激活视图
+void ScriptAPI::set_active_view(int index)
+{
+    if (m_mainWin && m_mainWin->getPlotManager())
+        m_mainWin->getPlotManager()->setActivePlotIndex(index);
+}
+
+// 支持指定视图
+void ScriptAPI::set_x_range(double min, double max, int view_index)
+{
+    QCustomPlot *plot = getTargetPlot(view_index);
+    if (plot)
+    {
+        plot->xAxis->setRange(min, max);
+        plot->replot();
+    }
+}
+
+// 支持指定视图
+void ScriptAPI::set_y_range(double min, double max, int view_index)
+{
+    QCustomPlot *plot = getTargetPlot(view_index);
+    if (plot)
+    {
+        plot->yAxis->setRange(min, max);
+        plot->replot();
+    }
+}
+
+//  获取 X 轴范围
+std::tuple<double, double> ScriptAPI::get_x_range(int view_index)
+{
+    QCustomPlot *plot = getTargetPlot(view_index);
+    if (plot)
+    {
+        return std::make_tuple(plot->xAxis->range().lower, plot->xAxis->range().upper);
+    }
+    return std::make_tuple(0.0, 1.0);
+}
+
+//  获取 Y 轴范围
+std::tuple<double, double> ScriptAPI::get_y_range(int view_index)
+{
+    QCustomPlot *plot = getTargetPlot(view_index);
+    if (plot)
+    {
+        return std::make_tuple(plot->yAxis->range().lower, plot->yAxis->range().upper);
+    }
+    return std::make_tuple(0.0, 1.0);
+}
+
+// 支持指定视图
+void ScriptAPI::autoscale(int view_index)
+{
+    if (!m_mainWin)
+        return;
+
+    if (view_index < 0)
+    {
+        // 自适应当前
+        m_mainWin->getPlotManager()->performFitView(true, true, PlotManager::FitActivePlot);
+    }
+    else
+    {
+        // 自适应指定
+        QCustomPlot *plot = getTargetPlot(view_index);
+        if (plot)
+        {
+            QList<QCustomPlot *> targets;
+            targets << plot;
+            m_mainWin->getPlotManager()->performFitView(targets, true, true);
+        }
+    }
+}
+
+//  获取视图中的信号列表
+std::vector<std::string> ScriptAPI::get_view_signals(int view_index)
+{
+    std::vector<std::string> result;
+    if (!m_mainWin || !m_mainWin->getPlotManager())
+        return result;
+
+    int idx = view_index;
+    if (idx < 0)
+        idx = get_active_view_index();
+
+    QSet<QString> ids = m_mainWin->getPlotManager()->getPlotSignalIDs(idx);
+    for (const QString &s : ids)
+        result.push_back(s.toStdString());
+    return result;
+}
+
+//  添加信号到视图
+bool ScriptAPI::add_signal(std::string id, int view_index)
+{
+    if (!m_mainWin)
+        return false;
+
+    QCustomPlot *plot = getTargetPlot(view_index);
+    if (!plot)
+        return false;
+
+    QString qid = QString::fromStdString(id);
+    SignalLocation loc = m_mainWin->getSignalDataFromID(qid);
+
+    if (loc.table)
+    {
+        // 调用 MainWindow 的逻辑或直接调用 PlotManager
+        m_mainWin->getPlotManager()->addSignal(qid, loc, plot);
+        // 如果是当前激活视图，还需要更新 SignalBrowser 的勾选状态
+        if (plot == m_mainWin->getPlotManager()->getActivePlot())
+        {
+            m_mainWin->m_signalBrowser->setSignalChecked(qid, true, true);
+        }
+        return true;
+    }
+    return false;
+}
+
+//  从视图移除信号
+bool ScriptAPI::remove_signal(std::string id, int view_index)
+{
+    if (!m_mainWin)
+        return false;
+
+    QCustomPlot *plot = getTargetPlot(view_index);
+    if (!plot)
+        return false;
+
+    QString qid = QString::fromStdString(id);
+    m_mainWin->getPlotManager()->removeSignal(qid, plot);
+
+    // 如果是当前激活视图，更新 UI
+    if (plot == m_mainWin->getPlotManager()->getActivePlot())
+    {
+        m_mainWin->m_signalBrowser->setSignalChecked(qid, false, true);
+    }
+    return true;
+}
+
+std::string ScriptAPI::get_signal_name(std::string id)
+{
+    if (!m_mainWin || !m_mainWin->m_signalBrowser)
+        return "";
+
+    // 调用 SignalBrowser 现有的 getSignalName 方法
+    QString name = m_mainWin->m_signalBrowser->getSignalName(QString::fromStdString(id));
+    return name.toStdString();
+}
+
+// --- Python 模块定义 ---
 PYBIND11_EMBEDDED_MODULE(inspector, m)
 {
     py::class_<ScriptAPI>(m, "API")
         .def(py::init<MainWindow *>())
-        .def("log", &ScriptAPI::log, "打印日志到控制台")
-        .def("load_file", &ScriptAPI::load_file, "加载文件 (同步阻塞)，可选参数 overwrite=True/False",
-             py::arg("path"), py::arg("overwrite") = false)
-        .def("remove_file", &ScriptAPI::remove_file, "移除已加载的文件 (参数为文件名，非路径)")
-        .def("import_view", &ScriptAPI::import_view, "导入 .mldatx 视图布局")
-        .def("find_id", &ScriptAPI::find_id, "根据信号名称查找其唯一 ID")
-        .def("set_x_range", &ScriptAPI::set_x_range, "设置当前子图 X 轴范围 (min, max)")
-        .def("set_y_range", &ScriptAPI::set_y_range, "设置当前子图 Y 轴范围 (min, max)")
-        .def("autoscale", &ScriptAPI::autoscale, "自适应当前子图")
-        .def("fit_view_y_all", &ScriptAPI::fit_view_y_all, "所有子图 Y 轴自适应")
-        .def("get_data", &ScriptAPI::get_data, "获取信号数据数组，参数为信号ID")
-        .def("get_time_data", &ScriptAPI::get_time_data, "获取信号时间数组，参数为信号ID")
-        .def("export_plot", &ScriptAPI::export_plot, "导出当前激活子图为图片 (png, jpg, pdf)")
-        .def("export_view", &ScriptAPI::export_view, "导出整个主界面视图布局为图片");
+        .def("log", &ScriptAPI::log)
+        // 文件
+        .def("load_file", &ScriptAPI::load_file, py::arg("path"), py::arg("overwrite") = false)
+        .def("remove_file", &ScriptAPI::remove_file)
+        .def("import_view", &ScriptAPI::import_view)
+        .def("export_plot", &ScriptAPI::export_plot)
+        .def("export_view", &ScriptAPI::export_view)
+
+        // 数据
+        .def("find_id", &ScriptAPI::find_id)
+        .def("get_data", &ScriptAPI::get_data)
+        .def("get_time_data", &ScriptAPI::get_time_data)
+        .def("get_all_signal_ids", &ScriptAPI::get_all_signal_ids, "获取所有已加载信号的ID列表")
+        .def("get_signal_name", &ScriptAPI::get_signal_name, "根据信号ID获取信号名称", py::arg("id"))
+
+        // 布局与视图管理
+        .def("set_layout", &ScriptAPI::set_layout, "设置布局 (rows, cols)", py::arg("rows"), py::arg("cols"))
+        .def("get_view_count", &ScriptAPI::get_view_count, "获取子图总数")
+        .def("get_active_view_index", &ScriptAPI::get_active_view_index, "获取当前激活子图的索引 (0-based)")
+        .def("set_active_view", &ScriptAPI::set_active_view, "设置当前激活子图", py::arg("index"))
+
+        // 视图信号操作
+        .def("get_view_signals", &ScriptAPI::get_view_signals, "获取指定视图中的信号ID列表", py::arg("view_index") = -1)
+        .def("add_signal", &ScriptAPI::add_signal, "添加信号到视图", py::arg("id"), py::arg("view_index") = -1)
+        .def("remove_signal", &ScriptAPI::remove_signal, "从视图移除信号", py::arg("id"), py::arg("view_index") = -1)
+
+        // 坐标轴操作
+        .def("set_x_range", &ScriptAPI::set_x_range, py::arg("min"), py::arg("max"), py::arg("view_index") = -1)
+        .def("set_y_range", &ScriptAPI::set_y_range, py::arg("min"), py::arg("max"), py::arg("view_index") = -1)
+        .def("get_x_range", &ScriptAPI::get_x_range, "返回 (min, max)", py::arg("view_index") = -1)
+        .def("get_y_range", &ScriptAPI::get_y_range, "返回 (min, max)", py::arg("view_index") = -1)
+        .def("autoscale", &ScriptAPI::autoscale, py::arg("view_index") = -1)
+        .def("fit_view_y_all", &ScriptAPI::fit_view_y_all);
 }

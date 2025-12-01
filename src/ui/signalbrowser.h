@@ -74,6 +74,11 @@ public:
      */
     int defaultPenWidth() const;
 
+    /**
+     * @brief 获取所有信号的 UniqueID 列表
+     */
+    QStringList getAllSignalIDs() const;
+
 signals:
     /**
      * @brief 当用户在树中勾选或取消勾选信号时发出

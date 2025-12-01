@@ -975,3 +975,18 @@ void PlotManager::activatePlot(QCustomPlot *plot)
     // 3. 发出信号
     emit activePlotChanged(m_activePlot);
 }
+
+int PlotManager::getActivePlotIndex() const
+{
+    if (!m_activePlot)
+        return -1;
+    return m_plots.indexOf(m_activePlot);
+}
+
+void PlotManager::setActivePlotIndex(int index)
+{
+    if (index >= 0 && index < m_plots.size())
+    {
+        activatePlot(m_plots[index]);
+    }
+}

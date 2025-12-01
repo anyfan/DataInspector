@@ -1,67 +1,72 @@
-#ifndef SCRIPTAPI_H
-#define SCRIPTAPI_H
+#pragma once
 
 #include <string>
 #include <vector>
+#include <tuple>
 #include <QObject>
 
-// 前向声明，避免包含 mainwindow.h 导致的循环引用
 class MainWindow;
 class ScriptWindow;
 
 class ScriptAPI
 {
 public:
-    // 构造函数声明
     ScriptAPI(MainWindow *mainWin);
-
-    // 设置脚本窗口指针
     void setScriptWindow(ScriptWindow *win);
 
-    // --- 供 Python 调用的方法声明 ---
-
-    // 打印日志
     void log(std::string msg);
 
-    // 加载数据文件 (.csv, .mat)
+    // --- 文件操作 ---
     bool load_file(std::string path, bool overwrite = false);
-
-    // 移除已加载的文件
     bool remove_file(std::string filename);
 
-    // 导入视图布局 (.mldatx)
-    void import_view(std::string path);
-
-    // 查找信号ID (通过名称)
+    // --- 信号操作 ---
     std::string find_id(std::string name);
+    std::vector<double> get_data(std::string id);
+    std::vector<double> get_time_data(std::string id);
+    // 获取所有信号ID
+    std::vector<std::string> get_all_signal_ids();
 
-    // 设置当前活动子图的 X 轴范围
-    void set_x_range(double min, double max);
+    // --- 视图与布局操作 ---
+    void import_view(std::string path);
+    bool export_plot(std::string path);
+    bool export_view(std::string path);
 
-    // 设置当前活动子图的 Y 轴范围
-    void set_y_range(double min, double max);
+    // 设置网格布局
+    void set_layout(int rows, int cols);
+    // 获取子图数量
+    int get_view_count();
+    // 获取当前激活视图索引
+    int get_active_view_index();
+    // 设置激活视图
+    void set_active_view(int index);
 
-    // 自适应当前视图 (X 和 Y)
-    void autoscale();
+    // --- 视图内容操作 ---
+    // 增加可选参数 view_index，默认 -1 表示当前视图
+    void set_x_range(double min, double max, int view_index = -1);
+    void set_y_range(double min, double max, int view_index = -1);
 
-    // 全局自适应 Y 轴 (所有子图)
+    // 获取范围
+    std::tuple<double, double> get_x_range(int view_index = -1);
+    std::tuple<double, double> get_y_range(int view_index = -1);
+
+    void autoscale(int view_index = -1);
     void fit_view_y_all();
 
-    // 获取信号数据
-    std::vector<double> get_data(std::string id);
+    // 获取某视图下的所有信号ID
+    std::vector<std::string> get_view_signals(int view_index = -1);
+    // 添加信号到视图
+    bool add_signal(std::string id, int view_index = -1);
+    // 从视图移除信号
+    bool remove_signal(std::string id, int view_index = -1);
 
-    // 获取信号的时间数据
-    std::vector<double> get_time_data(std::string id);
-
-    // 导出当前激活的子图为图片
-    bool export_plot(std::string path);
-
-    // 导出整个视图布局为图片
-    bool export_view(std::string path);
+    // 根据 ID 获取信号名称
+    std::string get_signal_name(std::string id);
 
 private:
     MainWindow *m_mainWin;
     ScriptWindow *m_scriptWin;
-};
 
-#endif // SCRIPTAPI_H
+    // 辅助：获取目标 Plot 指针
+    class QCustomPlot *getTargetPlot(int view_index);
+};

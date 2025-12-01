@@ -54,6 +54,15 @@ public:
     void setAntialiasing(bool enabled);
     void setLegendPosition(int mode); // 0: OutsideTop, 1: InsideTL, 2: InsideTR, -1: None
 
+    // 获取当前子图数量
+    int getPlotCount() const { return m_plots.size(); }
+
+    // 获取当前激活子图的索引 (0-based)，如果没有激活返回 -1
+    int getActivePlotIndex() const;
+
+    // 设置激活子图
+    void setActivePlotIndex(int index);
+
     // --- 导出 ---
     void exportActivePlot(const QString &path);
     void exportPlot(QCustomPlot *plot, const QString &path = QString());
