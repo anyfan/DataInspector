@@ -52,6 +52,7 @@ public:
 
     void autoscale(int view_index = -1);
     void fit_view_y_all();
+    void fit_view_all();
 
     // 获取某视图下的所有信号ID
     std::vector<std::string> get_view_signals(int view_index = -1);

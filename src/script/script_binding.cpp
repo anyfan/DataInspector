@@ -131,8 +131,38 @@ void ScriptAPI::fit_view_y_all()
 {
     if (!m_mainWin)
         return;
-    m_mainWin->getPlotManager()->performFitView(false, true, PlotManager::FitAllPlots);
+    
+    QEventLoop loop;
+    // 连接PlotManager的viewChanged信号，确保在视图变更完成后退出事件循环
+    QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
+    
+    // 使用Timer异步触发，确保loop.exec()在信号发射前启动
+    QTimer::singleShot(0, [=]() {
+        m_mainWin->getPlotManager()->performFitView(false, true, PlotManager::FitAllPlots);
+    });
+    
+    // 等待操作完成
+    loop.exec();
 }
+
+void ScriptAPI::fit_view_all()
+{
+    if (!m_mainWin)
+        return;
+    
+    QEventLoop loop;
+    // 连接PlotManager的viewChanged信号，确保在视图变更完成后退出事件循环
+    QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
+    
+    // 使用Timer异步触发，确保loop.exec()在信号发射前启动
+    QTimer::singleShot(0, [=]() {
+        m_mainWin->getPlotManager()->performFitView(true, true, PlotManager::FitAllPlots);
+    });
+    
+    // 等待操作完成
+    loop.exec();
+}
+
 std::vector<double> ScriptAPI::get_data(std::string id)
 {
     if (!m_mainWin)
@@ -223,8 +253,19 @@ std::vector<std::string> ScriptAPI::get_all_signal_ids()
 // 设置布局
 void ScriptAPI::set_layout(int rows, int cols)
 {
-    if (m_mainWin && m_mainWin->getPlotManager())
-        m_mainWin->getPlotManager()->setupLayout(rows, cols);
+    if (m_mainWin && m_mainWin->getPlotManager()) {
+        QEventLoop loop;
+        // 连接PlotManager的layoutChanged信号，确保在布局变更完成后退出事件循环
+        QObject::connect(m_mainWin->getPlotManager(), &PlotManager::layoutChanged, &loop, &QEventLoop::quit);
+        
+        // 使用Timer异步触发，确保loop.exec()在信号发射前启动
+        QTimer::singleShot(0, [=]() {
+            m_mainWin->getPlotManager()->setupLayout(rows, cols);
+        });
+        
+        // 等待操作完成
+        loop.exec();
+    }
 }
 
 // 获取视图数量
@@ -256,8 +297,18 @@ void ScriptAPI::set_x_range(double min, double max, int view_index)
     QCustomPlot *plot = getTargetPlot(view_index);
     if (plot)
     {
-        plot->xAxis->setRange(min, max);
-        plot->replot();
+        QEventLoop loop;
+        // 连接PlotManager的viewChanged信号，确保在视图变更完成后退出事件循环
+        QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
+        
+        // 使用Timer异步触发，确保loop.exec()在信号发射前启动
+        QTimer::singleShot(0, [=]() {
+            plot->xAxis->setRange(min, max);
+            plot->replot();
+        });
+        
+        // 等待操作完成
+        loop.exec();
     }
 }
 
@@ -267,8 +318,18 @@ void ScriptAPI::set_y_range(double min, double max, int view_index)
     QCustomPlot *plot = getTargetPlot(view_index);
     if (plot)
     {
-        plot->yAxis->setRange(min, max);
-        plot->replot();
+        QEventLoop loop;
+        // 连接PlotManager的viewChanged信号，确保在视图变更完成后退出事件循环
+        QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
+        
+        // 使用Timer异步触发，确保loop.exec()在信号发射前启动
+        QTimer::singleShot(0, [=]() {
+            plot->yAxis->setRange(min, max);
+            plot->replot();
+        });
+        
+        // 等待操作完成
+        loop.exec();
     }
 }
 
@@ -300,22 +361,32 @@ void ScriptAPI::autoscale(int view_index)
     if (!m_mainWin)
         return;
 
-    if (view_index < 0)
-    {
-        // 自适应当前
-        m_mainWin->getPlotManager()->performFitView(true, true, PlotManager::FitActivePlot);
-    }
-    else
-    {
-        // 自适应指定
-        QCustomPlot *plot = getTargetPlot(view_index);
-        if (plot)
+    QEventLoop loop;
+    // 连接PlotManager的viewChanged信号，确保在视图变更完成后退出事件循环
+    QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
+    
+    // 使用Timer异步触发，确保loop.exec()在信号发射前启动
+    QTimer::singleShot(0, [=]() {
+        if (view_index < 0)
         {
-            QList<QCustomPlot *> targets;
-            targets << plot;
-            m_mainWin->getPlotManager()->performFitView(targets, true, true);
+            // 自适应当前
+            m_mainWin->getPlotManager()->performFitView(true, true, PlotManager::FitActivePlot);
         }
-    }
+        else
+        {
+            // 自适应指定
+            QCustomPlot *plot = getTargetPlot(view_index);
+            if (plot)
+            {
+                QList<QCustomPlot *> targets;
+                targets << plot;
+                m_mainWin->getPlotManager()->performFitView(targets, true, true);
+            }
+        }
+    });
+    
+    // 等待操作完成
+    loop.exec();
 }
 
 //  获取视图中的信号列表
@@ -447,5 +518,6 @@ PYBIND11_EMBEDDED_MODULE(inspector, m)
         .def("get_x_range", &ScriptAPI::get_x_range, "返回 (min, max)", py::arg("view_index") = -1)
         .def("get_y_range", &ScriptAPI::get_y_range, "返回 (min, max)", py::arg("view_index") = -1)
         .def("autoscale", &ScriptAPI::autoscale, py::arg("view_index") = -1)
-        .def("fit_view_y_all", &ScriptAPI::fit_view_y_all);
+        .def("fit_view_y_all", &ScriptAPI::fit_view_y_all)
+        .def("fit_view_all", &ScriptAPI::fit_view_all);
 }
