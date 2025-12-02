@@ -719,6 +719,7 @@ void PlotManager::onCustomContextMenu(const QPoint &pos)
         // 3. 点击空白处：子图菜单
         QMenu menu;
         QAction *del = menu.addAction(tr("Clear Subplot"));
+        del->setIcon(QIcon(":/icon/clear.svg"));
         connect(del, &QAction::triggered, [this, plot]()
                 {
              int idx = m_plots.indexOf(plot);
@@ -727,6 +728,7 @@ void PlotManager::onCustomContextMenu(const QPoint &pos)
         menu.addSeparator();
 
         QAction *exportAction = menu.addAction(tr("Export Plot..."));
+        exportAction->setIcon(QIcon(":/icon/camera.svg"));
         connect(exportAction, &QAction::triggered, [this, plot]()
                 { exportPlot(plot); });
 

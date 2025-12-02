@@ -219,13 +219,13 @@ void MainWindow::createActions()
     connect(m_fitViewAction, &QAction::triggered, this, &MainWindow::on_actionFitView_triggered);
 
     m_fitViewTimeAction = new QAction(tr("Fit View (Time)"), this);
-    m_fitViewTimeAction->setIcon(QIcon::fromTheme("zoom-fit-width", style()->standardIcon(QStyle::SP_ArrowRight)));
+    m_fitViewTimeAction->setIcon(QIcon(":/icon/arrows_left_right.svg"));
     m_fitViewTimeAction->setToolTip(tr("适应视图（时间轴）"));
     m_fitViewTimeAction->setShortcut(QKeySequence(tr("Ctrl+Alt+T")));
     connect(m_fitViewTimeAction, &QAction::triggered, this, &MainWindow::on_actionFitViewTime_triggered);
 
     m_fitViewYAction = new QAction(tr("Fit View (Y-Axis)"), this);
-    m_fitViewYAction->setIcon(QIcon::fromTheme("zoom-fit-height", style()->standardIcon(QStyle::SP_ArrowDown)));
+    m_fitViewYAction->setIcon(QIcon(":/icon/arrows_up_down.svg"));
     m_fitViewYAction->setToolTip(tr("适应视图（Y轴）"));
     m_fitViewYAction->setShortcut(QKeySequence(tr("Ctrl+Alt+Y")));
     connect(m_fitViewYAction, &QAction::triggered, this, &MainWindow::on_actionFitViewY_triggered);

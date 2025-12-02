@@ -13,5 +13,9 @@
         <file>icon/MdiViewGridPlusOutline.svg</file>
         <file>icon/fullscreen.svg</file>
         <file>icon/fullscreen-exit.svg</file>
+        <file>icon/clear.svg</file>
+        <file>icon/camera.svg</file>
+        <file>icon/arrows_left_right.svg</file>
+        <file>icon/arrows_up_down.svg</file>
     </qresource>
 </RCC>
