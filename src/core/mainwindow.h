@@ -9,6 +9,7 @@
 
 #include "datamanager.h"
 #include "plotmanager.h"
+#include "viewloader.h"
 
 // Forward Declarations
 class QStandardItem;
@@ -38,6 +39,9 @@ public:
     SignalLocation getSignalDataFromID(const QString &uniqueID) const;
     void removeFile(const QString &filename);
 
+    bool exportViewToJson(const QString &path);
+    bool importViewFromJson(const QString &path);
+
     friend class ScriptAPI;
 
 signals:
@@ -63,6 +67,8 @@ private slots:
     void on_actionLayoutCustom_triggered();
     void on_actionMaximize_triggered();
     void on_actionFullScreen_triggered();
+    void on_actionExportViewJson_triggered();
+    void on_actionImportViewJson_triggered();
 
     // 设置
     void onOpenGLActionToggled(bool checked);
@@ -115,6 +121,8 @@ private:
     QCPRange getGlobalTimeRange() const;
     double getSmallestTimeStep() const;
     void updateReplayManagerRange();
+    ViewData captureCurrentViewData() const;
+    void applyViewData(const ViewData &viewData);
 
     // --- 成员变量 ---
     QThread *m_dataThread;
@@ -168,6 +176,9 @@ private:
 
     QAction *m_maximizeAction;
     QAction *m_fullScreenAction;
+
+    QAction *m_exportViewJsonAction;
+    QAction *m_importViewJsonAction;
 
     QToolButton *m_cursorMainBtn;
     QToolButton *m_cursorArrowBtn;

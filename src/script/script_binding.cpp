@@ -393,6 +393,21 @@ std::string ScriptAPI::get_signal_name(std::string id)
     return name.toStdString();
 }
 
+bool ScriptAPI::export_view_json(std::string path)
+{
+    if (!m_mainWin)
+        return false;
+
+    return m_mainWin->exportViewToJson(QString::fromStdString(path));
+}
+
+bool ScriptAPI::import_view_json(std::string path)
+{
+    if (!m_mainWin)
+        return false;
+    return m_mainWin->importViewFromJson(QString::fromStdString(path));
+}
+
 // --- Python 模块定义 ---
 PYBIND11_EMBEDDED_MODULE(inspector, m)
 {
@@ -405,6 +420,8 @@ PYBIND11_EMBEDDED_MODULE(inspector, m)
         .def("import_view", &ScriptAPI::import_view)
         .def("export_plot", &ScriptAPI::export_plot)
         .def("export_view", &ScriptAPI::export_view)
+        .def("export_view_json", &ScriptAPI::export_view_json, "导出视图配置到 JSON 文件")
+        .def("import_view_json", &ScriptAPI::import_view_json, "从 JSON 文件加载视图配置")
 
         // 数据
         .def("find_id", &ScriptAPI::find_id)

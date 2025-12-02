@@ -16,6 +16,7 @@ struct ViewLayoutInfo
 struct ViewSignalInfo
 {
     QString name;
+    QString uniqueId;
     int id = 0;
     QColor color;
     QList<int> plotIds;
@@ -35,6 +36,10 @@ public:
      * @return 如果成功返回 ViewData，否则返回 std::nullopt
      */
     static bool loadFromZip(const QString &path, ViewData &outData);
+
+    static bool saveToJson(const QString &path, const ViewData &data);
+
+    static bool loadFromJson(const QString &path, ViewData &outData);
 
 private:
     static ViewLayoutInfo parseViewMetaData(const QDomDocument &doc);

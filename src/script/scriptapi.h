@@ -63,6 +63,11 @@ public:
     // 根据 ID 获取信号名称
     std::string get_signal_name(std::string id);
 
+    // 导出视图布局到 JSON
+    bool export_view_json(std::string path);
+    //  从 JSON 导入视图布局
+    bool import_view_json(std::string path);
+
 private:
     MainWindow *m_mainWin;
     ScriptWindow *m_scriptWin;

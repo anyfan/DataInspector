@@ -146,6 +146,12 @@ void MainWindow::createActions()
     m_importViewAction = new QAction(tr("&Import View..."), this);
     connect(m_importViewAction, &QAction::triggered, this, &MainWindow::on_actionImportView_triggered);
 
+    m_exportViewJsonAction = new QAction(tr("Export View (JSON)..."), this);
+    connect(m_exportViewJsonAction, &QAction::triggered, this, &MainWindow::on_actionExportViewJson_triggered);
+
+    m_importViewJsonAction = new QAction(tr("Import View (JSON)..."), this);
+    connect(m_importViewJsonAction, &QAction::triggered, this, &MainWindow::on_actionImportViewJson_triggered);
+
     // 替换布局菜单
     m_layout1x1Action = new QAction(tr("1x1 Layout"), this);
     m_layout1x1Action->setData(QPoint(1, 1));
@@ -372,8 +378,10 @@ void MainWindow::createMenus()
     QMenu *fileMenu = menuBar()->addMenu(tr("&文件"));
     fileMenu->addAction(m_loadFileAction);
     fileMenu->addAction(m_importViewAction);
+    fileMenu->addAction(m_importViewJsonAction);
     fileMenu->addSeparator();
     fileMenu->addAction(m_exportAllAction);
+    fileMenu->addAction(m_exportViewJsonAction);
 
     QMenu *layoutMenu = menuBar()->addMenu(tr("&布局"));
     layoutMenu->addAction(m_layout1x1Action);
@@ -544,80 +552,17 @@ void MainWindow::on_actionLoadFile_triggered()
     loadFile(QFileDialog::getOpenFileName(this, tr("Open File"), "", tr("Data Files (*.csv *.txt *.mat)")));
 }
 
-void MainWindow::importView(const QString &path)
+void MainWindow::importView(const QString &filePath)
 {
     ViewData viewData;
-    bool success = ViewLoader::loadFromZip(path, viewData);
+    bool success = ViewLoader::loadFromZip(filePath, viewData);
 
     if (!success)
     {
-        QMessageBox::critical(this, tr("Import Error"), tr("Failed to load view file or missing required data."));
+        QMessageBox::critical(this, tr("Import Error"), tr("Failed to load view file."));
         return;
     }
-
-    qDebug().noquote() << QString("Layout Info: %1x%2 %3")
-                              .arg(viewData.layout.rows)
-                              .arg(viewData.layout.cols)
-                              .arg(viewData.layout.layoutType);
-
-    // 清除 PlotManager 中的所有信号记录
-    int currentPlotCount = m_plotManager->getPlots().size();
-    for (int i = 0; i < currentPlotCount; ++i)
-    {
-        QSet<QString> activeIds = m_plotManager->getPlotSignalIDs(i);
-        for (const QString &id : activeIds)
-        {
-            m_signalBrowser->setSignalChecked(id, false, true);
-        }
-    }
-
-    m_plotManager->clearAllPlots();
-    m_plotManager->setupLayout(viewData.layout.rows, viewData.layout.cols);
-
-    // 添加信号
-    int totalPlots = m_plotManager->getPlots().size();
-    if (totalPlots == 0)
-        return;
-
-    m_signalBrowser->setUpdatesEnabled(false);
-
-    for (const ViewSignalInfo &sig : viewData.signalList)
-    {
-        // 在树中查找以获取 uniqueID
-        QStandardItem *item = m_signalBrowser->findItemByName(sig.name);
-        if (!item)
-        {
-            qWarning() << "Import View: Could not find signal in tree:" << sig.name;
-            continue;
-        }
-        QString uniqueID = item->data(TreeItemRoles::UniqueIdRole).toString();
-
-        // 遍历该信号应在的子图 ID
-        for (int sdiPlotId : sig.plotIds)
-        {
-            if (sdiPlotId < 1)
-                sdiPlotId = 1;
-            int r = (sdiPlotId - 1) % 8 + 1;                          // 1-based row
-            int c = (sdiPlotId - 1) / 8 + 1;                          // 1-based col
-            int plotIndex = (r - 1) * viewData.layout.cols + (c - 1); // 映射到 grid index
-
-            if (plotIndex >= 0 && plotIndex < totalPlots)
-            {
-                QCustomPlot *targetPlot = m_plotManager->getPlots().at(plotIndex);
-                SignalLocation loc = getSignalDataFromID(uniqueID);
-                // 应用导入的颜色 (可选)
-                // loc.pen.setColor(sig.color);
-
-                m_plotManager->addSignal(uniqueID, loc, targetPlot, false, false, false);
-                m_signalBrowser->setSignalChecked(uniqueID, true, true);
-            }
-        }
-    }
-
-    m_signalBrowser->setUpdatesEnabled(true);
-    m_plotManager->updateLegends();
-
-    emit viewImportFinished();
+    applyViewData(viewData);
 }
 
 void MainWindow::on_actionImportView_triggered()
@@ -1075,4 +1020,164 @@ void MainWindow::onLayoutChanged()
     m_plotManager->performFitView(false, true, PlotManager::FitAllPlots);
 
     m_cursorManager->reset();
+}
+
+ViewData MainWindow::captureCurrentViewData() const
+{
+    ViewData data;
+
+    QGridLayout *grid = qobject_cast<QGridLayout *>(m_plotManager->getContainer()->layout());
+    if (grid)
+    {
+        data.layout.rows = grid->rowCount();
+        data.layout.cols = grid->columnCount();
+        // data.layout.layoutType = ... // 可选记录
+    }
+    else
+    {
+        data.layout.rows = 1;
+        data.layout.cols = 1;
+    }
+
+    QMap<QString, ViewSignalInfo> signalMap;
+
+    const QList<QCustomPlot *> &plots = m_plotManager->getPlots();
+
+    for (int i = 0; i < plots.size(); ++i)
+    {
+        QCustomPlot *plot = plots[i];
+        QSet<QString> ids = m_plotManager->getPlotSignalIDs(i);
+
+        for (const QString &id : ids)
+        {
+            if (!signalMap.contains(id))
+            {
+                ViewSignalInfo info;
+                info.uniqueId = id;
+                info.name = m_signalBrowser->getSignalName(id);         // 获取名称
+                info.color = m_signalBrowser->getSignalPen(id).color(); // 获取颜色
+                signalMap.insert(id, info);
+            }
+
+            signalMap[id].plotIds.append(i);
+        }
+    }
+
+    data.signalList = signalMap.values();
+    return data;
+}
+
+void MainWindow::on_actionExportViewJson_triggered()
+{
+    QString path = QFileDialog::getSaveFileName(this, tr("Export View to JSON"), "", tr("JSON Files (*.json)"));
+    if (path.isEmpty())
+        return;
+
+    ViewData data = captureCurrentViewData();
+    if (ViewLoader::saveToJson(path, data))
+    {
+        QMessageBox::information(this, tr("Success"), tr("View exported successfully."));
+    }
+    else
+    {
+        QMessageBox::warning(this, tr("Error"), tr("Failed to export view."));
+    }
+}
+
+void MainWindow::on_actionImportViewJson_triggered()
+{
+    QString path = QFileDialog::getOpenFileName(this, tr("Import View from JSON"), "", tr("JSON Files (*.json)"));
+    if (path.isEmpty())
+        return;
+
+    ViewData viewData;
+    if (ViewLoader::loadFromJson(path, viewData))
+    {
+        applyViewData(viewData);
+    }
+    else
+    {
+        QMessageBox::warning(this, tr("Error"), tr("Failed to load JSON view file."));
+    }
+}
+
+void MainWindow::applyViewData(const ViewData &viewData)
+{
+    qDebug().noquote() << QString("Applying Layout: %1x%2").arg(viewData.layout.rows).arg(viewData.layout.cols);
+
+    // 清除 PlotManager 中的所有信号记录
+    int currentPlotCount = m_plotManager->getPlots().size();
+    for (int i = 0; i < currentPlotCount; ++i)
+    {
+        QSet<QString> activeIds = m_plotManager->getPlotSignalIDs(i);
+        for (const QString &id : activeIds)
+        {
+            m_signalBrowser->setSignalChecked(id, false, true);
+        }
+    }
+
+    m_plotManager->clearAllPlots();
+    m_plotManager->setupLayout(viewData.layout.rows, viewData.layout.cols);
+
+    int totalPlots = m_plotManager->getPlots().size();
+    if (totalPlots == 0)
+        return;
+
+    m_signalBrowser->setUpdatesEnabled(false);
+
+    for (const ViewSignalInfo &sig : viewData.signalList)
+    {
+        QString uniqueID = sig.uniqueId;
+        bool needLookup = uniqueID.isEmpty() || (getSignalDataFromID(uniqueID).table == nullptr);
+
+        if (needLookup)
+        {
+            if (QStandardItem *item = m_signalBrowser->findItemByName(sig.name))
+            {
+                uniqueID = item->data(TreeItemRoles::UniqueIdRole).toString();
+            }
+        }
+
+        if (!uniqueID.isEmpty())
+        {
+            SignalLocation loc = getSignalDataFromID(uniqueID);
+            // 可选：如果 JSON 里有颜色，应用它
+            // if (sig.color.isValid()) loc.pen.setColor(sig.color);
+
+            for (int sdiPlotId : sig.plotIds)
+            {
+                if (sdiPlotId >= 0 && sdiPlotId < totalPlots)
+                {
+                    QCustomPlot *targetPlot = m_plotManager->getPlots().at(sdiPlotId);
+                    m_plotManager->addSignal(uniqueID, loc, targetPlot, false, false, false);
+                    m_signalBrowser->setSignalChecked(uniqueID, true, true);
+                }
+            }
+        }
+        else
+        {
+            qWarning() << "View Import: Signal not found:" << sig.name;
+        }
+    }
+
+    m_signalBrowser->setUpdatesEnabled(true);
+    m_plotManager->updateLegends();
+    emit viewImportFinished();
+}
+
+bool MainWindow::exportViewToJson(const QString &path)
+{
+    ViewData data = captureCurrentViewData();
+    return ViewLoader::saveToJson(path, data);
+}
+
+bool MainWindow::importViewFromJson(const QString &path)
+{
+    ViewData viewData;
+    if (ViewLoader::loadFromJson(path, viewData))
+    {
+        applyViewData(viewData);
+        return true;
+    }
+    return false;
 }
