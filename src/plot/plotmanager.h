@@ -111,7 +111,7 @@ private:
     QWidget *m_container;
     QList<QCustomPlot *> m_plots;
     QCustomPlot *m_activePlot;
-    QCPMarginGroup *m_yAxisGroup;
+    QPointer<QCPMarginGroup> m_yAxisGroup;
 
     // 存储每个图表上的信号ID集合: PlotIndex -> Set<UniqueID>
     QMap<int, QSet<QString>> m_plotSignalMap;
