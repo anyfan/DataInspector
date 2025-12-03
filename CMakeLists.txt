@@ -43,7 +43,7 @@ set_target_properties(quazip PROPERTIES
 target_link_libraries(quazip INTERFACE bzip)
 
 # Qt5 & OpenGL
-find_package(Qt5 REQUIRED COMPONENTS Core Xml Gui Widgets PrintSupport OpenGL)
+find_package(Qt5 REQUIRED COMPONENTS Core Xml Gui Widgets PrintSupport OpenGL Concurrent)
 find_package(OpenGL REQUIRED)
 target_link_libraries(qcustomplot Qt5::Core Qt5::PrintSupport Qt5::OpenGL ${OPENGL_LIBRARIES})
 
@@ -95,7 +95,7 @@ target_compile_definitions(DataInspector PRIVATE QUAZIP_STATIC)
 target_include_directories(DataInspector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(DataInspector
-    Qt5::Core Qt5::Xml Qt5::Gui Qt5::Widgets Qt5::OpenGL
+    Qt5::Core Qt5::Xml Qt5::Gui Qt5::Widgets Qt5::OpenGL Qt5::Concurrent
     matio qcustomplot quazip ${OPENGL_LIBRARIES}
     pybind11::embed
 )
