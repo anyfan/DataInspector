@@ -15,8 +15,43 @@
 #include <QFuture>
 #include <QFutureWatcher>
 #include <QApplication>
+#include <QMetaObject>
+#include <QThread>
 
 namespace py = pybind11;
+
+// --- 线程安全辅助函数 ---
+
+// 在主线程执行并返回结果 (阻塞等待)
+template <typename Func>
+auto runOnMain(MainWindow *win, Func &&f) -> decltype(f())
+{
+    using R = decltype(f());
+    // 如果已经在主线程，直接执行
+    if (QThread::currentThread() == win->thread())
+    {
+        return f();
+    }
+    // 否则调度到主线程
+    R ret;
+    QMetaObject::invokeMethod(win, [&]()
+                              { ret = f(); }, Qt::BlockingQueuedConnection);
+    return ret;
+}
+
+// 在主线程执行无返回值的函数 (阻塞等待)
+template <typename Func>
+void runOnMainVoid(MainWindow *win, Func &&f)
+{
+    if (QThread::currentThread() == win->thread())
+    {
+        f();
+        return;
+    }
+    QMetaObject::invokeMethod(win, f, Qt::BlockingQueuedConnection);
+}
+
+// ----------------------
 
 ScriptAPI::ScriptAPI(MainWindow *mainWin) : m_mainWin(mainWin), m_scriptWin(nullptr) {}
 
@@ -32,24 +67,38 @@ bool ScriptAPI::load_file(std::string path, bool overwrite)
 {
     if (!m_mainWin)
         return false;
+
+    // 1. 预处理 (线程安全，无需主线程)
     QString qPath = QString::fromStdString(path);
     QString cleanPath = QFileInfo(qPath).absoluteFilePath();
     QString fileName = QFileInfo(cleanPath).fileName();
-    if (overwrite && m_mainWin->m_fileDataMap.contains(fileName))
+
+    // 2. 检查文件是否存在和移除 (需主线程)
+    bool exists = runOnMain(m_mainWin, [&]()
+                            { return m_mainWin->m_fileDataMap.contains(fileName); });
+
+    if (overwrite && exists)
     {
-        m_mainWin->removeFile(fileName);
+        runOnMainVoid(m_mainWin, [&]()
+                      { m_mainWin->removeFile(fileName); });
         log("Overwriting file: " + fileName.toStdString());
     }
+
+    // 3. 启动加载
     QEventLoop loop;
     bool success = false;
     QString errorMessage;
     DataManager *dm = m_mainWin->getDataManager();
+
+    // 连接信号 (connect本身是线程安全的)
     auto connSuccess = QObject::connect(m_mainWin, &MainWindow::dataProcessingFinished, [&](const QString &filePath)
                                         {
         if (QFileInfo(filePath).absoluteFilePath() == cleanPath) {
             success = true;
             loop.quit();
         } });
+
+    // 注意：loadFailed 信号可能来自 DataManager 线程，连接到这里的 lambda 会在 emit 线程执行，或者 loop 所在线程执行
     auto connFail = QObject::connect(dm, &DataManager::loadFailed, [&](const QString &filePath, const QString &err)
                                      {
         if (QFileInfo(filePath).absoluteFilePath() == cleanPath) {
@@ -57,12 +106,20 @@ bool ScriptAPI::load_file(std::string path, bool overwrite)
             errorMessage = err;
             loop.quit();
         } });
-    m_mainWin->loadFile(qPath);
+
+    // 触发加载 (需主线程，因为 loadFile 操作 UI)
+    runOnMainVoid(m_mainWin, [&]()
+                  { m_mainWin->loadFile(qPath); });
+
+    // 4. 等待 (loop.exec 会阻塞当前的工作线程，直到主线程或其他线程 emit quit)
     loop.exec();
+
     QObject::disconnect(connSuccess);
     QObject::disconnect(connFail);
+
     if (!success)
         log("File load failed: " + errorMessage.toStdString());
+
     return success;
 }
 
@@ -70,7 +127,8 @@ bool ScriptAPI::remove_file(std::string filename)
 {
     if (!m_mainWin)
         return false;
-    m_mainWin->removeFile(QString::fromStdString(filename));
+    runOnMainVoid(m_mainWin, [&]()
+                  { m_mainWin->removeFile(QString::fromStdString(filename)); });
     return true;
 }
 
@@ -79,22 +137,27 @@ void ScriptAPI::import_view(std::string path)
     if (!m_mainWin)
         return;
     QString qPath = QString::fromStdString(path);
+
     QEventLoop loop;
     QObject::connect(m_mainWin, &MainWindow::viewImportFinished, &loop, &QEventLoop::quit);
-    QTimer::singleShot(0, m_mainWin, [this, qPath]()
-                       { m_mainWin->importView(qPath); });
+
+    runOnMainVoid(m_mainWin, [&]()
+                  { m_mainWin->importView(qPath); });
+
     loop.exec();
 }
 
 std::string ScriptAPI::find_id(std::string name)
 {
-    if (!m_mainWin || !m_mainWin->m_signalBrowser)
+    if (!m_mainWin)
         return "";
-    QStandardItem *item = m_mainWin->m_signalBrowser->findItemByName(QString::fromStdString(name));
-    if (item)
-        return item->data(TreeItemRoles::UniqueIdRole).toString().toStdString();
-    log("Signal name not found: " + name);
-    return "";
+    return runOnMain(m_mainWin, [&]() -> std::string
+                     {
+        if (!m_mainWin->m_signalBrowser) return "";
+        QStandardItem *item = m_mainWin->m_signalBrowser->findItemByName(QString::fromStdString(name));
+        if (item)
+            return item->data(TreeItemRoles::UniqueIdRole).toString().toStdString();
+        return ""; });
 }
 
 void ScriptAPI::fit_view_y_all()
@@ -103,8 +166,9 @@ void ScriptAPI::fit_view_y_all()
         return;
     QEventLoop loop;
     QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
-    QTimer::singleShot(0, [=]()
-                       { m_mainWin->getPlotManager()->performFitView(false, true, PlotManager::FitAllPlots); });
+
+    runOnMainVoid(m_mainWin, [&]()
+                  { m_mainWin->getPlotManager()->performFitView(false, true, PlotManager::FitAllPlots); });
     loop.exec();
 }
 
@@ -114,8 +178,9 @@ void ScriptAPI::fit_view_all()
         return;
     QEventLoop loop;
     QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
-    QTimer::singleShot(0, [=]()
-                       { m_mainWin->getPlotManager()->performFitView(true, true, PlotManager::FitAllPlots); });
+
+    runOnMainVoid(m_mainWin, [&]()
+                  { m_mainWin->getPlotManager()->performFitView(true, true, PlotManager::FitAllPlots); });
     loop.exec();
 }
 
@@ -123,33 +188,38 @@ std::vector<double> ScriptAPI::get_data(std::string id)
 {
     if (!m_mainWin)
         return {};
-    SignalLocation loc = m_mainWin->getSignalDataFromID(QString::fromStdString(id));
-    if (loc.table && loc.signalIndex >= 0 && loc.signalIndex < loc.table->valueData.size())
-    {
-        const QVector<double> &qvec = loc.table->valueData[loc.signalIndex];
-        return std::vector<double>(qvec.begin(), qvec.end());
-    }
-    return {};
+    return runOnMain(m_mainWin, [&]()
+                     {
+        SignalLocation loc = m_mainWin->getSignalDataFromID(QString::fromStdString(id));
+        if (loc.table && loc.signalIndex >= 0 && loc.signalIndex < loc.table->valueData.size())
+        {
+            const QVector<double> &qvec = loc.table->valueData[loc.signalIndex];
+            return std::vector<double>(qvec.begin(), qvec.end());
+        }
+        return std::vector<double>(); });
 }
 
 std::vector<double> ScriptAPI::get_time_data(std::string id)
 {
     if (!m_mainWin)
         return {};
-    SignalLocation loc = m_mainWin->getSignalDataFromID(QString::fromStdString(id));
-    if (loc.table)
-    {
-        const QVector<double> &qvec = loc.table->timeData;
-        return std::vector<double>(qvec.begin(), qvec.end());
-    }
-    return {};
+    return runOnMain(m_mainWin, [&]()
+                     {
+        SignalLocation loc = m_mainWin->getSignalDataFromID(QString::fromStdString(id));
+        if (loc.table)
+        {
+            const QVector<double> &qvec = loc.table->timeData;
+            return std::vector<double>(qvec.begin(), qvec.end());
+        }
+        return std::vector<double>(); });
 }
 
 bool ScriptAPI::export_plot(std::string path)
 {
     if (!m_mainWin)
         return false;
-    m_mainWin->getPlotManager()->exportActivePlot(QString::fromStdString(path));
+    runOnMainVoid(m_mainWin, [&]()
+                  { m_mainWin->getPlotManager()->exportActivePlot(QString::fromStdString(path)); });
     return true;
 }
 
@@ -157,12 +227,17 @@ bool ScriptAPI::export_view(std::string path)
 {
     if (!m_mainWin)
         return false;
-    m_mainWin->getPlotManager()->exportAllViews(QString::fromStdString(path));
+    runOnMainVoid(m_mainWin, [&]()
+                  { m_mainWin->getPlotManager()->exportAllViews(QString::fromStdString(path)); });
     return true;
 }
 
 QCustomPlot *ScriptAPI::getTargetPlot(int view_index)
 {
+    // 这是一个私有辅助函数，假设已经在主线程上下文中被调用，或者调用者处理了线程安全。
+    // 但在当前设计中，只有被 runOnMain 包裹的 lambda 才会调用它。
+    // 为了安全，最好不要直接暴露给 Python，或者在内部检查。
+    // 这里的实现依赖于外部 lambda 在主线程运行。
     if (!m_mainWin || !m_mainWin->getPlotManager())
         return nullptr;
     if (view_index < 0)
@@ -175,92 +250,120 @@ QCustomPlot *ScriptAPI::getTargetPlot(int view_index)
 
 std::vector<std::string> ScriptAPI::get_all_signal_ids()
 {
-    std::vector<std::string> result;
-    if (m_mainWin && m_mainWin->m_signalBrowser)
-    {
-        QStringList ids = m_mainWin->m_signalBrowser->getAllSignalIDs();
-        for (const QString &s : ids)
-            result.push_back(s.toStdString());
-    }
-    return result;
+    if (!m_mainWin)
+        return {};
+    return runOnMain(m_mainWin, [&]()
+                     {
+        std::vector<std::string> result;
+        if (m_mainWin->m_signalBrowser)
+        {
+            QStringList ids = m_mainWin->m_signalBrowser->getAllSignalIDs();
+            for (const QString &s : ids)
+                result.push_back(s.toStdString());
+        }
+        return result; });
 }
 
 void ScriptAPI::set_layout(int rows, int cols)
 {
-    if (m_mainWin && m_mainWin->getPlotManager())
-    {
-        QEventLoop loop;
-        QObject::connect(m_mainWin->getPlotManager(), &PlotManager::layoutChanged, &loop, &QEventLoop::quit);
-        QTimer::singleShot(0, [=]()
-                           { m_mainWin->getPlotManager()->setupLayout(rows, cols); });
-        loop.exec();
-    }
+    if (!m_mainWin)
+        return;
+    QEventLoop loop;
+    QObject::connect(m_mainWin->getPlotManager(), &PlotManager::layoutChanged, &loop, &QEventLoop::quit);
+
+    runOnMainVoid(m_mainWin, [&]()
+                  { m_mainWin->getPlotManager()->setupLayout(rows, cols); });
+    loop.exec();
 }
 
 int ScriptAPI::get_view_count()
 {
-    if (m_mainWin && m_mainWin->getPlotManager())
-        return m_mainWin->getPlotManager()->getPlotCount();
-    return 0;
+    if (!m_mainWin)
+        return 0;
+    return runOnMain(m_mainWin, [&]()
+                     {
+        if (m_mainWin->getPlotManager())
+            return m_mainWin->getPlotManager()->getPlotCount();
+        return 0; });
 }
 
 int ScriptAPI::get_active_view_index()
 {
-    if (m_mainWin && m_mainWin->getPlotManager())
-        return m_mainWin->getPlotManager()->getActivePlotIndex();
-    return -1;
+    if (!m_mainWin)
+        return -1;
+    return runOnMain(m_mainWin, [&]()
+                     {
+        if (m_mainWin->getPlotManager())
+            return m_mainWin->getPlotManager()->getActivePlotIndex();
+        return -1; });
 }
 
 void ScriptAPI::set_active_view(int index)
 {
-    if (m_mainWin && m_mainWin->getPlotManager())
-        m_mainWin->getPlotManager()->setActivePlotIndex(index);
+    if (!m_mainWin)
+        return;
+    runOnMainVoid(m_mainWin, [&]()
+                  {
+        if (m_mainWin->getPlotManager())
+            m_mainWin->getPlotManager()->setActivePlotIndex(index); });
 }
 
 void ScriptAPI::set_x_range(double min, double max, int view_index)
 {
-    QCustomPlot *plot = getTargetPlot(view_index);
-    if (plot)
-    {
-        QEventLoop loop;
-        QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
-        QTimer::singleShot(0, [=]()
-                           {
+    if (!m_mainWin)
+        return;
+    QEventLoop loop;
+    QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
+
+    runOnMainVoid(m_mainWin, [&]()
+                  {
+        QCustomPlot *plot = getTargetPlot(view_index);
+        if (plot) {
             plot->xAxis->setRange(min, max);
-            plot->replot(); });
-        loop.exec();
-    }
+            plot->replot();
+        } });
+    loop.exec();
 }
 
 void ScriptAPI::set_y_range(double min, double max, int view_index)
 {
-    QCustomPlot *plot = getTargetPlot(view_index);
-    if (plot)
-    {
-        QEventLoop loop;
-        QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
-        QTimer::singleShot(0, [=]()
-                           {
+    if (!m_mainWin)
+        return;
+    QEventLoop loop;
+    QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
+
+    runOnMainVoid(m_mainWin, [&]()
+                  {
+        QCustomPlot *plot = getTargetPlot(view_index);
+        if (plot) {
             plot->yAxis->setRange(min, max);
-            plot->replot(); });
-        loop.exec();
-    }
+            plot->replot();
+        } });
+    loop.exec();
 }
 
 std::tuple<double, double> ScriptAPI::get_x_range(int view_index)
 {
-    QCustomPlot *plot = getTargetPlot(view_index);
-    if (plot)
-        return std::make_tuple(plot->xAxis->range().lower, plot->xAxis->range().upper);
-    return std::make_tuple(0.0, 1.0);
+    if (!m_mainWin)
+        return std::make_tuple(0.0, 1.0);
+    return runOnMain(m_mainWin, [&]()
+                     {
+        QCustomPlot *plot = getTargetPlot(view_index);
+        if (plot)
+            return std::make_tuple(plot->xAxis->range().lower, plot->xAxis->range().upper);
+        return std::make_tuple(0.0, 1.0); });
 }
 
 std::tuple<double, double> ScriptAPI::get_y_range(int view_index)
 {
-    QCustomPlot *plot = getTargetPlot(view_index);
-    if (plot)
-        return std::make_tuple(plot->yAxis->range().lower, plot->yAxis->range().upper);
-    return std::make_tuple(0.0, 1.0);
+    if (!m_mainWin)
+        return std::make_tuple(0.0, 1.0);
+    return runOnMain(m_mainWin, [&]()
+                     {
+        QCustomPlot *plot = getTargetPlot(view_index);
+        if (plot)
+            return std::make_tuple(plot->yAxis->range().lower, plot->yAxis->range().upper);
+        return std::make_tuple(0.0, 1.0); });
 }
 
 void ScriptAPI::autoscale(int view_index)
@@ -269,8 +372,9 @@ void ScriptAPI::autoscale(int view_index)
         return;
     QEventLoop loop;
     QObject::connect(m_mainWin->getPlotManager(), &PlotManager::viewChanged, &loop, &QEventLoop::quit);
-    QTimer::singleShot(0, [=]()
-                       {
+
+    runOnMainVoid(m_mainWin, [&]()
+                  {
         if (view_index < 0)
             m_mainWin->getPlotManager()->performFitView(true, true, PlotManager::FitActivePlot);
         else {
@@ -286,69 +390,85 @@ void ScriptAPI::autoscale(int view_index)
 
 std::vector<std::string> ScriptAPI::get_view_signals(int view_index)
 {
-    std::vector<std::string> result;
-    if (!m_mainWin || !m_mainWin->getPlotManager())
-        return result;
-    int idx = view_index < 0 ? get_active_view_index() : view_index;
-    QSet<QString> ids = m_mainWin->getPlotManager()->getPlotSignalIDs(idx);
-    for (const QString &s : ids)
-        result.push_back(s.toStdString());
-    return result;
+    if (!m_mainWin)
+        return {};
+    return runOnMain(m_mainWin, [&]()
+                     {
+        std::vector<std::string> result;
+        if (!m_mainWin->getPlotManager()) return result;
+        int idx = view_index < 0 ? m_mainWin->getPlotManager()->getActivePlotIndex() : view_index;
+        QSet<QString> ids = m_mainWin->getPlotManager()->getPlotSignalIDs(idx);
+        for (const QString &s : ids)
+            result.push_back(s.toStdString());
+        return result; });
 }
 
 bool ScriptAPI::add_signal(std::string id, int view_index)
 {
     if (!m_mainWin)
         return false;
-    QCustomPlot *plot = getTargetPlot(view_index);
-    if (!plot)
-        return false;
-    QString qid = QString::fromStdString(id);
-    SignalLocation loc = m_mainWin->getSignalDataFromID(qid);
-    if (loc.table)
-    {
-        m_mainWin->getPlotManager()->addSignal(qid, loc, plot);
-        if (plot == m_mainWin->getPlotManager()->getActivePlot())
-            m_mainWin->m_signalBrowser->setSignalChecked(qid, true, true);
-        return true;
-    }
-    return false;
+    return runOnMain(m_mainWin, [&]()
+                     {
+        QCustomPlot *plot = getTargetPlot(view_index);
+        if (!plot) return false;
+        QString qid = QString::fromStdString(id);
+        SignalLocation loc = m_mainWin->getSignalDataFromID(qid);
+        if (loc.table)
+        {
+            m_mainWin->getPlotManager()->addSignal(qid, loc, plot);
+            if (plot == m_mainWin->getPlotManager()->getActivePlot())
+                m_mainWin->m_signalBrowser->setSignalChecked(qid, true, true);
+            return true;
+        }
+        return false; });
 }
 
 bool ScriptAPI::remove_signal(std::string id, int view_index)
 {
     if (!m_mainWin)
         return false;
-    QCustomPlot *plot = getTargetPlot(view_index);
-    if (!plot)
-        return false;
-    QString qid = QString::fromStdString(id);
-    m_mainWin->getPlotManager()->removeSignal(qid, plot);
-    if (plot == m_mainWin->getPlotManager()->getActivePlot())
-        m_mainWin->m_signalBrowser->setSignalChecked(qid, false, true);
-    return true;
+    return runOnMain(m_mainWin, [&]()
+                     {
+        QCustomPlot *plot = getTargetPlot(view_index);
+        if (!plot) return false;
+        QString qid = QString::fromStdString(id);
+        m_mainWin->getPlotManager()->removeSignal(qid, plot);
+        if (plot == m_mainWin->getPlotManager()->getActivePlot())
+            m_mainWin->m_signalBrowser->setSignalChecked(qid, false, true);
+        return true; });
 }
 
 std::string ScriptAPI::get_signal_name(std::string id)
 {
-    if (!m_mainWin || !m_mainWin->m_signalBrowser)
+    if (!m_mainWin)
         return "";
-    return m_mainWin->m_signalBrowser->getSignalName(QString::fromStdString(id)).toStdString();
+    return runOnMain(m_mainWin, [&]()
+                     {
+        if (!m_mainWin->m_signalBrowser) return std::string("");
+        return m_mainWin->m_signalBrowser->getSignalName(QString::fromStdString(id)).toStdString(); });
 }
 
 bool ScriptAPI::export_view_json(std::string path)
 {
     if (!m_mainWin)
         return false;
-    return m_mainWin->exportViewToJson(QString::fromStdString(path));
+    return runOnMain(m_mainWin, [&]()
+                     { return m_mainWin->exportViewToJson(QString::fromStdString(path)); });
 }
 
 bool ScriptAPI::import_view_json(std::string path)
 {
     if (!m_mainWin)
         return false;
-    return m_mainWin->importViewFromJson(QString::fromStdString(path));
+    return runOnMain(m_mainWin, [&]()
+                     { return m_mainWin->importViewFromJson(QString::fromStdString(path)); });
 }
+
+// ... CRC 计算和 parse_flight_data_fast 的其他部分 ...
+// 注意：parse_flight_data_fast 主要是计算密集型，且使用了独立的 QtConcurrent。
+// 它不涉及 UI 操作，所以可以在工作线程中直接运行，无需 runOnMain。
+// 唯一的依赖是文件读取，这是线程安全的。
+// 我们只需要保留原样的 CRC 和 parse_flight_data_fast 实现即可。
 
 static uint16_t do_crc_R_calculate(const uint8_t *data, size_t len)
 {
@@ -388,11 +508,9 @@ struct ChunkResult
     int errorCount = 0;
 };
 
-// Worker 函数
 static ChunkResult scan_chunk_worker(const ScanChunk &chunk)
 {
     ChunkResult res;
-    // 预分配内存
     res.packets.reserve((chunk.endOffset - chunk.startOffset) / 50);
 
     size_t offset = chunk.startOffset;
@@ -401,7 +519,7 @@ static ChunkResult scan_chunk_worker(const ScanChunk &chunk)
     while (offset + 4 < chunk.totalSize)
     {
         if (offset >= chunk.endOffset)
-            break; // 超出本块范围
+            break;
 
         if (buffer[offset] != 0xEB || buffer[offset + 1] != 0x90)
         {
@@ -437,14 +555,12 @@ static ChunkResult scan_chunk_worker(const ScanChunk &chunk)
 
         if (file_crc == calc_crc)
         {
-            // 校验通过
             std::string payload(reinterpret_cast<const char *>(&buffer[payload_start]), packet_len);
             res.packets.emplace_back(packet_id, std::move(payload));
             offset = crc_pos + 2;
         }
         else
         {
-            // 校验失败，记录错误并继续寻找
             res.errorCount++;
             offset += 2;
         }
@@ -452,16 +568,14 @@ static ChunkResult scan_chunk_worker(const ScanChunk &chunk)
     return res;
 }
 
-// 主解析函数
 py::tuple ScriptAPI::parse_flight_data_fast(std::string path, std::string protocol)
 {
-    // 1. 读取文件
+    // 该函数不操作 UI，直接在 Worker 线程运行是安全的
     QString qPath = QString::fromStdString(path);
     QFile file(qPath);
     if (!file.open(QIODevice::ReadOnly))
     {
         log("Error: Could not open file " + path);
-        // 返回空元组
         return py::make_tuple(py::list(), py::dict());
     }
 
@@ -473,7 +587,6 @@ py::tuple ScriptAPI::parse_flight_data_fast(std::string path, std::string protoc
         return py::make_tuple(py::list(), py::dict());
     }
 
-    // 2. 准备分块并发
     int threadCount = QThread::idealThreadCount();
     if (threadCount < 1)
         threadCount = 1;
@@ -496,25 +609,19 @@ py::tuple ScriptAPI::parse_flight_data_fast(std::string path, std::string protoc
         chunks.push_back(chunk);
     }
 
-    // 3. 启动后台计算 (使用 QtConcurrent)
     QFuture<ChunkResult> future = QtConcurrent::mapped(chunks, scan_chunk_worker);
 
     QFutureWatcher<ChunkResult> watcher;
     watcher.setFuture(future);
 
-    // 4. 事件循环 (防止界面冻结)
     QEventLoop loop;
-    // 当所有线程完成时退出循环
     QObject::connect(&watcher, &QFutureWatcherBase::finished, &loop, &QEventLoop::quit);
-    // 阻塞在这里，但 QEventLoop 会继续处理 GUI 事件（保持响应）
-    loop.exec();
+    loop.exec(); // 等待计算完成
 
-    // 5. 合并结果
     std::vector<std::pair<int, py::bytes>> allPackets;
     size_t totalErrors = 0;
     size_t totalValid = 0;
 
-    // 预分配
     size_t estimatedTotal = 0;
     for (const auto &res : future.results())
     {
@@ -528,18 +635,14 @@ py::tuple ScriptAPI::parse_flight_data_fast(std::string path, std::string protoc
         totalValid += res.packets.size();
         for (const auto &pair : res.packets)
         {
-            // 转为 py::bytes
             allPackets.emplace_back(pair.first, py::bytes(pair.second));
         }
     }
 
-    // 6. 构造统计字典
     py::dict stats;
     stats["valid"] = totalValid;
     stats["error"] = totalErrors;
 
-    // 7. 返回元组 (packets, stats)
-    // std::vector 会自动转换为 Python list
     return py::make_tuple(allPackets, stats);
 }
 
@@ -574,7 +677,6 @@ PYBIND11_EMBEDDED_MODULE(inspector, m)
         .def("autoscale", &ScriptAPI::autoscale, py::arg("view_index") = -1)
         .def("fit_view_y_all", &ScriptAPI::fit_view_y_all)
         .def("fit_view_all", &ScriptAPI::fit_view_all)
-        // [更新接口定义]
         .def("parse_flight_data_fast", &ScriptAPI::parse_flight_data_fast,
              "C++ Accelerated parsing: returns (packets_list, stats_dict)",
              py::arg("path"), py::arg("protocol"));

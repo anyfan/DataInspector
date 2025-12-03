@@ -1,11 +1,11 @@
-#ifndef SCRIPTWINDOW_H
-#define SCRIPTWINDOW_H
+#pragma once
 
 #include <QMainWindow>
 #include <QTextEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QSplitter>
+#include <QThread>
 #include <pybind11/embed.h>
 
 // 前向声明
@@ -13,6 +13,26 @@ class ScriptAPI;
 
 namespace py = pybind11;
 
+// --- 工作线程类 ---
+class ScriptWorker : public QObject
+{
+    Q_OBJECT
+public:
+    explicit ScriptWorker(ScriptAPI *api);
+
+public slots:
+    // 在子线程中执行脚本
+    void runScript(const QString &code);
+
+signals:
+    void finished();
+    void errorOccurred(const QString &msg);
+
+private:
+    ScriptAPI *m_api;
+};
+
+// --- 主窗口类 ---
 class ScriptWindow : public QMainWindow
 {
     Q_OBJECT
@@ -21,23 +41,27 @@ public:
     ~ScriptWindow();
 
 public slots:
-    // 执行脚本的槽函数
     void onRunClicked();
-    // 供 Python 调用的日志打印函数
+    // 线程安全的日志追加
     void appendLog(const QString &msg);
 
-    // 打开脚本文件
     void onOpenClicked();
-    // 保存脚本文件
     void onSaveClicked();
-
-    // 清理日志槽函数
     void onClearLogClicked();
 
-private:
-    ScriptAPI *m_api;       // API 接口对象
-    QTextEdit *m_editor;    // 代码编辑器
-    QTextEdit *m_logOutput; // 运行日志输出
-};
+    // 脚本运行结束的处理
+    void onScriptFinished();
 
-#endif // SCRIPTWINDOW_H
+private:
+    ScriptAPI *m_api;
+    QTextEdit *m_editor;
+    QTextEdit *m_logOutput;
+    QPushButton *m_runBtn;
+
+    QThread *m_workerThread;
+    ScriptWorker *m_worker;
+
+signals:
+    // 发送给 Worker 的信号，触发脚本执行
+    void startScriptExecution(const QString &code);
+};
