@@ -1,4 +1,5 @@
 #include "scriptapi.h"
+#include <pybind11/stl.h>
 #include <QtConcurrent>
 #include <QFuture>
 #include <QFutureWatcher>
