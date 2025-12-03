@@ -53,6 +53,7 @@ public:
 public slots:
     void loadCsvFile(const QString &filePath);
     void loadMatFile(const QString &filePath);
+    void importExternalData(const FileData &data);
 
 signals:
     void loadProgress(int percentage);

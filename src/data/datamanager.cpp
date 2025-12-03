@@ -403,3 +403,9 @@ void DataManager::loadMatFile(const QString &filePath)
     emit loadFinished(fileData);
     qDebug() << "DataManager: MAT Load finished on thread" << QThread::currentThreadId();
 }
+
+void DataManager::importExternalData(const FileData &data)
+{
+    // 直接发出加载完成信号，UI 会自动响应
+    emit loadFinished(data);
+}

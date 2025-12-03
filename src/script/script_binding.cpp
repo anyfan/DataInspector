@@ -646,6 +646,141 @@ py::tuple ScriptAPI::parse_flight_data_fast(std::string path, std::string protoc
     return py::make_tuple(allPackets, stats);
 }
 
+static QStringList pyListToQStringList(const py::list &list)
+{
+    QStringList result;
+    for (auto item : list)
+    {
+        result.append(QString::fromStdString(py::str(item)));
+    }
+    return result;
+}
+
+bool ScriptAPI::load_parsed_data(std::string filename, py::dict data_dict)
+{
+    if (!m_mainWin)
+        return false;
+
+    FileData fileData;
+    fileData.filePath = QString::fromStdString(filename);
+
+    // 遍历字典 keys
+    py::list keys = data_dict.attr("keys")();
+    QRegularExpression pVarRegex("^p(\\d+)$"); // 匹配 p1, p2, p998...
+
+    std::map<int, std::string> validTables;
+
+    for (auto key : keys)
+    {
+        std::string keyStr = py::str(key);
+        QString qKey = QString::fromStdString(keyStr);
+        auto match = pVarRegex.match(qKey);
+        if (match.hasMatch())
+        {
+            validTables[match.captured(1).toInt()] = keyStr;
+        }
+    }
+
+    if (validTables.empty())
+    {
+        log("Error: No valid data tables (keys like 'p1', 'p2') found in dictionary.");
+        return false;
+    }
+
+    // 遍历排序后的表
+    for (auto const &[idx, pKey] : validTables)
+    {
+        SignalTable table;
+        table.name = QString::fromStdString(pKey);
+
+        if (!data_dict.contains(pKey))
+            continue;
+        py::list rows = data_dict[pKey.c_str()].cast<py::list>();
+
+        size_t rowCount = rows.size();
+        if (rowCount == 0)
+            continue;
+
+        // 获取第一行以确定列数
+        py::list firstRow = rows[0].cast<py::list>();
+        size_t colCount = firstRow.size(); // Time + Values
+        if (colCount < 2)
+            continue; // 至少要有时间和一列数据
+
+        size_t valueColCount = colCount - 1;
+
+        // 2. 获取标题 (Headers)
+        std::string titleKey = pKey + "_title";   // 描述: "刹车指令(MPa)"
+        std::string title2Key = pKey + "_title2"; // 变量名: "brake_c"
+
+        QStringList titles, titles2;
+        if (data_dict.contains(titleKey.c_str()))
+            titles = pyListToQStringList(data_dict[titleKey.c_str()].cast<py::list>());
+        if (data_dict.contains(title2Key.c_str()))
+            titles2 = pyListToQStringList(data_dict[title2Key.c_str()].cast<py::list>());
+
+        if (!titles.isEmpty() && titles.size() == colCount)
+            titles.removeFirst();
+        if (!titles2.isEmpty() && titles2.size() == colCount)
+            titles2.removeFirst();
+
+        // 组合标题: "变量名 描述"
+        for (size_t i = 0; i < valueColCount; ++i)
+        {
+            QString header;
+            if (i < titles2.size())
+                header += titles2[i];
+            if (i < titles.size())
+            {
+                if (!header.isEmpty())
+                    header += " ";
+                header += titles[i];
+            }
+            if (header.isEmpty())
+                header = QString("Signal %1").arg(i + 1);
+            table.headers.append(header);
+        }
+
+        table.timeData.reserve(rowCount);
+        table.valueData.resize(valueColCount);
+        for (auto &vec : table.valueData)
+            vec.reserve(rowCount);
+
+        try
+        {
+            for (auto rowItem : rows)
+            {
+                py::list row = rowItem.cast<py::list>();
+
+                // 第一列是时间
+                double t = row[0].cast<double>();
+                table.timeData.append(t);
+
+                // 后续是数值
+                for (size_t c = 0; c < valueColCount; ++c)
+                {
+                    double v = row[c + 1].cast<double>();
+                    table.valueData[c].append(v);
+                }
+            }
+        }
+        catch (const std::exception &e)
+        {
+            log(std::string("Error parsing data row: ") + e.what());
+            continue;
+        }
+
+        fileData.tables.append(table);
+    }
+
+    if (fileData.tables.isEmpty())
+        return false;
+
+    // 4. 推送给 DataManager
+    m_mainWin->getDataManager()->importExternalData(fileData);
+    return true;
+}
+
 PYBIND11_EMBEDDED_MODULE(inspector, m)
 {
     py::class_<ScriptAPI>(m, "API")
@@ -679,5 +814,8 @@ PYBIND11_EMBEDDED_MODULE(inspector, m)
         .def("fit_view_all", &ScriptAPI::fit_view_all)
         .def("parse_flight_data_fast", &ScriptAPI::parse_flight_data_fast,
              "C++ Accelerated parsing: returns (packets_list, stats_dict)",
-             py::arg("path"), py::arg("protocol"));
+             py::arg("path"), py::arg("protocol"))
+        .def("load_parsed_data", &ScriptAPI::load_parsed_data,
+             "直接加载解析后的数据字典 (无需保存文件)",
+             py::arg("filename"), py::arg("data_dict"));
 }

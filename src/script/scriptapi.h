@@ -57,6 +57,8 @@ public:
 
     py::tuple parse_flight_data_fast(std::string path, std::string protocol);
 
+    bool load_parsed_data(std::string filename, py::dict data_dict);
+
 private:
     MainWindow *m_mainWin;
     ScriptWindow *m_scriptWin;
