@@ -85,6 +85,9 @@ set(SOURCES
     src/ui/signalbrowser.cpp
 
     # Script
+    src/script/script_api_ui.cpp
+    src/script/script_api_data.cpp
+    src/script/script_api_algo.cpp
     src/script/script_binding.cpp
     src/script/scriptwindow.cpp
 )
