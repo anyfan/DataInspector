@@ -55,6 +55,12 @@ PYBIND11_EMBEDDED_MODULE(inspector, m)
         .def("autoscale", &ScriptAPI::autoscale, py::arg("view_index") = -1)
         .def("fit_view_y_all", &ScriptAPI::fit_view_y_all)
         .def("fit_view_all", &ScriptAPI::fit_view_all)
+        .def("set_cursor_mode", &ScriptAPI::set_cursor_mode,
+             "设置游标模式: 'none' (关闭), 'single' (单游标), 'double' (双游标)",
+             py::arg("mode"))
+        .def("set_cursor_position", &ScriptAPI::set_cursor_position,
+             "设置游标位置 (X轴数值). index: 1 或 2",
+             py::arg("pos"), py::arg("index") = 1)
         // Algo
         .def("parse_flight_data_fast", &ScriptAPI::parse_flight_data_fast,
              "C++ Accelerated parsing: returns (packets_list, stats_dict)",

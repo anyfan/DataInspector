@@ -116,6 +116,7 @@ void CursorManager::setMode(CursorManager::CursorMode mode)
 
     setupCursors();
     updateAllCursors();
+    emit modeChanged(m_cursorMode);
 }
 /**
  * @brief 使用内部键值强制更新所有游标

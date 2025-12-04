@@ -63,6 +63,7 @@ MainWindow::MainWindow(QWidget *parent)
     // 4. 初始化 CursorManager
     m_cursorManager = new CursorManager(&m_plotManager->getPlots(), this);
     m_currentCursorMode = CursorManager::SingleCursor;
+    connect(m_cursorManager, &CursorManager::modeChanged, this, &MainWindow::onCursorModeChanged);
 
     // 5. 初始化 ReplayManager
     m_replayManager = new ReplayManager(m_replayAction, this);
@@ -1180,4 +1181,33 @@ bool MainWindow::importViewFromJson(const QString &path)
         return true;
     }
     return false;
+}
+
+void MainWindow::onCursorModeChanged(CursorManager::CursorMode mode)
+{
+    const QSignalBlocker blocker(m_cursorMainBtn);
+
+    if (mode == CursorManager::NoCursor)
+    {
+        // 关闭状态：按钮弹起
+        m_cursorMainBtn->setChecked(false);
+    }
+    else
+    {
+        // 开启状态：按钮按下
+        m_cursorMainBtn->setChecked(true);
+
+        // 更新内部记录的当前模式，以便下次点击切换时能恢复正确的模式
+        m_currentCursorMode = mode;
+
+        // 根据模式更新按钮图标
+        if (mode == CursorManager::SingleCursor)
+        {
+            m_cursorMainBtn->setIcon(QIcon(":/icon/cursor_1.svg"));
+        }
+        else if (mode == CursorManager::DoubleCursor)
+        {
+            m_cursorMainBtn->setIcon(QIcon(":/icon/cursor_2.svg"));
+        }
+    }
 }

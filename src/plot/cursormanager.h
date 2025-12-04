@@ -36,6 +36,7 @@ public:
 
 signals:
     void cursorKeyChanged(double key, int cursorIndex);
+    void modeChanged(CursorMode mode);
 
 public slots:
     void onCursorActionTriggered(QAction *action);

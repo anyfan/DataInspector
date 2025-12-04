@@ -64,6 +64,9 @@ public:
 
     bool load_parsed_data(std::string filename, py::dict data_dict);
 
+    void set_cursor_mode(std::string mode);
+    void set_cursor_position(double pos, int index = 1);
+
 private:
     MainWindow *m_mainWin;
     ScriptWindow *m_scriptWin;

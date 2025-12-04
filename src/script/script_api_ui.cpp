@@ -4,6 +4,7 @@
 #include "plotmanager.h"
 #include "signalbrowser.h"
 #include "qcustomplot.h"
+#include "cursormanager.h"
 
 #include <QEventLoop>
 
@@ -269,4 +270,32 @@ bool ScriptAPI::import_view_json(std::string path)
         return false;
     return runOnMain(m_mainWin, [&]()
                      { return m_mainWin->importViewFromJson(QString::fromStdString(path)); });
+}
+
+void ScriptAPI::set_cursor_mode(std::string mode)
+{
+    if (!m_mainWin)
+        return;
+
+    // 解析模式字符串
+    CursorManager::CursorMode cm = CursorManager::NoCursor;
+    if (mode == "single")
+        cm = CursorManager::SingleCursor;
+    else if (mode == "double")
+        cm = CursorManager::DoubleCursor;
+
+    runOnMainVoid(m_mainWin, [=]()
+                  {
+        if (m_mainWin->m_cursorManager)
+            m_mainWin->m_cursorManager->setMode(cm); });
+}
+
+void ScriptAPI::set_cursor_position(double pos, int index)
+{
+    if (!m_mainWin)
+        return;
+    runOnMainVoid(m_mainWin, [=]()
+                  {
+        if (m_mainWin->m_cursorManager)
+            m_mainWin->m_cursorManager->updateCursors(pos, index); });
 }

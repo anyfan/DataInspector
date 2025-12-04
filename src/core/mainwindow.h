@@ -10,6 +10,7 @@
 #include "datamanager.h"
 #include "plotmanager.h"
 #include "viewloader.h"
+#include "cursormanager.h"
 
 // Forward Declarations
 class QStandardItem;
@@ -106,6 +107,7 @@ private slots:
     void onCursorMainButtonToggled(bool checked);
     void onCursorMenuActionTriggered(QAction *action);
     void on_actionScriptConsole_triggered();
+    void onCursorModeChanged(CursorManager::CursorMode mode);
 
 private:
     void setupDataManagerThread();
