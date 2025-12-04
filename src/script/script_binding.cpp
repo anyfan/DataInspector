@@ -1,3 +1,4 @@
+
 #include "scriptapi.h"
 #include "scriptwindow.h"
 #include "mainwindow.h"
@@ -24,6 +25,8 @@ PYBIND11_EMBEDDED_MODULE(inspector, m)
         // Data
         .def("load_file", &ScriptAPI::load_file, py::arg("path"), py::arg("overwrite") = false)
         .def("remove_file", &ScriptAPI::remove_file)
+        .def("get_loaded_files", &ScriptAPI::get_loaded_files, "获取当前已加载的文件名列表")
+        .def("get_file_info", &ScriptAPI::get_file_info, "获取指定文件的结构信息 (Tables -> Signals)", py::arg("filename"))
         .def("find_id", &ScriptAPI::find_id)
         .def("get_data", &ScriptAPI::get_data)
         .def("get_time_data", &ScriptAPI::get_time_data)

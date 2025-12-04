@@ -2,6 +2,7 @@
 
 #include <string>
 #include <vector>
+#include <map> // 新增: 用于返回字典结构
 #include <tuple>
 #include <utility>
 #include <QObject>
@@ -23,6 +24,10 @@ public:
     // --- 文件操作 ---
     bool load_file(std::string path, bool overwrite = false);
     bool remove_file(std::string filename);
+
+    // 获取已加载文件信息
+    std::vector<std::string> get_loaded_files();
+    std::map<std::string, std::vector<std::string>> get_file_info(std::string filename);
 
     // --- 信号操作 ---
     std::string find_id(std::string name);

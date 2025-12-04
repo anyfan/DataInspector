@@ -71,6 +71,41 @@ bool ScriptAPI::remove_file(std::string filename)
     return true;
 }
 
+std::vector<std::string> ScriptAPI::get_loaded_files()
+{
+    if (!m_mainWin)
+        return {};
+    return runOnMain(m_mainWin, [&]()
+                     {
+        std::vector<std::string> files;
+        for (const QString &key : m_mainWin->m_fileDataMap.keys()) {
+            files.push_back(key.toStdString());
+        }
+        return files; });
+}
+
+std::map<std::string, std::vector<std::string>> ScriptAPI::get_file_info(std::string filename)
+{
+    if (!m_mainWin)
+        return {};
+    return runOnMain(m_mainWin, [&]()
+                     {
+        std::map<std::string, std::vector<std::string>> info;
+        QString qName = QString::fromStdString(filename);
+        
+        if (m_mainWin->m_fileDataMap.contains(qName)) {
+            const FileData &data = m_mainWin->m_fileDataMap[qName];
+            for (const SignalTable &table : data.tables) {
+                std::vector<std::string> signal_list;
+                for (const QString &header : table.headers) {
+                    signal_list.push_back(header.toStdString());
+                }
+                info[table.name.toStdString()] = signal_list;
+            }
+        }
+        return info; });
+}
+
 std::string ScriptAPI::find_id(std::string name)
 {
     if (!m_mainWin)
