@@ -41,7 +41,6 @@ MainWindow::MainWindow(QWidget *parent)
       m_signalBrowser(nullptr),
       m_plotContainer(nullptr),
       m_customLayoutDialog(nullptr),
-      m_scriptAPI(nullptr),
       m_scriptWindow(nullptr),
       m_legendPosGroup(nullptr)
 {
@@ -105,7 +104,6 @@ MainWindow::MainWindow(QWidget *parent)
     m_progressDialog->hide();
 
     qRegisterMetaType<QPen>("QPen");
-    m_scriptAPI = new ScriptAPI(this);
 }
 
 MainWindow::~MainWindow()
@@ -916,8 +914,7 @@ void MainWindow::on_actionScriptConsole_triggered()
 {
     if (!m_scriptWindow)
     {
-        m_scriptWindow = new ScriptWindow(m_scriptAPI, this);
-        m_scriptAPI->setScriptWindow(m_scriptWindow);
+        m_scriptWindow = new ScriptWindow(this, this);
     }
 
     m_scriptWindow->show();

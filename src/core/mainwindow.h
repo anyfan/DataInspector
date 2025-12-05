@@ -191,8 +191,7 @@ private:
 
     QAction *m_replayAction;
     QAction *m_scriptConsoleAction;
-
-    ScriptAPI *m_scriptAPI;
+    
     ScriptWindow *m_scriptWindow;
 };
 
