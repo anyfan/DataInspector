@@ -1,3 +1,5 @@
 build
 test_file
 .vscode
+DataInspector-cppcheck-build-dir
+DataInspector.cppcheck

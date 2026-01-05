@@ -5,6 +5,27 @@
 #include <algorithm>
 #include <QFontMetrics>
 
+// 辅助函数：根据模式格式化数值
+static QString formatValue(double value, bool raw, int precision)
+{
+    if (raw)
+    {
+        // 原始模式：使用 'f' 避免科学计数法，保留较多小数位 (最高12位)
+        QString s = QString::number(value, 'f', 12);
+        // 去除尾部的 0 和可能多余的小数点，保持简洁
+        if (s.contains('.'))
+        {
+            while (s.endsWith('0'))
+                s.chop(1);
+            if (s.endsWith('.'))
+                s.chop(1);
+        }
+        return s;
+    }
+    // 默认模式：使用 'g' (可能自动转为科学计数法)
+    return QString::number(value, 'g', precision);
+}
+
 CursorManager::CursorManager(QList<QCustomPlot *> *plotWidgets,
                              QObject *parent)
     : QObject(parent),
@@ -118,6 +139,7 @@ void CursorManager::setMode(CursorManager::CursorMode mode)
     updateAllCursors();
     emit modeChanged(m_cursorMode);
 }
+
 /**
  * @brief 使用内部键值强制更新所有游标
  */
@@ -149,6 +171,31 @@ void CursorManager::onPlotMousePress(QMouseEvent *event)
 
     for (int i = 0; i <= maxCursorIdx; ++i)
     {
+        // 检查 Y 轴标签点击 (切换显示格式)
+        QMapIterator<QCPItemTracer *, QCPItemText *> it(m_cursors[i].yLabels);
+        while (it.hasNext())
+        {
+            it.next();
+            QCPItemText *yLabel = it.value();
+            // 确保标签属于当前点击的 plot
+            if (yLabel->parentPlot() == plot && yLabel->visible())
+            {
+                double dist = yLabel->selectTest(event->pos(), false);
+                if (dist >= 0 && dist < plot->selectionTolerance())
+                {
+                    // 切换显示模式属性
+                    bool raw = yLabel->property("showRaw").toBool();
+                    yLabel->setProperty("showRaw", !raw);
+
+                    updateCursors(m_cursors[i].key, i + 1);
+                    plot->replot();
+                    event->accept();
+                    return;
+                }
+            }
+        }
+
+        // 2. 检查游标线 (拖拽)
         if (plotIndex < m_cursors[i].lines.size())
         {
             double dist = m_cursors[i].lines.at(plotIndex)->selectTest(event->pos(), false);
@@ -202,14 +249,31 @@ void CursorManager::onPlotMouseMove(QMouseEvent *event)
             int maxCursorIdx = (m_cursorMode == CursorManager::DoubleCursor) ? 1 : 0;
             for (int i = 0; i <= maxCursorIdx; ++i)
             {
+                // 检查线
                 if (plotIndex < m_cursors[i].lines.size())
                 {
                     double dist = m_cursors[i].lines.at(plotIndex)->selectTest(event->pos(), false);
                     if (dist >= 0 && dist < plot->selectionTolerance())
                         nearCursor = true;
                 }
+
+                // 检查 Y 标签悬停效果
+                if (!nearCursor)
+                {
+                    QMapIterator<QCPItemTracer *, QCPItemText *> it(m_cursors[i].yLabels);
+                    while (it.hasNext())
+                    {
+                        it.next();
+                        if (it.value()->parentPlot() == plot && it.value()->selectTest(event->pos(), false) < plot->selectionTolerance())
+                        {
+                            nearCursor = true;
+                            break;
+                        }
+                    }
+                }
             }
-            plot->setCursor(nearCursor ? Qt::SizeHorCursor : Qt::ArrowCursor);
+            // 如果在标签或线上，显示手型光标或水平调整光标
+            plot->setCursor(nearCursor ? Qt::PointingHandCursor : Qt::ArrowCursor);
         }
     }
     else
@@ -378,6 +442,7 @@ void CursorManager::setupCursors()
                 yLabel->position->setParentAnchor(tracer->position);
                 yLabel->position->setCoords(5, 0);
                 yLabel->setFont(cursorFont);
+                yLabel->setProperty("showRaw", false);
                 cursor.yLabels.insert(tracer, yLabel);
             }
         }
@@ -479,12 +544,6 @@ void CursorManager::updateCursors(double key, int cursorIndex)
     // 获取对应的 CursorData (0-based)
     CursorData &cursor = m_cursors[cursorIndex - 1];
 
-    if (qFuzzyCompare(cursor.key, key))
-    {
-        if (m_cursorMode == CursorManager::NoCursor)
-            return;
-    }
-
     cursor.key = key;
     emit cursorKeyChanged(key, cursorIndex);
 
@@ -524,7 +583,10 @@ void CursorManager::updateCursors(double key, int cursorIndex)
                 if (yLabel)
                 {
                     double value = tracer->position->value();
-                    yLabel->setText(QString::number(value, 'g'));
+                    // 根据属性决定格式
+                    bool yRaw = yLabel->property("showRaw").toBool();
+                    yLabel->setText(formatValue(value, yRaw, 6)); // Y轴默认保留6位精度(g模式)
+
                     yLabel->setVisible(true);
                     labelsOnThisPlot.append(yLabel);
                 }
