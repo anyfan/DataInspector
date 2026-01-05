@@ -2,11 +2,14 @@
 #include "plotmanager.h"
 #include "replaymanager.h"
 #include "cursormanager.h"
-#include "scriptwindow.h"
 #include "signalbrowser.h"
-#include "scriptapi.h"
 #include "types.h"
 #include "viewloader.h"
+
+#ifdef ENABLE_PYTHON
+#include "scriptwindow.h"
+#include "scriptapi.h"
+#endif
 
 #include <QMenuBar>
 #include <QToolBar>
@@ -41,8 +44,11 @@ MainWindow::MainWindow(QWidget *parent)
       m_signalBrowser(nullptr),
       m_plotContainer(nullptr),
       m_customLayoutDialog(nullptr),
-      m_scriptWindow(nullptr),
       m_legendPosGroup(nullptr)
+#ifdef ENABLE_PYTHON
+      ,
+      m_scriptWindow(nullptr)
+#endif
 {
     setupDataManagerThread();
 
@@ -367,9 +373,11 @@ void MainWindow::createActions()
     m_fullScreenAction->setShortcut(Qt::Key_F11);
     connect(m_fullScreenAction, &QAction::triggered, this, &MainWindow::on_actionFullScreen_triggered);
 
+#ifdef ENABLE_PYTHON
     m_scriptConsoleAction = new QAction(tr("Script Console"), this);
     m_scriptConsoleAction->setShortcut(QKeySequence(Qt::Key_F12)); // 快捷键 F12
     connect(m_scriptConsoleAction, &QAction::triggered, this, &MainWindow::on_actionScriptConsole_triggered);
+#endif
 }
 
 void MainWindow::createMenus()
@@ -428,7 +436,9 @@ void MainWindow::createMenus()
     legendPosMenu->addAction(m_legendPosInsideTRAction);
 
     QMenu *toolsMenu = menuBar()->addMenu(tr("&Tools"));
+#ifdef ENABLE_PYTHON
     toolsMenu->addAction(m_scriptConsoleAction);
+#endif
 }
 
 void MainWindow::createToolBars()
@@ -910,6 +920,7 @@ void MainWindow::on_actionSetDefaultPenWidth_triggered()
     }
 }
 
+#ifdef ENABLE_PYTHON
 void MainWindow::on_actionScriptConsole_triggered()
 {
     if (!m_scriptWindow)
@@ -921,6 +932,7 @@ void MainWindow::on_actionScriptConsole_triggered()
     m_scriptWindow->raise();
     m_scriptWindow->activateWindow();
 }
+#endif
 
 void MainWindow::onSignalDropRequested(const QString &uniqueId, QCustomPlot *plot)
 {

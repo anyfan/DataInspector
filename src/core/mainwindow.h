@@ -20,11 +20,14 @@ class QSpinBox;
 class QThread;
 class QActionGroup;
 
-class ScriptWindow;
-class ScriptAPI;
 class ReplayManager;
 class CursorManager;
 class SignalBrowser;
+
+#ifdef ENABLE_PYTHON
+class ScriptWindow;
+class ScriptAPI;
+#endif
 
 class MainWindow : public QMainWindow
 {
@@ -106,8 +109,11 @@ private slots:
     void onReplayActionToggled(bool checked);
     void onCursorMainButtonToggled(bool checked);
     void onCursorMenuActionTriggered(QAction *action);
-    void on_actionScriptConsole_triggered();
     void onCursorModeChanged(CursorManager::CursorMode mode);
+
+#ifdef ENABLE_PYTHON
+    void on_actionScriptConsole_triggered();
+#endif
 
 private:
     void setupDataManagerThread();
@@ -190,9 +196,11 @@ private:
     int m_currentCursorMode;
 
     QAction *m_replayAction;
-    QAction *m_scriptConsoleAction;
     
+#ifdef ENABLE_PYTHON
+    QAction *m_scriptConsoleAction;
     ScriptWindow *m_scriptWindow;
+#endif
 };
 
 #endif // MAINWINDOW_H

@@ -1,9 +1,12 @@
 #include "mainwindow.h"
 #include <QApplication>
+
+#ifdef ENABLE_PYTHON
 #include <QDir>
 #include <pybind11/embed.h>
 
 namespace py = pybind11;
+#endif
 
 int main(int argc, char *argv[])
 {
@@ -13,6 +16,7 @@ int main(int argc, char *argv[])
 
     QApplication a(argc, argv);
 
+#ifdef ENABLE_PYTHON
     // 设置 Python Home 目录
     QString pythonHomePath = QDir::toNativeSeparators(QCoreApplication::applicationDirPath() + "/python-3.14.1-embed-amd64");
 
@@ -21,6 +25,7 @@ int main(int argc, char *argv[])
     py::scoped_interpreter guard{};
 
     py::gil_scoped_release release;
+#endif
 
     QIcon appIcon(":/icon/plotjuggler.svg");
     if (!appIcon.isNull())

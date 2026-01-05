@@ -8,6 +8,9 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
+# Option to build without Python support
+option(ENABLE_PYTHON "Enable Python support" ON)
+
 # --- 1. 第三方库配置 ---
 # ZLIB
 add_library(zlib STATIC IMPORTED)
@@ -47,13 +50,17 @@ find_package(Qt5 REQUIRED COMPONENTS Core Xml Gui Widgets PrintSupport OpenGL Co
 find_package(OpenGL REQUIRED)
 target_link_libraries(qcustomplot Qt5::Core Qt5::PrintSupport Qt5::OpenGL ${OPENGL_LIBRARIES})
 
-include(FetchContent)
-FetchContent_Declare(
-    pybind11
-    URL ${CMAKE_SOURCE_DIR}/third_libs/pybind11-3.0.1.zip
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-)
-FetchContent_MakeAvailable(pybind11)
+if(ENABLE_PYTHON)
+    include(FetchContent)
+    FetchContent_Declare(
+        pybind11
+        URL ${CMAKE_SOURCE_DIR}/third_libs/pybind11-3.0.1.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_MakeAvailable(pybind11)
+    
+    add_compile_definitions(ENABLE_PYTHON)
+endif()
 
 include_directories(
     ${CMAKE_SOURCE_DIR}/src
@@ -61,8 +68,13 @@ include_directories(
     ${CMAKE_SOURCE_DIR}/src/data
     ${CMAKE_SOURCE_DIR}/src/plot
     ${CMAKE_SOURCE_DIR}/src/ui
-    ${CMAKE_SOURCE_DIR}/src/script
 )
+
+if(ENABLE_PYTHON)
+    include_directories(
+        ${CMAKE_SOURCE_DIR}/src/script
+    )
+endif()
 
 set(SOURCES
     src/main.cpp
@@ -83,14 +95,18 @@ set(SOURCES
     src/ui/signaltreedelegate.cpp
     src/ui/signalpropertiesdialog.cpp
     src/ui/signalbrowser.cpp
-
-    # Script
-    src/script/script_api_ui.cpp
-    src/script/script_api_data.cpp
-    src/script/script_api_algo.cpp
-    src/script/script_binding.cpp
-    src/script/scriptwindow.cpp
 )
+
+if(ENABLE_PYTHON)
+    list(APPEND SOURCES
+        # Script
+        src/script/script_api_ui.cpp
+        src/script/script_api_data.cpp
+        src/script/script_api_algo.cpp
+        src/script/script_binding.cpp
+        src/script/scriptwindow.cpp
+    )
+endif()
 
 add_executable(DataInspector ${SOURCES} assets/resources.qrc assets/DataInspector.rc)
 
@@ -100,5 +116,8 @@ target_include_directories(DataInspector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(DataInspector
     Qt5::Core Qt5::Xml Qt5::Gui Qt5::Widgets Qt5::OpenGL Qt5::Concurrent
     matio qcustomplot quazip ${OPENGL_LIBRARIES}
-    pybind11::embed
 )
+
+if(ENABLE_PYTHON)
+    target_link_libraries(DataInspector pybind11::embed)
+endif()
