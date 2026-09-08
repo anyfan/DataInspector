@@ -38,6 +38,7 @@ ApplicationWindow {
             Label { text: "线宽"; opacity: 0.65 }
             Slider { id: widthSlider; from: 1; to: 8; value: 2; stepSize: 0.5; Layout.preferredWidth: 100 }
             ComboBox { id: cursorModeSelector; model: ["关闭游标", "单游标", "双游标"]; currentIndex: 0 }
+            ComboBox { id: legendModeSelector; model: ["顶部图例", "左上图例", "右上图例", "隐藏图例"]; currentIndex: appController.legendMode; onCurrentIndexChanged: appController.setLegendMode(currentIndex) }
             ToolButton { text: "1×1"; onClicked: appController.setLayout(1, 1) }
             ToolButton { text: "1×2"; onClicked: appController.setLayout(1, 2) }
             ToolButton { text: "2×2"; onClicked: appController.setLayout(2, 2) }
@@ -54,12 +55,15 @@ ApplicationWindow {
                     Label { text: "已选 " + appController.signalModel.checkedCount + " / " + appController.signalModel.rowCount(); opacity: 0.58; Layout.fillWidth: true; horizontalAlignment: Text.AlignRight }
                 }
                 Label { text: appController.currentFile.length > 0 ? appController.currentFile : "未加载文件"; elide: Text.ElideMiddle; Layout.fillWidth: true; opacity: 0.62 }
-                TextField { id: signalSearch; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: appController.filterSignals(text) }
+                RowLayout { Layout.fillWidth: true; spacing: 4
+                    TextField { id: signalSearch; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: appController.filterSignals(text) }
+                    ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered; ToolTip.text: "清除搜索" }
+                }
                 RowLayout { Layout.fillWidth: true; spacing: 6
                     Button { text: "全选"; Layout.fillWidth: true; onClicked: appController.setAllSignalsChecked(true) }
                     Button { text: "清空选择"; Layout.fillWidth: true; onClicked: appController.setAllSignalsChecked(false) }
                 }
-                ListView { id: signalList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: appController.signalModel
+                ListView { id: signalList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: appController.signalModel; section.property: "group"; section.criteria: ViewSection.FullString; section.delegate: Label { width: signalList.width; height: text.length ? 24 : 0; text: section; visible: text.length > 0; color: accentColor; font.pixelSize: 11; font.weight: Font.DemiBold; leftPadding: 6; verticalAlignment: Text.AlignVCenter }
                     delegate: ItemDelegate { width: signalList.width; highlighted: index === signalList.currentIndex; checkable: true; checked: model.checked; onClicked: { signalList.currentIndex = index; appController.toggleSignal(signalIndex) }
                         contentItem: RowLayout { spacing: 8
                             Rectangle { width: 10; height: 10; radius: 2; color: model.color; Layout.alignment: Qt.AlignVCenter }
@@ -74,19 +78,23 @@ ApplicationWindow {
             GridLayout { anchors.fill: parent; anchors.margins: 42; rows: appController.plotRows; columns: appController.plotColumns; columnSpacing: 10; rowSpacing: 10
                 Repeater { model: appController.plotRows * appController.plotColumns
                     delegate: Rectangle { property int plotIndex: index; color: darkTheme ? "#14181d" : "#ffffff"; border.color: borderColor; radius: 3; Layout.fillWidth: true; Layout.fillHeight: true
-                        PlotItem { id: plotItem; anchors.fill: parent; anchors.topMargin: 28; anchors.bottomMargin: 22; lineWidth: widthSlider.value; cursorMode: cursorModeSelector.currentIndex; Component.onCompleted: appController.attachPlot(plotItem, plotIndex) }
+                        PlotItem { id: plotItem; anchors.fill: parent; anchors.leftMargin: 42; anchors.rightMargin: 8; anchors.topMargin: 28; anchors.bottomMargin: 22; lineWidth: widthSlider.value; cursorMode: cursorModeSelector.currentIndex; Component.onCompleted: appController.attachPlot(plotItem, plotIndex) }
                         Repeater { model: plotItem.xTicks; delegate: Rectangle { x: 42 + (modelData.value - plotItem.xMinimum) / Math.max(1e-12, plotItem.xMaximum - plotItem.xMinimum) * (parent.width - 50); y: 28; width: 1; height: parent.height - 50; color: borderColor; opacity: 0.18 } }
                         Repeater { model: plotItem.yTicks; delegate: Rectangle { x: 42; y: 28 + (1 - (modelData.value - plotItem.yMinimum) / Math.max(1e-12, plotItem.yMaximum - plotItem.yMinimum)) * (parent.height - 50); width: parent.width - 50; height: 1; color: borderColor; opacity: 0.18 } }
+                        Rectangle { x: 42; y: 28; width: parent.width - 50; height: 1; color: borderColor; opacity: 0.7 }
+                        Rectangle { x: 42; y: parent.height - 22; width: parent.width - 50; height: 1; color: borderColor; opacity: 0.7 }
+                        Rectangle { x: 42; y: 28; width: 1; height: parent.height - 50; color: borderColor; opacity: 0.7 }
+                        Rectangle { x: parent.width - 8; y: 28; width: 1; height: parent.height - 50; color: borderColor; opacity: 0.7 }
                         Row { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.leftMargin: 42; anchors.rightMargin: 8; anchors.bottomMargin: 2; spacing: 0
                             Repeater { model: plotItem.xTicks; delegate: Label { x: (modelData.value - plotItem.xMinimum) / Math.max(1e-12, plotItem.xMaximum - plotItem.xMinimum) * (parent.width - 50) - width / 2; width: 60; text: modelData.label; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 9; opacity: 0.58 } }
                         }
                         Column { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.topMargin: 28; anchors.bottomMargin: 22; width: 38; spacing: 0
                             Repeater { model: plotItem.yTicks; delegate: Label { y: (1 - (modelData.value - plotItem.yMinimum) / Math.max(1e-12, plotItem.yMaximum - plotItem.yMinimum)) * (parent.height - 50) - height / 2; height: 18; text: modelData.label; horizontalAlignment: Text.AlignRight; verticalAlignment: Text.AlignVCenter; font.pixelSize: 9; opacity: 0.58 } }
                         }
-                        Flow { anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 4; spacing: 6
+                        Flow { x: appController.legendMode === 2 ? parent.width - width - 4 : 4; y: 4; width: appController.legendMode === 0 ? parent.width - 8 : parent.width * 0.46; visible: appController.legendMode !== 3; spacing: 6
                             Repeater { model: appController.signalModel
                                 delegate: Item {
-                                    property int signalRow: index
+                                    property int signalRow: signalIndex
                                     visible: appController.plotStateRevision >= 0 && appController.plotSignalEnabled(plotIndex, signalRow)
                                     implicitWidth: legendLabel.implicitWidth + 18; implicitHeight: 18
                                     Rectangle { width: 10; height: 10; anchors.verticalCenter: parent.verticalCenter; color: model.color; radius: 2 }
@@ -96,7 +104,14 @@ ApplicationWindow {
                             }
                         }
                         Label { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 6; text: index + 1; opacity: 0.45 }
-                        Repeater { model: plotItem.cursorReadouts; delegate: Label { x: 42 + (modelData.x - plotItem.xMinimum) / Math.max(1e-12, plotItem.xMaximum - plotItem.xMinimum) * (parent.width - 50) + 5; y: 28 + (1 - (modelData.y - plotItem.yMinimum) / Math.max(1e-12, plotItem.yMaximum - plotItem.yMinimum)) * (parent.height - 50) - height / 2; text: modelData.text; color: modelData.color; font.pixelSize: 10; z: 4 } }
+                        Repeater { model: plotItem.cursorReadouts; delegate: Label {
+                                property bool compactFormat: true
+                                x: 42 + (modelData.x - plotItem.xMinimum) / Math.max(1e-12, plotItem.xMaximum - plotItem.xMinimum) * (parent.width - 50) + 5
+                                y: Math.max(28, Math.min(parent.height - 22 - height, 28 + (1 - (modelData.y - plotItem.yMinimum) / Math.max(1e-12, plotItem.yMaximum - plotItem.yMinimum)) * (parent.height - 50) - height / 2))
+                                text: compactFormat ? modelData.text : modelData.rawText
+                                color: modelData.color; font.pixelSize: 10; z: 4
+                                MouseArea { anchors.fill: parent; onClicked: parent.compactFormat = !parent.compactFormat }
+                            } }
                         Rectangle {
                             x: 42 + ((plotItem.cursorX1 + plotItem.cursorX2) * 0.5 - plotItem.xMinimum) / Math.max(1e-12, plotItem.xMaximum - plotItem.xMinimum) * (parent.width - 50) - width / 2
                             anchors.bottom: parent.bottom; anchors.bottomMargin: 2

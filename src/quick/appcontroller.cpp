@@ -184,6 +184,12 @@ void AppController::selectSignal(int row)
     if (m_plotSignals.size() < m_plots.size()) m_plotSignals.resize(m_plots.size());
     for (int p = 0; p < m_plots.size(); ++p) {
         if (m_plotSignals[p].isEmpty()) for (int i = 0; i < m_enabled.size(); ++i) if (m_enabled.value(i)) m_plotSignals[p].insert(i);
+        for (auto it = m_plotSignals[p].begin(); it != m_plotSignals[p].end();) {
+            if (!m_enabled.value(*it, false)) it = m_plotSignals[p].erase(it);
+            else ++it;
+        }
+        if (row >= 0 && row < m_enabled.size() && m_enabled.value(row))
+            m_plotSignals[p].insert(row);
         refreshPlot(p);
     }
 }
@@ -193,8 +199,80 @@ void AppController::filterSignals(const QString &text) { m_signals->setFilter(te
 void AppController::setAllSignalsChecked(bool checked) { m_signals->setAllChecked(checked); for (int i = 0; i < m_enabled.size(); ++i) m_enabled[i] = checked; selectSignal(-1); }
 void AppController::togglePlotSignal(int plotIndex, int row) { if (plotIndex < 0 || plotIndex >= m_plots.size() || row < 0 || row >= m_enabled.size()) return; if (m_plotSignals.size() <= plotIndex) m_plotSignals.resize(plotIndex + 1); if (m_plotSignals[plotIndex].contains(row)) m_plotSignals[plotIndex].remove(row); else m_plotSignals[plotIndex].insert(row); refreshPlot(plotIndex); ++m_plotStateRevision; emit plotBindingsChanged(); }
 bool AppController::plotSignalEnabled(int plotIndex, int row) const { return plotIndex >= 0 && plotIndex < m_plotSignals.size() && m_plotSignals.at(plotIndex).contains(row); }
-void AppController::attachPlot(QObject *plot, int index) { auto *item = qobject_cast<PlotItem *>(plot); if (!item || index < 0) return; if (index >= m_plots.size()) { m_plots.resize(index + 1); m_plotSignals.resize(index + 1); } m_plots[index] = item; connect(item, &PlotItem::rangeChanged, this, [this, item](double xmin, double xmax, double, double) { if (m_syncingRanges) return; m_syncingRanges = true; for (PlotItem *other : std::as_const(m_plots)) if (other && other != item) other->setXRange(xmin, xmax); m_syncingRanges = false; }); if (!m_tables.isEmpty()) { if (m_plotSignals[index].isEmpty()) for (int i = 0; i < m_enabled.size(); ++i) if (m_enabled.value(i)) m_plotSignals[index].insert(i); refreshPlot(index); } }
-void AppController::setLayout(int rows, int columns) { m_plots.clear(); m_plotSignals.clear(); ++m_plotStateRevision; m_plotRows = qBound(1, rows, 4); m_plotColumns = qBound(1, columns, 4); emit layoutChanged(); emit plotBindingsChanged(); }
+QVariantList AppController::plotSignalRows(int plotIndex) const
+{
+    QVariantList rows;
+    if (plotIndex < 0 || plotIndex >= m_plotSignals.size()) return rows;
+    QList<int> sorted = m_plotSignals.at(plotIndex).values();
+    std::sort(sorted.begin(), sorted.end());
+    for (int row : sorted) rows.append(row);
+    return rows;
+}
+void AppController::setLegendMode(int mode)
+{
+    const int normalized = qBound(0, mode, 3);
+    if (m_legendMode == normalized) return;
+    m_legendMode = normalized;
+    emit legendModeChanged();
+}
+void AppController::attachPlot(QObject *plot, int index)
+{
+    auto *item = qobject_cast<PlotItem *>(plot);
+    if (!item || index < 0) return;
+    if (index < m_plots.size() && m_plots[index] == item) return;
+    if (index >= m_plots.size()) m_plots.resize(index + 1);
+    if (index >= m_plotSignals.size()) m_plotSignals.resize(index + 1);
+    m_plots[index] = item;
+    connect(item, &PlotItem::rangeChanged, this,
+            [this, item](double xmin, double xmax, double, double) {
+                if (m_syncingRanges) return;
+                m_syncingRanges = true;
+                for (PlotItem *other : std::as_const(m_plots))
+                    if (other && other != item) other->setXRange(xmin, xmax);
+                m_syncingRanges = false;
+            });
+    connect(item, &PlotItem::cursorChanged, this, [this, item]() {
+        if (m_syncingCursors) return;
+        m_syncingCursors = true;
+        for (PlotItem *other : std::as_const(m_plots)) {
+            if (!other || other == item) continue;
+            other->setCursorMode(item->cursorMode());
+            if (item->cursorMode() != PlotItem::NoCursor) {
+                other->setCursorPosition(item->cursorX1(), 1);
+                if (item->cursorMode() == PlotItem::DoubleCursor)
+                    other->setCursorPosition(item->cursorX2(), 2);
+            }
+        }
+        m_syncingCursors = false;
+    });
+    if (!m_tables.isEmpty()) {
+        if (m_plotSignals[index].isEmpty())
+            for (int i = 0; i < m_enabled.size(); ++i)
+                if (m_enabled.value(i)) m_plotSignals[index].insert(i);
+        refreshPlot(index);
+    }
+    for (PlotItem *source : std::as_const(m_plots)) {
+        if (!source || source == item) continue;
+        item->setCursorMode(source->cursorMode());
+        if (source->cursorMode() != PlotItem::NoCursor) {
+            item->setCursorPosition(source->cursorX1(), 1);
+            if (source->cursorMode() == PlotItem::DoubleCursor)
+                item->setCursorPosition(source->cursorX2(), 2);
+        }
+        break;
+    }
+}
+void AppController::setLayout(int rows, int columns)
+{
+    // QML destroys and recreates delegates after layoutChanged. Keep the
+    // per-plot signal sets so newly attached items restore their bindings.
+    m_plots.clear();
+    ++m_plotStateRevision;
+    m_plotRows = qBound(1, rows, 4);
+    m_plotColumns = qBound(1, columns, 4);
+    emit layoutChanged();
+    emit plotBindingsChanged();
+}
 void AppController::clear() { m_tables.clear(); m_signalLocations.clear(); m_enabled.clear(); m_signalColors.clear(); m_plotSignals.clear(); m_signals->setNames({}); m_currentFile.clear(); emit currentFileChanged(); for (PlotItem *plot : std::as_const(m_plots)) if (plot) plot->clearSeries(); setStatus(QStringLiteral("已清空")); }
 void AppController::setStatus(const QString &status) { if (m_status == status) return; m_status = status; emit statusChanged(); }
 
@@ -210,7 +288,7 @@ void AppController::onLoadFinished(const QString &path, const QVector<LoadedTabl
             m_signalLocations.append({tableIndex, signalIndex});
         }
     }
-    m_enabled.fill(false, names.size()); m_signalColors.resize(names.size()); for (int i = 0; i < names.size(); ++i) m_signalColors[i] = QColor::fromHsv((i * 47) % 360, 190, 230); m_plotSignals.clear(); m_plotSignals.resize(m_plots.size()); m_signals->setNames(names, m_signalColors); ++m_plotStateRevision; emit plotBindingsChanged(); m_currentFile = QFileInfo(path).fileName(); emit currentFileChanged(); selectSignal(0);
+    m_enabled.fill(false, names.size()); m_signalColors.resize(names.size()); for (int i = 0; i < names.size(); ++i) m_signalColors[i] = QColor::fromHsv((i * 47) % 360, 190, 230); m_plotSignals.clear(); m_plotSignals.resize(m_plots.size()); m_signals->setNames(names, m_signalColors); ++m_plotStateRevision; emit plotBindingsChanged(); m_currentFile = QFileInfo(path).fileName(); emit currentFileChanged(); selectSignal(0); for (PlotItem *plot : std::as_const(m_plots)) if (plot) plot->fitView();
     qint64 rows = 0; for (const auto &table : m_tables) rows += table.time.size();
     setStatus(QStringLiteral("已加载 %1：%2 行，%3 个信号%4").arg(m_currentFile).arg(rows).arg(names.size()).arg(skipped ? QStringLiteral("，跳过 %1 行").arg(skipped) : QString()));
 }
@@ -218,10 +296,24 @@ void AppController::onLoadFinished(const QString &path, const QVector<LoadedTabl
 void AppController::refreshPlot(int index, bool fitY)
 {
     if (index < 0 || index >= m_plots.size() || !m_plots.at(index)) return;
-    PlotItem *plot = m_plots.at(index); plot->clearSeries();
+    PlotItem *plot = m_plots.at(index);
+    const double oldXMinimum = plot->xMinimum();
+    const double oldXMaximum = plot->xMaximum();
+    const bool preserveX = !qFuzzyCompare(oldXMinimum, 0.0)
+        || !qFuzzyCompare(oldXMaximum, 1.0)
+        || !qFuzzyCompare(plot->yMinimum(), -1.0)
+        || !qFuzzyCompare(plot->yMaximum(), 1.0);
+    plot->clearSeries();
     const QSet<int> rows = m_plotSignals.value(index);
     for (int i : rows) if (i >= 0 && i < m_signalLocations.size()) { const auto location = m_signalLocations.at(i); const auto &table = m_tables.at(location.first); plot->appendSeries(table.time, table.values.at(location.second), m_signalColors.value(i)); }
-    if (fitY) plot->fitView();
+    if (fitY) {
+        if (preserveX) {
+            plot->setXRange(oldXMinimum, oldXMaximum);
+            plot->fitY();
+        } else {
+            plot->fitView();
+        }
+    }
 }
 
 #include "appcontroller.moc"

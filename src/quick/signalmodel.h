@@ -7,7 +7,7 @@ class SignalModel final : public QAbstractListModel
     Q_OBJECT
     Q_PROPERTY(int checkedCount READ checkedCount NOTIFY checkedCountChanged)
 public:
-    enum Role { NameRole = Qt::UserRole + 1, IndexRole, CheckedRole, ColorRole };
+    enum Role { NameRole = Qt::UserRole + 1, IndexRole, CheckedRole, ColorRole, GroupRole };
     explicit SignalModel(QObject *parent = nullptr);
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;

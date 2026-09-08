@@ -26,28 +26,30 @@ public:
     enum CursorMode { NoCursor = 0, SingleCursor = 1, DoubleCursor = 2 };
     Q_ENUM(CursorMode)
     explicit PlotItem(QQuickItem *parent = nullptr);
-    double xMinimum() const { return m_xMinimum; }
-    double xMaximum() const { return m_xMaximum; }
-    double yMinimum() const { return m_yMinimum; }
-    double yMaximum() const { return m_yMaximum; }
-    double lineWidth() const { return m_lineWidth; }
-    bool cursorEnabled() const { return m_cursorEnabled; }
-    double cursorX() const { return m_cursorX; }
-    int cursorMode() const { return m_cursorMode; }
-    double cursorX1() const { return m_cursorX1; }
-    double cursorX2() const { return m_cursorX2; }
-    double cursorDeltaT() const { return m_cursorX2 - m_cursorX1; }
-    QVariantList xTicks() const { return m_xTicks; }
-    QVariantList yTicks() const { return m_yTicks; }
-    QVariantList cursorReadouts() const { return m_cursorReadouts; }
+    double xMinimum() const;
+    double xMaximum() const;
+    double yMinimum() const;
+    double yMaximum() const;
+    double lineWidth() const;
+    bool cursorEnabled() const;
+    double cursorX() const;
+    int cursorMode() const;
+    double cursorX1() const;
+    double cursorX2() const;
+    double cursorDeltaT() const;
+    QVariantList xTicks() const;
+    QVariantList yTicks() const;
+    QVariantList cursorReadouts() const;
     void setLineWidth(double width);
     void setCursorEnabled(bool enabled);
     void setCursorMode(int mode);
     Q_INVOKABLE void setCursorX(double x, int cursorIndex = 1);
+    void setCursorPosition(double x, int cursorIndex = 1);
     Q_INVOKABLE void setSeries(const QVector<double> &time, const QVector<double> &values);
     Q_INVOKABLE void appendSeries(const QVector<double> &time, const QVector<double> &values, const QColor &color);
     Q_INVOKABLE void clearSeries();
     Q_INVOKABLE void fitView();
+    Q_INVOKABLE void fitY();
     Q_INVOKABLE void setXRange(double xMinimum, double xMaximum);
 signals:
     void viewChanged();

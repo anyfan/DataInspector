@@ -68,24 +68,50 @@ static void updateLineNode(QSGGeometryNode *node, const QVector<QPointF> &segmen
 } // namespace
 
 PlotItem::PlotItem(QQuickItem *parent) : QQuickItem(parent) { setFlag(ItemHasContents, true); setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton); setAcceptHoverEvents(true); }
-void PlotItem::setLineWidth(double width) { const double v = qBound(1.0, width, 12.0); QMutexLocker lock(&m_dataMutex); if (qFuzzyCompare(v, m_lineWidth)) return; m_lineWidth = v; emit lineWidthChanged(); update(); }
+double PlotItem::xMinimum() const { QMutexLocker lock(&m_dataMutex); return m_xMinimum; }
+double PlotItem::xMaximum() const { QMutexLocker lock(&m_dataMutex); return m_xMaximum; }
+double PlotItem::yMinimum() const { QMutexLocker lock(&m_dataMutex); return m_yMinimum; }
+double PlotItem::yMaximum() const { QMutexLocker lock(&m_dataMutex); return m_yMaximum; }
+double PlotItem::lineWidth() const { QMutexLocker lock(&m_dataMutex); return m_lineWidth; }
+bool PlotItem::cursorEnabled() const { QMutexLocker lock(&m_dataMutex); return m_cursorEnabled; }
+double PlotItem::cursorX() const { QMutexLocker lock(&m_dataMutex); return m_cursorX; }
+int PlotItem::cursorMode() const { QMutexLocker lock(&m_dataMutex); return m_cursorMode; }
+double PlotItem::cursorX1() const { QMutexLocker lock(&m_dataMutex); return m_cursorX1; }
+double PlotItem::cursorX2() const { QMutexLocker lock(&m_dataMutex); return m_cursorX2; }
+double PlotItem::cursorDeltaT() const { QMutexLocker lock(&m_dataMutex); return m_cursorX2 - m_cursorX1; }
+QVariantList PlotItem::xTicks() const { QMutexLocker lock(&m_dataMutex); return m_xTicks; }
+QVariantList PlotItem::yTicks() const { QMutexLocker lock(&m_dataMutex); return m_yTicks; }
+QVariantList PlotItem::cursorReadouts() const { QMutexLocker lock(&m_dataMutex); return m_cursorReadouts; }
+void PlotItem::setLineWidth(double width)
+{
+    const double v = qBound(1.0, width, 12.0);
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (qFuzzyCompare(v, m_lineWidth)) return;
+        m_lineWidth = v;
+    }
+    emit lineWidthChanged();
+    update();
+}
 void PlotItem::setCursorEnabled(bool enabled) { setCursorMode(enabled ? SingleCursor : NoCursor); }
 void PlotItem::setCursorMode(int mode)
 {
     const int normalized = qBound(static_cast<int>(NoCursor), mode, static_cast<int>(DoubleCursor));
-    QMutexLocker lock(&m_dataMutex);
-    if (m_cursorMode == normalized) return;
-    const bool wasDisabled = m_cursorMode == NoCursor;
-    m_cursorMode = normalized;
-    m_cursorEnabled = normalized != NoCursor;
-    if (wasDisabled && m_cursorEnabled) {
-        const double span = qMax(m_xMaximum - m_xMinimum, 1e-12);
-        m_cursorX1 = m_xMinimum + span * .05;
-        m_cursorX2 = m_xMinimum + span * .95;
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (m_cursorMode == normalized) return;
+        const bool wasDisabled = m_cursorMode == NoCursor;
+        m_cursorMode = normalized;
+        m_cursorEnabled = normalized != NoCursor;
+        if (wasDisabled && m_cursorEnabled) {
+            const double span = qMax(m_xMaximum - m_xMinimum, 1e-12);
+            m_cursorX1 = m_xMinimum + span * .05;
+            m_cursorX2 = m_xMinimum + span * .95;
+        }
+        m_cursorX = m_cursorX1;
+        updateCursorValuesLocked();
+        rebuildTicksLocked();
     }
-    m_cursorX = m_cursorX1;
-    updateCursorValuesLocked();
-    rebuildTicksLocked();
     emit cursorChanged();
     emit cursorDeltaTChanged();
     emit cursorValuesChanged();
@@ -93,15 +119,29 @@ void PlotItem::setCursorMode(int mode)
 }
 void PlotItem::setCursorX(double x, int cursorIndex)
 {
-    QMutexLocker lock(&m_dataMutex);
-    if (m_cursorMode == NoCursor) return;
-    const double clamped = qBound(m_xMinimum, x, m_xMaximum);
-    const double snapped = nearestRawX(clamped);
-    if (cursorIndex == 2) m_cursorX2 = snapped;
-    else { m_cursorX1 = snapped; m_cursorX = snapped; }
-    if (m_cursorMode == DoubleCursor && m_cursorX2 < m_cursorX1) std::swap(m_cursorX1, m_cursorX2);
-    m_cursorX = cursorIndex == 2 ? m_cursorX2 : m_cursorX1;
-    updateCursorValuesLocked();
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (m_cursorMode == NoCursor) return;
+        const double clamped = qBound(m_xMinimum, x, m_xMaximum);
+        const double snapped = nearestRawX(clamped);
+        if (cursorIndex == 2) m_cursorX2 = snapped;
+        else { m_cursorX1 = snapped; m_cursorX = snapped; }
+        m_cursorX = cursorIndex == 2 ? m_cursorX2 : m_cursorX1;
+        updateCursorValuesLocked();
+    }
+    emit cursorChanged(); emit cursorDeltaTChanged(); emit cursorValuesChanged(); update();
+}
+void PlotItem::setCursorPosition(double x, int cursorIndex)
+{
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (m_cursorMode == NoCursor) return;
+        const double clamped = qBound(m_xMinimum, x, m_xMaximum);
+        if (cursorIndex == 2) m_cursorX2 = clamped;
+        else { m_cursorX1 = clamped; m_cursorX = clamped; }
+        m_cursorX = cursorIndex == 2 ? m_cursorX2 : m_cursorX1;
+        updateCursorValuesLocked();
+    }
     emit cursorChanged(); emit cursorDeltaTChanged(); emit cursorValuesChanged(); update();
 }
 void PlotItem::setSeries(const QVector<double> &time, const QVector<double> &values)
@@ -147,6 +187,40 @@ void PlotItem::fitView()
     if (qFuzzyCompare(ymin, ymax)) { ymin -= .5; ymax += .5; } else { const double p = qMax((ymax-ymin)*.08, 1e-9); ymin -= p; ymax += p; }
     setRange(xmin, xmax, ymin, ymax);
 }
+void PlotItem::fitY()
+{
+    double ymin = std::numeric_limits<double>::max();
+    double ymax = std::numeric_limits<double>::lowest();
+    {
+        QMutexLocker lock(&m_dataMutex);
+        for (const Series &series : std::as_const(m_series)) {
+            for (const QPointF &p : series.points) {
+                if (!qIsFinite(p.x()) || !qIsFinite(p.y())) continue;
+                ymin = qMin(ymin, p.y());
+                ymax = qMax(ymax, p.y());
+            }
+        }
+    }
+    double xmin, xmax;
+    {
+        QMutexLocker lock(&m_dataMutex);
+        xmin = m_xMinimum;
+        xmax = m_xMaximum;
+    }
+    if (ymin == std::numeric_limits<double>::max()) {
+        setRange(xmin, xmax, -1.0, 1.0);
+        return;
+    }
+    if (qFuzzyCompare(ymin, ymax)) {
+        ymin -= .5;
+        ymax += .5;
+    } else {
+        const double padding = qMax((ymax - ymin) * .08, 1e-9);
+        ymin -= padding;
+        ymax += padding;
+    }
+    setRange(xmin, xmax, ymin, ymax);
+}
 void PlotItem::setXRange(double xmin, double xmax)
 {
     double ymin, ymax;
@@ -179,8 +253,11 @@ void PlotItem::rebuildTicksLocked()
         const double step = (normalized <= 1.0 ? 1.0 : normalized <= 2.0 ? 2.0 : normalized <= 5.0 ? 5.0 : 10.0) * magnitude;
         const int first = static_cast<int>(qCeil(lo / step));
         const int last = static_cast<int>(qFloor(hi / step));
-        const int precision = qMax(0, static_cast<int>(-qFloor(qLn(step) / qLn(10.0))));
-        for (int i = first; i <= last && ticks.size() < 12; ++i) { const double value = i * step; ticks.append(QVariantMap{{QStringLiteral("value"), value}, {QStringLiteral("label"), QString::number(value, 'f', precision)}}); }
+        for (int i = first; i <= last && ticks.size() < 12; ++i) {
+            const double value = i * step;
+            ticks.append(QVariantMap{{QStringLiteral("value"), value},
+                                     {QStringLiteral("label"), QString::number(value, 'g', 12)}});
+        }
         return ticks;
     };
     m_xTicks = makeTicks(m_xMinimum, m_xMaximum);
@@ -204,9 +281,14 @@ void PlotItem::updateCursorValuesLocked()
             }
             m_cursorValues[s][c] = value;
             if (qIsFinite(value)) {
+                QString rawText = QString::number(value, 'f', 12);
+                while (rawText.contains(QLatin1Char('.')) && rawText.endsWith(QLatin1Char('0')))
+                    rawText.chop(1);
+                if (rawText.endsWith(QLatin1Char('.'))) rawText.chop(1);
                 m_cursorReadouts.append(QVariantMap{{QStringLiteral("x"), keys[c]},
                                                     {QStringLiteral("y"), value},
                                                     {QStringLiteral("text"), QString::number(value, 'g', 8)},
+                                                    {QStringLiteral("rawText"), rawText},
                                                     {QStringLiteral("color"), m_series.at(s).color}});
             }
         }
