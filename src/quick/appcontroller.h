@@ -2,6 +2,8 @@
 #include <QObject>
 #include <QVector>
 #include <QThread>
+#include <QColor>
+#include <QSet>
 #include "signalmodel.h"
 class PlotItem;
 
@@ -22,6 +24,7 @@ class AppController final : public QObject
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(int plotRows READ plotRows NOTIFY layoutChanged)
     Q_PROPERTY(int plotColumns READ plotColumns NOTIFY layoutChanged)
+    Q_PROPERTY(int plotStateRevision READ plotStateRevision NOTIFY plotBindingsChanged)
 public:
     explicit AppController(QObject *parent = nullptr);
     ~AppController() override;
@@ -31,9 +34,16 @@ public:
     bool loading() const { return m_loading; }
     int plotRows() const { return m_plotRows; }
     int plotColumns() const { return m_plotColumns; }
+    int plotStateRevision() const { return m_plotStateRevision; }
     Q_INVOKABLE bool loadCsv(const QString &filePath);
     Q_INVOKABLE void selectSignal(int row);
     Q_INVOKABLE void toggleSignal(int row);
+    Q_INVOKABLE void filterSignals(const QString &text);
+    Q_INVOKABLE void setAllSignalsChecked(bool checked);
+    Q_INVOKABLE int checkedSignalCount() const { return m_signals->checkedCount(); }
+    Q_INVOKABLE void togglePlotSignal(int plotIndex, int row);
+    Q_INVOKABLE bool plotSignalEnabled(int plotIndex, int row) const;
+    Q_INVOKABLE QColor signalColor(int row) const { return m_signalColors.value(row, QColor("#4ea1ff")); }
     Q_INVOKABLE void attachPlot(QObject *plot, int index = 0);
     Q_INVOKABLE void setLayout(int rows, int columns);
     Q_INVOKABLE void clear();
@@ -42,11 +52,13 @@ signals:
     void currentFileChanged();
     void loadingChanged();
     void layoutChanged();
+    void plotBindingsChanged();
 private:
     void onLoadFinished(const QString &path,
                         const QVector<LoadedTable> &tables,
                         int skipped, const QString &error);
     void setStatus(const QString &status);
+    void refreshPlot(int index, bool fitY = true);
     SignalModel *m_signals;
     QVector<PlotItem *> m_plots;
     int m_plotRows = 1;
@@ -56,9 +68,13 @@ private:
     QVector<LoadedTable> m_tables;
     QVector<QPair<int, int>> m_signalLocations;
     QVector<bool> m_enabled;
+    QVector<QColor> m_signalColors;
+    QVector<QSet<int>> m_plotSignals;
     QThread *m_loadThread = nullptr;
     QObject *m_loader = nullptr;
     bool m_loading = false;
+    bool m_syncingRanges = false;
+    int m_plotStateRevision = 0;
 };
 
 Q_DECLARE_METATYPE(QVector<QVector<double>>)

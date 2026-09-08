@@ -17,6 +17,7 @@ namespace {
 struct PlotRoot final : QSGNode {
     QVector<QSGGeometryNode *> lineNodes;
     QSGGeometryNode *cursorNode = nullptr;
+    QSGGeometryNode *cursorNode2 = nullptr;
 };
 
 static QSGGeometryNode *createLineNode(PlotRoot *root)
@@ -37,7 +38,7 @@ static QSGGeometryNode *createLineNode(PlotRoot *root)
 static void updateLineNode(QSGGeometryNode *node, const QVector<QPointF> &segment,
                            const QColor &color, double xmin, double xs,
                            double ymin, double ys, double itemWidth,
-                           double itemHeight, double hx, double hy)
+                           double itemHeight, double lineWidth)
 {
     auto *geometry = node->geometry();
     const int vertexCount = segment.size() * 2;
@@ -47,10 +48,12 @@ static void updateLineNode(QSGGeometryNode *node, const QVector<QPointF> &segmen
         const QPointF p = segment.at(i);
         const QPointF a = i ? segment.at(i - 1) : p;
         const QPointF b = i + 1 < segment.size() ? segment.at(i + 1) : p;
-        QPointF tangent = b - a;
+        const QPointF projectedA((a.x() - xmin) / xs * itemWidth, itemHeight - (a.y() - ymin) / ys * itemHeight);
+        const QPointF projectedB((b.x() - xmin) / xs * itemWidth, itemHeight - (b.y() - ymin) / ys * itemHeight);
+        QPointF tangent = projectedB - projectedA;
         double length = qSqrt(tangent.x() * tangent.x() + tangent.y() * tangent.y());
         if (length < 1e-12) length = 1.0;
-        const QPointF normal(-tangent.y() / length * hx, tangent.x() / length * hy);
+        const QPointF normal(-tangent.y() / length * lineWidth * .5, tangent.x() / length * lineWidth * .5);
         const double x = (p.x() - xmin) / xs * itemWidth;
         const double y = itemHeight - (p.y() - ymin) / ys * itemHeight;
         vertices[i * 2].set(x + normal.x(), y - normal.y());
@@ -64,9 +67,43 @@ static void updateLineNode(QSGGeometryNode *node, const QVector<QPointF> &segmen
 
 } // namespace
 
-PlotItem::PlotItem(QQuickItem *parent) : QQuickItem(parent) { setFlag(ItemHasContents, true); setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton); }
+PlotItem::PlotItem(QQuickItem *parent) : QQuickItem(parent) { setFlag(ItemHasContents, true); setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton); setAcceptHoverEvents(true); }
 void PlotItem::setLineWidth(double width) { const double v = qBound(1.0, width, 12.0); QMutexLocker lock(&m_dataMutex); if (qFuzzyCompare(v, m_lineWidth)) return; m_lineWidth = v; emit lineWidthChanged(); update(); }
-void PlotItem::setCursorEnabled(bool enabled) { QMutexLocker lock(&m_dataMutex); if (m_cursorEnabled == enabled) return; m_cursorEnabled = enabled; emit cursorChanged(); update(); }
+void PlotItem::setCursorEnabled(bool enabled) { setCursorMode(enabled ? SingleCursor : NoCursor); }
+void PlotItem::setCursorMode(int mode)
+{
+    const int normalized = qBound(static_cast<int>(NoCursor), mode, static_cast<int>(DoubleCursor));
+    QMutexLocker lock(&m_dataMutex);
+    if (m_cursorMode == normalized) return;
+    const bool wasDisabled = m_cursorMode == NoCursor;
+    m_cursorMode = normalized;
+    m_cursorEnabled = normalized != NoCursor;
+    if (wasDisabled && m_cursorEnabled) {
+        const double span = qMax(m_xMaximum - m_xMinimum, 1e-12);
+        m_cursorX1 = m_xMinimum + span * .05;
+        m_cursorX2 = m_xMinimum + span * .95;
+    }
+    m_cursorX = m_cursorX1;
+    updateCursorValuesLocked();
+    rebuildTicksLocked();
+    emit cursorChanged();
+    emit cursorDeltaTChanged();
+    emit cursorValuesChanged();
+    update();
+}
+void PlotItem::setCursorX(double x, int cursorIndex)
+{
+    QMutexLocker lock(&m_dataMutex);
+    if (m_cursorMode == NoCursor) return;
+    const double clamped = qBound(m_xMinimum, x, m_xMaximum);
+    const double snapped = nearestRawX(clamped);
+    if (cursorIndex == 2) m_cursorX2 = snapped;
+    else { m_cursorX1 = snapped; m_cursorX = snapped; }
+    if (m_cursorMode == DoubleCursor && m_cursorX2 < m_cursorX1) std::swap(m_cursorX1, m_cursorX2);
+    m_cursorX = cursorIndex == 2 ? m_cursorX2 : m_cursorX1;
+    updateCursorValuesLocked();
+    emit cursorChanged(); emit cursorDeltaTChanged(); emit cursorValuesChanged(); update();
+}
 void PlotItem::setSeries(const QVector<double> &time, const QVector<double> &values)
 {
     clearSeries();
@@ -91,9 +128,11 @@ void PlotItem::appendSeries(const QVector<double> &time, const QVector<double> &
         series.points.append(QPointF(timestamp, qIsFinite(value) ? value : qQNaN()));
     }
     m_series.append(std::move(series));
+    m_cursorValues.resize(m_series.size());
+    updateCursorValuesLocked();
     update();
 }
-void PlotItem::clearSeries() { { QMutexLocker lock(&m_dataMutex); m_series.clear(); } setRange(0, 1, -1, 1); }
+void PlotItem::clearSeries() { { QMutexLocker lock(&m_dataMutex); m_series.clear(); m_cursorValues.clear(); } setRange(0, 1, -1, 1); }
 void PlotItem::fitView()
 {
     double xmin = std::numeric_limits<double>::max(), xmax = std::numeric_limits<double>::lowest(), ymin = xmin, ymax = xmax;
@@ -107,6 +146,83 @@ void PlotItem::fitView()
     if (qFuzzyCompare(xmin, xmax)) { xmin -= .5; xmax += .5; } else { const double p = qMax((xmax-xmin)*.02, 1e-9); xmin -= p; xmax += p; }
     if (qFuzzyCompare(ymin, ymax)) { ymin -= .5; ymax += .5; } else { const double p = qMax((ymax-ymin)*.08, 1e-9); ymin -= p; ymax += p; }
     setRange(xmin, xmax, ymin, ymax);
+}
+void PlotItem::setXRange(double xmin, double xmax)
+{
+    double ymin, ymax;
+    { QMutexLocker lock(&m_dataMutex); ymin = m_yMinimum; ymax = m_yMaximum; }
+    setRange(xmin, xmax, ymin, ymax);
+}
+
+double PlotItem::nearestRawX(double x) const
+{
+    double nearest = x;
+    double distance = std::numeric_limits<double>::max();
+    for (const Series &series : std::as_const(m_series)) {
+        for (const QPointF &point : series.points) {
+            if (!qIsFinite(point.x())) continue;
+            const double d = qAbs(point.x() - x);
+            if (d < distance) { distance = d; nearest = point.x(); }
+        }
+    }
+    return distance == std::numeric_limits<double>::max() ? x : nearest;
+}
+
+void PlotItem::rebuildTicksLocked()
+{
+    auto makeTicks = [](double lo, double hi) {
+        QVariantList ticks;
+        if (!(hi > lo) || !qIsFinite(lo) || !qIsFinite(hi)) return ticks;
+        const double raw = (hi - lo) / 7.0;
+        const double magnitude = qPow(10.0, qFloor(qLn(raw) / qLn(10.0)));
+        const double normalized = raw / magnitude;
+        const double step = (normalized <= 1.0 ? 1.0 : normalized <= 2.0 ? 2.0 : normalized <= 5.0 ? 5.0 : 10.0) * magnitude;
+        const int first = static_cast<int>(qCeil(lo / step));
+        const int last = static_cast<int>(qFloor(hi / step));
+        const int precision = qMax(0, static_cast<int>(-qFloor(qLn(step) / qLn(10.0))));
+        for (int i = first; i <= last && ticks.size() < 12; ++i) { const double value = i * step; ticks.append(QVariantMap{{QStringLiteral("value"), value}, {QStringLiteral("label"), QString::number(value, 'f', precision)}}); }
+        return ticks;
+    };
+    m_xTicks = makeTicks(m_xMinimum, m_xMaximum);
+    m_yTicks = makeTicks(m_yMinimum, m_yMaximum);
+}
+
+void PlotItem::updateCursorValuesLocked()
+{
+    m_cursorReadouts.clear();
+    if (m_cursorMode == NoCursor) return;
+    m_cursorValues.resize(m_series.size());
+    const double keys[] = {m_cursorX1, m_cursorX2};
+    for (int s = 0; s < m_series.size(); ++s) {
+        m_cursorValues[s].resize(m_cursorMode == DoubleCursor ? 2 : 1);
+        for (int c = 0; c < m_cursorValues[s].size(); ++c) {
+            double value = qQNaN(), best = std::numeric_limits<double>::max();
+            for (const QPointF &point : m_series.at(s).points) {
+                if (!qIsFinite(point.x()) || !qIsFinite(point.y())) continue;
+                const double d = qAbs(point.x() - keys[c]);
+                if (d < best) { best = d; value = point.y(); }
+            }
+            m_cursorValues[s][c] = value;
+            if (qIsFinite(value)) {
+                m_cursorReadouts.append(QVariantMap{{QStringLiteral("x"), keys[c]},
+                                                    {QStringLiteral("y"), value},
+                                                    {QStringLiteral("text"), QString::number(value, 'g', 8)},
+                                                    {QStringLiteral("color"), m_series.at(s).color}});
+            }
+        }
+    }
+}
+
+bool PlotItem::cursorHit(double pixelX, int *cursorIndex) const
+{
+    if (m_cursorMode == NoCursor || width() <= 0) return false;
+    const double scale = width() / qMax(m_xMaximum - m_xMinimum, 1e-12);
+    const double tolerance = 8.0;
+    const double d1 = qAbs((m_cursorX1 - m_xMinimum) * scale - pixelX);
+    const double d2 = qAbs((m_cursorX2 - m_xMinimum) * scale - pixelX);
+    if (d1 <= tolerance && (m_cursorMode != DoubleCursor || d1 <= d2)) { if (cursorIndex) *cursorIndex = 1; return true; }
+    if (m_cursorMode == DoubleCursor && d2 <= tolerance) { if (cursorIndex) *cursorIndex = 2; return true; }
+    return false;
 }
 QVector<QPointF> PlotItem::buildLod(const Series &series) const
 {
@@ -195,8 +311,6 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
     const double xs = qMax(m_xMaximum - m_xMinimum, 1e-12);
     const double ys = qMax(m_yMaximum - m_yMinimum, 1e-12);
-    const double hx = m_lineWidth * .5 / qMax(width(), 1.) * xs;
-    const double hy = m_lineWidth * .5 / qMax(height(), 1.) * ys;
     QVector<QVector<QPointF>> segments;
     QVector<QColor> segmentColors;
     auto collectSeries = [&](const Series &series) {
@@ -224,15 +338,15 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         if (i < segments.size()) {
             updateLineNode(node, segments.at(i), segmentColors.at(i),
                            m_xMinimum, xs, m_yMinimum, ys,
-                           width(), height(), hx, hy);
+                           width(), height(), m_lineWidth);
         } else if (node->geometry()) {
             node->geometry()->allocate(0);
             node->geometry()->markVertexDataDirty();
             node->markDirty(QSGNode::DirtyGeometry);
         }
     }
-    if (m_cursorEnabled && m_xMaximum > m_xMinimum) {
-        const double x = (m_cursorX - m_xMinimum) / xs * width();
+    if (m_cursorMode != NoCursor && m_xMaximum > m_xMinimum) {
+        const double x = (m_cursorX1 - m_xMinimum) / xs * width();
         if (!root->cursorNode) {
             root->cursorNode = new QSGGeometryNode;
             auto *geometry = new QSGGeometry(QSGGeometry::defaultAttributes_Point2D(), 4);
@@ -252,18 +366,39 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         vertices[2].set(x - 0.75, height()); vertices[3].set(x + 0.75, height());
         geometry->markVertexDataDirty();
         root->cursorNode->markDirty(QSGNode::DirtyGeometry);
+        if (m_cursorMode == DoubleCursor) {
+            if (!root->cursorNode2) {
+                auto *second = new QSGGeometryNode;
+                auto *g2 = new QSGGeometry(QSGGeometry::defaultAttributes_Point2D(), 4);
+                g2->setDrawingMode(QSGGeometry::DrawTriangleStrip); second->setGeometry(g2); second->setFlag(QSGNode::OwnsGeometry);
+                auto *m2 = new QSGFlatColorMaterial; m2->setColor(QColor("#4e79e7")); second->setMaterial(m2); second->setFlag(QSGNode::OwnsMaterial); root->appendChildNode(second); root->cursorNode2 = second;
+            }
+            auto *second = root->cursorNode2;
+            const double x2 = (m_cursorX2 - m_xMinimum) / xs * width();
+            auto *g2 = second->geometry(); g2->allocate(4); auto *v2 = static_cast<QSGGeometry::Point2D *>(g2->vertexData());
+            v2[0].set(x2 - .75, 0); v2[1].set(x2 + .75, 0); v2[2].set(x2 - .75, height()); v2[3].set(x2 + .75, height()); g2->markVertexDataDirty(); second->markDirty(QSGNode::DirtyGeometry);
+        } else if (root->cursorNode2 && root->cursorNode2->geometry()) {
+            root->cursorNode2->geometry()->allocate(0);
+            root->cursorNode2->geometry()->markVertexDataDirty();
+            root->cursorNode2->markDirty(QSGNode::DirtyGeometry);
+        }
     } else if (root->cursorNode && root->cursorNode->geometry()) {
         root->cursorNode->geometry()->allocate(0);
         root->cursorNode->geometry()->markVertexDataDirty();
         root->cursorNode->markDirty(QSGNode::DirtyGeometry);
+        if (root->cursorNode2 && root->cursorNode2->geometry()) {
+            root->cursorNode2->geometry()->allocate(0);
+            root->cursorNode2->geometry()->markVertexDataDirty();
+            root->cursorNode2->markDirty(QSGNode::DirtyGeometry);
+        }
     }
     return root;
 }
 void PlotItem::geometryChange(const QRectF &n,const QRectF &o){QQuickItem::geometryChange(n,o);update();}
-void PlotItem::mousePressEvent(QMouseEvent *e){if(e->button()!=Qt::LeftButton&&e->button()!=Qt::MiddleButton)return;m_dragging=true;m_dragStartPixel=e->position();m_dragStartXMinimum=m_xMinimum;m_dragStartXMaximum=m_xMaximum;m_dragStartYMinimum=m_yMinimum;m_dragStartYMaximum=m_yMaximum;e->accept();}
-void PlotItem::mouseMoveEvent(QMouseEvent *e){if(!m_dragging)return;QPointF d=e->position()-m_dragStartPixel;double xs=m_dragStartXMaximum-m_dragStartXMinimum,ys=m_dragStartYMaximum-m_dragStartYMinimum;setRange(m_dragStartXMinimum-d.x()/qMax(width(),1.)*xs,m_dragStartXMaximum-d.x()/qMax(width(),1.)*xs,m_dragStartYMinimum+d.y()/qMax(height(),1.)*ys,m_dragStartYMaximum+d.y()/qMax(height(),1.)*ys);e->accept();}
-void PlotItem::mouseReleaseEvent(QMouseEvent *e){m_dragging=false;e->accept();}
-void PlotItem::hoverMoveEvent(QHoverEvent *e){if(!m_cursorEnabled)return;const QPointF p=e->position();m_cursorX=pixelToData(p).x();emit cursorChanged();update();}
+void PlotItem::mousePressEvent(QMouseEvent *e){if(e->button()!=Qt::LeftButton&&e->button()!=Qt::MiddleButton)return;int cursorIndex=0;{QMutexLocker lock(&m_dataMutex);if(cursorHit(e->position().x(),&cursorIndex)){m_cursorDragIndex=cursorIndex;m_dragging=false;e->accept();return;}}m_cursorDragIndex=0;m_dragging=true;m_dragStartPixel=e->position();m_dragStartXMinimum=m_xMinimum;m_dragStartXMaximum=m_xMaximum;m_dragStartYMinimum=m_yMinimum;m_dragStartYMaximum=m_yMaximum;e->accept();}
+void PlotItem::mouseMoveEvent(QMouseEvent *e){if(m_cursorDragIndex){setCursorX(pixelToData(e->position()).x(),m_cursorDragIndex);e->accept();return;}if(!m_dragging)return;QPointF d=e->position()-m_dragStartPixel;double xs=m_dragStartXMaximum-m_dragStartXMinimum,ys=m_dragStartYMaximum-m_dragStartYMinimum;setRange(m_dragStartXMinimum-d.x()/qMax(width(),1.)*xs,m_dragStartXMaximum-d.x()/qMax(width(),1.)*xs,m_dragStartYMinimum+d.y()/qMax(height(),1.)*ys,m_dragStartYMaximum+d.y()/qMax(height(),1.)*ys);e->accept();}
+void PlotItem::mouseReleaseEvent(QMouseEvent *e){m_dragging=false;m_cursorDragIndex=0;e->accept();}
+void PlotItem::hoverMoveEvent(QHoverEvent *e){Q_UNUSED(e);}
 void PlotItem::wheelEvent(QWheelEvent *e){const double f=e->angleDelta().y()>0?.85:1/.85;const QPointF a=pixelToData(e->position());setRange(a.x()-(a.x()-m_xMinimum)*f,a.x()+(m_xMaximum-a.x())*f,a.y()-(a.y()-m_yMinimum)*f,a.y()+(m_yMaximum-a.y())*f);e->accept();}
 void PlotItem::setRange(double xmin,double xmax,double ymin,double ymax)
 {
@@ -275,9 +410,11 @@ void PlotItem::setRange(double xmin,double xmax,double ymin,double ymax)
         m_xMaximum = xmax;
         m_yMinimum = ymin;
         m_yMaximum = ymax;
+        rebuildTicksLocked();
     }
     emit viewChanged();
     emit rangeChanged(xmin, xmax, ymin, ymax);
+    emit axisTicksChanged();
     update();
 }
 QPointF PlotItem::pixelToData(const QPointF &p) const

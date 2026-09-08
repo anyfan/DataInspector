@@ -3,10 +3,12 @@
 #include <QColor>
 #include <QVector>
 #include <QMutex>
+#include <QVariantList>
 
 class PlotItem : public QQuickItem
 {
     Q_OBJECT
+    Q_PROPERTY(int cursorMode READ cursorMode WRITE setCursorMode NOTIFY cursorChanged)
     Q_PROPERTY(double xMinimum READ xMinimum NOTIFY viewChanged)
     Q_PROPERTY(double xMaximum READ xMaximum NOTIFY viewChanged)
     Q_PROPERTY(double yMinimum READ yMinimum NOTIFY viewChanged)
@@ -14,7 +16,15 @@ class PlotItem : public QQuickItem
     Q_PROPERTY(double lineWidth READ lineWidth WRITE setLineWidth NOTIFY lineWidthChanged)
     Q_PROPERTY(bool cursorEnabled READ cursorEnabled WRITE setCursorEnabled NOTIFY cursorChanged)
     Q_PROPERTY(double cursorX READ cursorX NOTIFY cursorChanged)
+    Q_PROPERTY(double cursorX1 READ cursorX1 NOTIFY cursorChanged)
+    Q_PROPERTY(double cursorX2 READ cursorX2 NOTIFY cursorChanged)
+    Q_PROPERTY(double cursorDeltaT READ cursorDeltaT NOTIFY cursorDeltaTChanged)
+    Q_PROPERTY(QVariantList xTicks READ xTicks NOTIFY axisTicksChanged)
+    Q_PROPERTY(QVariantList yTicks READ yTicks NOTIFY axisTicksChanged)
+    Q_PROPERTY(QVariantList cursorReadouts READ cursorReadouts NOTIFY cursorValuesChanged)
 public:
+    enum CursorMode { NoCursor = 0, SingleCursor = 1, DoubleCursor = 2 };
+    Q_ENUM(CursorMode)
     explicit PlotItem(QQuickItem *parent = nullptr);
     double xMinimum() const { return m_xMinimum; }
     double xMaximum() const { return m_xMaximum; }
@@ -23,16 +33,29 @@ public:
     double lineWidth() const { return m_lineWidth; }
     bool cursorEnabled() const { return m_cursorEnabled; }
     double cursorX() const { return m_cursorX; }
+    int cursorMode() const { return m_cursorMode; }
+    double cursorX1() const { return m_cursorX1; }
+    double cursorX2() const { return m_cursorX2; }
+    double cursorDeltaT() const { return m_cursorX2 - m_cursorX1; }
+    QVariantList xTicks() const { return m_xTicks; }
+    QVariantList yTicks() const { return m_yTicks; }
+    QVariantList cursorReadouts() const { return m_cursorReadouts; }
     void setLineWidth(double width);
     void setCursorEnabled(bool enabled);
+    void setCursorMode(int mode);
+    Q_INVOKABLE void setCursorX(double x, int cursorIndex = 1);
     Q_INVOKABLE void setSeries(const QVector<double> &time, const QVector<double> &values);
     Q_INVOKABLE void appendSeries(const QVector<double> &time, const QVector<double> &values, const QColor &color);
     Q_INVOKABLE void clearSeries();
     Q_INVOKABLE void fitView();
+    Q_INVOKABLE void setXRange(double xMinimum, double xMaximum);
 signals:
     void viewChanged();
     void lineWidthChanged();
     void cursorChanged();
+    void cursorDeltaTChanged();
+    void cursorValuesChanged();
+    void axisTicksChanged();
     void rangeChanged(double xMinimum, double xMaximum, double yMinimum, double yMaximum);
 protected:
     QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override;
@@ -52,6 +75,10 @@ private:
         mutable int cachedBuckets = 0;
         mutable QVector<QPointF> cachedLod;
     };
+    double nearestRawX(double x) const;
+    void updateCursorValuesLocked();
+    void rebuildTicksLocked();
+    bool cursorHit(double pixelX, int *cursorIndex) const;
     QVector<QPointF> buildLod(const Series &series) const;
     void setRange(double xMinimum, double xMaximum, double yMinimum, double yMaximum);
     QPointF pixelToData(const QPointF &pixel) const;
@@ -60,6 +87,14 @@ private:
     double m_lineWidth = 2.0;
     bool m_cursorEnabled = false;
     double m_cursorX = 0.0;
+    int m_cursorMode = NoCursor;
+    double m_cursorX1 = 0.0;
+    double m_cursorX2 = 1.0;
+    QVector<QVector<double>> m_cursorValues;
+    QVariantList m_xTicks;
+    QVariantList m_yTicks;
+    QVariantList m_cursorReadouts;
+    int m_cursorDragIndex = 0;
     QPointF m_dragStartPixel;
     double m_dragStartXMinimum = 0.0, m_dragStartXMaximum = 1.0, m_dragStartYMinimum = -1.0, m_dragStartYMaximum = 1.0;
     bool m_dragging = false;
