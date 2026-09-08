@@ -1,0 +1,45 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "qt6-clang-debug",
+            "displayName": "Qt 6.8.3 LLVM-MinGW Debug",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build_qt6-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_PREFIX_PATH": "D:/Software/Qt/6.8.3/llvm-mingw_64",
+                "Qt6_DIR": "D:/Software/Qt/6.8.3/llvm-mingw_64/lib/cmake/Qt6",
+                "CMAKE_C_COMPILER": "D:/Software/Qt/Tools/llvm-mingw1706_64/bin/clang.exe",
+                "CMAKE_CXX_COMPILER": "D:/Software/Qt/Tools/llvm-mingw1706_64/bin/clang++.exe",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": true
+            }
+        },
+        {
+            "name": "qt6-clang-release",
+            "displayName": "Qt 6.8.3 LLVM-MinGW Release",
+            "inherits": "qt6-clang-debug",
+            "binaryDir": "${sourceDir}/build_qt6-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "qt6-clang-debug",
+            "configurePreset": "qt6-clang-debug",
+            "jobs": 4
+        },
+        {
+            "name": "qt6-clang-release",
+            "configurePreset": "qt6-clang-release",
+            "jobs": 4
+        }
+    ]
+}

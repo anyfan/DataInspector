@@ -1,5 +1,10 @@
 build
+build_qt6
+build-release
 test_file
 .vscode
 DataInspector-cppcheck-build-dir
 DataInspector.cppcheck
+build_qt6-debug
+CMakeLists.txt.user
+build_qt6-release

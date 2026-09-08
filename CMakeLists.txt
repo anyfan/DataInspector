@@ -1,123 +1,66 @@
-cmake_minimum_required(VERSION 3.10)
-project(DataInspector LANGUAGES CXX)
+cmake_minimum_required(VERSION 3.21)
+project(DataInspector VERSION 0.1 LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
+set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
-set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-# Option to build without Python support
-option(ENABLE_PYTHON "Enable Python support" ON)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 QuickDialogs2)
+option(ENABLE_MAT "Enable MAT file loading (requires LLVM-MinGW compatible matio/HDF5)" OFF)
+qt_standard_project_setup(REQUIRES 6.8)
 
-# --- 1. 第三方库配置 ---
-# ZLIB
-add_library(zlib STATIC IMPORTED)
-set_target_properties(zlib PROPERTIES IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/zlib131/lib/libzlibstatic.a")
-
-# HDF5
-add_library(hdf5 STATIC IMPORTED)
-set_target_properties(hdf5 PROPERTIES IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/hdf5-1.14.6/lib/libhdf5.a")
-target_link_libraries(hdf5 INTERFACE zlib)
-
-# MATIO
-add_library(matio STATIC IMPORTED)
-set_target_properties(matio PROPERTIES
-    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/matio-1.5.28/lib/libmatio.a"
-    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_libs/matio-1.5.28/include"
+qt_add_executable(DataInspector
+    src/quick/main.cpp
+    src/quick/appcontroller.cpp
+    src/quick/appcontroller.h
+    src/quick/plotitem.cpp
+    src/quick/plotitem.h
+    src/quick/signalmodel.cpp
+    src/quick/signalmodel.h
 )
-target_link_libraries(matio INTERFACE hdf5)
 
-# QCustomPlot
-add_definitions(-DQCUSTOMPLOT_USE_OPENGL)
-add_library(qcustomplot "${CMAKE_SOURCE_DIR}/third_libs/qcustomplot-2.1.1/qcustomplot.cpp")
-set_target_properties(qcustomplot PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_libs/qcustomplot-2.1.1")
-
-# QuaZip
-add_library(bzip STATIC IMPORTED)
-set_target_properties(bzip PROPERTIES IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/quazip-1.5/lib/libbzip2.a")
-
-add_library(quazip STATIC IMPORTED)
-set_target_properties(quazip PROPERTIES
-    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/quazip-1.5/lib/libquazip1-qt5.a"
-    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/third_libs/quazip-1.5/include/QuaZip-Qt5-1.5"
+set_source_files_properties(qml/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
+qt_add_qml_module(DataInspector
+    URI DataInspector
+    VERSION 1.0
+    QML_FILES qml/Main.qml
 )
-target_link_libraries(quazip INTERFACE bzip)
 
-# Qt5 & OpenGL
-find_package(Qt5 REQUIRED COMPONENTS Core Xml Gui Widgets PrintSupport OpenGL Concurrent)
-find_package(OpenGL REQUIRED)
-target_link_libraries(qcustomplot Qt5::Core Qt5::PrintSupport Qt5::OpenGL ${OPENGL_LIBRARIES})
+target_include_directories(DataInspector PRIVATE src/quick)
+target_include_directories(DataInspector PRIVATE
+    third_libs/matio-1.5.28/include
+    third_libs/hdf5-1.14.6/include
+    third_libs/zlib131/include
+)
 
-if(ENABLE_PYTHON)
-    include(FetchContent)
-    FetchContent_Declare(
-        pybind11
-        URL ${CMAKE_SOURCE_DIR}/third_libs/pybind11-3.0.1.zip
-        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-    )
-    FetchContent_MakeAvailable(pybind11)
-    
-    add_compile_definitions(ENABLE_PYTHON)
+if(ENABLE_MAT)
+    add_compile_definitions(ENABLE_MAT)
+    add_library(zlib_qt6 STATIC IMPORTED)
+    set_target_properties(zlib_qt6 PROPERTIES IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/zlib131/lib/libzlibstatic.a")
+    add_library(hdf5_qt6 STATIC IMPORTED)
+    set_target_properties(hdf5_qt6 PROPERTIES IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/hdf5-1.14.6/lib/libhdf5.a")
+    target_link_libraries(hdf5_qt6 INTERFACE zlib_qt6)
+    add_library(matio_qt6 STATIC IMPORTED)
+    set_target_properties(matio_qt6 PROPERTIES IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/matio-1.5.28/lib/libmatio.a")
+    target_link_libraries(matio_qt6 INTERFACE hdf5_qt6)
+endif()
+target_link_libraries(DataInspector PRIVATE
+    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick
+    Qt6::QuickControls2 Qt6::QuickDialogs2
+)
+if(ENABLE_MAT)
+    target_link_libraries(DataInspector PRIVATE matio_qt6)
 endif()
 
-include_directories(
-    ${CMAKE_SOURCE_DIR}/src
-    ${CMAKE_SOURCE_DIR}/src/core
-    ${CMAKE_SOURCE_DIR}/src/data
-    ${CMAKE_SOURCE_DIR}/src/plot
-    ${CMAKE_SOURCE_DIR}/src/ui
-)
-
-if(ENABLE_PYTHON)
-    include_directories(
-        ${CMAKE_SOURCE_DIR}/src/script
-    )
+if(MSVC)
+    target_compile_options(DataInspector PRIVATE /W4)
+else()
+    target_compile_options(DataInspector PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-set(SOURCES
-    src/main.cpp
-
-    # Core
-    src/core/mainwindow.cpp
-
-    # Data
-    src/data/datamanager.cpp
-    src/data/viewloader.cpp
-
-    # Plot
-    src/plot/plotmanager.cpp
-    src/plot/cursormanager.cpp
-    src/plot/replaymanager.cpp
-
-    # UI
-    src/ui/signaltreedelegate.cpp
-    src/ui/signalpropertiesdialog.cpp
-    src/ui/signalbrowser.cpp
+set_target_properties(DataInspector PROPERTIES
+    WIN32_EXECUTABLE TRUE
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
-
-if(ENABLE_PYTHON)
-    list(APPEND SOURCES
-        # Script
-        src/script/script_api_ui.cpp
-        src/script/script_api_data.cpp
-        src/script/script_api_algo.cpp
-        src/script/script_binding.cpp
-        src/script/scriptwindow.cpp
-    )
-endif()
-
-add_executable(DataInspector ${SOURCES} assets/resources.qrc assets/DataInspector.rc)
-
-target_compile_definitions(DataInspector PRIVATE QUAZIP_STATIC)
-target_include_directories(DataInspector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-
-target_link_libraries(DataInspector
-    Qt5::Core Qt5::Xml Qt5::Gui Qt5::Widgets Qt5::OpenGL Qt5::Concurrent
-    matio qcustomplot quazip ${OPENGL_LIBRARIES}
-)
-
-if(ENABLE_PYTHON)
-    target_link_libraries(DataInspector pybind11::embed)
-endif()
