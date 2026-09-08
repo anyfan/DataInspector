@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 QuickDialogs2)
-option(ENABLE_MAT "Enable MAT file loading (requires LLVM-MinGW compatible matio/HDF5)" OFF)
+option(ENABLE_MAT "Enable MAT file loading (requires LLVM-MinGW compatible matio/HDF5)" ON)
 qt_standard_project_setup(REQUIRES 6.8)
 
 qt_add_executable(DataInspector
@@ -51,7 +51,13 @@ target_link_libraries(DataInspector PRIVATE
     Qt6::QuickControls2 Qt6::QuickDialogs2
 )
 if(ENABLE_MAT)
-    target_link_libraries(DataInspector PRIVATE matio_qt6)
+    # HDF5's static Windows build does not carry transitive system libraries
+    # in the archive. Keep them explicit so the same LLVM-MinGW ABI is used
+    # regardless of which Qt module happens to pull them in first.
+    target_link_libraries(DataInspector PRIVATE
+        matio_qt6
+        m ws2_32 wsock32 shlwapi advapi32
+    )
 endif()
 
 if(MSVC)

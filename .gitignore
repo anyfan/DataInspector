@@ -8,3 +8,8 @@ DataInspector.cppcheck
 build_qt6-debug
 CMakeLists.txt.user
 build_qt6-release
+.deps-src
+.deps-build
+.deps-install
+build_qt6-mat
+dist

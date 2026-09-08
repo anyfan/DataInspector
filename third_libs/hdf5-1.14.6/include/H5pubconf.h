@@ -105,7 +105,7 @@
 #define H5_HAVE_ATTRIBUTE 1
 
 /* Define to 1 if you have the `clock_gettime' function. */
-#define H5_HAVE_CLOCK_GETTIME 1
+/* #undef H5_HAVE_CLOCK_GETTIME */
 
 /* Define to 1 if CLOCK_MONOTONIC_COARSE is available */
 /* #undef H5_HAVE_CLOCK_MONOTONIC_COARSE */
@@ -379,7 +379,7 @@
 #define H5_IGNORE_DISABLED_FILE_LOCKS 1
 
 /* Define if the high-level library headers should be included in hdf5.h */
-#define H5_INCLUDE_HL 1
+/* #undef H5_INCLUDE_HL */
 
 /* Define if new-style references should be used with dimension scales */
 /* #undef H5_DIMENSION_SCALES_WITH_NEW_REF */
@@ -587,14 +587,14 @@
 #define H5_SIZEOF_UNSIGNED 4
 
 /* The size of `_Float16', as computed by sizeof. */
-#define H5_SIZEOF__FLOAT16 0
+#define H5_SIZEOF__FLOAT16 2
 
 /* Define if strict file format checks are enabled */
 /* #undef H5_STRICT_FORMAT_CHECKS */
 
 /* Define if your system supports pthread_attr_setscope(&attribute,
    PTHREAD_SCOPE_SYSTEM) call. */
-#define H5_SYSTEM_SCOPE_THREADS 1
+/* #undef H5_SYSTEM_SCOPE_THREADS */
 
 /* Define using v1.6 public API symbols by default */
 /* #undef H5_USE_16_API_DEFAULT */

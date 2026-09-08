@@ -18,10 +18,13 @@ ApplicationWindow {
 
     FileDialog {
         id: fileDialog
-        title: "打开时间序列文件"
-        nameFilters: ["CSV/TXT 文件 (*.csv *.txt)", "所有文件 (*)"]
+        title: "打开数据文件"
+        nameFilters: ["数据文件 (*.csv *.txt *.mat)", "CSV/TXT 文件 (*.csv *.txt)", "MAT 文件 (*.mat)", "所有文件 (*)"]
         fileMode: FileDialog.OpenFile
-        onAccepted: appController.loadCsv(selectedFile.toLocalFile())
+        // Qt 6.8 exposes selectedFile as a URL value without the QObject
+        // toLocalFile() helper in some QML runtimes. AppController accepts
+        // both local paths and file: URLs and performs the conversion in C++.
+        onAccepted: appController.loadCsv(selectedFile.toString())
     }
 
     header: ToolBar {

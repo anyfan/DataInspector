@@ -33,14 +33,14 @@ Time,Signal A,Signal B
 
 ### MATLAB MAT（可选）
 
-源码包含 MAT 读取路径，可识别名称为 `p1`、`p2` 等二维 `double` 变量：第一列是时间，其余列是信号，`pN_title`/`pN_title2` 用作标题。由于仓库中现有 matio/HDF5 静态库不是 LLVM-MinGW 17 ABI 构建，默认配置关闭 MAT：
+源码包含 MAT 读取路径，可识别名称为 `p1`、`p2` 等二维 `double` 变量：第一列是时间，其余列是信号，`pN_title`/`pN_title2` 用作标题。当前仓库已提供 LLVM-MinGW 17 兼容静态库，默认配置开启 MAT：
 
 ```powershell
 cmake -S . -B build_qt6 -G Ninja `
-  -DENABLE_MAT=OFF
+  -DENABLE_MAT=ON
 ```
 
-要启用 MAT，必须先使用 Qt 6.8.3 LLVM-MinGW 工具链重新构建兼容的 matio、HDF5 和 zlib，再配置 `-DENABLE_MAT=ON`。否则程序会明确提示当前构建未启用 MAT 支持。
+如果替换或删除了仓库内的兼容库，可暂时使用 `-DENABLE_MAT=OFF` 构建 CSV/TXT 版本；启用 MAT 时必须确保 matio、HDF5 和 zlib 均使用同一 LLVM-MinGW 工具链构建。
 
 ## 构建环境
 
@@ -59,7 +59,7 @@ cmake -S . -B build_qt6 -G Ninja `
   -DCMAKE_PREFIX_PATH="D:/Software/Qt/6.8.3/llvm-mingw_64" `
   -DCMAKE_CXX_COMPILER="D:/Software/Qt/Tools/llvm-mingw1706_64/bin/clang++.exe" `
   -DCMAKE_BUILD_TYPE=Release `
-  -DENABLE_MAT=OFF
+  -DENABLE_MAT=ON
 
 cmake --build build_qt6 --parallel 4
 ```
@@ -104,7 +104,7 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 - 坐标轴刻度、图例、悬停高亮、图片导出尚未迁移。
 - `.mldatx`、JSON 视图、重放和 Python API 暂未接入 Qt Quick 版本。
 - CSV 仍为简单逗号解析；数据目前整体读入内存，不是分块/流式架构。
-- MAT 需要兼容 LLVM-MinGW 的第三方库后才能打开。
+- MAT 依赖仓库内与 LLVM-MinGW 17 兼容的 matio/HDF5/zlib 静态库。
 
 建议下一阶段按以下顺序推进：后台 LOD 缓存 → 多子图独立状态和 X 轴同步 → 完整游标/坐标轴 → 导出与视图文件 → 真实百万/千万点性能基准。
 
