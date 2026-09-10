@@ -54,15 +54,15 @@ The store has no dependency on `QQuickItem`, QML or Scene Graph classes. It may 
 
 Required behavior:
 
-- Replacing, appending or clearing series increments a store generation.
+- Replacing or clearing the active series set increments a store generation.
 - Each snapshot remains valid for the duration of a synchronous render-core call.
 - Monotonicity describes finite X values in input order. Invalid X or decreasing finite X marks a series non-monotonic.
 - Invalid Y remains represented as NaN and creates a line break.
 - Cursor lookup uses original data, never LOD data and never interpolation.
 - Monotonic finite-time data uses binary search; non-monotonic data uses a finite-point scan.
-- Equal-distance cursor candidates resolve deterministically to the earlier point in original input order.
+- Equal-distance cursor candidates resolve deterministically by snapshot series order, then by original point order within that series.
 
-`AppController` owns one shared `PlotSeriesStore` for the loaded session and retains the signal-to-table mapping needed by the UI. Each `PlotItem` receives a shared read-only store handle and keeps only an ordered set of visible series IDs. Changing a subplot legend therefore changes IDs, not raw point containers, and all subplots refer to the same immutable series payloads.
+`AppController` owns one shared `PlotSeriesStore` for the loaded session. `LoadedTable` values and signal-to-table locations are transient loader output: after the controller creates store inputs, it releases those raw arrays and retains only UI metadata such as names, colors and selection state. Each `PlotItem` receives a shared read-only store handle and keeps only an ordered set of visible series IDs. Changing a subplot legend therefore changes IDs, not raw point containers, and all subplots refer to the same immutable series payloads.
 
 Store mutation uses copy-on-write series payloads. A read snapshot contains shared immutable payload handles plus the captured generation, so it remains valid even if the GUI thread subsequently replaces or clears the active store contents. This avoids copying all points for every paint while preventing the render thread from observing a container during mutation.
 
@@ -164,7 +164,7 @@ Each step is completed test-first. Production behavior is not removed until the 
 
 Automated tests must cover:
 
-- Store replacement, append/clear generation changes, monotonic detection and deterministic raw-point snapping.
+- Store replacement/clear generation changes, snapshot immutability, monotonic detection and deterministic raw-point snapping.
 - LOD empty/invalid input, one point, dense extrema preservation, repeated timestamps, NaN segmentation, non-monotonic input, and a viewport lying entirely between adjacent samples.
 - LOD output preserves original temporal/sample order within every bucket.
 - Geometry produces finite clipped vertices, honors line width, omits one-point/fully degenerate segments, and keeps separate segments separate.
