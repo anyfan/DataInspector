@@ -22,10 +22,11 @@ qt_add_executable(DataInspector
 )
 
 set_source_files_properties(qml/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
+set_source_files_properties(qml/QuickPlot.qml PROPERTIES QT_RESOURCE_ALIAS QuickPlot.qml)
 qt_add_qml_module(DataInspector
     URI DataInspector
     VERSION 1.0
-    QML_FILES qml/Main.qml
+    QML_FILES qml/Main.qml qml/QuickPlot.qml
 )
 
 target_include_directories(DataInspector PRIVATE src/quick)

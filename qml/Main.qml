@@ -77,50 +77,15 @@ ApplicationWindow {
         Rectangle { id: plotPanel; Layout.fillWidth: true; Layout.fillHeight: true; color: darkTheme ? "#14181d" : "#ffffff"; border.color: borderColor; radius: 5; clip: true
             GridLayout { anchors.fill: parent; anchors.margins: 42; rows: appController.plotRows; columns: appController.plotColumns; columnSpacing: 10; rowSpacing: 10
                 Repeater { model: appController.plotRows * appController.plotColumns
-                    delegate: Rectangle { property int plotIndex: index; color: darkTheme ? "#14181d" : "#ffffff"; border.color: borderColor; radius: 3; Layout.fillWidth: true; Layout.fillHeight: true
-                        PlotItem { id: plotItem; anchors.fill: parent; anchors.leftMargin: 42; anchors.rightMargin: 8; anchors.topMargin: 28; anchors.bottomMargin: 22; lineWidth: widthSlider.value; cursorMode: cursorModeSelector.currentIndex; Component.onCompleted: appController.attachPlot(plotItem, plotIndex) }
-                        Repeater { model: plotItem.xTicks; delegate: Rectangle { x: 42 + (modelData.value - plotItem.xMinimum) / Math.max(1e-12, plotItem.xMaximum - plotItem.xMinimum) * (parent.width - 50); y: 28; width: 1; height: parent.height - 50; color: borderColor; opacity: 0.18 } }
-                        Repeater { model: plotItem.yTicks; delegate: Rectangle { x: 42; y: 28 + (1 - (modelData.value - plotItem.yMinimum) / Math.max(1e-12, plotItem.yMaximum - plotItem.yMinimum)) * (parent.height - 50); width: parent.width - 50; height: 1; color: borderColor; opacity: 0.18 } }
-                        Rectangle { x: 42; y: 28; width: parent.width - 50; height: 1; color: borderColor; opacity: 0.7 }
-                        Rectangle { x: 42; y: parent.height - 22; width: parent.width - 50; height: 1; color: borderColor; opacity: 0.7 }
-                        Rectangle { x: 42; y: 28; width: 1; height: parent.height - 50; color: borderColor; opacity: 0.7 }
-                        Rectangle { x: parent.width - 8; y: 28; width: 1; height: parent.height - 50; color: borderColor; opacity: 0.7 }
-                        Row { anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom; anchors.leftMargin: 42; anchors.rightMargin: 8; anchors.bottomMargin: 2; spacing: 0
-                            Repeater { model: plotItem.xTicks; delegate: Label { x: (modelData.value - plotItem.xMinimum) / Math.max(1e-12, plotItem.xMaximum - plotItem.xMinimum) * (parent.width - 50) - width / 2; width: 60; text: modelData.label; horizontalAlignment: Text.AlignHCenter; font.pixelSize: 9; opacity: 0.58 } }
-                        }
-                        Column { anchors.left: parent.left; anchors.top: parent.top; anchors.bottom: parent.bottom; anchors.topMargin: 28; anchors.bottomMargin: 22; width: 38; spacing: 0
-                            Repeater { model: plotItem.yTicks; delegate: Label { y: (1 - (modelData.value - plotItem.yMinimum) / Math.max(1e-12, plotItem.yMaximum - plotItem.yMinimum)) * (parent.height - 50) - height / 2; height: 18; text: modelData.label; horizontalAlignment: Text.AlignRight; verticalAlignment: Text.AlignVCenter; font.pixelSize: 9; opacity: 0.58 } }
-                        }
-                        Flow { x: appController.legendMode === 2 ? parent.width - width - 4 : 4; y: 4; width: appController.legendMode === 0 ? parent.width - 8 : parent.width * 0.46; visible: appController.legendMode !== 3; spacing: 6
-                            Repeater { model: appController.signalModel
-                                delegate: Item {
-                                    property int signalRow: signalIndex
-                                    visible: appController.plotStateRevision >= 0 && appController.plotSignalEnabled(plotIndex, signalRow)
-                                    implicitWidth: legendLabel.implicitWidth + 18; implicitHeight: 18
-                                    Rectangle { width: 10; height: 10; anchors.verticalCenter: parent.verticalCenter; color: model.color; radius: 2 }
-                                    Label { id: legendLabel; anchors.left: parent.left; anchors.leftMargin: 13; anchors.verticalCenter: parent.verticalCenter; text: model.name; font.pixelSize: 10 }
-                                    MouseArea { anchors.fill: parent; onClicked: appController.togglePlotSignal(plotIndex, signalRow) }
-                                }
-                            }
-                        }
-                        Label { anchors.left: parent.left; anchors.top: parent.top; anchors.margins: 6; text: index + 1; opacity: 0.45 }
-                        Repeater { model: plotItem.cursorReadouts; delegate: Label {
-                                property bool compactFormat: true
-                                x: 42 + (modelData.x - plotItem.xMinimum) / Math.max(1e-12, plotItem.xMaximum - plotItem.xMinimum) * (parent.width - 50) + 5
-                                y: Math.max(28, Math.min(parent.height - 22 - height, 28 + (1 - (modelData.y - plotItem.yMinimum) / Math.max(1e-12, plotItem.yMaximum - plotItem.yMinimum)) * (parent.height - 50) - height / 2))
-                                text: compactFormat ? modelData.text : modelData.rawText
-                                color: modelData.color; font.pixelSize: 10; z: 4
-                                MouseArea { anchors.fill: parent; onClicked: parent.compactFormat = !parent.compactFormat }
-                            } }
-                        Rectangle {
-                            x: 42 + ((plotItem.cursorX1 + plotItem.cursorX2) * 0.5 - plotItem.xMinimum) / Math.max(1e-12, plotItem.xMaximum - plotItem.xMinimum) * (parent.width - 50) - width / 2
-                            anchors.bottom: parent.bottom; anchors.bottomMargin: 2
-                            visible: plotItem.cursorMode === 2
-                            color: darkTheme ? "#26313d" : "#eef4fb"
-                            radius: 3; border.color: borderColor
-                            implicitWidth: cursorValue.implicitWidth + 14; implicitHeight: cursorValue.implicitHeight + 6
-                            Label { id: cursorValue; anchors.centerIn: parent; text: "ΔT = " + Number(plotItem.cursorDeltaT).toPrecision(7); color: darkTheme ? "#e7edf5" : "#243447"; font.pixelSize: 11 }
-                        }
+                    delegate: QuickPlot {
+                        required property int index
+                        plotIndex: index
+                        controller: appController
+                        graphLineWidth: widthSlider.value
+                        graphCursorMode: cursorModeSelector.currentIndex
+                        darkTheme: window.darkTheme
+                        Layout.fillWidth: true
+                        Layout.fillHeight: true
                     }
                 }
             }

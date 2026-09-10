@@ -17,6 +17,7 @@ public:
     void setAllChecked(bool checked);
     int checkedCount() const;
     QColor color(int row) const { return m_colors.value(row, QColor("#4ea1ff")); }
+    QString nameAt(int row) const { return m_names.value(row); }
     void setChecked(int row, bool checked);
 signals:
     void checkedCountChanged();

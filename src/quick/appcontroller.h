@@ -48,6 +48,7 @@ public:
     Q_INVOKABLE bool plotSignalEnabled(int plotIndex, int row) const;
     Q_INVOKABLE QVariantList plotSignalRows(int plotIndex) const;
     Q_INVOKABLE QColor signalColor(int row) const { return m_signalColors.value(row, QColor("#4ea1ff")); }
+    Q_INVOKABLE QString signalName(int row) const;
     Q_INVOKABLE void attachPlot(QObject *plot, int index = 0);
     Q_INVOKABLE void setLayout(int rows, int columns);
     Q_INVOKABLE void clear();

@@ -199,6 +199,10 @@ void AppController::filterSignals(const QString &text) { m_signals->setFilter(te
 void AppController::setAllSignalsChecked(bool checked) { m_signals->setAllChecked(checked); for (int i = 0; i < m_enabled.size(); ++i) m_enabled[i] = checked; selectSignal(-1); }
 void AppController::togglePlotSignal(int plotIndex, int row) { if (plotIndex < 0 || plotIndex >= m_plots.size() || row < 0 || row >= m_enabled.size()) return; if (m_plotSignals.size() <= plotIndex) m_plotSignals.resize(plotIndex + 1); if (m_plotSignals[plotIndex].contains(row)) m_plotSignals[plotIndex].remove(row); else m_plotSignals[plotIndex].insert(row); refreshPlot(plotIndex); ++m_plotStateRevision; emit plotBindingsChanged(); }
 bool AppController::plotSignalEnabled(int plotIndex, int row) const { return plotIndex >= 0 && plotIndex < m_plotSignals.size() && m_plotSignals.at(plotIndex).contains(row); }
+QString AppController::signalName(int row) const
+{
+    return m_signals->nameAt(row);
+}
 QVariantList AppController::plotSignalRows(int plotIndex) const
 {
     QVariantList rows;

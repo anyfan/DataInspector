@@ -56,8 +56,12 @@ static void updateLineNode(QSGGeometryNode *node, const QVector<QPointF> &segmen
         const QPointF normal(-tangent.y() / length * lineWidth * .5, tangent.x() / length * lineWidth * .5);
         const double x = (p.x() - xmin) / xs * itemWidth;
         const double y = itemHeight - (p.y() - ymin) / ys * itemHeight;
-        vertices[i * 2].set(x + normal.x(), y - normal.y());
-        vertices[i * 2 + 1].set(x - normal.x(), y + normal.y());
+        const double x0 = qBound(0.0, x + normal.x(), itemWidth);
+        const double y0 = qBound(0.0, y - normal.y(), itemHeight);
+        const double x1 = qBound(0.0, x - normal.x(), itemWidth);
+        const double y1 = qBound(0.0, y + normal.y(), itemHeight);
+        vertices[i * 2].set(x0, y0);
+        vertices[i * 2 + 1].set(x1, y1);
     }
     geometry->markVertexDataDirty();
     if (auto *material = static_cast<QSGFlatColorMaterial *>(node->material()))
@@ -67,7 +71,14 @@ static void updateLineNode(QSGGeometryNode *node, const QVector<QPointF> &segmen
 
 } // namespace
 
-PlotItem::PlotItem(QQuickItem *parent) : QQuickItem(parent) { setFlag(ItemHasContents, true); setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton); setAcceptHoverEvents(true); }
+PlotItem::PlotItem(QQuickItem *parent) : QQuickItem(parent)
+{
+    setFlag(ItemHasContents, true);
+    setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
+    setAcceptHoverEvents(true);
+    setClip(true);
+    rebuildTicksLocked();
+}
 double PlotItem::xMinimum() const { QMutexLocker lock(&m_dataMutex); return m_xMinimum; }
 double PlotItem::xMaximum() const { QMutexLocker lock(&m_dataMutex); return m_xMaximum; }
 double PlotItem::yMinimum() const { QMutexLocker lock(&m_dataMutex); return m_yMinimum; }
@@ -251,12 +262,18 @@ void PlotItem::rebuildTicksLocked()
         const double magnitude = qPow(10.0, qFloor(qLn(raw) / qLn(10.0)));
         const double normalized = raw / magnitude;
         const double step = (normalized <= 1.0 ? 1.0 : normalized <= 2.0 ? 2.0 : normalized <= 5.0 ? 5.0 : 10.0) * magnitude;
-        const int first = static_cast<int>(qCeil(lo / step));
-        const int last = static_cast<int>(qFloor(hi / step));
-        for (int i = first; i <= last && ticks.size() < 12; ++i) {
+        const qint64 first = static_cast<qint64>(qCeil(lo / step - 1e-12));
+        const qint64 last = static_cast<qint64>(qFloor(hi / step + 1e-12));
+        for (qint64 i = first; i <= last && ticks.size() < 12; ++i) {
             const double value = i * step;
             ticks.append(QVariantMap{{QStringLiteral("value"), value},
                                      {QStringLiteral("label"), QString::number(value, 'g', 12)}});
+        }
+        if (ticks.isEmpty()) {
+            ticks.append(QVariantMap{{QStringLiteral("value"), lo},
+                                     {QStringLiteral("label"), QString::number(lo, 'g', 12)}});
+            ticks.append(QVariantMap{{QStringLiteral("value"), hi},
+                                     {QStringLiteral("label"), QString::number(hi, 'g', 12)}});
         }
         return ticks;
     };
@@ -313,7 +330,10 @@ QVector<QPointF> PlotItem::buildLod(const Series &series) const
     if (points.isEmpty() || width() <= 1 || m_xMaximum <= m_xMinimum)
         return out;
 
-    const int buckets = qBound(64, qCeil(width() * 1.5), 8192);
+    // Keep the vertex budget proportional to pixels. QCustomPlot's adaptive
+    // sampling follows the same principle and avoids pushing millions of raw
+    // points through the scene graph on every repaint.
+    const int buckets = qBound(64, qCeil(width()), 4096);
     if (series.cachedBuckets == buckets
         && series.cachedXMinimum == m_xMinimum
         && series.cachedXMaximum == m_xMaximum)
