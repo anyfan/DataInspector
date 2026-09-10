@@ -382,7 +382,11 @@ QVector<QPointF> PlotItem::buildLod(const Series &series) const
                 out.append(QPointF(qQNaN(), qQNaN()));
             continue;
         }
-        if (point.x() < m_xMinimum || point.x() > m_xMaximum)
+        // The monotonic fast path deliberately includes one point on each
+        // side of the viewport. Keep those points so a line crossing a narrow
+        // view still has two vertices after LOD reduction.
+        if (!series.monotonicTime
+            && (point.x() < m_xMinimum || point.x() > m_xMaximum))
             continue;
         const int bucket = qBound(0, static_cast<int>((point.x() - m_xMinimum) / bucketWidth), buckets - 1);
         if (bucket != currentBucket) {

@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 3.21)
 project(DataInspector VERSION 0.1 LANGUAGES CXX)
 
+include(CTest)
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -71,3 +73,18 @@ set_target_properties(DataInspector PROPERTIES
     WIN32_EXECUTABLE TRUE
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
+
+if(BUILD_TESTING)
+    add_executable(plotitem_lod_test
+        tests/plotitem_lod_test.cpp
+        src/quick/plotitem.cpp
+        src/quick/plotitem.h
+    )
+    target_include_directories(plotitem_lod_test PRIVATE src/quick)
+    target_link_libraries(plotitem_lod_test PRIVATE Qt6::Core Qt6::Gui Qt6::Quick)
+    add_test(NAME plotitem_lod_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:plotitem_lod_test> -platform offscreen
+    )
+endif()
