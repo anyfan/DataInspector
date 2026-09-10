@@ -61,6 +61,7 @@ signals:
     void cursorDeltaTChanged();
     void cursorValuesChanged();
     void axisTicksChanged();
+    void activated();
     void rangeChanged(double xMinimum, double xMaximum, double yMinimum, double yMaximum);
 protected:
     QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override;

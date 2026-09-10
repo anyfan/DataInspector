@@ -32,7 +32,7 @@ ApplicationWindow {
             Label { text: "DataInspector"; font.pixelSize: 18; font.weight: Font.DemiBold; color: accentColor }
             ToolSeparator { }
             ToolButton { text: "打开"; onClicked: fileDialog.open() }
-            ToolButton { text: "适应"; onClicked: appController.selectSignal(-1) }
+            ToolButton { text: "适应"; onClicked: appController.fitAllPlots() }
             ToolButton { text: "清空"; onClicked: appController.clear() }
             ToolButton { text: "主题"; onClicked: window.darkTheme = !window.darkTheme }
             Label { text: "线宽"; opacity: 0.65 }
@@ -50,24 +50,28 @@ ApplicationWindow {
     RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 10
         Rectangle { Layout.preferredWidth: 280; Layout.fillHeight: true; color: panelColor; border.color: borderColor; radius: 5
             ColumnLayout { anchors.fill: parent; anchors.margins: 10; spacing: 8
-                RowLayout { Layout.fillWidth: true
-                    Label { text: "信号"; font.pixelSize: 15; font.weight: Font.DemiBold }
-                    Label { text: "已选 " + appController.signalModel.checkedCount + " / " + appController.signalModel.rowCount(); opacity: 0.58; Layout.fillWidth: true; horizontalAlignment: Text.AlignRight }
-                }
+                Label { text: "信号 · 子图 " + (appController.activePlotIndex + 1); font.pixelSize: 15; font.weight: Font.DemiBold }
                 Label { text: appController.currentFile.length > 0 ? appController.currentFile : "未加载文件"; elide: Text.ElideMiddle; Layout.fillWidth: true; opacity: 0.62 }
                 RowLayout { Layout.fillWidth: true; spacing: 4
                     TextField { id: signalSearch; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: appController.filterSignals(text) }
                     ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered; ToolTip.text: "清除搜索" }
                 }
-                RowLayout { Layout.fillWidth: true; spacing: 6
-                    Button { text: "全选"; Layout.fillWidth: true; onClicked: appController.setAllSignalsChecked(true) }
-                    Button { text: "清空选择"; Layout.fillWidth: true; onClicked: appController.setAllSignalsChecked(false) }
-                }
-                ListView { id: signalList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: appController.signalModel; section.property: "group"; section.criteria: ViewSection.FullString; section.delegate: Label { width: signalList.width; height: text.length ? 24 : 0; text: section; visible: text.length > 0; color: accentColor; font.pixelSize: 11; font.weight: Font.DemiBold; leftPadding: 6; verticalAlignment: Text.AlignVCenter }
-                    delegate: ItemDelegate { width: signalList.width; highlighted: index === signalList.currentIndex; checkable: true; checked: model.checked; onClicked: { signalList.currentIndex = index; appController.toggleSignal(signalIndex) }
+                ListView { id: signalList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: appController.signalModel; section.property: "groupName"; section.criteria: ViewSection.FullString; section.delegate: Label { width: signalList.width; height: text.length ? 24 : 0; text: section; visible: text.length > 0; color: accentColor; font.pixelSize: 11; font.weight: Font.DemiBold; leftPadding: 6; verticalAlignment: Text.AlignVCenter }
+                    delegate: ItemDelegate {
+                        id: signalDelegate
+                        required property int index
+                        required property string signalName
+                        required property int signalIndex
+                        required property bool signalChecked
+                        required property color signalColor
+                        width: signalList.width
+                        highlighted: index === signalList.currentIndex
+                        checkable: true
+                        checked: signalChecked
+                        onClicked: { signalList.currentIndex = index; appController.toggleSignal(signalIndex) }
                         contentItem: RowLayout { spacing: 8
-                            Rectangle { width: 10; height: 10; radius: 2; color: model.color; Layout.alignment: Qt.AlignVCenter }
-                            Label { text: name; elide: Text.ElideRight; Layout.fillWidth: true; color: highlighted ? accentColor : palette.text }
+                            Rectangle { Layout.preferredWidth: 10; Layout.preferredHeight: 10; radius: 2; color: signalDelegate.signalColor; Layout.alignment: Qt.AlignVCenter }
+                            Label { text: signalDelegate.signalName; elide: Text.ElideRight; Layout.fillWidth: true; color: signalDelegate.highlighted ? accentColor : palette.text }
                         }
                     }
                     ScrollBar.vertical: ScrollBar { }

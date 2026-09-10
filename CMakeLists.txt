@@ -21,6 +21,8 @@ qt_add_executable(DataInspector
     src/quick/plotitem.h
     src/quick/signalmodel.cpp
     src/quick/signalmodel.h
+    src/quick/signalmetadata.cpp
+    src/quick/signalmetadata.h
 )
 
 set_source_files_properties(qml/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
@@ -106,5 +108,51 @@ if(BUILD_TESTING)
         COMMAND ${CMAKE_COMMAND} -E env
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             $<TARGET_FILE:plotitem_lod_test> -platform offscreen
+    )
+
+    add_executable(signalselection_test
+        tests/signalselection_test.cpp
+        src/quick/signalmetadata.cpp
+        src/quick/signalmetadata.h
+        src/quick/signalmodel.cpp
+        src/quick/signalmodel.h
+    )
+    target_include_directories(signalselection_test PRIVATE src/quick)
+    target_link_libraries(signalselection_test PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
+    add_test(NAME signalselection_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:signalselection_test>
+    )
+
+    add_executable(appcontroller_test
+        tests/appcontroller_test.cpp
+        src/quick/appcontroller.cpp
+        src/quick/appcontroller.h
+        src/quick/plotitem.cpp
+        src/quick/plotitem.h
+        src/quick/signalmetadata.cpp
+        src/quick/signalmetadata.h
+        src/quick/signalmodel.cpp
+        src/quick/signalmodel.h
+    )
+    target_include_directories(appcontroller_test PRIVATE src/quick)
+    target_link_libraries(appcontroller_test PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Quick Qt6::Test plot_render_core
+    )
+    if(ENABLE_MAT)
+        target_include_directories(appcontroller_test PRIVATE
+            third_libs/matio-1.5.28/include
+            third_libs/hdf5-1.14.6/include
+            third_libs/zlib131/include
+        )
+        target_link_libraries(appcontroller_test PRIVATE
+            matio_qt6 m ws2_32 wsock32 shlwapi advapi32
+        )
+    endif()
+    add_test(NAME appcontroller_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:appcontroller_test> -platform offscreen
     )
 endif()

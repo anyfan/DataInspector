@@ -19,12 +19,15 @@ Rectangle {
 
     readonly property real axisLeft: 64
     readonly property real axisRight: 18
-    readonly property real axisTop: controller.legendMode === 0 ? 30 : 12
+    readonly property real axisTop: controller.legendMode === 0 && legend.visible
+                                    ? Math.max(30, legend.implicitHeight + 10) : 12
     readonly property real axisBottom: 38
     property alias renderer: plotItem
 
     color: plotColor
-    border.color: frameColor
+    border.color: root.controller.activePlotIndex === root.plotIndex
+                  ? "#0078d4" : frameColor
+    border.width: root.controller.activePlotIndex === root.plotIndex ? 2 : 1
     radius: 3
     clip: true
 
@@ -79,6 +82,7 @@ Rectangle {
             cursorMode: root.graphCursorMode
             z: 1
             Component.onCompleted: root.controller.attachPlot(plotItem, root.plotIndex)
+            onActivated: root.controller.setActivePlot(root.plotIndex)
         }
 
         Rectangle {
@@ -167,21 +171,28 @@ Rectangle {
 
     Flow {
         id: legend
-        x: root.controller.legendMode === 2 ? root.width - width - 6 : 6
+        x: root.controller.legendMode === 2 ? root.width - width - 6
+           : root.controller.legendMode === 0 ? 30 : 6
         y: root.controller.legendMode === 0 ? 4 : axisRect.y + 5
-        width: root.controller.legendMode === 0 ? root.width - 12 : root.width * 0.46
-        visible: root.controller.legendMode !== 3
+        width: root.controller.legendMode === 0 ? root.width - 36 : root.width * 0.46
+        visible: root.controller.legendMode !== 3 && legendRepeater.count > 0
         spacing: 7
         z: 5
 
         Repeater {
+            id: legendRepeater
             model: root.controller.plotStateRevision >= 0
                    ? root.controller.plotSignalRows(root.plotIndex) : []
             delegate: Item {
                 required property int modelData
                 property int signalRow: modelData
-                implicitWidth: legendLabel.implicitWidth + 18
+                implicitWidth: Math.min(legend.width,
+                                        legendLabel.implicitWidth + 18)
                 implicitHeight: 18
+                opacity: root.controller.plotStateRevision >= 0
+                         && root.controller.plotSignalVisible(root.plotIndex,
+                                                              signalRow)
+                         ? 1.0 : 0.42
 
                 Rectangle {
                     width: 10
@@ -194,12 +205,15 @@ Rectangle {
                     anchors.left: parent.left
                     anchors.leftMargin: 14
                     anchors.verticalCenter: parent.verticalCenter
+                    width: Math.max(0, parent.width - 14)
                     text: root.controller.signalName(parent.signalRow)
+                    elide: Text.ElideRight
                     color: root.textColor
                     font.pixelSize: 10
                 }
                 MouseArea {
                     anchors.fill: parent
+                    onPressed: root.controller.setActivePlot(root.plotIndex)
                     onClicked: root.controller.togglePlotSignal(root.plotIndex,
                                                                  parent.signalRow)
                 }

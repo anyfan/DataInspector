@@ -27,6 +27,7 @@ class AppController final : public QObject
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(int plotRows READ plotRows NOTIFY layoutChanged)
     Q_PROPERTY(int plotColumns READ plotColumns NOTIFY layoutChanged)
+    Q_PROPERTY(int activePlotIndex READ activePlotIndex NOTIFY activePlotChanged)
     Q_PROPERTY(int plotStateRevision READ plotStateRevision NOTIFY plotBindingsChanged)
     Q_PROPERTY(int legendMode READ legendMode WRITE setLegendMode NOTIFY legendModeChanged)
 public:
@@ -38,6 +39,7 @@ public:
     bool loading() const { return m_loading; }
     int plotRows() const { return m_plotRows; }
     int plotColumns() const { return m_plotColumns; }
+    int activePlotIndex() const { return m_signals->activePlot(); }
     int plotStateRevision() const { return m_plotStateRevision; }
     int legendMode() const { return m_legendMode; }
     Q_INVOKABLE bool loadCsv(const QString &filePath);
@@ -48,11 +50,14 @@ public:
     Q_INVOKABLE int checkedSignalCount() const { return m_signals->checkedCount(); }
     Q_INVOKABLE void togglePlotSignal(int plotIndex, int row);
     Q_INVOKABLE bool plotSignalEnabled(int plotIndex, int row) const;
+    Q_INVOKABLE bool plotSignalVisible(int plotIndex, int row) const;
     Q_INVOKABLE QVariantList plotSignalRows(int plotIndex) const;
     Q_INVOKABLE QColor signalColor(int row) const { return m_signalColors.value(row, QColor("#4ea1ff")); }
     Q_INVOKABLE QString signalName(int row) const;
     Q_INVOKABLE void attachPlot(QObject *plot, int index = 0);
     Q_INVOKABLE void setLayout(int rows, int columns);
+    Q_INVOKABLE void setActivePlot(int index);
+    Q_INVOKABLE void fitAllPlots();
     Q_INVOKABLE void clear();
     void setLegendMode(int mode);
 signals:
@@ -61,6 +66,7 @@ signals:
     void loadingChanged();
     void layoutChanged();
     void plotBindingsChanged();
+    void activePlotChanged();
     void legendModeChanged();
 private:
     void onLoadFinished(const QString &path,
@@ -75,9 +81,7 @@ private:
     QString m_status = QStringLiteral("打开 CSV 或 TXT 文件开始查看");
     QString m_currentFile;
     std::shared_ptr<PlotSeriesStore> m_seriesStore;
-    QVector<bool> m_enabled;
     QVector<QColor> m_signalColors;
-    QVector<QSet<int>> m_plotSignals;
     QThread *m_loadThread = nullptr;
     QObject *m_loader = nullptr;
     bool m_loading = false;
