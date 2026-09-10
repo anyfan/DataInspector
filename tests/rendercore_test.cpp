@@ -1,5 +1,6 @@
 #include "render/plotseriesstore.h"
 #include "render/plotlodbuilder.h"
+#include "render/plotgeometrybuilder.h"
 
 #include <QtTest>
 
@@ -17,6 +18,11 @@ private slots:
     void lodFiltersNonMonotonicSeriesToViewportInInputOrder();
     void lodRejectsInvalidRequests();
     void lodCacheReusesOnlyAnExactRequestKey();
+    void geometryBuildsClippedTriangleStrip();
+    void geometryOmitsUndrawableSegments();
+    void geometryKeepsLodSegmentsIndependent();
+    void geometryLineWidthChangesScreenSpaceExpansion();
+    void geometryRejectsInvalidViewTransforms();
 };
 
 void RenderCoreTest::storeGenerationAndSnapshotsAreImmutable()
@@ -177,6 +183,80 @@ void RenderCoreTest::lodCacheReusesOnlyAnExactRequestKey()
     cache.clear();
     cache.resolve(snapshot, key);
     QCOMPARE(cache.rebuildCount(), quint64(3));
+}
+
+void RenderCoreTest::geometryBuildsClippedTriangleStrip()
+{
+    LodResult lod;
+    lod.segments.append({1, QColor("red"), {{-1.0, 0.0}, {2.0, 1.0}}});
+    const GeometryRequest request{PlotViewTransform{0.0, 1.0, 0.0, 1.0,
+                                                    100.0, 50.0}, 4.0};
+    const GeometryResult result = PlotGeometryBuilder::build(lod, request);
+
+    QCOMPARE(result.segments.size(), 1);
+    QCOMPARE(result.segments.at(0).vertices.size(), 4);
+    for (const QPointF &vertex : result.segments.at(0).vertices) {
+        QVERIFY(qIsFinite(vertex.x()));
+        QVERIFY(qIsFinite(vertex.y()));
+        QVERIFY(vertex.x() >= 0.0 && vertex.x() <= 100.0);
+        QVERIFY(vertex.y() >= 0.0 && vertex.y() <= 50.0);
+    }
+}
+
+void RenderCoreTest::geometryOmitsUndrawableSegments()
+{
+    LodResult lod;
+    lod.segments.append({1, QColor("red"), {{0.0, 0.0}}});
+    lod.segments.append({2, QColor("blue"), {{0.5, 0.5}, {0.5, 0.5}}});
+    const auto result = PlotGeometryBuilder::build(
+        lod, GeometryRequest{PlotViewTransform{0.0, 1.0, 0.0, 1.0,
+                                               100.0, 100.0}, 2.0});
+    QVERIFY(result.segments.isEmpty());
+}
+
+void RenderCoreTest::geometryKeepsLodSegmentsIndependent()
+{
+    LodResult lod;
+    lod.segments.append({1, QColor("red"), {{0.0, 0.0}, {0.5, 0.5}}});
+    lod.segments.append({1, QColor("red"), {{0.6, 0.6}, {1.0, 1.0}}});
+    const auto result = PlotGeometryBuilder::build(
+        lod, GeometryRequest{PlotViewTransform{0.0, 1.0, 0.0, 1.0,
+                                               100.0, 100.0}, 2.0});
+    QCOMPARE(result.segments.size(), 2);
+    QCOMPARE(result.segments.at(0).vertices.size(), 4);
+    QCOMPARE(result.segments.at(1).vertices.size(), 4);
+}
+
+void RenderCoreTest::geometryLineWidthChangesScreenSpaceExpansion()
+{
+    LodResult lod;
+    lod.segments.append({1, QColor("red"), {{0.0, 0.5}, {1.0, 0.5}}});
+    const PlotViewTransform transform{0.0, 1.0, 0.0, 1.0, 100.0, 100.0};
+    const auto thin = PlotGeometryBuilder::build(
+        lod, GeometryRequest{transform, 2.0});
+    const auto thick = PlotGeometryBuilder::build(
+        lod, GeometryRequest{transform, 8.0});
+
+    const double thinSpan = qAbs(thin.segments.at(0).vertices.at(0).y()
+                                 - thin.segments.at(0).vertices.at(1).y());
+    const double thickSpan = qAbs(thick.segments.at(0).vertices.at(0).y()
+                                  - thick.segments.at(0).vertices.at(1).y());
+    QCOMPARE(thinSpan, 2.0);
+    QCOMPARE(thickSpan, 8.0);
+}
+
+void RenderCoreTest::geometryRejectsInvalidViewTransforms()
+{
+    LodResult lod;
+    lod.segments.append({1, QColor("red"), {{0.0, 0.0}, {1.0, 1.0}}});
+    QVERIFY(PlotGeometryBuilder::build(
+        lod, GeometryRequest{PlotViewTransform{1.0, 1.0, 0.0, 1.0,
+                                               100.0, 100.0}, 2.0})
+                .segments.isEmpty());
+    QVERIFY(PlotGeometryBuilder::build(
+        lod, GeometryRequest{PlotViewTransform{0.0, 1.0, 0.0, 1.0,
+                                               0.0, 100.0}, 2.0})
+                .segments.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(RenderCoreTest)

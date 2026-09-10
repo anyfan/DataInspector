@@ -81,6 +81,8 @@ if(BUILD_TESTING)
         src/quick/render/plotseriesstore.h
         src/quick/render/plotlodbuilder.cpp
         src/quick/render/plotlodbuilder.h
+        src/quick/render/plotgeometrybuilder.cpp
+        src/quick/render/plotgeometrybuilder.h
     )
     target_include_directories(plot_render_core PUBLIC src/quick)
     target_link_libraries(plot_render_core PUBLIC Qt6::Core Qt6::Gui)
