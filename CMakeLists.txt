@@ -75,13 +75,29 @@ set_target_properties(DataInspector PROPERTIES
 )
 
 if(BUILD_TESTING)
+    find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+    add_library(plot_render_core STATIC
+        src/quick/render/plotseriesstore.cpp
+        src/quick/render/plotseriesstore.h
+    )
+    target_include_directories(plot_render_core PUBLIC src/quick)
+    target_link_libraries(plot_render_core PUBLIC Qt6::Core Qt6::Gui)
+
+    add_executable(rendercore_test tests/rendercore_test.cpp)
+    target_link_libraries(rendercore_test PRIVATE plot_render_core Qt6::Test)
+    add_test(NAME rendercore_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:rendercore_test>
+    )
+
     add_executable(plotitem_lod_test
         tests/plotitem_lod_test.cpp
         src/quick/plotitem.cpp
         src/quick/plotitem.h
     )
     target_include_directories(plotitem_lod_test PRIVATE src/quick)
-    target_link_libraries(plotitem_lod_test PRIVATE Qt6::Core Qt6::Gui Qt6::Quick)
+    target_link_libraries(plotitem_lod_test PRIVATE Qt6::Core Qt6::Gui Qt6::Quick plot_render_core)
     add_test(NAME plotitem_lod_test
         COMMAND ${CMAKE_COMMAND} -E env
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
