@@ -74,19 +74,19 @@ set_target_properties(DataInspector PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+add_library(plot_render_core STATIC
+    src/quick/render/plotseriesstore.cpp
+    src/quick/render/plotseriesstore.h
+    src/quick/render/plotlodbuilder.cpp
+    src/quick/render/plotlodbuilder.h
+    src/quick/render/plotgeometrybuilder.cpp
+    src/quick/render/plotgeometrybuilder.h
+)
+target_include_directories(plot_render_core PUBLIC src/quick)
+target_link_libraries(plot_render_core PUBLIC Qt6::Core Qt6::Gui)
+
 if(BUILD_TESTING)
     find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
-    add_library(plot_render_core STATIC
-        src/quick/render/plotseriesstore.cpp
-        src/quick/render/plotseriesstore.h
-        src/quick/render/plotlodbuilder.cpp
-        src/quick/render/plotlodbuilder.h
-        src/quick/render/plotgeometrybuilder.cpp
-        src/quick/render/plotgeometrybuilder.h
-    )
-    target_include_directories(plot_render_core PUBLIC src/quick)
-    target_link_libraries(plot_render_core PUBLIC Qt6::Core Qt6::Gui)
-
     add_executable(rendercore_test tests/rendercore_test.cpp)
     target_link_libraries(rendercore_test PRIVATE plot_render_core Qt6::Test)
     add_test(NAME rendercore_test
