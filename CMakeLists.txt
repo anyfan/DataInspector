@@ -79,6 +79,8 @@ if(BUILD_TESTING)
     add_library(plot_render_core STATIC
         src/quick/render/plotseriesstore.cpp
         src/quick/render/plotseriesstore.h
+        src/quick/render/plotlodbuilder.cpp
+        src/quick/render/plotlodbuilder.h
     )
     target_include_directories(plot_render_core PUBLIC src/quick)
     target_link_libraries(plot_render_core PUBLIC Qt6::Core Qt6::Gui)

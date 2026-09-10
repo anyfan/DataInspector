@@ -1,4 +1,5 @@
 #include "render/plotseriesstore.h"
+#include "render/plotlodbuilder.h"
 
 #include <QtTest>
 
@@ -10,6 +11,12 @@ private slots:
     void storeGenerationAndSnapshotsAreImmutable();
     void storeQueriesRawSamplesWithoutInterpolation();
     void storeSkipsUnknownIdsAndIgnoresInvalidBounds();
+    void lodKeepsBothNeighborsAcrossNarrowViewport();
+    void lodPreservesSampleOrderForBucketExtrema();
+    void lodKeepsRepeatedTimesAndSplitsAtNan();
+    void lodFiltersNonMonotonicSeriesToViewportInInputOrder();
+    void lodRejectsInvalidRequests();
+    void lodCacheReusesOnlyAnExactRequestKey();
 };
 
 void RenderCoreTest::storeGenerationAndSnapshotsAreImmutable()
@@ -83,6 +90,93 @@ void RenderCoreTest::storeSkipsUnknownIdsAndIgnoresInvalidBounds()
     QCOMPARE(samples.at(0).y, 7.0);
     QCOMPARE(samples.at(1).x, 1.0);
     QCOMPARE(samples.at(1).y, 7.0);
+}
+
+void RenderCoreTest::lodKeepsBothNeighborsAcrossNarrowViewport()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{7, {0.0, 1.0}, {0.0, 1.0}, QColor("red")}});
+    const auto snapshot = store.snapshot({7});
+    const LodRequestKey key{snapshot.generation, {7}, 0.4, 0.6, 800, 1};
+
+    const LodResult result = PlotLodBuilder::build(snapshot, key);
+    QCOMPARE(result.segments.size(), 1);
+    QCOMPARE(result.segments.at(0).points,
+             QVector<QPointF>({QPointF(0.0, 0.0), QPointF(1.0, 1.0)}));
+}
+
+void RenderCoreTest::lodPreservesSampleOrderForBucketExtrema()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{3, {0.0, 0.1, 0.2, 0.3},
+                          {5.0, 9.0, 1.0, 6.0}, QColor("green")}});
+    const auto snapshot = store.snapshot({3});
+    const auto result = PlotLodBuilder::build(
+        snapshot, {snapshot.generation, {3}, 0.0, 0.3, 1, 1});
+    QCOMPARE(result.segments.size(), 1);
+    QCOMPARE(result.segments.at(0).points,
+             QVector<QPointF>({QPointF(0.1, 9.0), QPointF(0.2, 1.0)}));
+}
+
+void RenderCoreTest::lodKeepsRepeatedTimesAndSplitsAtNan()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{5, {0.0, 0.0, 1.0, 2.0},
+                          {1.0, 2.0, qQNaN(), 4.0}, QColor("cyan")}});
+    const auto snapshot = store.snapshot({5});
+    const auto result = PlotLodBuilder::build(
+        snapshot, {snapshot.generation, {5}, 0.0, 2.0, 16, 1});
+    QCOMPARE(result.segments.size(), 2);
+    QCOMPARE(result.segments.at(0).points.size(), 2);
+    QCOMPARE(result.segments.at(0).points.at(0), QPointF(0.0, 1.0));
+    QCOMPARE(result.segments.at(0).points.at(1), QPointF(0.0, 2.0));
+    QCOMPARE(result.segments.at(1).points, QVector<QPointF>({QPointF(2.0, 4.0)}));
+}
+
+void RenderCoreTest::lodFiltersNonMonotonicSeriesToViewportInInputOrder()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{9, {2.0, 0.5, 1.5, -1.0},
+                          {20.0, 5.0, 15.0, -10.0}, QColor("yellow")}});
+    const auto snapshot = store.snapshot({9});
+    const auto result = PlotLodBuilder::build(
+        snapshot, {snapshot.generation, {9}, 0.0, 1.0, 10, 1});
+    QCOMPARE(result.segments.size(), 1);
+    QCOMPARE(result.segments.at(0).points,
+             QVector<QPointF>({QPointF(0.5, 5.0)}));
+}
+
+void RenderCoreTest::lodRejectsInvalidRequests()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{1, {0.0, 1.0}, {0.0, 1.0}, QColor("red")}});
+    const auto snapshot = store.snapshot({1});
+    QVERIFY(PlotLodBuilder::build(
+        snapshot, {snapshot.generation, {1}, 1.0, 1.0, 10, 1}).segments.isEmpty());
+    QVERIFY(PlotLodBuilder::build(
+        snapshot, {snapshot.generation, {1}, qQNaN(), 1.0, 10, 1}).segments.isEmpty());
+    QVERIFY(PlotLodBuilder::build(
+        snapshot, {snapshot.generation, {1}, 0.0, 1.0, 0, 1}).segments.isEmpty());
+}
+
+void RenderCoreTest::lodCacheReusesOnlyAnExactRequestKey()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{1, {0.0, 1.0}, {0.0, 1.0}, QColor("red")}});
+    const auto snapshot = store.snapshot({1});
+    PlotLodCache cache;
+    LodRequestKey key{snapshot.generation, {1}, 0.0, 1.0, 100, 1};
+
+    cache.resolve(snapshot, key);
+    cache.resolve(snapshot, key);
+    QCOMPARE(cache.rebuildCount(), quint64(1));
+
+    key.bucketCount = 101;
+    cache.resolve(snapshot, key);
+    QCOMPARE(cache.rebuildCount(), quint64(2));
+    cache.clear();
+    cache.resolve(snapshot, key);
+    QCOMPARE(cache.rebuildCount(), quint64(3));
 }
 
 QTEST_GUILESS_MAIN(RenderCoreTest)
