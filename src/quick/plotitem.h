@@ -4,6 +4,9 @@
 #include <QVector>
 #include <QMutex>
 #include <QVariantList>
+#include <memory>
+
+#include "render/plotseriesstore.h"
 
 class PlotItem : public QQuickItem
 {
@@ -43,11 +46,10 @@ public:
     void setLineWidth(double width);
     void setCursorEnabled(bool enabled);
     void setCursorMode(int mode);
+    void setSeriesStore(const std::shared_ptr<const PlotSeriesStore> &store);
+    void setVisibleSeries(const QVector<PlotSeriesId> &orderedIds);
     Q_INVOKABLE void setCursorX(double x, int cursorIndex = 1);
     void setCursorPosition(double x, int cursorIndex = 1);
-    Q_INVOKABLE void setSeries(const QVector<double> &time, const QVector<double> &values);
-    Q_INVOKABLE void appendSeries(const QVector<double> &time, const QVector<double> &values, const QColor &color);
-    Q_INVOKABLE void clearSeries();
     Q_INVOKABLE void fitView();
     Q_INVOKABLE void fitY();
     Q_INVOKABLE void setXRange(double xMinimum, double xMaximum);
@@ -68,23 +70,17 @@ protected:
     void wheelEvent(QWheelEvent *event) override;
     void hoverMoveEvent(QHoverEvent *event) override;
 private:
-    struct Series {
-        QVector<QPointF> points;
-        QColor color;
-        bool monotonicTime = true;
-        mutable double cachedXMinimum = 0.0;
-        mutable double cachedXMaximum = 0.0;
-        mutable int cachedBuckets = 0;
-        mutable QVector<QPointF> cachedLod;
-    };
     double nearestRawX(double x) const;
     void updateCursorValuesLocked();
     void rebuildTicksLocked();
     bool cursorHit(double pixelX, int *cursorIndex) const;
-    QVector<QPointF> buildLod(const Series &series) const;
+    void refreshSnapshotLocked();
+    QVector<QPointF> buildLod(const PlotSeriesData &series) const;
     void setRange(double xMinimum, double xMaximum, double yMinimum, double yMaximum);
     QPointF pixelToData(const QPointF &pixel) const;
-    QVector<Series> m_series;
+    std::shared_ptr<const PlotSeriesStore> m_seriesStore;
+    QVector<PlotSeriesId> m_visibleSeries;
+    PlotSeriesSnapshot m_seriesSnapshot;
     double m_xMinimum = 0.0, m_xMaximum = 1.0, m_yMinimum = -1.0, m_yMaximum = 1.0;
     double m_lineWidth = 2.0;
     bool m_cursorEnabled = false;

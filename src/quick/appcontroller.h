@@ -5,7 +5,9 @@
 #include <QColor>
 #include <QSet>
 #include <QVariantList>
+#include <memory>
 #include "signalmodel.h"
+#include "render/plotseriesstore.h"
 class PlotItem;
 
 struct LoadedTable
@@ -72,8 +74,7 @@ private:
     int m_plotColumns = 1;
     QString m_status = QStringLiteral("打开 CSV 或 TXT 文件开始查看");
     QString m_currentFile;
-    QVector<LoadedTable> m_tables;
-    QVector<QPair<int, int>> m_signalLocations;
+    std::shared_ptr<PlotSeriesStore> m_seriesStore;
     QVector<bool> m_enabled;
     QVector<QColor> m_signalColors;
     QVector<QSet<int>> m_plotSignals;

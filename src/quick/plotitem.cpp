@@ -155,62 +155,63 @@ void PlotItem::setCursorPosition(double x, int cursorIndex)
     }
     emit cursorChanged(); emit cursorDeltaTChanged(); emit cursorValuesChanged(); update();
 }
-void PlotItem::setSeries(const QVector<double> &time, const QVector<double> &values)
+void PlotItem::setSeriesStore(const std::shared_ptr<const PlotSeriesStore> &store)
 {
-    clearSeries();
-    appendSeries(time, values, QColor("#4ea1ff"));
-}
-void PlotItem::appendSeries(const QVector<double> &time, const QVector<double> &values, const QColor &color)
-{
-    QMutexLocker lock(&m_dataMutex);
-    Series series; const int n = qMin(time.size(), values.size()); series.points.reserve(n); series.color = color.isValid() ? color : QColor("#4ea1ff");
-    double previousTime = -std::numeric_limits<double>::infinity();
-    for (int i = 0; i < n; ++i) {
-        const double timestamp = time.at(i);
-        const double value = values.at(i);
-        if (!qIsFinite(timestamp)) {
-            series.monotonicTime = false;
-            series.points.append(QPointF(qQNaN(), qQNaN()));
-            continue;
-        }
-        if (timestamp < previousTime)
-            series.monotonicTime = false;
-        previousTime = timestamp;
-        series.points.append(QPointF(timestamp, qIsFinite(value) ? value : qQNaN()));
-    }
-    m_series.append(std::move(series));
-    m_cursorValues.resize(m_series.size());
-    updateCursorValuesLocked();
-    update();
-}
-void PlotItem::clearSeries() { { QMutexLocker lock(&m_dataMutex); m_series.clear(); m_cursorValues.clear(); } setRange(0, 1, -1, 1); }
-void PlotItem::fitView()
-{
-    double xmin = std::numeric_limits<double>::max(), xmax = std::numeric_limits<double>::lowest(), ymin = xmin, ymax = xmax;
     {
         QMutexLocker lock(&m_dataMutex);
-        for (const Series &series : std::as_const(m_series))
-            for (const QPointF &p : series.points)
-                if (qIsFinite(p.x()) && qIsFinite(p.y())) { xmin = qMin(xmin, p.x()); xmax = qMax(xmax, p.x()); ymin = qMin(ymin, p.y()); ymax = qMax(ymax, p.y()); }
+        m_seriesStore = store;
+        refreshSnapshotLocked();
+        updateCursorValuesLocked();
     }
-    if (xmin == std::numeric_limits<double>::max()) { setRange(0, 1, -1, 1); return; }
+    emit cursorValuesChanged();
+    update();
+}
+
+void PlotItem::setVisibleSeries(const QVector<PlotSeriesId> &orderedIds)
+{
+    QVector<PlotSeriesId> uniqueIds;
+    uniqueIds.reserve(orderedIds.size());
+    for (PlotSeriesId id : orderedIds) {
+        if (id >= 0 && !uniqueIds.contains(id))
+            uniqueIds.append(id);
+    }
+    {
+        QMutexLocker lock(&m_dataMutex);
+        m_visibleSeries = std::move(uniqueIds);
+        refreshSnapshotLocked();
+        updateCursorValuesLocked();
+    }
+    emit cursorValuesChanged();
+    update();
+}
+
+void PlotItem::refreshSnapshotLocked()
+{
+    m_seriesSnapshot = m_seriesStore
+            ? m_seriesStore->snapshot(m_visibleSeries) : PlotSeriesSnapshot{};
+    m_cursorValues.resize(m_seriesSnapshot.series.size());
+}
+
+void PlotItem::fitView()
+{
+    std::optional<PlotBounds> plotBounds;
+    {
+        QMutexLocker lock(&m_dataMutex);
+        plotBounds = PlotSeriesStore::bounds(m_seriesSnapshot);
+    }
+    if (!plotBounds.has_value()) { setRange(0, 1, -1, 1); return; }
+    double xmin = plotBounds->xMinimum, xmax = plotBounds->xMaximum;
+    double ymin = plotBounds->yMinimum, ymax = plotBounds->yMaximum;
     if (qFuzzyCompare(xmin, xmax)) { xmin -= .5; xmax += .5; } else { const double p = qMax((xmax-xmin)*.02, 1e-9); xmin -= p; xmax += p; }
     if (qFuzzyCompare(ymin, ymax)) { ymin -= .5; ymax += .5; } else { const double p = qMax((ymax-ymin)*.08, 1e-9); ymin -= p; ymax += p; }
     setRange(xmin, xmax, ymin, ymax);
 }
 void PlotItem::fitY()
 {
-    double ymin = std::numeric_limits<double>::max();
-    double ymax = std::numeric_limits<double>::lowest();
+    std::optional<PlotBounds> plotBounds;
     {
         QMutexLocker lock(&m_dataMutex);
-        for (const Series &series : std::as_const(m_series)) {
-            for (const QPointF &p : series.points) {
-                if (!qIsFinite(p.x()) || !qIsFinite(p.y())) continue;
-                ymin = qMin(ymin, p.y());
-                ymax = qMax(ymax, p.y());
-            }
-        }
+        plotBounds = PlotSeriesStore::bounds(m_seriesSnapshot);
     }
     double xmin, xmax;
     {
@@ -218,10 +219,12 @@ void PlotItem::fitY()
         xmin = m_xMinimum;
         xmax = m_xMaximum;
     }
-    if (ymin == std::numeric_limits<double>::max()) {
+    if (!plotBounds.has_value()) {
         setRange(xmin, xmax, -1.0, 1.0);
         return;
     }
+    double ymin = plotBounds->yMinimum;
+    double ymax = plotBounds->yMaximum;
     if (qFuzzyCompare(ymin, ymax)) {
         ymin -= .5;
         ymax += .5;
@@ -241,16 +244,8 @@ void PlotItem::setXRange(double xmin, double xmax)
 
 double PlotItem::nearestRawX(double x) const
 {
-    double nearest = x;
-    double distance = std::numeric_limits<double>::max();
-    for (const Series &series : std::as_const(m_series)) {
-        for (const QPointF &point : series.points) {
-            if (!qIsFinite(point.x())) continue;
-            const double d = qAbs(point.x() - x);
-            if (d < distance) { distance = d; nearest = point.x(); }
-        }
-    }
-    return distance == std::numeric_limits<double>::max() ? x : nearest;
+    const auto nearest = PlotSeriesStore::nearestX(m_seriesSnapshot, x);
+    return nearest.has_value() ? *nearest : x;
 }
 
 void PlotItem::rebuildTicksLocked()
@@ -285,16 +280,21 @@ void PlotItem::updateCursorValuesLocked()
 {
     m_cursorReadouts.clear();
     if (m_cursorMode == NoCursor) return;
-    m_cursorValues.resize(m_series.size());
+    m_cursorValues.resize(m_seriesSnapshot.series.size());
     const double keys[] = {m_cursorX1, m_cursorX2};
-    for (int s = 0; s < m_series.size(); ++s) {
+    for (int s = 0; s < m_seriesSnapshot.series.size(); ++s) {
         m_cursorValues[s].resize(m_cursorMode == DoubleCursor ? 2 : 1);
         for (int c = 0; c < m_cursorValues[s].size(); ++c) {
-            double value = qQNaN(), best = std::numeric_limits<double>::max();
-            for (const QPointF &point : m_series.at(s).points) {
-                if (!qIsFinite(point.x()) || !qIsFinite(point.y())) continue;
-                const double d = qAbs(point.x() - keys[c]);
-                if (d < best) { best = d; value = point.y(); }
+            double value = qQNaN();
+            QColor color;
+            const QVector<PlotSample> samples = PlotSeriesStore::nearestSamples(
+                m_seriesSnapshot, keys[c]);
+            for (const PlotSample &sample : samples) {
+                if (sample.id == m_seriesSnapshot.series.at(s)->id) {
+                    value = sample.y;
+                    color = sample.color;
+                    break;
+                }
             }
             m_cursorValues[s][c] = value;
             if (qIsFinite(value)) {
@@ -306,7 +306,7 @@ void PlotItem::updateCursorValuesLocked()
                                                     {QStringLiteral("y"), value},
                                                     {QStringLiteral("text"), QString::number(value, 'g', 8)},
                                                     {QStringLiteral("rawText"), rawText},
-                                                    {QStringLiteral("color"), m_series.at(s).color}});
+                                                    {QStringLiteral("color"), color}});
             }
         }
     }
@@ -323,7 +323,7 @@ bool PlotItem::cursorHit(double pixelX, int *cursorIndex) const
     if (m_cursorMode == DoubleCursor && d2 <= tolerance) { if (cursorIndex) *cursorIndex = 2; return true; }
     return false;
 }
-QVector<QPointF> PlotItem::buildLod(const Series &series) const
+QVector<QPointF> PlotItem::buildLod(const PlotSeriesData &series) const
 {
     QVector<QPointF> out;
     const QVector<QPointF> &points = series.points;
@@ -334,11 +334,6 @@ QVector<QPointF> PlotItem::buildLod(const Series &series) const
     // sampling follows the same principle and avoids pushing millions of raw
     // points through the scene graph on every repaint.
     const int buckets = qBound(64, qCeil(width()), 4096);
-    if (series.cachedBuckets == buckets
-        && series.cachedXMinimum == m_xMinimum
-        && series.cachedXMaximum == m_xMaximum)
-        return series.cachedLod;
-
     const double span = m_xMaximum - m_xMinimum;
     const double bucketWidth = span / buckets;
     out.reserve(buckets * 2);
@@ -404,10 +399,6 @@ QVector<QPointF> PlotItem::buildLod(const Series &series) const
     flush();
     while (!out.isEmpty() && qIsNaN(out.constLast().x()))
         out.removeLast();
-    series.cachedXMinimum = m_xMinimum;
-    series.cachedXMaximum = m_xMaximum;
-    series.cachedBuckets = buckets;
-    series.cachedLod = out;
     return out;
 }
 QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
@@ -419,7 +410,7 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     const double ys = qMax(m_yMaximum - m_yMinimum, 1e-12);
     QVector<QVector<QPointF>> segments;
     QVector<QColor> segmentColors;
-    auto collectSeries = [&](const Series &series) {
+    auto collectSeries = [&](const PlotSeriesData &series) {
         const QVector<QPointF> lod = buildLod(series);
         QVector<QPointF> segment;
         auto addSegment = [&]() {
@@ -435,7 +426,8 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         }
         addSegment();
     };
-    for (const Series &series : std::as_const(m_series)) collectSeries(series);
+    for (const PlotSeriesDataPtr &series : m_seriesSnapshot.series)
+        if (series) collectSeries(*series);
 
     while (root->lineNodes.size() < segments.size())
         createLineNode(root);

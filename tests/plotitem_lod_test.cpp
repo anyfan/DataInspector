@@ -1,4 +1,5 @@
 #include "plotitem.h"
+#include "render/plotseriesstore.h"
 
 #include <QGuiApplication>
 #include <QSGGeometryNode>
@@ -22,7 +23,10 @@ int main(int argc, char *argv[])
     TestPlotItem plot;
     plot.setWidth(800);
     plot.setHeight(400);
-    plot.appendSeries({0.0, 1.0}, {0.0, 1.0}, QColor("#4ea1ff"));
+    auto store = std::make_shared<PlotSeriesStore>();
+    store->replaceSeries({{7, {0.0, 1.0}, {0.0, 1.0}, QColor("#4ea1ff")}});
+    plot.setSeriesStore(store);
+    plot.setVisibleSeries({7});
     plot.setXRange(0.4, 0.6);
 
     QSGNode *root = plot.paint();

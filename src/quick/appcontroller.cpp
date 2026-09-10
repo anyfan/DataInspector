@@ -153,7 +153,9 @@ private:
 
 } // namespace
 
-AppController::AppController(QObject *parent) : QObject(parent), m_signals(new SignalModel(this))
+AppController::AppController(QObject *parent)
+    : QObject(parent), m_signals(new SignalModel(this)),
+      m_seriesStore(std::make_shared<PlotSeriesStore>())
 {
     qRegisterMetaType<LoadedTable>();
     qRegisterMetaType<QVector<LoadedTable>>();
@@ -227,6 +229,7 @@ void AppController::attachPlot(QObject *plot, int index)
     if (index >= m_plots.size()) m_plots.resize(index + 1);
     if (index >= m_plotSignals.size()) m_plotSignals.resize(index + 1);
     m_plots[index] = item;
+    item->setSeriesStore(m_seriesStore);
     connect(item, &PlotItem::rangeChanged, this,
             [this, item](double xmin, double xmax, double, double) {
                 if (m_syncingRanges) return;
@@ -249,7 +252,7 @@ void AppController::attachPlot(QObject *plot, int index)
         }
         m_syncingCursors = false;
     });
-    if (!m_tables.isEmpty()) {
+    if (!m_enabled.isEmpty()) {
         if (m_plotSignals[index].isEmpty())
             for (int i = 0; i < m_enabled.size(); ++i)
                 if (m_enabled.value(i)) m_plotSignals[index].insert(i);
@@ -277,23 +280,61 @@ void AppController::setLayout(int rows, int columns)
     emit layoutChanged();
     emit plotBindingsChanged();
 }
-void AppController::clear() { m_tables.clear(); m_signalLocations.clear(); m_enabled.clear(); m_signalColors.clear(); m_plotSignals.clear(); m_signals->setNames({}); m_currentFile.clear(); emit currentFileChanged(); for (PlotItem *plot : std::as_const(m_plots)) if (plot) plot->clearSeries(); setStatus(QStringLiteral("已清空")); }
+void AppController::clear()
+{
+    m_seriesStore->clear();
+    m_enabled.clear();
+    m_signalColors.clear();
+    m_plotSignals.clear();
+    m_signals->setNames({});
+    m_currentFile.clear();
+    emit currentFileChanged();
+    for (PlotItem *plot : std::as_const(m_plots))
+        if (plot)
+            plot->setVisibleSeries({});
+    setStatus(QStringLiteral("已清空"));
+}
 void AppController::setStatus(const QString &status) { if (m_status == status) return; m_status = status; emit statusChanged(); }
 
 void AppController::onLoadFinished(const QString &path, const QVector<LoadedTable> &tables, int skipped, const QString &error)
 {
     m_loading = false; emit loadingChanged(); if (!error.isEmpty()) { setStatus(error); return; }
-    m_tables = tables; m_signalLocations.clear(); QStringList names;
-    const bool multiple = m_tables.size() > 1;
-    for (int tableIndex = 0; tableIndex < m_tables.size(); ++tableIndex) {
-        const auto &table = m_tables.at(tableIndex);
+    QStringList names;
+    const bool multiple = tables.size() > 1;
+    for (int tableIndex = 0; tableIndex < tables.size(); ++tableIndex) {
+        const auto &table = tables.at(tableIndex);
         for (int signalIndex = 0; signalIndex < table.signalNames.size(); ++signalIndex) {
             names.append(multiple ? table.name + QStringLiteral(" / ") + table.signalNames.at(signalIndex) : table.signalNames.at(signalIndex));
-            m_signalLocations.append({tableIndex, signalIndex});
         }
     }
-    m_enabled.fill(false, names.size()); m_signalColors.resize(names.size()); for (int i = 0; i < names.size(); ++i) m_signalColors[i] = QColor::fromHsv((i * 47) % 360, 190, 230); m_plotSignals.clear(); m_plotSignals.resize(m_plots.size()); m_signals->setNames(names, m_signalColors); ++m_plotStateRevision; emit plotBindingsChanged(); m_currentFile = QFileInfo(path).fileName(); emit currentFileChanged(); selectSignal(0); for (PlotItem *plot : std::as_const(m_plots)) if (plot) plot->fitView();
-    qint64 rows = 0; for (const auto &table : m_tables) rows += table.time.size();
+    m_enabled.fill(false, names.size());
+    m_signalColors.resize(names.size());
+    for (int i = 0; i < names.size(); ++i)
+        m_signalColors[i] = QColor::fromHsv((i * 47) % 360, 190, 230);
+
+    QVector<PlotSeriesInput> inputs;
+    inputs.reserve(names.size());
+    int signalId = 0;
+    for (const LoadedTable &table : tables) {
+        for (int signalIndex = 0; signalIndex < table.signalNames.size(); ++signalIndex) {
+            inputs.append({signalId, table.time, table.values.at(signalIndex),
+                           m_signalColors.at(signalId)});
+            ++signalId;
+        }
+    }
+    m_seriesStore->replaceSeries(inputs);
+    m_plotSignals.clear();
+    m_plotSignals.resize(m_plots.size());
+    m_signals->setNames(names, m_signalColors);
+    ++m_plotStateRevision;
+    emit plotBindingsChanged();
+    m_currentFile = QFileInfo(path).fileName();
+    emit currentFileChanged();
+    selectSignal(0);
+    for (PlotItem *plot : std::as_const(m_plots))
+        if (plot)
+            plot->fitView();
+    qint64 rows = 0; for (const auto &table : tables) rows += table.time.size();
     setStatus(QStringLiteral("已加载 %1：%2 行，%3 个信号%4").arg(m_currentFile).arg(rows).arg(names.size()).arg(skipped ? QStringLiteral("，跳过 %1 行").arg(skipped) : QString()));
 }
 
@@ -307,9 +348,15 @@ void AppController::refreshPlot(int index, bool fitY)
         || !qFuzzyCompare(oldXMaximum, 1.0)
         || !qFuzzyCompare(plot->yMinimum(), -1.0)
         || !qFuzzyCompare(plot->yMaximum(), 1.0);
-    plot->clearSeries();
     const QSet<int> rows = m_plotSignals.value(index);
-    for (int i : rows) if (i >= 0 && i < m_signalLocations.size()) { const auto location = m_signalLocations.at(i); const auto &table = m_tables.at(location.first); plot->appendSeries(table.time, table.values.at(location.second), m_signalColors.value(i)); }
+    QList<int> sortedRows = rows.values();
+    std::sort(sortedRows.begin(), sortedRows.end());
+    QVector<PlotSeriesId> visibleIds;
+    visibleIds.reserve(sortedRows.size());
+    for (int row : sortedRows)
+        if (row >= 0 && row < m_signalColors.size())
+            visibleIds.append(row);
+    plot->setVisibleSeries(visibleIds);
     if (fitY) {
         if (preserveX) {
             plot->setXRange(oldXMinimum, oldXMaximum);
