@@ -1,4 +1,5 @@
 #include "plotitem.h"
+#include "render/plotgeometrybuilder.h"
 #include <QMouseEvent>
 #include <QSGFlatColorMaterial>
 #include <QSGGeometryNode>
@@ -35,37 +36,20 @@ static QSGGeometryNode *createLineNode(PlotRoot *root)
     return node;
 }
 
-static void updateLineNode(QSGGeometryNode *node, const QVector<QPointF> &segment,
-                           const QColor &color, double xmin, double xs,
-                           double ymin, double ys, double itemWidth,
-                           double itemHeight, double lineWidth)
+static void uploadLineNode(QSGGeometryNode *node,
+                           const GeometrySegment &segment)
 {
     auto *geometry = node->geometry();
-    const int vertexCount = segment.size() * 2;
-    geometry->allocate(vertexCount);
+    geometry->allocate(segment.vertices.size());
     auto *vertices = static_cast<QSGGeometry::Point2D *>(geometry->vertexData());
-    for (int i = 0; i < segment.size(); ++i) {
-        const QPointF p = segment.at(i);
-        const QPointF a = i ? segment.at(i - 1) : p;
-        const QPointF b = i + 1 < segment.size() ? segment.at(i + 1) : p;
-        const QPointF projectedA((a.x() - xmin) / xs * itemWidth, itemHeight - (a.y() - ymin) / ys * itemHeight);
-        const QPointF projectedB((b.x() - xmin) / xs * itemWidth, itemHeight - (b.y() - ymin) / ys * itemHeight);
-        QPointF tangent = projectedB - projectedA;
-        double length = qSqrt(tangent.x() * tangent.x() + tangent.y() * tangent.y());
-        if (length < 1e-12) length = 1.0;
-        const QPointF normal(-tangent.y() / length * lineWidth * .5, tangent.x() / length * lineWidth * .5);
-        const double x = (p.x() - xmin) / xs * itemWidth;
-        const double y = itemHeight - (p.y() - ymin) / ys * itemHeight;
-        const double x0 = qBound(0.0, x + normal.x(), itemWidth);
-        const double y0 = qBound(0.0, y - normal.y(), itemHeight);
-        const double x1 = qBound(0.0, x - normal.x(), itemWidth);
-        const double y1 = qBound(0.0, y + normal.y(), itemHeight);
-        vertices[i * 2].set(x0, y0);
-        vertices[i * 2 + 1].set(x1, y1);
+    for (int i = 0; i < segment.vertices.size(); ++i) {
+        const QPointF point = segment.vertices.at(i);
+        vertices[i].set(static_cast<float>(point.x()),
+                        static_cast<float>(point.y()));
     }
     geometry->markVertexDataDirty();
     if (auto *material = static_cast<QSGFlatColorMaterial *>(node->material()))
-        material->setColor(color);
+        material->setColor(segment.color);
     node->markDirty(QSGNode::DirtyGeometry | QSGNode::DirtyMaterial);
 }
 
@@ -329,7 +313,6 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     auto *root = oldNode ? static_cast<PlotRoot *>(oldNode) : new PlotRoot;
 
     const double xs = qMax(m_xMaximum - m_xMinimum, 1e-12);
-    const double ys = qMax(m_yMaximum - m_yMinimum, 1e-12);
     const int buckets = qBound(64, static_cast<int>(qCeil(width())), 4096);
     const LodRequestKey lodKey{m_seriesSnapshot.generation,
                                m_seriesSnapshot.orderedIds,
@@ -338,23 +321,18 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                                buckets,
                                1};
     const LodResult &lod = m_lodCache.resolve(m_seriesSnapshot, lodKey);
-    QVector<QVector<QPointF>> segments;
-    QVector<QColor> segmentColors;
-    for (const LodSegment &lodSegment : lod.segments) {
-        if (lodSegment.points.size() >= 2) {
-            segments.append(lodSegment.points);
-            segmentColors.append(lodSegment.color);
-        }
-    }
+    const GeometryRequest geometryRequest{
+        {m_xMinimum, m_xMaximum, m_yMinimum, m_yMaximum, width(), height()},
+        m_lineWidth};
+    const GeometryResult geometry = PlotGeometryBuilder::build(
+        lod, geometryRequest);
 
-    while (root->lineNodes.size() < segments.size())
+    while (root->lineNodes.size() < geometry.segments.size())
         createLineNode(root);
     for (int i = 0; i < root->lineNodes.size(); ++i) {
         auto *node = root->lineNodes.at(i);
-        if (i < segments.size()) {
-            updateLineNode(node, segments.at(i), segmentColors.at(i),
-                           m_xMinimum, xs, m_yMinimum, ys,
-                           width(), height(), m_lineWidth);
+        if (i < geometry.segments.size()) {
+            uploadLineNode(node, geometry.segments.at(i));
         } else if (node->geometry()) {
             node->geometry()->allocate(0);
             node->geometry()->markVertexDataDirty();

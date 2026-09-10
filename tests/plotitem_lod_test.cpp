@@ -38,6 +38,17 @@ int main(int argc, char *argv[])
                   << vertexCount << " vertices\n";
         return 1;
     }
+    const auto *vertices = static_cast<const QSGGeometry::Point2D *>(
+        lineNode->geometry()->vertexData());
+    for (int i = 0; i < lineNode->geometry()->vertexCount(); ++i) {
+        if (!qIsFinite(vertices[i].x) || !qIsFinite(vertices[i].y)
+            || vertices[i].x < 0.0f || vertices[i].x > plot.width()
+            || vertices[i].y < 0.0f || vertices[i].y > plot.height()) {
+            std::cerr << "Scene graph received an invalid or unclipped vertex\n";
+            delete root;
+            return 1;
+        }
+    }
 
     plot.setLineWidth(6.0);
     root = plot.paint(root);

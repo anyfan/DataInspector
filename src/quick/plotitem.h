@@ -76,7 +76,6 @@ private:
     void rebuildTicksLocked();
     bool cursorHit(double pixelX, int *cursorIndex) const;
     void refreshSnapshotLocked();
-    QVector<QPointF> buildLod(const PlotSeriesData &series) const;
     void setRange(double xMinimum, double xMaximum, double yMinimum, double yMaximum);
     QPointF pixelToData(const QPointF &pixel) const;
     std::shared_ptr<const PlotSeriesStore> m_seriesStore;
