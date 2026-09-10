@@ -33,12 +33,21 @@ int main(int argc, char *argv[])
     auto *lineNode = dynamic_cast<QSGGeometryNode *>(root->firstChild());
     const int vertexCount = lineNode && lineNode->geometry()
             ? lineNode->geometry()->vertexCount() : 0;
-    delete root;
-
     if (vertexCount != 4) {
         std::cerr << "Expected a two-point line crossing the viewport, got "
                   << vertexCount << " vertices\n";
         return 1;
     }
+
+    plot.setLineWidth(6.0);
+    root = plot.paint(root);
+    lineNode = dynamic_cast<QSGGeometryNode *>(root->firstChild());
+    if (!lineNode || !lineNode->geometry()
+        || lineNode->geometry()->vertexCount() != 4) {
+        std::cerr << "Line geometry disappeared after a visual-only update\n";
+        delete root;
+        return 1;
+    }
+    delete root;
     return 0;
 }

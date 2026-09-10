@@ -7,6 +7,7 @@
 #include <memory>
 
 #include "render/plotseriesstore.h"
+#include "render/plotlodbuilder.h"
 
 class PlotItem : public QQuickItem
 {
@@ -81,6 +82,7 @@ private:
     std::shared_ptr<const PlotSeriesStore> m_seriesStore;
     QVector<PlotSeriesId> m_visibleSeries;
     PlotSeriesSnapshot m_seriesSnapshot;
+    PlotLodCache m_lodCache;
     double m_xMinimum = 0.0, m_xMaximum = 1.0, m_yMinimum = -1.0, m_yMaximum = 1.0;
     double m_lineWidth = 2.0;
     bool m_cursorEnabled = false;

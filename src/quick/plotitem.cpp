@@ -323,84 +323,6 @@ bool PlotItem::cursorHit(double pixelX, int *cursorIndex) const
     if (m_cursorMode == DoubleCursor && d2 <= tolerance) { if (cursorIndex) *cursorIndex = 2; return true; }
     return false;
 }
-QVector<QPointF> PlotItem::buildLod(const PlotSeriesData &series) const
-{
-    QVector<QPointF> out;
-    const QVector<QPointF> &points = series.points;
-    if (points.isEmpty() || width() <= 1 || m_xMaximum <= m_xMinimum)
-        return out;
-
-    // Keep the vertex budget proportional to pixels. QCustomPlot's adaptive
-    // sampling follows the same principle and avoids pushing millions of raw
-    // points through the scene graph on every repaint.
-    const int buckets = qBound(64, qCeil(width()), 4096);
-    const double span = m_xMaximum - m_xMinimum;
-    const double bucketWidth = span / buckets;
-    out.reserve(buckets * 2);
-
-    auto first = points.cbegin();
-    auto last = points.cend();
-    if (series.monotonicTime) {
-        first = std::lower_bound(points.cbegin(), points.cend(), m_xMinimum,
-                                 [](const QPointF &point, double x) { return point.x() < x; });
-        last = std::upper_bound(first, points.cend(), m_xMaximum,
-                                [](double x, const QPointF &point) { return x < point.x(); });
-        // Keep one neighbour on each side so a sparse line still reaches the
-        // viewport boundary instead of visibly popping during a pan.
-        if (first != points.cbegin()) --first;
-        if (last != points.cend()) ++last;
-    }
-
-    int currentBucket = -1;
-    QPointF minimum;
-    QPointF maximum;
-    bool hasPoint = false;
-    auto flush = [&]() {
-        if (!hasPoint)
-            return;
-        if (minimum.x() <= maximum.x()) {
-            out.append(minimum);
-            if (minimum != maximum) out.append(maximum);
-        } else {
-            out.append(maximum);
-            if (minimum != maximum) out.append(minimum);
-        }
-        hasPoint = false;
-    };
-
-    for (auto it = first; it != last; ++it) {
-        const QPointF &point = *it;
-        if (!qIsFinite(point.x()) || !qIsFinite(point.y())) {
-            flush();
-            currentBucket = -1;
-            if (out.isEmpty() || !qIsNaN(out.constLast().x()))
-                out.append(QPointF(qQNaN(), qQNaN()));
-            continue;
-        }
-        // The monotonic fast path deliberately includes one point on each
-        // side of the viewport. Keep those points so a line crossing a narrow
-        // view still has two vertices after LOD reduction.
-        if (!series.monotonicTime
-            && (point.x() < m_xMinimum || point.x() > m_xMaximum))
-            continue;
-        const int bucket = qBound(0, static_cast<int>((point.x() - m_xMinimum) / bucketWidth), buckets - 1);
-        if (bucket != currentBucket) {
-            flush();
-            currentBucket = bucket;
-        }
-        if (!hasPoint) {
-            minimum = maximum = point;
-            hasPoint = true;
-        } else {
-            if (point.y() < minimum.y()) minimum = point;
-            if (point.y() > maximum.y()) maximum = point;
-        }
-    }
-    flush();
-    while (!out.isEmpty() && qIsNaN(out.constLast().x()))
-        out.removeLast();
-    return out;
-}
 QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 {
     QMutexLocker lock(&m_dataMutex);
@@ -408,26 +330,22 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
     const double xs = qMax(m_xMaximum - m_xMinimum, 1e-12);
     const double ys = qMax(m_yMaximum - m_yMinimum, 1e-12);
+    const int buckets = qBound(64, static_cast<int>(qCeil(width())), 4096);
+    const LodRequestKey lodKey{m_seriesSnapshot.generation,
+                               m_seriesSnapshot.orderedIds,
+                               m_xMinimum,
+                               m_xMaximum,
+                               buckets,
+                               1};
+    const LodResult &lod = m_lodCache.resolve(m_seriesSnapshot, lodKey);
     QVector<QVector<QPointF>> segments;
     QVector<QColor> segmentColors;
-    auto collectSeries = [&](const PlotSeriesData &series) {
-        const QVector<QPointF> lod = buildLod(series);
-        QVector<QPointF> segment;
-        auto addSegment = [&]() {
-            if (segment.size() >= 2) {
-                segments.append(segment);
-                segmentColors.append(series.color);
-            }
-            segment.clear();
-        };
-        for (const QPointF &point : lod) {
-            if (qIsFinite(point.x()) && qIsFinite(point.y())) segment.append(point);
-            else addSegment();
+    for (const LodSegment &lodSegment : lod.segments) {
+        if (lodSegment.points.size() >= 2) {
+            segments.append(lodSegment.points);
+            segmentColors.append(lodSegment.color);
         }
-        addSegment();
-    };
-    for (const PlotSeriesDataPtr &series : m_seriesSnapshot.series)
-        if (series) collectSeries(*series);
+    }
 
     while (root->lineNodes.size() < segments.size())
         createLineNode(root);
