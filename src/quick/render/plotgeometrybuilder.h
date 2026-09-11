@@ -18,7 +18,7 @@ struct PlotViewTransform
 struct GeometryRequest
 {
     PlotViewTransform transform;
-    double lineWidth = 1.0;
+    double lineWidth = 2.0;
 };
 
 struct GeometrySegment

@@ -257,7 +257,7 @@ ApplicationWindow {
                         required property int index
                         plotIndex: index
                         controller: appController
-                        graphLineWidth: 1
+                        graphLineWidth: 2
                         graphCursorMode: cursorModeSelector.currentIndex
                         darkTheme: window.darkTheme
                         Layout.fillWidth: true

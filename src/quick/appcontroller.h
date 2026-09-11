@@ -73,7 +73,7 @@ public:
     Q_INVOKABLE void setActivePlot(int index);
     Q_INVOKABLE void fitAllPlots();
     Q_INVOKABLE void clear();
-    void setLegendMode(int mode);
+    Q_INVOKABLE void setLegendMode(int mode);
 signals:
     void statusChanged();
     void currentFileChanged();

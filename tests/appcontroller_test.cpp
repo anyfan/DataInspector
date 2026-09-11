@@ -23,6 +23,7 @@ private slots:
     void customLayoutSupportsLegacyEightByEightRange();
     void replacingAPlotDelegateRestoresItsCurves();
     void qmlUrlListImportsLocalFiles();
+    void qmlCanCallLegendModeSetter();
 };
 
 void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
@@ -54,7 +55,7 @@ void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
     QCOMPARE(controller.signalColor(0), QColor("green"));
     QCOMPARE(controller.signalWidth(0), 5.0);
     QCOMPARE(controller.signalStyle(0), int(Qt::DotLine));
-    QCOMPARE(controller.signalWidth(1), 1.0);
+    QCOMPARE(controller.signalWidth(1), 2.0);
     QVERIFY(controller.plotSignalRows(0).isEmpty());
     QVERIFY(controller.plotSignalRows(1).isEmpty());
 
@@ -234,6 +235,24 @@ void AppControllerTest::qmlUrlListImportsLocalFiles()
                                       Q_RETURN_ARG(QVariant, accepted)));
     QCOMPARE(accepted.toInt(), 1);
     QTRY_COMPARE_WITH_TIMEOUT(controller.loadedFileCount(), 1, 5000);
+}
+
+void AppControllerTest::qmlCanCallLegendModeSetter()
+{
+    AppController controller;
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("testController"),
+                                              &controller);
+    QQmlComponent component(&engine);
+    component.setData(QByteArrayLiteral(
+        "import QtQml\n"
+        "QtObject {\n"
+        "  function submit() { testController.setLegendMode(2) }\n"
+        "}\n"), QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "submit"));
+    QCOMPARE(controller.legendMode(), 2);
 }
 
 QTEST_MAIN(AppControllerTest)

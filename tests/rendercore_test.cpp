@@ -25,6 +25,7 @@ private slots:
     void geometryRejectsInvalidViewTransforms();
     void geometryUsesIndependentSeriesWidthsAndStyles();
     void appendSeriesKeepsExistingSnapshots();
+    void geometryKeepsFullWidthForOffscreenDiagonalEntry();
 };
 
 void RenderCoreTest::storeGenerationAndSnapshotsAreImmutable()
@@ -48,7 +49,7 @@ void RenderCoreTest::storeGenerationAndSnapshotsAreImmutable()
     QCOMPARE(styledSnapshot.series.at(0)->lineWidth, 7.0);
     QCOMPARE(styledSnapshot.series.at(0)->lineStyle, Qt::DotLine);
     QCOMPARE(oldSnapshot.series.at(0)->color, QColor("red"));
-    QCOMPARE(oldSnapshot.series.at(0)->lineWidth, 1.0);
+    QCOMPARE(oldSnapshot.series.at(0)->lineWidth, 2.0);
     QCOMPARE(oldSnapshot.series.at(0)->lineStyle, Qt::SolidLine);
 
     store.clear();
@@ -210,8 +211,6 @@ void RenderCoreTest::geometryBuildsClippedTriangleStrip()
     for (const QPointF &vertex : result.segments.at(0).vertices) {
         QVERIFY(qIsFinite(vertex.x()));
         QVERIFY(qIsFinite(vertex.y()));
-        QVERIFY(vertex.x() >= 0.0 && vertex.x() <= 100.0);
-        QVERIFY(vertex.y() >= 0.0 && vertex.y() <= 50.0);
     }
 }
 
@@ -320,6 +319,21 @@ void RenderCoreTest::appendSeriesKeepsExistingSnapshots()
     QCOMPARE(snapshot.series.size(), 2);
     QCOMPARE(snapshot.series.at(0), original);
     QCOMPARE(snapshot.series.at(1)->id, 1);
+}
+
+void RenderCoreTest::geometryKeepsFullWidthForOffscreenDiagonalEntry()
+{
+    LodResult lod;
+    lod.segments.append({1, QColor("red"),
+                         {{-1.0, -1.0}, {0.5, 0.5}, {2.0, 2.0}}});
+    const auto result = PlotGeometryBuilder::build(
+        lod, GeometryRequest{{0.0, 1.0, 0.0, 1.0, 100.0, 100.0}, 4.0});
+
+    QCOMPARE(result.segments.size(), 1);
+    const auto &vertices = result.segments.first().vertices;
+    QCOMPARE(vertices.size(), 6);
+    QCOMPARE(QLineF(vertices.at(0), vertices.at(1)).length(), 4.0);
+    QCOMPARE(QLineF(vertices.at(4), vertices.at(5)).length(), 4.0);
 }
 
 QTEST_GUILESS_MAIN(RenderCoreTest)

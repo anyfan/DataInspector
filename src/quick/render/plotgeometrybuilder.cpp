@@ -27,11 +27,62 @@ static bool hasUsableLength(const QPointF &vector)
     return vector.x() * vector.x() + vector.y() * vector.y() >= 1e-24;
 }
 
-static QPointF clampToBounds(const QPointF &point,
-                             const PlotViewTransform &transform)
+static std::optional<QPair<QPointF, QPointF>> clipSegment(
+        const QPointF &start, const QPointF &end, double left, double top,
+        double right, double bottom)
 {
-    return {qBound(0.0, point.x(), transform.width),
-            qBound(0.0, point.y(), transform.height)};
+    const QPointF delta = end - start;
+    double t0 = 0.0;
+    double t1 = 1.0;
+    const double p[] = {-delta.x(), delta.x(), -delta.y(), delta.y()};
+    const double q[] = {start.x() - left, right - start.x(),
+                        start.y() - top, bottom - start.y()};
+    for (int i = 0; i < 4; ++i) {
+        if (qFuzzyIsNull(p[i])) {
+            if (q[i] < 0.0) return std::nullopt;
+            continue;
+        }
+        const double ratio = q[i] / p[i];
+        if (p[i] < 0.0) {
+            if (ratio > t1) return std::nullopt;
+            t0 = qMax(t0, ratio);
+        } else {
+            if (ratio < t0) return std::nullopt;
+            t1 = qMin(t1, ratio);
+        }
+    }
+    return std::make_pair(start + delta * t0, start + delta * t1);
+}
+
+static QVector<QVector<QPointF>> clipPolyline(const QVector<QPointF> &points,
+                                              const PlotViewTransform &transform,
+                                              double lineWidth)
+{
+    const double halfWidth = qMax(1.0, lineWidth) * 0.5;
+    const double left = halfWidth;
+    const double top = halfWidth;
+    const double right = transform.width - halfWidth;
+    const double bottom = transform.height - halfWidth;
+    if (right < left || bottom < top) return {};
+
+    QVector<QVector<QPointF>> result;
+    for (int index = 1; index < points.size(); ++index) {
+        const auto clipped = clipSegment(points.at(index - 1), points.at(index),
+                                          left, top, right, bottom);
+        if (!clipped.has_value()) continue;
+        const QPointF start = clipped->first;
+        const QPointF end = clipped->second;
+        if (!hasUsableLength(end - start)) continue;
+        if (result.isEmpty() || result.last().isEmpty()
+            || !qFuzzyCompare(result.last().last().x(), start.x())
+            || !qFuzzyCompare(result.last().last().y(), start.y())) {
+            result.append({start, end});
+        } else if (!qFuzzyCompare(result.last().last().x(), end.x())
+                   || !qFuzzyCompare(result.last().last().y(), end.y())) {
+            result.last().append(end);
+        }
+    }
+    return result;
 }
 
 static QVector<double> dashPattern(Qt::PenStyle style, double width)
@@ -91,8 +142,7 @@ static QVector<QVector<QPointF>> strokePieces(const QVector<QPointF> &points,
 }
 
 static std::optional<QVector<QPointF>> buildBand(const QVector<QPointF> &projected,
-                                                 double lineWidth,
-                                                 const PlotViewTransform &transform)
+                                                 double lineWidth)
 {
     if (projected.size() < 2) return std::nullopt;
     const double halfWidth = qMax(1.0, lineWidth) * 0.5;
@@ -121,8 +171,10 @@ static std::optional<QVector<QPointF>> buildBand(const QVector<QPointF> &project
         const double length = qSqrt(QPointF::dotProduct(tangent, tangent));
         const QPointF normal(-tangent.y() / length * halfWidth,
                              tangent.x() / length * halfWidth);
-        vertices.append(clampToBounds(projected.at(i) + normal, transform));
-        vertices.append(clampToBounds(projected.at(i) - normal, transform));
+        // The centerline was clipped before expansion. Keep both sides of the
+        // screen-space band; clamping them independently collapses corners.
+        vertices.append(projected.at(i) + normal);
+        vertices.append(projected.at(i) - normal);
     }
     return vertices;
 }
@@ -160,24 +212,32 @@ GeometryResult PlotGeometryBuilder::build(const LodResult &lod,
         const QVector<QVector<QPointF>> pieces = strokePieces(
             projected, lodSegment.lineStyle, width);
         if (pieces.size() == 1 && lodSegment.lineStyle == Qt::SolidLine) {
-            auto vertices = buildBand(pieces.first(), width, request.transform);
-            if (vertices.has_value())
-                result.segments.append({lodSegment.seriesId, lodSegment.color,
-                                        std::move(*vertices), false});
+            const QVector<QVector<QPointF>> clippedPieces = clipPolyline(
+                pieces.first(), request.transform, width);
+            for (const QVector<QPointF> &piece : clippedPieces) {
+                auto vertices = buildBand(piece, width);
+                if (vertices.has_value())
+                    result.segments.append({lodSegment.seriesId, lodSegment.color,
+                                            std::move(*vertices), false});
+            }
             continue;
         }
 
         QVector<QPointF> triangles;
         for (const QVector<QPointF> &piece : pieces) {
-            auto vertices = buildBand(piece, width, request.transform);
-            if (!vertices.has_value()) continue;
-            for (int index = 0; index + 3 < vertices->size(); index += 2) {
-                triangles.append(vertices->at(index));
-                triangles.append(vertices->at(index + 1));
-                triangles.append(vertices->at(index + 2));
-                triangles.append(vertices->at(index + 1));
-                triangles.append(vertices->at(index + 3));
-                triangles.append(vertices->at(index + 2));
+            const QVector<QVector<QPointF>> clippedPieces = clipPolyline(
+                piece, request.transform, width);
+            for (const QVector<QPointF> &clippedPiece : clippedPieces) {
+                auto vertices = buildBand(clippedPiece, width);
+                if (!vertices.has_value()) continue;
+                for (int index = 0; index + 3 < vertices->size(); index += 2) {
+                    triangles.append(vertices->at(index));
+                    triangles.append(vertices->at(index + 1));
+                    triangles.append(vertices->at(index + 2));
+                    triangles.append(vertices->at(index + 1));
+                    triangles.append(vertices->at(index + 3));
+                    triangles.append(vertices->at(index + 2));
+                }
             }
         }
         if (!triangles.isEmpty())

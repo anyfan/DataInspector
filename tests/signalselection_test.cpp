@@ -172,7 +172,7 @@ void SignalSelectionTest::eachSignalKeepsIndependentPenProperties()
     QCOMPARE(model.signalWidth(0), 6.0);
     QCOMPARE(model.signalStyle(0), Qt::DashLine);
     QCOMPARE(model.signalColor(1), QColor("blue"));
-    QCOMPARE(model.signalWidth(1), 1.0);
+    QCOMPARE(model.signalWidth(1), 2.0);
     QCOMPARE(model.signalStyle(1), Qt::SolidLine);
 }
 

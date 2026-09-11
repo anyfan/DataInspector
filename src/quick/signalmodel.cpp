@@ -26,7 +26,7 @@ QVariant SignalModel::data(const QModelIndex &index, int role) const
         if (role == IndexRole) return -1;
         if (role == CheckedRole) return false;
         if (role == ColorRole) return QColor("#4ea1ff");
-        if (role == WidthRole) return 1.0;
+        if (role == WidthRole) return 2.0;
         if (role == LineStyleRole) return static_cast<int>(Qt::SolidLine);
         return {};
     }
@@ -38,7 +38,7 @@ QVariant SignalModel::data(const QModelIndex &index, int role) const
             && m_plotRows.at(m_activePlot).contains(sourceRow);
     }
     if (role == ColorRole) return m_colors.value(sourceRow, QColor("#4ea1ff"));
-    if (role == WidthRole) return m_widths.value(sourceRow, 1.0);
+    if (role == WidthRole) return m_widths.value(sourceRow, 2.0);
     if (role == LineStyleRole)
         return static_cast<int>(m_lineStyles.value(sourceRow, Qt::SolidLine));
     return {};
@@ -67,7 +67,7 @@ void SignalModel::setNames(const QStringList &names, const QStringList &groups,
     m_groups.resize(names.size());
     m_colors = colors;
     if (m_colors.size() < names.size()) m_colors.resize(names.size());
-    m_widths.fill(1.0, names.size());
+    m_widths.fill(2.0, names.size());
     m_lineStyles.fill(Qt::SolidLine, names.size());
     m_expandedGroups.clear();
     for (const QString &group : std::as_const(m_groups)) {
@@ -103,7 +103,7 @@ void SignalModel::appendNames(const QStringList &names, const QStringList &group
         const int row = oldSize + index;
         const QColor color = colors.value(index);
         m_colors[row] = color.isValid() ? color : QColor("#4ea1ff");
-        m_widths[row] = 1.0;
+        m_widths[row] = 2.0;
         m_lineStyles[row] = Qt::SolidLine;
     }
     for (const QString &group : std::as_const(appendedGroups)) {
@@ -249,7 +249,7 @@ QColor SignalModel::signalColor(int row) const
 
 double SignalModel::signalWidth(int row) const
 {
-    return m_widths.value(row, 1.0);
+    return m_widths.value(row, 2.0);
 }
 
 Qt::PenStyle SignalModel::signalStyle(int row) const

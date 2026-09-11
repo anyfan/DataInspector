@@ -2,6 +2,7 @@
 #include <QFile>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
+#include <QQuickStyle>
 #include <QDebug>
 #include <QTextStream>
 #include <QtQml/qqml.h>
@@ -9,6 +10,7 @@
 #include "plotitem.h"
 int main(int argc, char *argv[])
 {
+    QQuickStyle::setStyle(QStringLiteral("Fusion"));
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("DataInspector"));
     app.setOrganizationName(QStringLiteral("DataInspector"));

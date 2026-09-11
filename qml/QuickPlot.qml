@@ -192,7 +192,7 @@ Rectangle {
                                              ? root.controller.signalColor(signalRow)
                                              : "transparent"
                 property real previewWidth: styleRevision >= 0
-                                            ? root.controller.signalWidth(signalRow) : 1
+                                            ? root.controller.signalWidth(signalRow) : 2
                 property int previewStyle: styleRevision >= 0
                                            ? root.controller.signalStyle(signalRow) : 1
                 onPreviewColorChanged: legendPreview.requestPaint()

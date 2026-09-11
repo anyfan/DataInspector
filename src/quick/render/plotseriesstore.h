@@ -16,7 +16,7 @@ struct PlotSeriesInput
     QVector<double> time;
     QVector<double> values;
     QColor color;
-    double lineWidth = 1.0;
+    double lineWidth = 2.0;
     Qt::PenStyle lineStyle = Qt::SolidLine;
 };
 
@@ -24,7 +24,7 @@ struct PlotSeriesData
 {
     PlotSeriesId id = -1;
     QColor color;
-    double lineWidth = 1.0;
+    double lineWidth = 2.0;
     Qt::PenStyle lineStyle = Qt::SolidLine;
     QVector<QPointF> points;
     bool monotonicTime = true;
