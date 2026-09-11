@@ -17,6 +17,8 @@ private slots:
     void hiddenCurveRemainsInThePlotLegend();
     void groupsCanExpandAndCollapseWithoutLosingSignalRows();
     void eachSignalKeepsIndependentPenProperties();
+    void appendingSignalsPreservesBindingsAndPenProperties();
+    void nestedFileAndTableGroupsExpandIndependently();
 };
 
 void SignalSelectionTest::matTitlesIgnoreLeadingTimeColumn()
@@ -172,6 +174,54 @@ void SignalSelectionTest::eachSignalKeepsIndependentPenProperties()
     QCOMPARE(model.signalColor(1), QColor("blue"));
     QCOMPARE(model.signalWidth(1), 1.0);
     QCOMPARE(model.signalStyle(1), Qt::SolidLine);
+}
+
+void SignalSelectionTest::appendingSignalsPreservesBindingsAndPenProperties()
+{
+    SignalModel model;
+    model.setNames({QStringLiteral("Pitch")},
+                   {QStringLiteral("flight.csv")}, {QColor("red")});
+    model.setPlotCount(1);
+    model.setChecked(0, true);
+    model.setSignalPen(0, QColor("green"), 4.0, Qt::DashLine);
+
+    model.appendNames({QStringLiteral("Roll")},
+                      {QStringLiteral("second.csv")}, {QColor("blue")});
+
+    QCOMPARE(model.sourceCount(), 2);
+    QCOMPARE(model.plotRows(0), QVector<int>({0}));
+    QCOMPARE(model.signalColor(0), QColor("green"));
+    QCOMPARE(model.signalWidth(0), 4.0);
+    QCOMPARE(model.signalStyle(0), Qt::DashLine);
+    QCOMPARE(model.nameAt(1), QStringLiteral("Roll"));
+}
+
+void SignalSelectionTest::nestedFileAndTableGroupsExpandIndependently()
+{
+    SignalModel model;
+    model.setNames(QStringList{QStringLiteral("Pitch"), QStringLiteral("Roll")},
+                   QStringList{QStringLiteral("flight.mat/p1"),
+                               QStringLiteral("flight.mat/p2")});
+
+    QCOMPARE(model.rowCount(), 5);
+    QCOMPARE(model.data(model.index(0), SignalModel::NameRole).toString(),
+             QStringLiteral("flight.mat"));
+    QCOMPARE(model.data(model.index(0), SignalModel::DepthRole).toInt(), 0);
+    QCOMPARE(model.data(model.index(1), SignalModel::NameRole).toString(),
+             QStringLiteral("p1"));
+    QCOMPARE(model.data(model.index(1), SignalModel::GroupRole).toString(),
+             QStringLiteral("flight.mat/p1"));
+    QCOMPARE(model.data(model.index(1), SignalModel::DepthRole).toInt(), 1);
+    QCOMPARE(model.data(model.index(2), SignalModel::IndexRole).toInt(), 0);
+    QCOMPARE(model.data(model.index(2), SignalModel::DepthRole).toInt(), 2);
+
+    model.toggleGroup(QStringLiteral("flight.mat/p1"));
+    QCOMPARE(model.rowCount(), 4);
+    QCOMPARE(model.data(model.index(2), SignalModel::NameRole).toString(),
+             QStringLiteral("p2"));
+
+    model.toggleGroup(QStringLiteral("flight.mat"));
+    QCOMPARE(model.rowCount(), 1);
 }
 
 QTEST_GUILESS_MAIN(SignalSelectionTest)

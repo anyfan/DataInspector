@@ -24,6 +24,7 @@ private slots:
     void geometryLineWidthChangesScreenSpaceExpansion();
     void geometryRejectsInvalidViewTransforms();
     void geometryUsesIndependentSeriesWidthsAndStyles();
+    void appendSeriesKeepsExistingSnapshots();
 };
 
 void RenderCoreTest::storeGenerationAndSnapshotsAreImmutable()
@@ -305,6 +306,20 @@ void RenderCoreTest::geometryUsesIndependentSeriesWidthsAndStyles()
         QVERIFY(maximumThickness > 7.0 && maximumThickness < 9.0);
     }
     QCOMPARE(dashedSegments, 1);
+}
+
+void RenderCoreTest::appendSeriesKeepsExistingSnapshots()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{0, {0.0, 1.0}, {1.0, 2.0}, QColor("red")}});
+    const PlotSeriesDataPtr original = store.snapshot({0}).series.first();
+
+    store.appendSeries({{1, {0.0, 1.0}, {3.0, 4.0}, QColor("blue")}});
+
+    const PlotSeriesSnapshot snapshot = store.snapshot({0, 1});
+    QCOMPARE(snapshot.series.size(), 2);
+    QCOMPARE(snapshot.series.at(0), original);
+    QCOMPARE(snapshot.series.at(1)->id, 1);
 }
 
 QTEST_GUILESS_MAIN(RenderCoreTest)

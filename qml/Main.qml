@@ -89,11 +89,40 @@ ApplicationWindow {
         id: fileDialog
         title: "打开数据文件"
         nameFilters: ["数据文件 (*.csv *.txt *.mat)", "CSV/TXT 文件 (*.csv *.txt)", "MAT 文件 (*.mat)", "所有文件 (*)"]
-        fileMode: FileDialog.OpenFile
-        // Qt 6.8 exposes selectedFile as a URL value without the QObject
-        // toLocalFile() helper in some QML runtimes. AppController accepts
-        // both local paths and file: URLs and performs the conversion in C++.
-        onAccepted: appController.loadCsv(selectedFile.toString())
+        fileMode: FileDialog.OpenFiles
+        onAccepted: appController.loadFiles(selectedFiles)
+    }
+
+    Dialog {
+        id: layoutDialog
+        title: "自定义子图布局"
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onOpened: {
+            layoutRows.value = appController.plotRows
+            layoutColumns.value = appController.plotColumns
+        }
+        onAccepted: appController.setLayout(layoutRows.value, layoutColumns.value)
+        GridLayout {
+            columns: 2
+            Label { text: "行数" }
+            SpinBox { id: layoutRows; from: 1; to: 8; editable: true }
+            Label { text: "列数" }
+            SpinBox { id: layoutColumns; from: 1; to: 8; editable: true }
+        }
+    }
+
+    DropArea {
+        anchors.fill: parent
+        z: 1000
+        onEntered: function(drag) { drag.accepted = drag.hasUrls }
+        onDropped: function(drop) {
+            if (drop.hasUrls) {
+                appController.loadFiles(drop.urls)
+                drop.acceptProposedAction()
+            }
+        }
     }
 
     header: ToolBar {
@@ -108,7 +137,9 @@ ApplicationWindow {
             ComboBox { id: legendModeSelector; model: ["顶部图例", "左上图例", "右上图例", "隐藏图例"]; currentIndex: appController.legendMode; onCurrentIndexChanged: appController.setLegendMode(currentIndex) }
             ToolButton { text: "1×1"; onClicked: appController.setLayout(1, 1) }
             ToolButton { text: "1×2"; onClicked: appController.setLayout(1, 2) }
+            ToolButton { text: "2×1"; onClicked: appController.setLayout(2, 1) }
             ToolButton { text: "2×2"; onClicked: appController.setLayout(2, 2) }
+            ToolButton { text: "布局…"; onClicked: layoutDialog.open() }
             Item { Layout.fillWidth: true }
             Label { text: "Qt Quick · Scene Graph"; opacity: 0.62 }
         }
@@ -235,6 +266,19 @@ ApplicationWindow {
                 }
             }
             Label { anchors.left: parent.left; anchors.leftMargin: 10; anchors.top: parent.top; anchors.topMargin: 10; text: appController.status; elide: Text.ElideRight; width: parent.width - 20; opacity: 0.7 }
+            ProgressBar {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.leftMargin: 10
+                anchors.rightMargin: 10
+                anchors.topMargin: 30
+                from: 0
+                to: 100
+                value: appController.loadingProgress
+                visible: appController.loading
+                z: 20
+            }
         }
     }
 }

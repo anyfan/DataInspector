@@ -5,6 +5,7 @@
 #include <QColor>
 #include <QSet>
 #include <QPointer>
+#include <QQueue>
 #include <QVariantList>
 #include <memory>
 #include "signalmodel.h"
@@ -26,6 +27,9 @@ class AppController final : public QObject
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString currentFile READ currentFile NOTIFY currentFileChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
+    Q_PROPERTY(int loadingProgress READ loadingProgress NOTIFY loadingProgressChanged)
+    Q_PROPERTY(int loadedFileCount READ loadedFileCount NOTIFY currentFileChanged)
+    Q_PROPERTY(int signalCount READ signalCount NOTIFY currentFileChanged)
     Q_PROPERTY(int plotRows READ plotRows NOTIFY layoutChanged)
     Q_PROPERTY(int plotColumns READ plotColumns NOTIFY layoutChanged)
     Q_PROPERTY(int activePlotIndex READ activePlotIndex NOTIFY activePlotChanged)
@@ -38,12 +42,16 @@ public:
     QString status() const { return m_status; }
     QString currentFile() const { return m_currentFile; }
     bool loading() const { return m_loading; }
+    int loadingProgress() const { return m_loadingProgress; }
+    int loadedFileCount() const { return m_loadedFileNames.size(); }
+    int signalCount() const { return m_signals->sourceCount(); }
     int plotRows() const { return m_plotRows; }
     int plotColumns() const { return m_plotColumns; }
     int activePlotIndex() const { return m_signals->activePlot(); }
     int plotStateRevision() const { return m_plotStateRevision; }
     int legendMode() const { return m_legendMode; }
     Q_INVOKABLE bool loadCsv(const QString &filePath);
+    Q_INVOKABLE int loadFiles(const QVariantList &filePaths);
     Q_INVOKABLE void selectSignal(int row);
     Q_INVOKABLE void toggleSignal(int row);
     Q_INVOKABLE void filterSignals(const QString &text);
@@ -60,6 +68,7 @@ public:
                                   double width, int style);
     Q_INVOKABLE QString signalName(int row) const;
     Q_INVOKABLE void attachPlot(QObject *plot, int index = 0);
+    Q_INVOKABLE void detachPlot(QObject *plot, int index = 0);
     Q_INVOKABLE void setLayout(int rows, int columns);
     Q_INVOKABLE void setActivePlot(int index);
     Q_INVOKABLE void fitAllPlots();
@@ -69,6 +78,7 @@ signals:
     void statusChanged();
     void currentFileChanged();
     void loadingChanged();
+    void loadingProgressChanged();
     void layoutChanged();
     void plotBindingsChanged();
     void activePlotChanged();
@@ -77,6 +87,9 @@ private:
     void onLoadFinished(const QString &path,
                         const QVector<LoadedTable> &tables,
                         int skipped, const QString &error);
+    void onLoadProgress(const QString &path, int percentage);
+    void startNextLoad();
+    void setLoadingProgress(int progress);
     void setStatus(const QString &status);
     void refreshPlot(int index, bool fitY = true);
     SignalModel *m_signals;
@@ -85,11 +98,23 @@ private:
     int m_plotColumns = 1;
     QString m_status = QStringLiteral("打开 CSV 或 TXT 文件开始查看");
     QString m_currentFile;
+    QStringList m_loadedFileNames;
+    QSet<QString> m_loadedPaths;
+    QSet<QString> m_pendingPaths;
+    QQueue<QString> m_loadQueue;
+    QString m_activeLoadPath;
     std::shared_ptr<PlotSeriesStore> m_seriesStore;
     QVector<QColor> m_signalColors;
     QThread *m_loadThread = nullptr;
     QObject *m_loader = nullptr;
     bool m_loading = false;
+    int m_loadingProgress = 0;
+    int m_batchTotal = 0;
+    int m_batchCompleted = 0;
+    int m_batchErrors = 0;
+    int m_batchSignals = 0;
+    qint64 m_batchRows = 0;
+    int m_batchSkipped = 0;
     bool m_syncingRanges = false;
     bool m_syncingCursors = false;
     int m_plotStateRevision = 0;

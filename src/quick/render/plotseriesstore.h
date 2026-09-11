@@ -60,6 +60,7 @@ class PlotSeriesStore final
 {
 public:
     void replaceSeries(const QVector<PlotSeriesInput> &inputs);
+    void appendSeries(const QVector<PlotSeriesInput> &inputs);
     void updateSeriesPen(PlotSeriesId id, const QColor &color,
                          double lineWidth, Qt::PenStyle lineStyle);
     void clear();

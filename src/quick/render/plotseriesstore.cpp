@@ -4,40 +4,60 @@
 
 #include <limits>
 
+namespace {
+
+PlotSeriesDataPtr makeSeriesData(const PlotSeriesInput &input, quint64 version)
+{
+    auto data = std::make_shared<PlotSeriesData>();
+    data->id = input.id;
+    data->color = input.color.isValid() ? input.color : QColor("#4ea1ff");
+    data->lineWidth = qBound(1.0, input.lineWidth, 20.0);
+    data->lineStyle = input.lineStyle;
+    data->version = version;
+
+    const int count = qMin(input.time.size(), input.values.size());
+    data->points.reserve(count);
+    double previousTime = -std::numeric_limits<double>::infinity();
+    for (int index = 0; index < count; ++index) {
+        const double timestamp = input.time.at(index);
+        const double value = input.values.at(index);
+        if (!qIsFinite(timestamp)) {
+            data->monotonicTime = false;
+            data->points.append(QPointF(qQNaN(), qQNaN()));
+            continue;
+        }
+        if (timestamp < previousTime)
+            data->monotonicTime = false;
+        previousTime = timestamp;
+        data->points.append(QPointF(timestamp,
+                                    qIsFinite(value) ? value : qQNaN()));
+    }
+    return data;
+}
+
+} // namespace
+
 void PlotSeriesStore::replaceSeries(const QVector<PlotSeriesInput> &inputs)
 {
     const quint64 nextGeneration = m_generation + 1;
     QVector<PlotSeriesDataPtr> replacement;
     replacement.reserve(inputs.size());
-    for (const PlotSeriesInput &input : inputs) {
-        auto data = std::make_shared<PlotSeriesData>();
-        data->id = input.id;
-        data->color = input.color.isValid() ? input.color : QColor("#4ea1ff");
-        data->lineWidth = qBound(1.0, input.lineWidth, 20.0);
-        data->lineStyle = input.lineStyle;
-        data->version = nextGeneration;
-
-        const int count = qMin(input.time.size(), input.values.size());
-        data->points.reserve(count);
-        double previousTime = -std::numeric_limits<double>::infinity();
-        for (int i = 0; i < count; ++i) {
-            const double timestamp = input.time.at(i);
-            const double value = input.values.at(i);
-            if (!qIsFinite(timestamp)) {
-                data->monotonicTime = false;
-                data->points.append(QPointF(qQNaN(), qQNaN()));
-                continue;
-            }
-            if (timestamp < previousTime)
-                data->monotonicTime = false;
-            previousTime = timestamp;
-            data->points.append(QPointF(timestamp,
-                                        qIsFinite(value) ? value : qQNaN()));
-        }
-        replacement.append(std::move(data));
-    }
+    for (const PlotSeriesInput &input : inputs)
+        replacement.append(makeSeriesData(input, nextGeneration));
 
     m_series = std::move(replacement);
+    m_generation = nextGeneration;
+}
+
+void PlotSeriesStore::appendSeries(const QVector<PlotSeriesInput> &inputs)
+{
+    if (inputs.isEmpty()) return;
+    const quint64 nextGeneration = m_generation + 1;
+    QVector<PlotSeriesDataPtr> appended = m_series;
+    appended.reserve(m_series.size() + inputs.size());
+    for (const PlotSeriesInput &input : inputs)
+        appended.append(makeSeriesData(input, nextGeneration));
+    m_series = std::move(appended);
     m_generation = nextGeneration;
 }
 

@@ -29,6 +29,9 @@ public:
     void setNames(const QStringList &names, const QVector<QColor> &colors = {});
     void setNames(const QStringList &names, const QStringList &groups,
                   const QVector<QColor> &colors = {});
+    void appendNames(const QStringList &names, const QStringList &groups,
+                     const QVector<QColor> &colors = {});
+    int sourceCount() const { return m_names.size(); }
     void setFilter(const QString &text);
     Q_INVOKABLE void toggleGroup(const QString &group);
     void setAllChecked(bool checked);
@@ -60,6 +63,7 @@ private:
     };
     void rebuildVisibleNodes();
     int visibleModelRow(int sourceRow) const;
+    bool groupExists(const QString &group) const;
     QStringList m_names;
     QStringList m_groups;
     QVector<QColor> m_colors;

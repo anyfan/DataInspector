@@ -82,6 +82,7 @@ Rectangle {
             cursorMode: root.graphCursorMode
             z: 1
             Component.onCompleted: root.controller.attachPlot(plotItem, root.plotIndex)
+            Component.onDestruction: root.controller.detachPlot(plotItem, root.plotIndex)
             onActivated: root.controller.setActivePlot(root.plotIndex)
         }
 

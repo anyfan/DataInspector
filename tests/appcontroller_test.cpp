@@ -4,7 +4,10 @@
 #include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
+#include <QUrl>
 #include <QtTest>
+
+#include <algorithm>
 
 class AppControllerTest final : public QObject
 {
@@ -13,6 +16,9 @@ class AppControllerTest final : public QObject
 private slots:
     void loadedSignalsBindOnlyToTheActivePlot();
     void expandingLayoutKeepsExistingPlotAttached();
+    void multipleFilesAppendAndPreserveExistingBindings();
+    void customLayoutSupportsLegacyEightByEightRange();
+    void replacingAPlotDelegateRestoresItsCurves();
 };
 
 void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
@@ -61,9 +67,9 @@ void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
     QVariantList secondPlotRows;
     secondPlotRows.append(1);
     QCOMPARE(controller.plotSignalRows(1), secondPlotRows);
-    QVERIFY(controller.signalModel()->data(controller.signalModel()->index(1),
+    QVERIFY(controller.signalModel()->data(controller.signalModel()->index(2),
                                             SignalModel::CheckedRole).toBool());
-    QVERIFY(!controller.signalModel()->data(controller.signalModel()->index(0),
+    QVERIFY(!controller.signalModel()->data(controller.signalModel()->index(1),
                                              SignalModel::CheckedRole).toBool());
 
     controller.togglePlotSignal(1, 1);
@@ -107,6 +113,87 @@ void AppControllerTest::expandingLayoutKeepsExistingPlotAttached()
 
     QCOMPARE(firstPlot.visibleSeriesIds(), QVector<PlotSeriesId>({0, 1}));
     QVERIFY(secondPlot.visibleSeriesIds().isEmpty());
+}
+
+void AppControllerTest::multipleFilesAppendAndPreserveExistingBindings()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString firstPath = directory.filePath(QStringLiteral("first.csv"));
+    const QString secondPath = directory.filePath(QStringLiteral("second.csv"));
+    const QVector<QPair<QString, QByteArray>> contents = {
+        {firstPath, QByteArray("time,Pitch\n0,1\n1,2\n")},
+        {secondPath, QByteArray("time,Roll\n0,3\n1,4\n")}
+    };
+    for (const auto &entry : contents) {
+        QFile file(entry.first);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QCOMPARE(file.write(entry.second), qint64(entry.second.size()));
+    }
+
+    AppController controller;
+    PlotItem plot;
+    controller.attachPlot(&plot, 0);
+    QSignalSpy loaded(&controller, &AppController::currentFileChanged);
+    QVector<int> progressValues;
+    connect(&controller, &AppController::loadingProgressChanged,
+            &controller, [&]() { progressValues.append(controller.loadingProgress()); });
+    QVariantList files{QUrl::fromLocalFile(firstPath), QUrl::fromLocalFile(secondPath)};
+
+    QCOMPARE(controller.loadFiles(files), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 2, 5000);
+    QCOMPARE(controller.loadedFileCount(), 2);
+    QCOMPARE(controller.signalCount(), 2);
+    QCOMPARE(controller.signalName(0), QStringLiteral("Pitch"));
+    QCOMPARE(controller.signalName(1), QStringLiteral("Roll"));
+
+    controller.toggleSignal(0);
+    QCOMPARE(plot.visibleSeriesIds(), QVector<PlotSeriesId>({0}));
+    controller.toggleSignal(1);
+    QCOMPARE(plot.visibleSeriesIds(), QVector<PlotSeriesId>({0, 1}));
+    QCOMPARE(controller.loadingProgress(), 100);
+    QVERIFY(!controller.loading());
+    QVERIFY(!progressValues.isEmpty());
+    QVERIFY(std::is_sorted(progressValues.cbegin(), progressValues.cend()));
+}
+
+void AppControllerTest::customLayoutSupportsLegacyEightByEightRange()
+{
+    AppController controller;
+    controller.setLayout(8, 8);
+    QCOMPARE(controller.plotRows(), 8);
+    QCOMPARE(controller.plotColumns(), 8);
+
+    controller.setLayout(9, 0);
+    QCOMPARE(controller.plotRows(), 8);
+    QCOMPARE(controller.plotColumns(), 1);
+}
+
+void AppControllerTest::replacingAPlotDelegateRestoresItsCurves()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("flight.csv"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    QCOMPARE(file.write("time,Pitch\n10,1\n20,2\n"), qint64(21));
+    file.close();
+
+    AppController controller;
+    auto *oldPlot = new PlotItem;
+    controller.attachPlot(oldPlot, 0);
+    QSignalSpy loaded(&controller, &AppController::currentFileChanged);
+    QVERIFY(controller.loadCsv(path));
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 5000);
+    controller.toggleSignal(0);
+
+    controller.setLayout(2, 2);
+    PlotItem replacement;
+    controller.attachPlot(&replacement, 0);
+    controller.detachPlot(oldPlot, 0);
+    delete oldPlot;
+
+    QCOMPARE(replacement.visibleSeriesIds(), QVector<PlotSeriesId>({0}));
 }
 
 QTEST_MAIN(AppControllerTest)
