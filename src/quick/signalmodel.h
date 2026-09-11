@@ -1,6 +1,7 @@
 #pragma once
 #include <QAbstractListModel>
 #include <QColor>
+#include <QPen>
 #include <QSet>
 #include <QVector>
 
@@ -9,7 +10,18 @@ class SignalModel final : public QAbstractListModel
     Q_OBJECT
     Q_PROPERTY(int checkedCount READ checkedCount NOTIFY checkedCountChanged)
 public:
-    enum Role { NameRole = Qt::UserRole + 1, IndexRole, CheckedRole, ColorRole, GroupRole };
+    enum Role {
+        NameRole = Qt::UserRole + 1,
+        IndexRole,
+        CheckedRole,
+        ColorRole,
+        GroupRole,
+        GroupNodeRole,
+        ExpandedRole,
+        DepthRole,
+        WidthRole,
+        LineStyleRole
+    };
     explicit SignalModel(QObject *parent = nullptr);
     int rowCount(const QModelIndex &parent = {}) const override;
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
@@ -18,9 +30,15 @@ public:
     void setNames(const QStringList &names, const QStringList &groups,
                   const QVector<QColor> &colors = {});
     void setFilter(const QString &text);
+    Q_INVOKABLE void toggleGroup(const QString &group);
     void setAllChecked(bool checked);
     int checkedCount() const;
-    QColor color(int row) const { return m_colors.value(row, QColor("#4ea1ff")); }
+    QColor color(int row) const { return signalColor(row); }
+    QColor signalColor(int row) const;
+    double signalWidth(int row) const;
+    Qt::PenStyle signalStyle(int row) const;
+    void setSignalPen(int row, const QColor &color, double width,
+                      Qt::PenStyle style);
     QString nameAt(int row) const { return m_names.value(row); }
     void setChecked(int row, bool checked);
     void setPlotCount(int count);
@@ -34,10 +52,21 @@ public:
 signals:
     void checkedCountChanged();
 private:
+    struct VisibleNode {
+        bool groupNode = false;
+        int sourceRow = -1;
+        QString group;
+        int depth = 0;
+    };
+    void rebuildVisibleNodes();
+    int visibleModelRow(int sourceRow) const;
     QStringList m_names;
     QStringList m_groups;
     QVector<QColor> m_colors;
-    QVector<int> m_visibleRows;
+    QVector<double> m_widths;
+    QVector<Qt::PenStyle> m_lineStyles;
+    QVector<VisibleNode> m_visibleNodes;
+    QSet<QString> m_expandedGroups;
     QVector<QSet<int>> m_plotRows;
     QVector<QSet<int>> m_hiddenPlotRows;
     int m_plotCount = 0;

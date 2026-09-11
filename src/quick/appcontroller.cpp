@@ -210,6 +210,22 @@ QVariantList AppController::plotSignalRows(int plotIndex) const
     for (int row : m_signals->plotRows(plotIndex)) rows.append(row);
     return rows;
 }
+void AppController::setSignalPen(int row, const QColor &color,
+                                 double width, int style)
+{
+    if (row < 0 || row >= m_signalColors.size()) return;
+    const auto penStyle = static_cast<Qt::PenStyle>(style);
+    m_signals->setSignalPen(row, color, width, penStyle);
+    m_signalColors[row] = m_signals->signalColor(row);
+    m_seriesStore->updateSeriesPen(row, m_signals->signalColor(row),
+                                   m_signals->signalWidth(row),
+                                   m_signals->signalStyle(row));
+    for (int plotIndex = 0; plotIndex < m_plots.size(); ++plotIndex)
+        if (m_signals->plotRows(plotIndex).contains(row))
+            refreshPlot(plotIndex, false);
+    ++m_plotStateRevision;
+    emit plotBindingsChanged();
+}
 void AppController::setLegendMode(int mode)
 {
     const int normalized = qBound(0, mode, 3);
@@ -229,14 +245,14 @@ void AppController::attachPlot(QObject *plot, int index)
             [this, item](double xmin, double xmax, double, double) {
                 if (m_syncingRanges) return;
                 m_syncingRanges = true;
-                for (PlotItem *other : std::as_const(m_plots))
+                for (const QPointer<PlotItem> &other : std::as_const(m_plots))
                     if (other && other != item) other->setXRange(xmin, xmax);
                 m_syncingRanges = false;
             });
     connect(item, &PlotItem::cursorChanged, this, [this, item]() {
         if (m_syncingCursors) return;
         m_syncingCursors = true;
-        for (PlotItem *other : std::as_const(m_plots)) {
+        for (const QPointer<PlotItem> &other : std::as_const(m_plots)) {
             if (!other || other == item) continue;
             other->setCursorMode(item->cursorMode());
             if (item->cursorMode() != PlotItem::NoCursor) {
@@ -248,7 +264,7 @@ void AppController::attachPlot(QObject *plot, int index)
         m_syncingCursors = false;
     });
     refreshPlot(index);
-    for (PlotItem *source : std::as_const(m_plots)) {
+    for (const QPointer<PlotItem> &source : std::as_const(m_plots)) {
         if (!source || source == item) continue;
         item->setCursorMode(source->cursorMode());
         if (source->cursorMode() != PlotItem::NoCursor) {
@@ -265,9 +281,9 @@ void AppController::setLayout(int rows, int columns)
     const int normalizedColumns = qBound(1, columns, 4);
     if (m_plotRows == normalizedRows && m_plotColumns == normalizedColumns)
         return;
-    // QML destroys and recreates delegates after layoutChanged. Keep the
-    // per-plot signal sets so newly attached items restore their bindings.
-    m_plots.clear();
+    // A numeric QML Repeater retains delegates whose indices still exist.
+    // Preserve those attachments and leave new slots empty for attachPlot().
+    m_plots.resize(normalizedRows * normalizedColumns);
     ++m_plotStateRevision;
     const int previousActivePlot = m_signals->activePlot();
     m_plotRows = normalizedRows;
@@ -285,7 +301,7 @@ void AppController::setActivePlot(int index)
 }
 void AppController::fitAllPlots()
 {
-    for (PlotItem *plot : std::as_const(m_plots))
+    for (const QPointer<PlotItem> &plot : std::as_const(m_plots))
         if (plot) plot->fitView();
 }
 void AppController::clear()
@@ -295,7 +311,7 @@ void AppController::clear()
     m_signals->setNames({});
     m_currentFile.clear();
     emit currentFileChanged();
-    for (PlotItem *plot : std::as_const(m_plots))
+    for (const QPointer<PlotItem> &plot : std::as_const(m_plots))
         if (plot)
             plot->setVisibleSeries({});
     ++m_plotStateRevision;

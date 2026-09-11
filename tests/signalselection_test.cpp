@@ -15,6 +15,8 @@ private slots:
     void checksFollowTheActivePlot();
     void resizingLayoutPreservesExistingPlotBindings();
     void hiddenCurveRemainsInThePlotLegend();
+    void groupsCanExpandAndCollapseWithoutLosingSignalRows();
+    void eachSignalKeepsIndependentPenProperties();
 };
 
 void SignalSelectionTest::matTitlesIgnoreLeadingTimeColumn()
@@ -48,13 +50,14 @@ void SignalSelectionTest::filteredRowsKeepDisplayNameGroupAndSourceIndex()
 
     model.setFilter(QStringLiteral("Roll"));
 
-    QCOMPARE(model.rowCount(), 1);
-    QCOMPARE(model.data(model.index(0), SignalModel::NameRole).toString(),
+    QCOMPARE(model.rowCount(), 2);
+    QVERIFY(model.data(model.index(0), SignalModel::GroupNodeRole).toBool());
+    QCOMPARE(model.data(model.index(1), SignalModel::NameRole).toString(),
              QStringLiteral("Roll"));
-    QCOMPARE(model.data(model.index(0), SignalModel::GroupRole).toString(),
+    QCOMPARE(model.data(model.index(1), SignalModel::GroupRole).toString(),
              QStringLiteral("p2"));
-    QCOMPARE(model.data(model.index(0), SignalModel::IndexRole).toInt(), 1);
-    QCOMPARE(model.data(model.index(0), SignalModel::ColorRole).value<QColor>(),
+    QCOMPARE(model.data(model.index(1), SignalModel::IndexRole).toInt(), 1);
+    QCOMPARE(model.data(model.index(1), SignalModel::ColorRole).value<QColor>(),
              QColor("blue"));
 }
 
@@ -122,6 +125,53 @@ void SignalSelectionTest::hiddenCurveRemainsInThePlotLegend()
     QCOMPARE(model.plotRows(0), QVector<int>({0}));
     QVERIFY(model.visiblePlotRows(0).isEmpty());
     QVERIFY(!model.plotSignalVisible(0, 0));
+}
+
+void SignalSelectionTest::groupsCanExpandAndCollapseWithoutLosingSignalRows()
+{
+    SignalModel model;
+    model.setNames(QStringList{QStringLiteral("Pitch"), QStringLiteral("Roll"),
+                               QStringLiteral("Altitude")},
+                   QStringList{QStringLiteral("p1"), QStringLiteral("p1"),
+                               QStringLiteral("p2")});
+
+    QCOMPARE(model.rowCount(), 5);
+    QVERIFY(model.data(model.index(0), SignalModel::GroupNodeRole).toBool());
+    QCOMPARE(model.data(model.index(0), SignalModel::GroupRole).toString(),
+             QStringLiteral("p1"));
+    QVERIFY(model.data(model.index(0), SignalModel::ExpandedRole).toBool());
+    QVERIFY(!model.data(model.index(1), SignalModel::GroupNodeRole).toBool());
+    QCOMPARE(model.data(model.index(1), SignalModel::IndexRole).toInt(), 0);
+    QCOMPARE(model.data(model.index(1), SignalModel::DepthRole).toInt(), 1);
+
+    model.toggleGroup(QStringLiteral("p1"));
+
+    QCOMPARE(model.rowCount(), 3);
+    QVERIFY(model.data(model.index(0), SignalModel::GroupNodeRole).toBool());
+    QVERIFY(!model.data(model.index(0), SignalModel::ExpandedRole).toBool());
+    QCOMPARE(model.data(model.index(1), SignalModel::GroupRole).toString(),
+             QStringLiteral("p2"));
+    QCOMPARE(model.data(model.index(2), SignalModel::IndexRole).toInt(), 2);
+
+    model.toggleGroup(QStringLiteral("p1"));
+    QCOMPARE(model.rowCount(), 5);
+    QCOMPARE(model.data(model.index(2), SignalModel::IndexRole).toInt(), 1);
+}
+
+void SignalSelectionTest::eachSignalKeepsIndependentPenProperties()
+{
+    SignalModel model;
+    model.setNames({QStringLiteral("Pitch"), QStringLiteral("Roll")},
+                   {}, {QColor("red"), QColor("blue")});
+
+    model.setSignalPen(0, QColor("green"), 6.0, Qt::DashLine);
+
+    QCOMPARE(model.signalColor(0), QColor("green"));
+    QCOMPARE(model.signalWidth(0), 6.0);
+    QCOMPARE(model.signalStyle(0), Qt::DashLine);
+    QCOMPARE(model.signalColor(1), QColor("blue"));
+    QCOMPARE(model.signalWidth(1), 1.0);
+    QCOMPARE(model.signalStyle(1), Qt::SolidLine);
 }
 
 QTEST_GUILESS_MAIN(SignalSelectionTest)

@@ -13,6 +13,8 @@ void PlotSeriesStore::replaceSeries(const QVector<PlotSeriesInput> &inputs)
         auto data = std::make_shared<PlotSeriesData>();
         data->id = input.id;
         data->color = input.color.isValid() ? input.color : QColor("#4ea1ff");
+        data->lineWidth = qBound(1.0, input.lineWidth, 20.0);
+        data->lineStyle = input.lineStyle;
         data->version = nextGeneration;
 
         const int count = qMin(input.time.size(), input.values.size());
@@ -35,6 +37,29 @@ void PlotSeriesStore::replaceSeries(const QVector<PlotSeriesInput> &inputs)
         replacement.append(std::move(data));
     }
 
+    m_series = std::move(replacement);
+    m_generation = nextGeneration;
+}
+
+void PlotSeriesStore::updateSeriesPen(PlotSeriesId id, const QColor &color,
+                                      double lineWidth, Qt::PenStyle lineStyle)
+{
+    const quint64 nextGeneration = m_generation + 1;
+    bool changed = false;
+    QVector<PlotSeriesDataPtr> replacement = m_series;
+    for (int index = 0; index < replacement.size(); ++index) {
+        const PlotSeriesDataPtr &current = replacement.at(index);
+        if (!current || current->id != id) continue;
+        auto updated = std::make_shared<PlotSeriesData>(*current);
+        updated->color = color.isValid() ? color : QColor("#4ea1ff");
+        updated->lineWidth = qBound(1.0, lineWidth, 20.0);
+        updated->lineStyle = lineStyle;
+        updated->version = nextGeneration;
+        replacement[index] = std::move(updated);
+        changed = true;
+        break;
+    }
+    if (!changed) return;
     m_series = std::move(replacement);
     m_generation = nextGeneration;
 }

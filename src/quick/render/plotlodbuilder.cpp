@@ -63,6 +63,8 @@ static void appendSeriesLod(const PlotSeriesData &series,
     LodSegment current;
     current.seriesId = series.id;
     current.color = series.color;
+    current.lineWidth = series.lineWidth;
+    current.lineStyle = series.lineStyle;
     int currentBucket = -1;
     std::optional<IndexedPoint> minimum;
     std::optional<IndexedPoint> maximum;
@@ -79,7 +81,8 @@ static void appendSeriesLod(const PlotSeriesData &series,
         flushBucket();
         if (!current.points.isEmpty())
             output.append(std::move(current));
-        current = LodSegment{series.id, series.color, {}};
+        current = LodSegment{series.id, series.color, {}, series.lineWidth,
+                             series.lineStyle};
         currentBucket = -1;
     };
 

@@ -23,6 +23,7 @@ private slots:
     void geometryKeepsLodSegmentsIndependent();
     void geometryLineWidthChangesScreenSpaceExpansion();
     void geometryRejectsInvalidViewTransforms();
+    void geometryUsesIndependentSeriesWidthsAndStyles();
 };
 
 void RenderCoreTest::storeGenerationAndSnapshotsAreImmutable()
@@ -39,8 +40,18 @@ void RenderCoreTest::storeGenerationAndSnapshotsAreImmutable()
     QCOMPARE(oldSnapshot.series.at(0)->points.at(1), QPointF(1.0, 11.0));
     QCOMPARE(store.snapshot({4}).series.at(0)->points.at(1), QPointF(1.0, 21.0));
 
-    store.clear();
+    store.updateSeriesPen(4, QColor("green"), 7.0, Qt::DotLine);
+    const PlotSeriesSnapshot styledSnapshot = store.snapshot({4});
     QCOMPARE(store.generation(), quint64(3));
+    QCOMPARE(styledSnapshot.series.at(0)->color, QColor("green"));
+    QCOMPARE(styledSnapshot.series.at(0)->lineWidth, 7.0);
+    QCOMPARE(styledSnapshot.series.at(0)->lineStyle, Qt::DotLine);
+    QCOMPARE(oldSnapshot.series.at(0)->color, QColor("red"));
+    QCOMPARE(oldSnapshot.series.at(0)->lineWidth, 1.0);
+    QCOMPARE(oldSnapshot.series.at(0)->lineStyle, Qt::SolidLine);
+
+    store.clear();
+    QCOMPARE(store.generation(), quint64(4));
     QVERIFY(store.snapshot({4}).series.isEmpty());
 }
 
@@ -257,6 +268,43 @@ void RenderCoreTest::geometryRejectsInvalidViewTransforms()
         lod, GeometryRequest{PlotViewTransform{0.0, 1.0, 0.0, 1.0,
                                                0.0, 100.0}, 2.0})
                 .segments.isEmpty());
+}
+
+void RenderCoreTest::geometryUsesIndependentSeriesWidthsAndStyles()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({
+        {1, {0.0, 10.0}, {0.0, 10.0}, QColor("red"), 2.0, Qt::SolidLine},
+        {2, {0.0, 10.0}, {10.0, 0.0}, QColor("blue"), 8.0, Qt::DashLine}
+    });
+    const PlotSeriesSnapshot snapshot = store.snapshot({1, 2});
+    const LodRequestKey key{store.generation(), {1, 2}, 0.0, 10.0, 100, 1};
+    const LodResult lod = PlotLodBuilder::build(snapshot, key);
+    const GeometryResult geometry = PlotGeometryBuilder::build(
+        lod, {{0.0, 10.0, 0.0, 10.0, 100.0, 100.0}, 1.0});
+
+    QCOMPARE(geometry.segments.size(), 2);
+    QCOMPARE(geometry.segments.first().seriesId, 1);
+    QVERIFY(!geometry.segments.first().triangleList);
+    const qreal solidThickness = QLineF(geometry.segments.first().vertices.at(0),
+                                       geometry.segments.first().vertices.at(1)).length();
+    QVERIFY(solidThickness > 1.0 && solidThickness < 3.0);
+
+    int dashedSegments = 0;
+    for (const GeometrySegment &segment : geometry.segments) {
+        if (segment.seriesId != 2)
+            continue;
+        ++dashedSegments;
+        QVERIFY(segment.triangleList);
+        QVERIFY(segment.vertices.size() > 6);
+        qreal maximumThickness = 0.0;
+        for (int index = 0; index + 5 < segment.vertices.size(); index += 6)
+            maximumThickness = qMax(maximumThickness,
+                QLineF(segment.vertices.at(index),
+                       segment.vertices.at(index + 1)).length());
+        QVERIFY(maximumThickness > 7.0 && maximumThickness < 9.0);
+    }
+    QCOMPARE(dashedSegments, 1);
 }
 
 QTEST_GUILESS_MAIN(RenderCoreTest)

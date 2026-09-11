@@ -15,6 +15,75 @@ ApplicationWindow {
     property color borderColor: darkTheme ? "#3b4652" : "#d7dfe8"
     property color accentColor: "#0078d4"
     property bool darkTheme: false
+    property int editingSignalIndex: -1
+
+    ListModel {
+        id: lineStyleModel
+        ListElement { text: "实线"; value: 1 }
+        ListElement { text: "虚线"; value: 2 }
+        ListElement { text: "点线"; value: 3 }
+        ListElement { text: "点划线"; value: 4 }
+        ListElement { text: "双点划线"; value: 5 }
+    }
+
+    Dialog {
+        id: signalPropertiesDialog
+        title: "信号属性"
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: 300
+        onAccepted: appController.setSignalPen(
+            window.editingSignalIndex, colorButton.selectedColor,
+            widthSpin.value, lineStyleModel.get(styleCombo.currentIndex).value)
+
+        ColumnLayout {
+            width: parent.width
+            spacing: 10
+            Label { text: window.editingSignalIndex >= 0 ? appController.signalName(window.editingSignalIndex) : ""; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
+            RowLayout {
+                Label { text: "颜色"; Layout.preferredWidth: 54 }
+                Button {
+                    id: colorButton
+                    property color selectedColor: "#4ea1ff"
+                    Layout.fillWidth: true
+                    contentItem: Rectangle { color: colorButton.selectedColor; border.color: window.borderColor; implicitHeight: 22 }
+                    onClicked: {
+                        colorDialog.selectedColor = colorButton.selectedColor
+                        colorDialog.open()
+                    }
+                }
+            }
+            RowLayout {
+                Label { text: "宽度"; Layout.preferredWidth: 54 }
+                SpinBox { id: widthSpin; from: 1; to: 20; editable: true; Layout.fillWidth: true }
+                Label { text: "px" }
+            }
+            RowLayout {
+                Label { text: "线型"; Layout.preferredWidth: 54 }
+                ComboBox { id: styleCombo; model: lineStyleModel; textRole: "text"; Layout.fillWidth: true }
+            }
+        }
+    }
+
+    ColorDialog {
+        id: colorDialog
+        title: "选择信号颜色"
+        selectedColor: "#4ea1ff"
+        onAccepted: colorButton.selectedColor = selectedColor
+    }
+
+    function editSignalPen(signalIndex) {
+        editingSignalIndex = signalIndex
+        colorButton.selectedColor = appController.signalColor(signalIndex)
+        widthSpin.value = Math.round(appController.signalWidth(signalIndex))
+        const style = appController.signalStyle(signalIndex)
+        let found = 0
+        for (let index = 0; index < lineStyleModel.count; ++index)
+            if (lineStyleModel.get(index).value === style) found = index
+        styleCombo.currentIndex = found
+        signalPropertiesDialog.open()
+    }
 
     FileDialog {
         id: fileDialog
@@ -35,8 +104,6 @@ ApplicationWindow {
             ToolButton { text: "适应"; onClicked: appController.fitAllPlots() }
             ToolButton { text: "清空"; onClicked: appController.clear() }
             ToolButton { text: "主题"; onClicked: window.darkTheme = !window.darkTheme }
-            Label { text: "线宽"; opacity: 0.65 }
-            Slider { id: widthSlider; from: 1; to: 8; value: 2; stepSize: 0.5; Layout.preferredWidth: 100 }
             ComboBox { id: cursorModeSelector; model: ["关闭游标", "单游标", "双游标"]; currentIndex: 0 }
             ComboBox { id: legendModeSelector; model: ["顶部图例", "左上图例", "右上图例", "隐藏图例"]; currentIndex: appController.legendMode; onCurrentIndexChanged: appController.setLegendMode(currentIndex) }
             ToolButton { text: "1×1"; onClicked: appController.setLayout(1, 1) }
@@ -56,22 +123,96 @@ ApplicationWindow {
                     TextField { id: signalSearch; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: appController.filterSignals(text) }
                     ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered; ToolTip.text: "清除搜索" }
                 }
-                ListView { id: signalList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: appController.signalModel; section.property: "groupName"; section.criteria: ViewSection.FullString; section.delegate: Label { width: signalList.width; height: text.length ? 24 : 0; text: section; visible: text.length > 0; color: accentColor; font.pixelSize: 11; font.weight: Font.DemiBold; leftPadding: 6; verticalAlignment: Text.AlignVCenter }
-                    delegate: ItemDelegate {
+                ListView { id: signalList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: appController.signalModel
+                    delegate: Item {
                         id: signalDelegate
                         required property int index
                         required property string signalName
                         required property int signalIndex
                         required property bool signalChecked
                         required property color signalColor
+                        required property string groupName
+                        required property bool groupNode
+                        required property bool groupExpanded
+                        required property int nodeDepth
+                        required property real signalWidth
+                        required property int signalLineStyle
+                        onSignalColorChanged: penPreview.requestPaint()
+                        onSignalWidthChanged: penPreview.requestPaint()
+                        onSignalLineStyleChanged: penPreview.requestPaint()
                         width: signalList.width
-                        highlighted: index === signalList.currentIndex
-                        checkable: true
-                        checked: signalChecked
-                        onClicked: { signalList.currentIndex = index; appController.toggleSignal(signalIndex) }
-                        contentItem: RowLayout { spacing: 8
-                            Rectangle { Layout.preferredWidth: 10; Layout.preferredHeight: 10; radius: 2; color: signalDelegate.signalColor; Layout.alignment: Qt.AlignVCenter }
-                            Label { text: signalDelegate.signalName; elide: Text.ElideRight; Layout.fillWidth: true; color: signalDelegate.highlighted ? accentColor : palette.text }
+                        height: groupNode ? 28 : 30
+
+                        Rectangle { anchors.fill: parent; color: signalDelegate.index === signalList.currentIndex ? (window.darkTheme ? "#29333d" : "#e8f1fb") : "transparent" }
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: signalDelegate.nodeDepth * 14 + 4
+                            anchors.rightMargin: 4
+                            spacing: 6
+                            ToolButton {
+                                visible: signalDelegate.groupNode
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 24
+                                text: signalDelegate.groupExpanded ? "▾" : "▸"
+                                onClicked: appController.signalModel.toggleGroup(signalDelegate.groupName)
+                            }
+                            CheckBox {
+                                id: signalCheck
+                                visible: !signalDelegate.groupNode
+                                checked: signalDelegate.signalChecked
+                                Layout.preferredWidth: 24
+                                Layout.preferredHeight: 24
+                                onClicked: {
+                                    signalList.currentIndex = signalDelegate.index
+                                    appController.toggleSignal(signalDelegate.signalIndex)
+                                }
+                            }
+                            Label {
+                                text: signalDelegate.signalName
+                                font.weight: signalDelegate.groupNode ? Font.DemiBold : Font.Normal
+                                color: signalDelegate.groupNode ? window.accentColor : palette.text
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        signalList.currentIndex = signalDelegate.index
+                                        if (signalDelegate.groupNode)
+                                            appController.signalModel.toggleGroup(signalDelegate.groupName)
+                                    }
+                                }
+                            }
+                            Canvas {
+                                id: penPreview
+                                visible: !signalDelegate.groupNode
+                                Layout.preferredWidth: 42
+                                Layout.preferredHeight: 24
+                                onPaint: {
+                                    const context = getContext("2d")
+                                    context.reset()
+                                    context.strokeStyle = signalDelegate.signalColor
+                                    context.lineWidth = signalDelegate.signalWidth
+                                    if (signalDelegate.signalLineStyle === 2) context.setLineDash([8, 4])
+                                    else if (signalDelegate.signalLineStyle === 3) context.setLineDash([2, 4])
+                                    else if (signalDelegate.signalLineStyle === 4) context.setLineDash([8, 4, 2, 4])
+                                    else if (signalDelegate.signalLineStyle === 5) context.setLineDash([8, 4, 2, 4, 2, 4])
+                                    else context.setLineDash([])
+                                    context.beginPath()
+                                    context.moveTo(3, height / 2)
+                                    context.lineTo(width - 3, height / 2)
+                                    context.stroke()
+                                }
+                                onVisibleChanged: requestPaint()
+                                MouseArea {
+                                    anchors.fill: parent
+                                    acceptedButtons: Qt.LeftButton
+                                    onDoubleClicked: window.editSignalPen(signalDelegate.signalIndex)
+                                    ToolTip.visible: containsMouse
+                                    ToolTip.text: "双击编辑信号线属性"
+                                    hoverEnabled: true
+                                }
+                            }
                         }
                     }
                     ScrollBar.vertical: ScrollBar { }
@@ -85,7 +226,7 @@ ApplicationWindow {
                         required property int index
                         plotIndex: index
                         controller: appController
-                        graphLineWidth: widthSlider.value
+                        graphLineWidth: 1
                         graphCursorMode: cursorModeSelector.currentIndex
                         darkTheme: window.darkTheme
                         Layout.fillWidth: true

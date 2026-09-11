@@ -186,26 +186,52 @@ Rectangle {
             delegate: Item {
                 required property int modelData
                 property int signalRow: modelData
+                property int styleRevision: root.controller.plotStateRevision
+                property color previewColor: styleRevision >= 0
+                                             ? root.controller.signalColor(signalRow)
+                                             : "transparent"
+                property real previewWidth: styleRevision >= 0
+                                            ? root.controller.signalWidth(signalRow) : 1
+                property int previewStyle: styleRevision >= 0
+                                           ? root.controller.signalStyle(signalRow) : 1
+                onPreviewColorChanged: legendPreview.requestPaint()
+                onPreviewWidthChanged: legendPreview.requestPaint()
+                onPreviewStyleChanged: legendPreview.requestPaint()
                 implicitWidth: Math.min(legend.width,
-                                        legendLabel.implicitWidth + 18)
+                                        legendLabel.implicitWidth + 26)
                 implicitHeight: 18
                 opacity: root.controller.plotStateRevision >= 0
                          && root.controller.plotSignalVisible(root.plotIndex,
                                                               signalRow)
                          ? 1.0 : 0.42
 
-                Rectangle {
-                    width: 10
-                    height: 3
+                Canvas {
+                    id: legendPreview
+                    width: 18
+                    height: 14
                     anchors.verticalCenter: parent.verticalCenter
-                    color: root.controller.signalColor(parent.signalRow)
+                    onPaint: {
+                        const context = getContext("2d")
+                        context.reset()
+                        context.strokeStyle = parent.previewColor
+                        context.lineWidth = parent.previewWidth
+                        if (parent.previewStyle === 2) context.setLineDash([6, 3])
+                        else if (parent.previewStyle === 3) context.setLineDash([2, 3])
+                        else if (parent.previewStyle === 4) context.setLineDash([6, 3, 2, 3])
+                        else if (parent.previewStyle === 5) context.setLineDash([6, 3, 2, 3, 2, 3])
+                        else context.setLineDash([])
+                        context.beginPath()
+                        context.moveTo(1, height / 2)
+                        context.lineTo(width - 1, height / 2)
+                        context.stroke()
+                    }
                 }
                 Label {
                     id: legendLabel
                     anchors.left: parent.left
-                    anchors.leftMargin: 14
+                    anchors.leftMargin: 22
                     anchors.verticalCenter: parent.verticalCenter
-                    width: Math.max(0, parent.width - 14)
+                    width: Math.max(0, parent.width - 22)
                     text: root.controller.signalName(parent.signalRow)
                     elide: Text.ElideRight
                     color: root.textColor

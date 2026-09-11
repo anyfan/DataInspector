@@ -12,6 +12,7 @@ class AppControllerTest final : public QObject
 
 private slots:
     void loadedSignalsBindOnlyToTheActivePlot();
+    void expandingLayoutKeepsExistingPlotAttached();
 };
 
 void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
@@ -39,6 +40,11 @@ void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
     QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 5000);
     QCOMPARE(controller.signalName(0), QStringLiteral("Pitch"));
     QCOMPARE(controller.signalName(1), QStringLiteral("Roll"));
+    controller.setSignalPen(0, QColor("green"), 5.0, Qt::DotLine);
+    QCOMPARE(controller.signalColor(0), QColor("green"));
+    QCOMPARE(controller.signalWidth(0), 5.0);
+    QCOMPARE(controller.signalStyle(0), int(Qt::DotLine));
+    QCOMPARE(controller.signalWidth(1), 1.0);
     QVERIFY(controller.plotSignalRows(0).isEmpty());
     QVERIFY(controller.plotSignalRows(1).isEmpty());
 
@@ -71,6 +77,36 @@ void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
     QVERIFY(controller.plotSignalRows(1).isEmpty());
     QVERIFY(controller.plotStateRevision() > revisionBeforeClear);
     QCOMPARE(bindingsChanged.count(), 1);
+}
+
+void AppControllerTest::expandingLayoutKeepsExistingPlotAttached()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("flight.csv"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    QCOMPARE(file.write("time,Pitch,Roll\n0,1,2\n1,3,4\n"), qint64(28));
+    file.close();
+
+    AppController controller;
+    PlotItem firstPlot;
+    controller.attachPlot(&firstPlot, 0);
+    QSignalSpy loaded(&controller, &AppController::currentFileChanged);
+    QVERIFY(controller.loadCsv(path));
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 5000);
+
+    controller.toggleSignal(0);
+    QCOMPARE(firstPlot.visibleSeriesIds(), QVector<PlotSeriesId>({0}));
+
+    // A numeric QML Repeater can retain delegate 0 and only create delegate 1.
+    controller.setLayout(1, 2);
+    PlotItem secondPlot;
+    controller.attachPlot(&secondPlot, 1);
+    controller.toggleSignal(1);
+
+    QCOMPARE(firstPlot.visibleSeriesIds(), QVector<PlotSeriesId>({0, 1}));
+    QVERIFY(secondPlot.visibleSeriesIds().isEmpty());
 }
 
 QTEST_MAIN(AppControllerTest)

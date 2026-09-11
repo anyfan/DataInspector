@@ -40,6 +40,9 @@ static void uploadLineNode(QSGGeometryNode *node,
                            const GeometrySegment &segment)
 {
     auto *geometry = node->geometry();
+    geometry->setDrawingMode(segment.triangleList
+                             ? QSGGeometry::DrawTriangles
+                             : QSGGeometry::DrawTriangleStrip);
     geometry->allocate(segment.vertices.size());
     auto *vertices = static_cast<QSGGeometry::Point2D *>(geometry->vertexData());
     for (int i = 0; i < segment.vertices.size(); ++i) {
@@ -167,6 +170,12 @@ void PlotItem::setVisibleSeries(const QVector<PlotSeriesId> &orderedIds)
     }
     emit cursorValuesChanged();
     update();
+}
+
+QVector<PlotSeriesId> PlotItem::visibleSeriesIds() const
+{
+    QMutexLocker lock(&m_dataMutex);
+    return m_visibleSeries;
 }
 
 void PlotItem::refreshSnapshotLocked()

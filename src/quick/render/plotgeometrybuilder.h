@@ -26,6 +26,7 @@ struct GeometrySegment
     PlotSeriesId seriesId = -1;
     QColor color;
     QVector<QPointF> vertices;
+    bool triangleList = false;
 };
 
 struct GeometryResult

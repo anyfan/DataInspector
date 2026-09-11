@@ -4,6 +4,7 @@
 #include <QThread>
 #include <QColor>
 #include <QSet>
+#include <QPointer>
 #include <QVariantList>
 #include <memory>
 #include "signalmodel.h"
@@ -52,7 +53,11 @@ public:
     Q_INVOKABLE bool plotSignalEnabled(int plotIndex, int row) const;
     Q_INVOKABLE bool plotSignalVisible(int plotIndex, int row) const;
     Q_INVOKABLE QVariantList plotSignalRows(int plotIndex) const;
-    Q_INVOKABLE QColor signalColor(int row) const { return m_signalColors.value(row, QColor("#4ea1ff")); }
+    Q_INVOKABLE QColor signalColor(int row) const { return m_signals->signalColor(row); }
+    Q_INVOKABLE double signalWidth(int row) const { return m_signals->signalWidth(row); }
+    Q_INVOKABLE int signalStyle(int row) const { return static_cast<int>(m_signals->signalStyle(row)); }
+    Q_INVOKABLE void setSignalPen(int row, const QColor &color,
+                                  double width, int style);
     Q_INVOKABLE QString signalName(int row) const;
     Q_INVOKABLE void attachPlot(QObject *plot, int index = 0);
     Q_INVOKABLE void setLayout(int rows, int columns);
@@ -75,7 +80,7 @@ private:
     void setStatus(const QString &status);
     void refreshPlot(int index, bool fitY = true);
     SignalModel *m_signals;
-    QVector<PlotItem *> m_plots;
+    QVector<QPointer<PlotItem>> m_plots;
     int m_plotRows = 1;
     int m_plotColumns = 1;
     QString m_status = QStringLiteral("打开 CSV 或 TXT 文件开始查看");

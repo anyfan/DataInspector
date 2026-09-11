@@ -21,6 +21,8 @@ struct LodSegment
     PlotSeriesId seriesId = -1;
     QColor color;
     QVector<QPointF> points;
+    double lineWidth = 0.0;
+    Qt::PenStyle lineStyle = Qt::SolidLine;
 };
 
 struct LodResult

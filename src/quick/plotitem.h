@@ -49,6 +49,7 @@ public:
     void setCursorMode(int mode);
     void setSeriesStore(const std::shared_ptr<const PlotSeriesStore> &store);
     void setVisibleSeries(const QVector<PlotSeriesId> &orderedIds);
+    QVector<PlotSeriesId> visibleSeriesIds() const;
     Q_INVOKABLE void setCursorX(double x, int cursorIndex = 1);
     void setCursorPosition(double x, int cursorIndex = 1);
     Q_INVOKABLE void fitView();
