@@ -202,14 +202,25 @@ AppController::~AppController()
 
 bool AppController::loadCsv(const QString &filePath)
 {
-    return loadFiles({filePath}) == 1;
+    return loadFiles(QVariant(filePath)) == 1;
 }
 
-int AppController::loadFiles(const QVariantList &filePaths)
+int AppController::loadFiles(const QVariant &filePaths)
 {
     if (!m_loader) return 0;
+    QVariantList paths;
+    if (filePaths.typeId() == QMetaType::QString
+        || filePaths.typeId() == QMetaType::QByteArray) {
+        paths.append(filePaths);
+    } else if (filePaths.canConvert<QUrl>()) {
+        paths.append(filePaths);
+    } else if (filePaths.canConvert<QVariantList>()) {
+        paths = filePaths.toList();
+    } else if (!filePaths.toString().isEmpty()) {
+        paths.append(filePaths);
+    }
     int accepted = 0;
-    for (const QVariant &value : filePaths) {
+    for (const QVariant &value : paths) {
         const QUrl url = value.canConvert<QUrl>() ? value.toUrl() : QUrl(value.toString());
         QString path = url.isLocalFile() ? url.toLocalFile() : value.toString();
         if (path.startsWith(QStringLiteral("file:"))) path = QUrl(path).toLocalFile();

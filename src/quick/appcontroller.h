@@ -51,7 +51,7 @@ public:
     int plotStateRevision() const { return m_plotStateRevision; }
     int legendMode() const { return m_legendMode; }
     Q_INVOKABLE bool loadCsv(const QString &filePath);
-    Q_INVOKABLE int loadFiles(const QVariantList &filePaths);
+    Q_INVOKABLE int loadFiles(const QVariant &filePaths);
     Q_INVOKABLE void selectSignal(int row);
     Q_INVOKABLE void toggleSignal(int row);
     Q_INVOKABLE void filterSignals(const QString &text);

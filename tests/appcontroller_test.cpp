@@ -2,6 +2,9 @@
 #include "plotitem.h"
 
 #include <QFile>
+#include <QQmlComponent>
+#include <QQmlContext>
+#include <QQmlEngine>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -19,6 +22,7 @@ private slots:
     void multipleFilesAppendAndPreserveExistingBindings();
     void customLayoutSupportsLegacyEightByEightRange();
     void replacingAPlotDelegateRestoresItsCurves();
+    void qmlUrlListImportsLocalFiles();
 };
 
 void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
@@ -194,6 +198,42 @@ void AppControllerTest::replacingAPlotDelegateRestoresItsCurves()
     delete oldPlot;
 
     QCOMPARE(replacement.visibleSeriesIds(), QVector<PlotSeriesId>({0}));
+}
+
+void AppControllerTest::qmlUrlListImportsLocalFiles()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("typed-url-list.csv"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    QCOMPARE(file.write("time,Pitch\n0,1\n"), qint64(15));
+    file.close();
+
+    AppController controller;
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("testController"),
+                                              &controller);
+    QQmlComponent component(&engine);
+    const QByteArray source = QByteArrayLiteral(
+        "import QtQml\n"
+        "QtObject {\n"
+        "  property list<url> files: [\"")
+        + QUrl::fromLocalFile(path).toString().toUtf8()
+        + QByteArrayLiteral("\"]\n"
+                            "  function submit() {\n"
+                            "    return testController.loadFiles(files)\n"
+                            "  }\n"
+                            "}\n");
+    component.setData(source, QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+
+    QVariant accepted;
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "submit",
+                                      Q_RETURN_ARG(QVariant, accepted)));
+    QCOMPARE(accepted.toInt(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.loadedFileCount(), 1, 5000);
 }
 
 QTEST_MAIN(AppControllerTest)
