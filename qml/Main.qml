@@ -14,8 +14,10 @@ ApplicationWindow {
     property color panelColor: darkTheme ? "#20252b" : "#f7f9fb"
     property color borderColor: darkTheme ? "#3b4652" : "#d7dfe8"
     property color accentColor: "#0078d4"
+    property color treeTextColor: darkTheme ? "#e6edf3" : "#202830"
     property bool darkTheme: false
     property int editingSignalIndex: -1
+    property string pendingFileRemoval: ""
 
     ListModel {
         id: lineStyleModel
@@ -73,6 +75,30 @@ ApplicationWindow {
         onAccepted: colorButton.selectedColor = selectedColor
     }
 
+    Menu {
+        id: fileContextMenu
+        property string fileName: ""
+        MenuItem {
+            text: "移除文件 '" + fileContextMenu.fileName + "'"
+            onTriggered: window.requestRemoveFile(fileContextMenu.fileName)
+        }
+    }
+
+    Dialog {
+        id: removeFileDialog
+        title: "移除文件"
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: appController.removeFile(window.pendingFileRemoval)
+        Label {
+            width: 320
+            wrapMode: Text.Wrap
+            text: "确定移除文件 '" + window.pendingFileRemoval
+                  + "' 及其所有曲线吗？"
+        }
+    }
+
     function editSignalPen(signalIndex) {
         editingSignalIndex = signalIndex
         colorButton.selectedColor = appController.signalColor(signalIndex)
@@ -83,6 +109,11 @@ ApplicationWindow {
             if (lineStyleModel.get(index).value === style) found = index
         styleCombo.currentIndex = found
         signalPropertiesDialog.open()
+    }
+
+    function requestRemoveFile(fileName) {
+        pendingFileRemoval = fileName
+        removeFileDialog.open()
     }
 
     FileDialog {
@@ -116,12 +147,26 @@ ApplicationWindow {
     DropArea {
         anchors.fill: parent
         z: 1000
-        onEntered: function(drag) { drag.accepted = drag.hasUrls }
-        onDropped: function(drop) {
-            if (drop.hasUrls) {
-                appController.loadFiles(drop.urls)
-                drop.acceptProposedAction()
+        function droppedFileUrls(drop) {
+            if (drop.hasUrls && drop.urls.length > 0)
+                return drop.urls
+            const urls = []
+            if (drop.hasText) {
+                const lines = drop.text.split(/\r?\n/)
+                for (let index = 0; index < lines.length; ++index) {
+                    const value = lines[index].trim()
+                    if (value.indexOf("file:") === 0) urls.push(value)
+                }
             }
+            return urls
+        }
+        onEntered: function(drag) {
+            if (drag.hasUrls || drag.hasText) drag.acceptProposedAction()
+        }
+        onDropped: function(drop) {
+            const urls = droppedFileUrls(drop)
+            if (urls.length > 0 && appController.loadFiles(urls) > 0)
+                drop.acceptProposedAction()
         }
     }
 
@@ -164,6 +209,7 @@ ApplicationWindow {
                         required property color signalColor
                         required property string groupName
                         required property bool groupNode
+                        required property bool fileNode
                         required property bool groupExpanded
                         required property int nodeDepth
                         required property real signalWidth
@@ -186,6 +232,9 @@ ApplicationWindow {
                                 Layout.preferredWidth: 24
                                 Layout.preferredHeight: 24
                                 text: signalDelegate.groupExpanded ? "▾" : "▸"
+                                palette.buttonText: signalDelegate.groupNode
+                                                    ? window.accentColor
+                                                    : window.treeTextColor
                                 onClicked: appController.signalModel.toggleGroup(signalDelegate.groupName)
                             }
                             CheckBox {
@@ -202,7 +251,8 @@ ApplicationWindow {
                             Label {
                                 text: signalDelegate.signalName
                                 font.weight: signalDelegate.groupNode ? Font.DemiBold : Font.Normal
-                                color: signalDelegate.groupNode ? window.accentColor : palette.text
+                                color: signalDelegate.groupNode
+                                       ? window.accentColor : window.treeTextColor
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                                 MouseArea {
@@ -213,6 +263,17 @@ ApplicationWindow {
                                             appController.signalModel.toggleGroup(signalDelegate.groupName)
                                     }
                                 }
+                            }
+                            ToolButton {
+                                visible: signalDelegate.fileNode
+                                Layout.preferredWidth: 26
+                                Layout.preferredHeight: 24
+                                text: "×"
+                                palette.buttonText: window.treeTextColor
+                                onClicked: window.requestRemoveFile(
+                                               signalDelegate.groupName)
+                                ToolTip.visible: hovered
+                                ToolTip.text: "移除文件"
                             }
                             Canvas {
                                 id: penPreview
@@ -243,6 +304,15 @@ ApplicationWindow {
                                     ToolTip.text: "双击编辑信号线属性"
                                     hoverEnabled: true
                                 }
+                            }
+                        }
+                        TapHandler {
+                            acceptedButtons: Qt.RightButton
+                            enabled: signalDelegate.fileNode
+                            onTapped: {
+                                signalList.currentIndex = signalDelegate.index
+                                fileContextMenu.fileName = signalDelegate.groupName
+                                fileContextMenu.popup()
                             }
                         }
                     }

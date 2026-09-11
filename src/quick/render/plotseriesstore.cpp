@@ -3,6 +3,7 @@
 #include <QtMath>
 
 #include <limits>
+#include <utility>
 
 namespace {
 
@@ -14,6 +15,12 @@ PlotSeriesDataPtr makeSeriesData(const PlotSeriesInput &input, quint64 version)
     data->lineWidth = qBound(1.0, input.lineWidth, 20.0);
     data->lineStyle = input.lineStyle;
     data->version = version;
+
+    if (!input.points.isEmpty()) {
+        data->points = input.points;
+        data->monotonicTime = input.monotonicTime;
+        return data;
+    }
 
     const int count = qMin(input.time.size(), input.values.size());
     data->points.reserve(count);
@@ -80,6 +87,24 @@ void PlotSeriesStore::updateSeriesPen(PlotSeriesId id, const QColor &color,
         break;
     }
     if (!changed) return;
+    m_series = std::move(replacement);
+    m_generation = nextGeneration;
+}
+
+void PlotSeriesStore::removeSeries(const QSet<PlotSeriesId> &ids)
+{
+    if (ids.isEmpty()) return;
+    const quint64 nextGeneration = m_generation + 1;
+    QVector<PlotSeriesDataPtr> replacement;
+    replacement.reserve(m_series.size());
+    for (const PlotSeriesDataPtr &current : std::as_const(m_series)) {
+        if (!current || ids.contains(current->id)) continue;
+        auto updated = std::make_shared<PlotSeriesData>(*current);
+        updated->id = replacement.size();
+        updated->version = nextGeneration;
+        replacement.append(std::move(updated));
+    }
+    if (replacement.size() == m_series.size()) return;
     m_series = std::move(replacement);
     m_generation = nextGeneration;
 }

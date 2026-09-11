@@ -26,6 +26,7 @@ private slots:
     void geometryUsesIndependentSeriesWidthsAndStyles();
     void appendSeriesKeepsExistingSnapshots();
     void geometryKeepsFullWidthForOffscreenDiagonalEntry();
+    void storeAcceptsWorkerPreparedPoints();
 };
 
 void RenderCoreTest::storeGenerationAndSnapshotsAreImmutable()
@@ -334,6 +335,24 @@ void RenderCoreTest::geometryKeepsFullWidthForOffscreenDiagonalEntry()
     QCOMPARE(vertices.size(), 6);
     QCOMPARE(QLineF(vertices.at(0), vertices.at(1)).length(), 4.0);
     QCOMPARE(QLineF(vertices.at(4), vertices.at(5)).length(), 4.0);
+}
+
+void RenderCoreTest::storeAcceptsWorkerPreparedPoints()
+{
+    PlotSeriesInput input;
+    input.id = 8;
+    input.color = QColor("magenta");
+    input.points = {{0.0, 2.0}, {1.0, 4.0}};
+    input.monotonicTime = true;
+
+    PlotSeriesStore store;
+    store.appendSeries({input});
+
+    const PlotSeriesSnapshot snapshot = store.snapshot({8});
+    QCOMPARE(snapshot.series.size(), 1);
+    QCOMPARE(snapshot.series.first()->points,
+             QVector<QPointF>({{0.0, 2.0}, {1.0, 4.0}}));
+    QVERIFY(snapshot.series.first()->monotonicTime);
 }
 
 QTEST_GUILESS_MAIN(RenderCoreTest)

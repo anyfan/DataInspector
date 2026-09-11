@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QPointF>
 #include <QPen>
+#include <QSet>
 #include <QVector>
 
 #include <memory>
@@ -18,6 +19,8 @@ struct PlotSeriesInput
     QColor color;
     double lineWidth = 2.0;
     Qt::PenStyle lineStyle = Qt::SolidLine;
+    QVector<QPointF> points;
+    bool monotonicTime = true;
 };
 
 struct PlotSeriesData
@@ -63,6 +66,7 @@ public:
     void appendSeries(const QVector<PlotSeriesInput> &inputs);
     void updateSeriesPen(PlotSeriesId id, const QColor &color,
                          double lineWidth, Qt::PenStyle lineStyle);
+    void removeSeries(const QSet<PlotSeriesId> &ids);
     void clear();
     quint64 generation() const;
     PlotSeriesSnapshot snapshot(const QVector<PlotSeriesId> &orderedIds) const;

@@ -17,6 +17,7 @@ public:
         ColorRole,
         GroupRole,
         GroupNodeRole,
+        FileNodeRole,
         ExpandedRole,
         DepthRole,
         WidthRole,
@@ -34,6 +35,7 @@ public:
     int sourceCount() const { return m_names.size(); }
     void setFilter(const QString &text);
     Q_INVOKABLE void toggleGroup(const QString &group);
+    QVector<int> removeFile(const QString &fileName);
     void setAllChecked(bool checked);
     int checkedCount() const;
     QColor color(int row) const { return signalColor(row); }

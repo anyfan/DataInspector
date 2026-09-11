@@ -4,12 +4,15 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QJSValue>
 #include <QRegularExpression>
 #include <QStringView>
 #include <QTextStream>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
+#include <QtMath>
+#include <limits>
 #include <utility>
 
 #ifdef ENABLE_MAT
@@ -78,6 +81,37 @@ static bool buildMatTable(int index, const QMap<QString, matvar_t *> &variables,
 }
 #endif
 
+static void prepareTableSeries(LoadedTable &table)
+{
+    table.rowCount = table.time.size();
+    table.preparedPoints.reserve(table.values.size());
+    table.monotonicTimes.reserve(table.values.size());
+    for (const QVector<double> &values : std::as_const(table.values)) {
+        const int count = qMin(table.time.size(), values.size());
+        QVector<QPointF> points;
+        points.reserve(count);
+        bool monotonic = true;
+        double previousTime = -std::numeric_limits<double>::infinity();
+        for (int index = 0; index < count; ++index) {
+            const double timestamp = table.time.at(index);
+            const double value = values.at(index);
+            if (!qIsFinite(timestamp)) {
+                monotonic = false;
+                points.append(QPointF(qQNaN(), qQNaN()));
+                continue;
+            }
+            if (timestamp < previousTime) monotonic = false;
+            previousTime = timestamp;
+            points.append(QPointF(timestamp,
+                                  qIsFinite(value) ? value : qQNaN()));
+        }
+        table.preparedPoints.append(std::move(points));
+        table.monotonicTimes.append(monotonic);
+    }
+    table.time.clear();
+    table.values.clear();
+}
+
 class DataLoadWorker final : public QObject
 {
     Q_OBJECT
@@ -123,7 +157,7 @@ private:
             const QString line = stream.readLine();
             ++lineCount;
             if ((lineCount & 0xff) == 0 && fileSize > 0) {
-                const int percentage = qBound(0, static_cast<int>(stream.pos() * 100 / fileSize), 99);
+                const int percentage = qBound(0, static_cast<int>(stream.pos() * 90 / fileSize), 90);
                 if (percentage > lastProgress) {
                     lastProgress = percentage;
                     emit progress(path, percentage);
@@ -137,7 +171,9 @@ private:
             for (int i = 1; i < fields.size(); ++i) { bool ok = false; const double value = fields.at(i).toDouble(&ok); table.values[i-1].append(ok ? value : qQNaN()); }
         }
         if (table.time.isEmpty()) { emit finished(path, {}, skipped, QStringLiteral("没有读取到有效数据：%1").arg(path)); return; }
-        emit progress(path, 100);
+        emit progress(path, 92);
+        prepareTableSeries(table);
+        emit progress(path, 99);
         emit finished(path, {table}, skipped, {});
     }
  #ifdef ENABLE_MAT
@@ -164,13 +200,16 @@ private:
             LoadedTable table;
             if (buildMatTable(indices.at(position), variables, table))
                 tables.append(std::move(table));
-            emit progress(path, 10 + 85 * (position + 1) / qMax(1, indices.size()));
+            emit progress(path, 10 + 75 * (position + 1) / qMax(1, indices.size()));
         }
         for (matvar_t *entry : std::as_const(variables))
             Mat_VarFree(entry);
         Mat_Close(file);
         if (tables.isEmpty()) { emit finished(path, {}, 0, QStringLiteral("MAT 文件中没有有效的 pN 数据变量")); return; }
-        emit progress(path, 100);
+        for (int position = 0; position < tables.size(); ++position) {
+            prepareTableSeries(tables[position]);
+            emit progress(path, 85 + 14 * (position + 1) / tables.size());
+        }
         emit finished(path, tables, 0, {});
     }
  #endif
@@ -209,7 +248,11 @@ int AppController::loadFiles(const QVariant &filePaths)
 {
     if (!m_loader) return 0;
     QVariantList paths;
-    if (filePaths.typeId() == QMetaType::QString
+    if (filePaths.typeId() == qMetaTypeId<QJSValue>()) {
+        const QVariant converted = filePaths.value<QJSValue>().toVariant();
+        paths = converted.canConvert<QVariantList>()
+            ? converted.toList() : QVariantList{converted};
+    } else if (filePaths.typeId() == QMetaType::QString
         || filePaths.typeId() == QMetaType::QByteArray) {
         paths.append(filePaths);
     } else if (filePaths.canConvert<QUrl>()) {
@@ -256,6 +299,38 @@ int AppController::loadFiles(const QVariant &filePaths)
         m_batchTotal += accepted;
     }
     return accepted;
+}
+
+bool AppController::removeFile(const QString &fileName)
+{
+    if (m_loading || fileName.isEmpty()) return false;
+    const QVector<int> removedRows = m_signals->removeFile(fileName);
+    if (removedRows.isEmpty()) return false;
+
+    m_seriesStore->removeSeries(QSet<int>(removedRows.cbegin(),
+                                           removedRows.cend()));
+    for (auto it = removedRows.crbegin(); it != removedRows.crend(); ++it)
+        if (*it >= 0 && *it < m_signalColors.size())
+            m_signalColors.removeAt(*it);
+    for (auto it = m_loadedPaths.begin(); it != m_loadedPaths.end();) {
+        if (QFileInfo(*it).fileName() == fileName)
+            it = m_loadedPaths.erase(it);
+        else
+            ++it;
+    }
+    m_loadedFileNames.removeAll(fileName);
+    m_currentFile = m_loadedFileNames.isEmpty()
+        ? QString()
+        : m_loadedFileNames.size() == 1
+            ? m_loadedFileNames.first()
+            : QStringLiteral("已加载 %1 个文件").arg(m_loadedFileNames.size());
+    emit currentFileChanged();
+    for (int index = 0; index < m_plots.size(); ++index)
+        refreshPlot(index, false);
+    ++m_plotStateRevision;
+    emit plotBindingsChanged();
+    setStatus(QStringLiteral("已移除文件：%1").arg(fileName));
+    return true;
 }
 
 void AppController::selectSignal(int row)
@@ -327,9 +402,12 @@ void AppController::attachPlot(QObject *plot, int index)
     if (index >= m_plots.size()) m_plots.resize(index + 1);
     m_plots[index] = item;
     item->setSeriesStore(m_seriesStore);
+    item->setXRange(m_sharedXMinimum, m_sharedXMaximum);
     connect(item, &PlotItem::rangeChanged, this,
             [this, item](double xmin, double xmax, double, double) {
                 if (m_syncingRanges) return;
+                m_sharedXMinimum = xmin;
+                m_sharedXMaximum = xmax;
                 m_syncingRanges = true;
                 for (const QPointer<PlotItem> &other : std::as_const(m_plots))
                     if (other && other != item) other->setXRange(xmin, xmax);
@@ -503,12 +581,17 @@ void AppController::onLoadFinished(const QString &path, const QVector<LoadedTabl
         for (const LoadedTable &table : tables) {
             for (int signalIndex = 0;
                  signalIndex < table.signalNames.size(); ++signalIndex) {
-                inputs.append({signalId, table.time,
-                               table.values.at(signalIndex),
-                               colors.at(signalId - firstSignalId)});
+                PlotSeriesInput input;
+                input.id = signalId;
+                input.color = colors.at(signalId - firstSignalId);
+                input.points = table.preparedPoints.value(signalIndex);
+                input.monotonicTime = table.monotonicTimes.value(signalIndex,
+                                                                  true);
+                inputs.append(std::move(input));
                 ++signalId;
             }
         }
+        const bool initializeSharedXRange = m_loadedPaths.isEmpty();
         m_seriesStore->appendSeries(inputs);
         m_signalColors.append(colors);
         m_signals->setPlotCount(m_plotRows * m_plotColumns);
@@ -521,17 +604,41 @@ void AppController::onLoadFinished(const QString &path, const QVector<LoadedTabl
             ? fileName
             : QStringLiteral("已加载 %1 个文件").arg(m_loadedFileNames.size());
         emit currentFileChanged();
+        if (initializeSharedXRange) {
+            QVector<PlotSeriesId> allSeries;
+            allSeries.reserve(m_signalColors.size());
+            for (int id = 0; id < m_signalColors.size(); ++id)
+                allSeries.append(id);
+            const auto bounds = PlotSeriesStore::bounds(
+                m_seriesStore->snapshot(allSeries));
+            if (bounds.has_value()) {
+                if (qFuzzyCompare(bounds->xMinimum, bounds->xMaximum)) {
+                    m_sharedXMinimum = bounds->xMinimum - 0.5;
+                    m_sharedXMaximum = bounds->xMaximum + 0.5;
+                } else {
+                    const double padding = qMax(
+                        (bounds->xMaximum - bounds->xMinimum) * 0.02, 1e-9);
+                    m_sharedXMinimum = bounds->xMinimum - padding;
+                    m_sharedXMaximum = bounds->xMaximum + padding;
+                }
+                m_syncingRanges = true;
+                for (const QPointer<PlotItem> &plot : std::as_const(m_plots))
+                    if (plot) plot->setXRange(m_sharedXMinimum,
+                                               m_sharedXMaximum);
+                m_syncingRanges = false;
+            }
+        }
         for (int index = 0; index < m_plots.size(); ++index)
             refreshPlot(index);
         qint64 rows = 0;
-        for (const auto &table : tables) rows += table.time.size();
+        for (const auto &table : tables) rows += table.rowCount;
         m_batchRows += rows;
         m_batchSignals += names.size();
         m_batchSkipped += skipped;
     }
     ++m_batchCompleted;
     if (m_batchTotal > 0)
-        setLoadingProgress(m_batchCompleted * 100 / m_batchTotal);
+        setLoadingProgress(qMin(99, m_batchCompleted * 100 / m_batchTotal));
     startNextLoad();
 }
 
@@ -539,12 +646,6 @@ void AppController::refreshPlot(int index, bool fitY)
 {
     if (index < 0 || index >= m_plots.size() || !m_plots.at(index)) return;
     PlotItem *plot = m_plots.at(index);
-    const double oldXMinimum = plot->xMinimum();
-    const double oldXMaximum = plot->xMaximum();
-    const bool preserveX = !qFuzzyCompare(oldXMinimum, 0.0)
-        || !qFuzzyCompare(oldXMaximum, 1.0)
-        || !qFuzzyCompare(plot->yMinimum(), -1.0)
-        || !qFuzzyCompare(plot->yMaximum(), 1.0);
     const QVector<int> sortedRows = m_signals->visiblePlotRows(index);
     QVector<PlotSeriesId> visibleIds;
     visibleIds.reserve(sortedRows.size());
@@ -552,14 +653,7 @@ void AppController::refreshPlot(int index, bool fitY)
         if (row >= 0 && row < m_signalColors.size())
             visibleIds.append(row);
     plot->setVisibleSeries(visibleIds);
-    if (fitY) {
-        if (preserveX) {
-            plot->setXRange(oldXMinimum, oldXMaximum);
-            plot->fitY();
-        } else {
-            plot->fitView();
-        }
-    }
+    if (fitY) plot->fitY();
 }
 
 #include "appcontroller.moc"

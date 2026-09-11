@@ -16,6 +16,7 @@ QVariant SignalModel::data(const QModelIndex &index, int role) const
         return {};
     const VisibleNode &node = m_visibleNodes.at(index.row());
     if (role == GroupNodeRole) return node.groupNode;
+    if (role == FileNodeRole) return node.groupNode && node.depth == 0;
     if (role == ExpandedRole)
         return node.groupNode && m_expandedGroups.contains(node.group);
     if (role == DepthRole) return node.depth;
@@ -49,6 +50,7 @@ QHash<int, QByteArray> SignalModel::roleNames() const
     return {{NameRole, "signalName"}, {IndexRole, "signalIndex"},
             {CheckedRole, "signalChecked"}, {ColorRole, "signalColor"},
             {GroupRole, "groupName"}, {GroupNodeRole, "groupNode"},
+            {FileNodeRole, "fileNode"},
             {ExpandedRole, "groupExpanded"}, {DepthRole, "nodeDepth"},
             {WidthRole, "signalWidth"}, {LineStyleRole, "signalLineStyle"}};
 }
@@ -135,6 +137,68 @@ void SignalModel::toggleGroup(const QString &group)
     else m_expandedGroups.insert(group);
     rebuildVisibleNodes();
     endResetModel();
+}
+
+QVector<int> SignalModel::removeFile(const QString &fileName)
+{
+    if (fileName.isEmpty()) return {};
+
+    QVector<int> removedRows;
+    QVector<int> oldToNew(m_names.size(), -1);
+    QStringList names;
+    QStringList groups;
+    QVector<QColor> colors;
+    QVector<double> widths;
+    QVector<Qt::PenStyle> lineStyles;
+    names.reserve(m_names.size());
+    groups.reserve(m_groups.size());
+    colors.reserve(m_colors.size());
+    widths.reserve(m_widths.size());
+    lineStyles.reserve(m_lineStyles.size());
+
+    for (int row = 0; row < m_names.size(); ++row) {
+        const QString topLevelGroup = m_groups.value(row).section(
+            QLatin1Char('/'), 0, 0);
+        if (topLevelGroup == fileName) {
+            removedRows.append(row);
+            continue;
+        }
+        oldToNew[row] = names.size();
+        names.append(m_names.at(row));
+        groups.append(m_groups.value(row));
+        colors.append(m_colors.value(row, QColor("#4ea1ff")));
+        widths.append(m_widths.value(row, 2.0));
+        lineStyles.append(m_lineStyles.value(row, Qt::SolidLine));
+    }
+    if (removedRows.isEmpty()) return {};
+
+    beginResetModel();
+    m_names = std::move(names);
+    m_groups = std::move(groups);
+    m_colors = std::move(colors);
+    m_widths = std::move(widths);
+    m_lineStyles = std::move(lineStyles);
+    auto remapRows = [&oldToNew](QSet<int> &rows) {
+        QSet<int> remapped;
+        for (int oldRow : std::as_const(rows)) {
+            if (oldRow >= 0 && oldRow < oldToNew.size()
+                && oldToNew.at(oldRow) >= 0)
+                remapped.insert(oldToNew.at(oldRow));
+        }
+        rows = std::move(remapped);
+    };
+    for (QSet<int> &rows : m_plotRows) remapRows(rows);
+    for (QSet<int> &rows : m_hiddenPlotRows) remapRows(rows);
+    for (auto it = m_expandedGroups.begin(); it != m_expandedGroups.end();) {
+        if (*it == fileName || it->startsWith(fileName + QLatin1Char('/')))
+            it = m_expandedGroups.erase(it);
+        else
+            ++it;
+    }
+    rebuildVisibleNodes();
+    endResetModel();
+    emit checkedCountChanged();
+    return removedRows;
 }
 
 void SignalModel::setAllChecked(bool checked)

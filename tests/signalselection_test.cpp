@@ -19,6 +19,7 @@ private slots:
     void eachSignalKeepsIndependentPenProperties();
     void appendingSignalsPreservesBindingsAndPenProperties();
     void nestedFileAndTableGroupsExpandIndependently();
+    void removingFileGroupReindexesPlotBindings();
 };
 
 void SignalSelectionTest::matTitlesIgnoreLeadingTimeColumn()
@@ -222,6 +223,29 @@ void SignalSelectionTest::nestedFileAndTableGroupsExpandIndependently()
 
     model.toggleGroup(QStringLiteral("flight.mat"));
     QCOMPARE(model.rowCount(), 1);
+}
+
+void SignalSelectionTest::removingFileGroupReindexesPlotBindings()
+{
+    SignalModel model;
+    model.setNames(QStringList{QStringLiteral("Pitch"), QStringLiteral("Roll"),
+                               QStringLiteral("Altitude")},
+                   QStringList{QStringLiteral("first.csv"),
+                               QStringLiteral("second.csv/p1"),
+                               QStringLiteral("second.csv/p2")});
+    model.setPlotCount(2);
+    model.setPlotChecked(0, 0, true);
+    model.setPlotChecked(0, 1, true);
+    model.setPlotChecked(1, 2, true);
+
+    QCOMPARE(model.removeFile(QStringLiteral("first.csv")), QVector<int>({0}));
+
+    QCOMPARE(model.sourceCount(), 2);
+    QCOMPARE(model.nameAt(0), QStringLiteral("Roll"));
+    QCOMPARE(model.nameAt(1), QStringLiteral("Altitude"));
+    QCOMPARE(model.plotRows(0), QVector<int>({0}));
+    QCOMPARE(model.plotRows(1), QVector<int>({1}));
+    QVERIFY(model.data(model.index(0), SignalModel::FileNodeRole).toBool());
 }
 
 QTEST_GUILESS_MAIN(SignalSelectionTest)

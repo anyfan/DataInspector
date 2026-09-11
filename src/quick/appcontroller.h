@@ -18,6 +18,9 @@ struct LoadedTable
     QStringList signalNames;
     QVector<double> time;
     QVector<QVector<double>> values;
+    QVector<QVector<QPointF>> preparedPoints;
+    QVector<bool> monotonicTimes;
+    qsizetype rowCount = 0;
 };
 
 class AppController final : public QObject
@@ -52,6 +55,7 @@ public:
     int legendMode() const { return m_legendMode; }
     Q_INVOKABLE bool loadCsv(const QString &filePath);
     Q_INVOKABLE int loadFiles(const QVariant &filePaths);
+    Q_INVOKABLE bool removeFile(const QString &fileName);
     Q_INVOKABLE void selectSignal(int row);
     Q_INVOKABLE void toggleSignal(int row);
     Q_INVOKABLE void filterSignals(const QString &text);
@@ -117,6 +121,8 @@ private:
     int m_batchSkipped = 0;
     bool m_syncingRanges = false;
     bool m_syncingCursors = false;
+    double m_sharedXMinimum = 0.0;
+    double m_sharedXMaximum = 1.0;
     int m_plotStateRevision = 0;
     int m_legendMode = 0;
 };

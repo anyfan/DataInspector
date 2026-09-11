@@ -23,7 +23,11 @@ private slots:
     void customLayoutSupportsLegacyEightByEightRange();
     void replacingAPlotDelegateRestoresItsCurves();
     void qmlUrlListImportsLocalFiles();
+    void qmlJavaScriptArrayImportsLocalFiles();
     void qmlCanCallLegendModeSetter();
+    void addingSignalPreservesCurrentXRange();
+    void attachingNewPlotPreservesSharedXRange();
+    void removingFileKeepsRemainingSignalsAndBindings();
 };
 
 void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
@@ -141,8 +145,13 @@ void AppControllerTest::multipleFilesAppendAndPreserveExistingBindings()
     controller.attachPlot(&plot, 0);
     QSignalSpy loaded(&controller, &AppController::currentFileChanged);
     QVector<int> progressValues;
+    bool completedWhileLoading = false;
     connect(&controller, &AppController::loadingProgressChanged,
-            &controller, [&]() { progressValues.append(controller.loadingProgress()); });
+            &controller, [&]() {
+                progressValues.append(controller.loadingProgress());
+                if (controller.loading() && controller.loadingProgress() == 100)
+                    completedWhileLoading = true;
+            });
     QVariantList files{QUrl::fromLocalFile(firstPath), QUrl::fromLocalFile(secondPath)};
 
     QCOMPARE(controller.loadFiles(files), 2);
@@ -160,6 +169,7 @@ void AppControllerTest::multipleFilesAppendAndPreserveExistingBindings()
     QVERIFY(!controller.loading());
     QVERIFY(!progressValues.isEmpty());
     QVERIFY(std::is_sorted(progressValues.cbegin(), progressValues.cend()));
+    QVERIFY(!completedWhileLoading);
 }
 
 void AppControllerTest::customLayoutSupportsLegacyEightByEightRange()
@@ -253,6 +263,116 @@ void AppControllerTest::qmlCanCallLegendModeSetter()
     QVERIFY2(object, qPrintable(component.errorString()));
     QVERIFY(QMetaObject::invokeMethod(object.get(), "submit"));
     QCOMPARE(controller.legendMode(), 2);
+}
+
+void AppControllerTest::qmlJavaScriptArrayImportsLocalFiles()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("dropped.csv"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    QCOMPARE(file.write("time,Pitch\n0,1\n"), qint64(15));
+    file.close();
+
+    AppController controller;
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(QStringLiteral("testController"),
+                                              &controller);
+    QQmlComponent component(&engine);
+    const QByteArray source = QByteArrayLiteral(
+        "import QtQml\n"
+        "QtObject {\n"
+        "  function submit() { return testController.loadFiles([\"")
+        + QUrl::fromLocalFile(path).toString().toUtf8()
+        + QByteArrayLiteral("\"]) }\n"
+                            "}\n");
+    component.setData(source, QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+
+    QVariant accepted;
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "submit",
+                                      Q_RETURN_ARG(QVariant, accepted)));
+    QCOMPARE(accepted.toInt(), 1);
+    QTRY_COMPARE_WITH_TIMEOUT(controller.loadedFileCount(), 1, 5000);
+}
+
+void AppControllerTest::addingSignalPreservesCurrentXRange()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("wide.csv"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    QCOMPARE(file.write("time,Pitch\n0,1\n10,2\n"), qint64(20));
+    file.close();
+
+    AppController controller;
+    PlotItem plot;
+    controller.attachPlot(&plot, 0);
+    QSignalSpy loaded(&controller, &AppController::currentFileChanged);
+    QVERIFY(controller.loadCsv(path));
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 5000);
+
+    plot.setXRange(0.0, 1.0);
+    controller.toggleSignal(0);
+
+    QCOMPARE(plot.xMinimum(), 0.0);
+    QCOMPARE(plot.xMaximum(), 1.0);
+}
+
+void AppControllerTest::attachingNewPlotPreservesSharedXRange()
+{
+    AppController controller;
+    PlotItem firstPlot;
+    controller.attachPlot(&firstPlot, 0);
+    firstPlot.setXRange(12.0, 14.0);
+
+    controller.setLayout(1, 2);
+    PlotItem secondPlot;
+    controller.attachPlot(&secondPlot, 1);
+
+    QCOMPARE(firstPlot.xMinimum(), 12.0);
+    QCOMPARE(firstPlot.xMaximum(), 14.0);
+    QCOMPARE(secondPlot.xMinimum(), 12.0);
+    QCOMPARE(secondPlot.xMaximum(), 14.0);
+}
+
+void AppControllerTest::removingFileKeepsRemainingSignalsAndBindings()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString firstPath = directory.filePath(QStringLiteral("first.csv"));
+    const QString secondPath = directory.filePath(QStringLiteral("second.csv"));
+    const QVector<QPair<QString, QByteArray>> contents = {
+        {firstPath, QByteArray("time,Pitch\n0,1\n1,2\n")},
+        {secondPath, QByteArray("time,Roll\n0,3\n1,4\n")}
+    };
+    for (const auto &entry : contents) {
+        QFile file(entry.first);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QCOMPARE(file.write(entry.second), qint64(entry.second.size()));
+    }
+
+    AppController controller;
+    PlotItem plot;
+    controller.attachPlot(&plot, 0);
+    QSignalSpy loaded(&controller, &AppController::currentFileChanged);
+    QCOMPARE(controller.loadFiles(QVariantList{firstPath, secondPath}), 2);
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 2, 5000);
+    controller.toggleSignal(0);
+    controller.toggleSignal(1);
+
+    QVERIFY(controller.removeFile(QStringLiteral("first.csv")));
+
+    QCOMPARE(controller.loadedFileCount(), 1);
+    QCOMPARE(controller.signalCount(), 1);
+    QCOMPARE(controller.signalName(0), QStringLiteral("Roll"));
+    QVariantList remainingRows;
+    remainingRows.append(0);
+    QCOMPARE(controller.plotSignalRows(0), remainingRows);
+    QCOMPARE(plot.visibleSeriesIds(), QVector<PlotSeriesId>({0}));
 }
 
 QTEST_MAIN(AppControllerTest)
