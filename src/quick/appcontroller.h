@@ -28,7 +28,6 @@ class AppController final : public QObject
     Q_PROPERTY(int plotColumns READ plotColumns NOTIFY layoutChanged)
     Q_PROPERTY(int activePlotIndex READ activePlotIndex NOTIFY activePlotChanged)
     Q_PROPERTY(int plotStateRevision READ plotStateRevision NOTIFY plotBindingsChanged)
-    Q_PROPERTY(int legendMode READ legendMode WRITE setLegendMode NOTIFY legendModeChanged)
 public:
     explicit AppController(QObject *parent = nullptr);
     ~AppController() override;
@@ -43,7 +42,6 @@ public:
     int plotColumns() const { return m_plotColumns; }
     int activePlotIndex() const { return m_signals->activePlot(); }
     int plotStateRevision() const { return m_plotStateRevision; }
-    int legendMode() const { return m_legendMode; }
     Q_INVOKABLE bool loadCsv(const QString &filePath);
     Q_INVOKABLE int loadFiles(const QVariant &filePaths);
     Q_INVOKABLE bool removeFile(const QString &fileName);
@@ -65,9 +63,13 @@ public:
     Q_INVOKABLE void setLayout(int rows, int columns);
     Q_INVOKABLE void setActivePlot(int index);
     Q_INVOKABLE void fitAllPlots();
+    Q_INVOKABLE void fitPlots(bool fitX, bool fitY, bool allPlots = false);
+    Q_INVOKABLE void revealLegendSignal(int plotIndex, int row);
+    Q_INVOKABLE void removeLegendSignal(int plotIndex, int row);
+
     Q_INVOKABLE void clear();
-    Q_INVOKABLE void setLegendMode(int mode);
 signals:
+    void revealSignalRequested(int row);
     void statusChanged();
     void currentFileChanged();
     void loadingChanged();
@@ -75,7 +77,6 @@ signals:
     void layoutChanged();
     void plotBindingsChanged();
     void activePlotChanged();
-    void legendModeChanged();
 private:
     void onLoadFinished(const QString &path,
                         const QVector<LoadedTable> &tables,
@@ -114,5 +115,4 @@ private:
     double m_sharedXMinimum = 0.0;
     double m_sharedXMaximum = 1.0;
     int m_plotStateRevision = 0;
-    int m_legendMode = 0;
 };

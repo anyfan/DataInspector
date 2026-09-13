@@ -8,6 +8,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QSignalSpy>
+#include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QUrl>
 #include <QtTest>
@@ -27,10 +28,14 @@ private slots:
     void replacingAPlotDelegateRestoresItsCurves();
     void qmlUrlListImportsLocalFiles();
     void qmlJavaScriptArrayImportsLocalFiles();
-    void qmlCanCallLegendModeSetter();
+    void legendNavigationAndRemoval();
     void quotedCsvFieldsAreImported();
     void failedLoadReportsReason();
     void legendDoesNotToggleSignalVisibility();
+    void fitAndAxisZoomFollowLegacyRanges();
+    void fittingUsesUnionOfSubplotTimeRanges();
+    void asynchronousLodKeepsLatestRequest();
+    void quickPlotLoadsWithLegendAndCursors();
     void realMatImportPerformanceWhenRequested();
     void addingSignalPreservesCurrentXRange();
     void attachingNewPlotPreservesSharedXRange();
@@ -281,22 +286,141 @@ void AppControllerTest::qmlUrlListImportsLocalFiles()
     QTRY_COMPARE_WITH_TIMEOUT(controller.loadedFileCount(), 1, 5000);
 }
 
-void AppControllerTest::qmlCanCallLegendModeSetter()
+void AppControllerTest::legendNavigationAndRemoval()
 {
     AppController controller;
+    controller.signalModel()->setNames({"A", "B"}, QStringList{"file/table", "file/table"});
+    controller.signalModel()->setPlotChecked(0, 1, true);
+    QSignalSpy revealed(&controller, &AppController::revealSignalRequested);
+    controller.revealLegendSignal(0, 1);
+    QCOMPARE(revealed.count(), 1);
+    QCOMPARE(revealed.first().first().toInt(), 1);
+    QVERIFY(controller.plotSignalEnabled(0, 1));
+    controller.signalModel()->toggleGroup("file");
+    controller.signalModel()->setFilter("missing");
+    const int row = controller.signalModel()->revealSignal(1);
+    QVERIFY(row >= 0);
+    QCOMPARE(controller.signalModel()->data(controller.signalModel()->index(row), SignalModel::NameRole).toString(), "B");
+    controller.removeLegendSignal(0, 1);
+    QVERIFY(!controller.plotSignalEnabled(0, 1));
+    QCOMPARE(controller.signalCount(), 2);
+}
+
+void AppControllerTest::fittingUsesUnionOfSubplotTimeRanges()
+{
+    QTemporaryDir directory;
+    QFile firstFile(directory.filePath("first.csv")), secondFile(directory.filePath("second.csv"));
+    QVERIFY(firstFile.open(QIODevice::WriteOnly));
+    firstFile.write("time,A\n0,nan\n10,1\n"); firstFile.close();
+    QVERIFY(secondFile.open(QIODevice::WriteOnly));
+    secondFile.write("time,B\n100,2\n200,nan\n"); secondFile.close();
+    AppController controller;
+    controller.setLayout(1, 2);
+    PlotItem first, second;
+    controller.attachPlot(&first, 0); controller.attachPlot(&second, 1);
+    controller.loadFiles(QVariantList{firstFile.fileName(), secondFile.fileName()});
+    QTRY_VERIFY(!controller.loading());
+    controller.setActivePlot(0); controller.toggleSignal(0);
+    controller.setActivePlot(1); controller.toggleSignal(1);
+    controller.fitPlots(true, true, true);
+    QCOMPARE(first.xMinimum(), -4.0); QCOMPARE(first.xMaximum(), 204.0);
+    QCOMPARE(second.xMinimum(), -4.0); QCOMPARE(second.xMaximum(), 204.0);
+    QCOMPARE(first.yMinimum(), .95); QCOMPARE(first.yMaximum(), 1.05);
+    QCOMPARE(second.yMinimum(), 1.95); QCOMPARE(second.yMaximum(), 2.05);
+}
+
+void AppControllerTest::fitAndAxisZoomFollowLegacyRanges()
+{
+    auto store = std::make_shared<PlotSeriesStore>();
+    store->replaceSeries({{1, {0, 1, 2, 3}, {1000, 10, 20, -1000}, QColor("red")}});
+    PlotItem plot;
+    plot.setSeriesStore(store);
+    plot.setVisibleSeries({1});
+    plot.setXRange(1, 2);
+    plot.fitY();
+    QCOMPARE(plot.yMinimum(), 9.5);
+    QCOMPARE(plot.yMaximum(), 20.5);
+    plot.zoomAxis(0, .5, 1);
+    QCOMPARE(plot.yMinimum(), 9.5);
+    QVERIFY(plot.xMinimum() > 1);
+    const double xmin = plot.xMinimum();
+    plot.zoomAxis(1, .5, 1);
+    QCOMPARE(plot.xMinimum(), xmin);
+    QVERIFY(plot.yMinimum() > 9.5);
+}
+
+void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
+{
+    qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
+    QTemporaryDir directory;
+    QFile file(directory.filePath("ui.csv"));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("time,A,B\n0,1,1\n1,2,2\n");
+    file.close();
+    AppController controller;
+    QVERIFY(controller.loadCsv(file.fileName()));
+    QTRY_VERIFY(!controller.loading());
+    controller.toggleSignal(0);
+    controller.toggleSignal(1);
     QQmlEngine engine;
-    engine.rootContext()->setContextProperty(QStringLiteral("testController"),
-                                              &controller);
-    QQmlComponent component(&engine);
-    component.setData(QByteArrayLiteral(
-        "import QtQml\n"
-        "QtObject {\n"
-        "  function submit() { testController.setLegendMode(2) }\n"
-        "}\n"), QUrl());
-    std::unique_ptr<QObject> object(component.create());
+    QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) {
+        for (const auto &error : errors) warnings.append(error.toString());
+    });
+    const QString path = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml/QuickPlot.qml");
+    QQmlComponent component(&engine, QUrl::fromLocalFile(path));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {"plotIndex", 0}, {"controller", QVariant::fromValue<QObject *>(&controller)},
+        {"width", 800}, {"height", 400}, {"graphCursorMode", 2}}));
     QVERIFY2(object, qPrintable(component.errorString()));
-    QVERIFY(QMetaObject::invokeMethod(object.get(), "submit"));
-    QCOMPARE(controller.legendMode(), 2);
+    auto *plot = object->findChild<PlotItem *>();
+    QVERIFY(plot);
+    QTRY_VERIFY(!plot->lodPending());
+    plot->setCursorPosition(.5);
+    QCoreApplication::processEvents();
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+    QCOMPARE(plot->cursorReadouts().size(), 4);
+    QQuickWindow window;
+    window.resize(800, 400);
+    auto *item = qobject_cast<QQuickItem *>(object.get());
+    QVERIFY(item);
+    item->setParentItem(window.contentItem());
+    window.show();
+    QTest::qWait(50);
+    QSignalSpy revealed(&controller, &AppController::revealSignalRequested);
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(40, 12));
+    QTRY_COMPARE(revealed.count(), 1);
+    QVERIFY(controller.plotSignalEnabled(0, 0));
+    QTest::mouseClick(&window, Qt::RightButton, Qt::NoModifier, QPoint(40, 12));
+    QTest::qWait(30);
+    QTest::keyClick(&window, Qt::Key_Escape);
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+    item->setParentItem(nullptr);
+}
+
+void AppControllerTest::asynchronousLodKeepsLatestRequest()
+{
+    PlotSeriesStore store;
+    QVector<double> time(200000), values(200000);
+    for (int i = 0; i < time.size(); ++i) { time[i] = i; values[i] = i % 100; }
+    store.replaceSeries({{1, time, values, QColor("red")}});
+    PlotLodScheduler scheduler;
+    QSignalSpy ready(&scheduler, &PlotLodScheduler::ready);
+    const auto snapshot = store.snapshot({1});
+    for (int i = 0; i < 100; ++i)
+        scheduler.request(snapshot, {snapshot.generation, {1}, double(i), double(i + 1000), 800, 1});
+    QTRY_VERIFY_WITH_TIMEOUT(!scheduler.pending(), 10000);
+    QVERIFY(scheduler.result());
+    QCOMPARE(scheduler.result()->key.xMinimum, 99.0);
+    QCOMPARE(ready.count(), 1);
+    store.clear();
+    const auto empty = store.snapshot({});
+    scheduler.request(empty, {empty.generation, {}, 0, 1, 800, 1});
+    QVERIFY(!scheduler.result());
+    QTRY_VERIFY_WITH_TIMEOUT(!scheduler.pending(), 10000);
+    QVERIFY(scheduler.result()->segments.isEmpty());
+    // Destruction must not wait for a worker or leave a callback to a dead QObject.
+    { PlotLodScheduler temporary; temporary.request(snapshot, {snapshot.generation, {1}, 0, 200000, 800, 1}); }
 }
 
 void AppControllerTest::qmlJavaScriptArrayImportsLocalFiles()

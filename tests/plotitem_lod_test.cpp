@@ -3,6 +3,7 @@
 
 #include <QGuiApplication>
 #include <QElapsedTimer>
+#include <QThread>
 #include <QSGGeometryNode>
 
 #include <iostream>
@@ -14,6 +15,13 @@ public:
 
     QSGNode *paint(QSGNode *oldNode = nullptr)
     {
+        QElapsedTimer deadline;
+        deadline.start();
+        while (lodPending() && deadline.elapsed() < 10000) {
+            QCoreApplication::processEvents();
+            QThread::msleep(1);
+        }
+        if (lodPending()) qFatal("LOD did not finish");
         return updatePaintNode(oldNode, nullptr);
     }
 };
@@ -85,13 +93,30 @@ int main(int argc, char *argv[])
     plot.setVisibleSeries(ids);
     plot.fitView();
     root = plot.paint();
+    auto *last = dynamic_cast<QSGGeometryNode *>(root->lastChild());
+    if (!last || last->geometry()->vertexCount() != 4) {
+        std::cerr << "Cursor must be the top scene graph node\n";
+        delete root;
+        return 1;
+    }
+    // Adding more curves while the cursor exists must insert them below it.
+    inputs.append({16, time, values, QColor("blue")});
+    ids.append(16);
+    store->replaceSeries(inputs);
+    plot.setVisibleSeries(ids);
+    root = plot.paint(root);
+    if (root->lastChild() != last) {
+        std::cerr << "New curve covered the cursor\n";
+        delete root;
+        return 1;
+    }
     QElapsedTimer timer;
     timer.start();
     for (int i = 0; i < 200; ++i) {
         plot.setCursorX(20000 + i * 100);
         root = plot.paint(root);
     }
-    std::cout << "16 signals x 100000 samples, 200 cursor updates: "
+    std::cout << "17 signals x 100000 samples, 200 cursor updates: "
               << timer.elapsed() << " ms (CPU query and scene graph submission)\n";
     delete root;
     return 0;

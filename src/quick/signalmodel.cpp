@@ -370,3 +370,18 @@ int SignalModel::visibleModelRow(int sourceRow) const
             && m_visibleNodes.at(row).sourceRow == sourceRow) return row;
     return -1;
 }
+
+int SignalModel::revealSignal(int sourceRow)
+{
+    if (sourceRow < 0 || sourceRow >= m_names.size()) return -1;
+    beginResetModel();
+    m_filter.clear();
+    QString prefix;
+    for (const QString &part : m_groups.value(sourceRow).split('/', Qt::SkipEmptyParts)) {
+        prefix = prefix.isEmpty() ? part : prefix + '/' + part;
+        m_expandedGroups.insert(prefix);
+    }
+    rebuildVisibleNodes();
+    endResetModel();
+    return visibleModelRow(sourceRow);
+}

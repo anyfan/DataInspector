@@ -17,9 +17,9 @@ namespace {
 // every pan/zoom/cursor update.
 struct PlotRoot final : QSGNode {
     QVector<QSGGeometryNode *> lineNodes;
-    std::optional<LodRequestKey> curveKey;
+    std::shared_ptr<const LodResult> curveResult;
     QVector<double> curveView;
-    QVector<PlotSeriesDataPtr> curvePayloads;
+
     QSGGeometryNode *cursorNode = nullptr;
     QSGGeometryNode *cursorNode2 = nullptr;
 };
@@ -34,7 +34,8 @@ static QSGGeometryNode *createLineNode(PlotRoot *root)
     auto *material = new QSGFlatColorMaterial;
     node->setMaterial(material);
     node->setFlag(QSGNode::OwnsMaterial);
-    root->appendChildNode(node);
+    if (root->cursorNode) root->insertChildNodeBefore(node, root->cursorNode);
+    else root->appendChildNode(node);
     root->lineNodes.append(node);
     return node;
 }
@@ -63,11 +64,31 @@ static void uploadLineNode(QSGGeometryNode *node,
 
 PlotItem::PlotItem(QQuickItem *parent) : QQuickItem(parent)
 {
+    m_lodScheduler = new PlotLodScheduler(this);
+    connect(m_lodScheduler, &PlotLodScheduler::ready, this, [this] {
+        { QMutexLocker lock(&m_dataMutex); m_lodResult = m_lodScheduler->result(); }
+        emit lodChanged();
+        update();
+    });
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
     setAcceptHoverEvents(true);
     setClip(true);
     rebuildTicksLocked();
+}
+void PlotItem::requestLod()
+{
+    PlotSeriesSnapshot snapshot;
+    LodRequestKey key;
+    {
+        QMutexLocker lock(&m_dataMutex);
+        snapshot = m_seriesSnapshot;
+        key = {snapshot.generation, snapshot.orderedIds, m_xMinimum, m_xMaximum,
+               qBound(64, int(qCeil(width())), 4096), 1};
+    }
+    m_lodScheduler->request(snapshot, key);
+    { QMutexLocker lock(&m_dataMutex); m_lodResult = m_lodScheduler->result(); }
+    emit lodChanged();
 }
 double PlotItem::xMinimum() const { QMutexLocker lock(&m_dataMutex); return m_xMinimum; }
 double PlotItem::xMaximum() const { QMutexLocker lock(&m_dataMutex); return m_xMaximum; }
@@ -155,6 +176,7 @@ void PlotItem::setSeriesStore(const std::shared_ptr<const PlotSeriesStore> &stor
         refreshSnapshotLocked();
         updateCursorValuesLocked();
     }
+    requestLod();
     emit cursorValuesChanged();
     update();
 }
@@ -173,6 +195,7 @@ void PlotItem::setVisibleSeries(const QVector<PlotSeriesId> &orderedIds)
         refreshSnapshotLocked();
         updateCursorValuesLocked();
     }
+    requestLod();
     emit cursorValuesChanged();
     update();
 }
@@ -192,45 +215,44 @@ void PlotItem::refreshSnapshotLocked()
 
 void PlotItem::fitView()
 {
-    std::optional<PlotBounds> plotBounds;
-    {
-        QMutexLocker lock(&m_dataMutex);
-        plotBounds = PlotSeriesStore::bounds(m_seriesSnapshot);
-    }
-    if (!plotBounds.has_value()) { setRange(0, 1, -1, 1); return; }
-    double xmin = plotBounds->xMinimum, xmax = plotBounds->xMaximum;
-    double ymin = plotBounds->yMinimum, ymax = plotBounds->yMaximum;
-    if (qFuzzyCompare(xmin, xmax)) { xmin -= .5; xmax += .5; } else { const double p = qMax((xmax-xmin)*.02, 1e-9); xmin -= p; xmax += p; }
-    if (qFuzzyCompare(ymin, ymax)) { ymin -= .5; ymax += .5; } else { const double p = qMax((ymax-ymin)*.08, 1e-9); ymin -= p; ymax += p; }
-    setRange(xmin, xmax, ymin, ymax);
+    std::optional<QPair<double, double>> bounds;
+    { QMutexLocker lock(&m_dataMutex); bounds = PlotSeriesStore::timeBounds(m_seriesSnapshot); }
+    if (!bounds) { setRange(0, 10, 0, 1); return; }
+    const double span = bounds->second - bounds->first;
+    const double padding = span > 0 ? span * .02 : .5;
+    setXRange(bounds->first - padding, bounds->second + padding);
+    fitY();
 }
 void PlotItem::fitY()
 {
-    std::optional<PlotBounds> plotBounds;
-    {
-        QMutexLocker lock(&m_dataMutex);
-        plotBounds = PlotSeriesStore::bounds(m_seriesSnapshot);
-    }
     double xmin, xmax;
+    std::optional<PlotBounds> bounds;
     {
         QMutexLocker lock(&m_dataMutex);
-        xmin = m_xMinimum;
-        xmax = m_xMaximum;
+        xmin = m_xMinimum; xmax = m_xMaximum;
+        bounds = PlotSeriesStore::bounds(m_seriesSnapshot, xmin, xmax);
     }
-    if (!plotBounds.has_value()) {
-        setRange(xmin, xmax, -1.0, 1.0);
-        return;
-    }
-    double ymin = plotBounds->yMinimum;
-    double ymax = plotBounds->yMaximum;
-    if (qFuzzyCompare(ymin, ymax)) {
-        ymin -= .5;
-        ymax += .5;
+    if (!bounds) { setRange(xmin, xmax, 0, 1); return; }
+    const double span = bounds->yMaximum - bounds->yMinimum;
+    const double padding = span == 0 ? (bounds->yMinimum == 0 ? .5 : .05) : span * .05;
+    setRange(xmin, xmax, bounds->yMinimum - padding, bounds->yMaximum + padding);
+}
+void PlotItem::zoomAxis(int axis, double fraction, double steps)
+{
+    if ((axis != 0 && axis != 1) || !qIsFinite(fraction) || !qIsFinite(steps) || steps == 0) return;
+    fraction = qBound(0.0, fraction, 1.0);
+    const double factor = qPow(.85, qBound(-20.0, steps, 20.0));
+    double xmin = xMinimum(), xmax = xMaximum(), ymin = yMinimum(), ymax = yMaximum();
+    if (axis == 0) {
+        const double anchor = xmin + fraction * (xmax - xmin);
+        xmin = anchor + (xmin - anchor) * factor;
+        xmax = anchor + (xmax - anchor) * factor;
     } else {
-        const double padding = qMax((ymax - ymin) * .08, 1e-9);
-        ymin -= padding;
-        ymax += padding;
+        const double anchor = ymax - fraction * (ymax - ymin);
+        ymin = anchor + (ymin - anchor) * factor;
+        ymax = anchor + (ymax - anchor) * factor;
     }
+    emit activated();
     setRange(xmin, xmax, ymin, ymax);
 }
 void PlotItem::setXRange(double xmin, double xmax)
@@ -302,7 +324,9 @@ void PlotItem::updateCursorValuesLocked()
                 if (rawText.endsWith(QLatin1Char('.'))) rawText.chop(1);
                 m_cursorReadouts.append(QVariantMap{{QStringLiteral("x"), keys[c]},
                                                     {QStringLiteral("y"), value},
-                                                    {QStringLiteral("text"), QString::number(value, 'g', 8)},
+                                                    {QStringLiteral("seriesId"), m_seriesSnapshot.series.at(s)->id},
+                                                    {QStringLiteral("cursorIndex"), c + 1},
+                                                    {QStringLiteral("text"), QString::number(value, 'g', 6)},
                                                     {QStringLiteral("rawText"), rawText},
                                                     {QStringLiteral("color"), color}});
             }
@@ -327,18 +351,11 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     auto *root = oldNode ? static_cast<PlotRoot *>(oldNode) : new PlotRoot;
 
     const double xs = qMax(m_xMaximum - m_xMinimum, 1e-12);
-    const int buckets = qBound(64, static_cast<int>(qCeil(width())), 4096);
-    const LodRequestKey lodKey{m_seriesSnapshot.generation,
-                               m_seriesSnapshot.orderedIds,
-                               m_xMinimum,
-                               m_xMaximum,
-                               buckets,
-                               1};
-    const QVector<double> curveView{m_yMinimum, m_yMaximum, width(), height(), m_lineWidth};
-    if (!root->curveKey || !(*root->curveKey == lodKey) || root->curveView != curveView
-        || root->curvePayloads != m_seriesSnapshot.series) {
-        if (root->curvePayloads != m_seriesSnapshot.series) m_lodCache.clear();
-        const LodResult &lod = m_lodCache.resolve(m_seriesSnapshot, lodKey);
+    const QVector<double> curveView{m_xMinimum, m_xMaximum, m_yMinimum, m_yMaximum,
+                                    width(), height(), m_lineWidth};
+    if (root->curveResult != m_lodResult || root->curveView != curveView) {
+        const LodResult empty;
+        const LodResult &lod = m_lodResult ? *m_lodResult : empty;
         const GeometryRequest geometryRequest{
             {m_xMinimum, m_xMaximum, m_yMinimum, m_yMaximum, width(), height()},
             m_lineWidth};
@@ -357,9 +374,8 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                 node->markDirty(QSGNode::DirtyGeometry);
             }
         }
-        root->curveKey = lodKey;
+        root->curveResult = m_lodResult;
         root->curveView = curveView;
-        root->curvePayloads = m_seriesSnapshot.series;
     }
     if (m_cursorMode != NoCursor && m_xMaximum > m_xMinimum) {
         const double x = (m_cursorX1 - m_xMinimum) / xs * width();
@@ -410,7 +426,7 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     }
     return root;
 }
-void PlotItem::geometryChange(const QRectF &n,const QRectF &o){QQuickItem::geometryChange(n,o);update();}
+void PlotItem::geometryChange(const QRectF &n,const QRectF &o){QQuickItem::geometryChange(n,o);requestLod();update();}
 void PlotItem::mousePressEvent(QMouseEvent *e){if(e->button()!=Qt::LeftButton&&e->button()!=Qt::MiddleButton)return;emit activated();int cursorIndex=0;{QMutexLocker lock(&m_dataMutex);if(cursorHit(e->position().x(),&cursorIndex)){m_cursorDragIndex=cursorIndex;m_dragging=false;e->accept();return;}}m_cursorDragIndex=0;m_dragging=true;m_dragStartPixel=e->position();m_dragStartXMinimum=m_xMinimum;m_dragStartXMaximum=m_xMaximum;m_dragStartYMinimum=m_yMinimum;m_dragStartYMaximum=m_yMaximum;e->accept();}
 void PlotItem::mouseMoveEvent(QMouseEvent *e){if(m_cursorDragIndex){setCursorX(pixelToData(e->position()).x(),m_cursorDragIndex);e->accept();return;}if(!m_dragging)return;QPointF d=e->position()-m_dragStartPixel;double xs=m_dragStartXMaximum-m_dragStartXMinimum,ys=m_dragStartYMaximum-m_dragStartYMinimum;setRange(m_dragStartXMinimum-d.x()/qMax(width(),1.)*xs,m_dragStartXMaximum-d.x()/qMax(width(),1.)*xs,m_dragStartYMinimum+d.y()/qMax(height(),1.)*ys,m_dragStartYMaximum+d.y()/qMax(height(),1.)*ys);e->accept();}
 void PlotItem::mouseReleaseEvent(QMouseEvent *e){m_dragging=false;m_cursorDragIndex=0;e->accept();}
@@ -418,16 +434,19 @@ void PlotItem::hoverMoveEvent(QHoverEvent *e){Q_UNUSED(e);}
 void PlotItem::wheelEvent(QWheelEvent *e){const double f=e->angleDelta().y()>0?.85:1/.85;const QPointF a=pixelToData(e->position());setRange(a.x()-(a.x()-m_xMinimum)*f,a.x()+(m_xMaximum-a.x())*f,a.y()-(a.y()-m_yMinimum)*f,a.y()+(m_yMaximum-a.y())*f);e->accept();}
 void PlotItem::setRange(double xmin,double xmax,double ymin,double ymax)
 {
-    if (xmax <= xmin || ymax <= ymin)
+    if (!qIsFinite(xmin) || !qIsFinite(xmax) || !qIsFinite(ymin) || !qIsFinite(ymax)
+        || xmax <= xmin || ymax <= ymin)
         return;
     {
         QMutexLocker lock(&m_dataMutex);
+        if (m_xMinimum == xmin && m_xMaximum == xmax && m_yMinimum == ymin && m_yMaximum == ymax) return;
         m_xMinimum = xmin;
         m_xMaximum = xmax;
         m_yMinimum = ymin;
         m_yMaximum = ymax;
         rebuildTicksLocked();
     }
+    requestLod();
     emit viewChanged();
     emit rangeChanged(xmin, xmax, ymin, ymax);
     emit axisTicksChanged();

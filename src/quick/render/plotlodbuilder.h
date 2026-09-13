@@ -3,6 +3,7 @@
 #include "plotseriesstore.h"
 
 #include <optional>
+#include <atomic>
 
 struct LodRequestKey
 {
@@ -35,7 +36,8 @@ class PlotLodBuilder final
 {
 public:
     static LodResult build(const PlotSeriesSnapshot &snapshot,
-                           const LodRequestKey &key);
+                           const LodRequestKey &key,
+                           const std::atomic_bool *cancelled = nullptr);
 };
 
 class PlotLodCache final

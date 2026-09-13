@@ -40,7 +40,8 @@ static void appendReducedBucket(QVector<QPointF> &output,
 
 static void appendSeriesLod(const PlotSeriesData &series,
                             const LodRequestKey &key,
-                            QVector<LodSegment> &output)
+                            QVector<LodSegment> &output,
+                            const std::atomic_bool *cancelled)
 {
     const qsizetype pointCount = series.sampleCount();
     qsizetype firstIndex = 0;
@@ -99,6 +100,7 @@ static void appendSeriesLod(const PlotSeriesData &series,
     };
 
     for (qsizetype position = firstIndex; position < lastIndex; ++position) {
+        if ((position & 1023) == 0 && cancelled && cancelled->load()) return;
         const int index = static_cast<int>(position);
         const QPointF point = series.pointAt(position);
         if (!qIsFinite(point.x()) || !qIsFinite(point.y())) {
@@ -134,7 +136,8 @@ static void appendSeriesLod(const PlotSeriesData &series,
 } // namespace
 
 LodResult PlotLodBuilder::build(const PlotSeriesSnapshot &snapshot,
-                                const LodRequestKey &key)
+                                const LodRequestKey &key,
+                                const std::atomic_bool *cancelled)
 {
     LodResult result;
     result.key = key;
@@ -145,7 +148,7 @@ LodResult PlotLodBuilder::build(const PlotSeriesSnapshot &snapshot,
 
     for (const PlotSeriesDataPtr &series : snapshot.series)
         if (series)
-            appendSeriesLod(*series, key, result.segments);
+            appendSeriesLod(*series, key, result.segments, cancelled);
     return result;
 }
 

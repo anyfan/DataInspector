@@ -8,10 +8,12 @@
 
 #include "render/plotseriesstore.h"
 #include "render/plotlodbuilder.h"
+#include "render/plotlodscheduler.h"
 
 class PlotItem : public QQuickItem
 {
     Q_OBJECT
+    Q_PROPERTY(bool lodPending READ lodPending NOTIFY lodChanged)
     Q_PROPERTY(int cursorMode READ cursorMode WRITE setCursorMode NOTIFY cursorChanged)
     Q_PROPERTY(double xMinimum READ xMinimum NOTIFY viewChanged)
     Q_PROPERTY(double xMaximum READ xMaximum NOTIFY viewChanged)
@@ -30,6 +32,7 @@ public:
     enum CursorMode { NoCursor = 0, SingleCursor = 1, DoubleCursor = 2 };
     Q_ENUM(CursorMode)
     explicit PlotItem(QQuickItem *parent = nullptr);
+    bool lodPending() const { return m_lodScheduler->pending(); }
     double xMinimum() const;
     double xMaximum() const;
     double yMinimum() const;
@@ -53,9 +56,11 @@ public:
     Q_INVOKABLE void setCursorX(double x, int cursorIndex = 1);
     void setCursorPosition(double x, int cursorIndex = 1);
     Q_INVOKABLE void fitView();
+    Q_INVOKABLE void zoomAxis(int axis, double fraction, double steps);
     Q_INVOKABLE void fitY();
     Q_INVOKABLE void setXRange(double xMinimum, double xMaximum);
 signals:
+    void lodChanged();
     void viewChanged();
     void lineWidthChanged();
     void cursorChanged();
@@ -83,7 +88,9 @@ private:
     std::shared_ptr<const PlotSeriesStore> m_seriesStore;
     QVector<PlotSeriesId> m_visibleSeries;
     PlotSeriesSnapshot m_seriesSnapshot;
-    PlotLodCache m_lodCache;
+    PlotLodScheduler *m_lodScheduler;
+    std::shared_ptr<const LodResult> m_lodResult;
+    void requestLod();
     double m_xMinimum = 0.0, m_xMaximum = 1.0, m_yMinimum = -1.0, m_yMaximum = 1.0;
     double m_lineWidth = 2.0;
     bool m_cursorEnabled = false;

@@ -74,15 +74,18 @@ else()
     target_compile_options(DataInspector PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+set(DATAINSPECTOR_BIN_DIR "bin" CACHE STRING "Application output subdirectory")
 set_target_properties(DataInspector PROPERTIES
     WIN32_EXECUTABLE TRUE
-    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${DATAINSPECTOR_BIN_DIR}"
 )
 
 add_library(plot_render_core STATIC
     src/quick/render/plotseriesstore.cpp
     src/quick/render/plotseriesstore.h
     src/quick/render/plotlodbuilder.cpp
+    src/quick/render/plotlodscheduler.cpp
+    src/quick/render/plotlodscheduler.h
     src/quick/render/plotlodbuilder.h
     src/quick/render/plotgeometrybuilder.cpp
     src/quick/render/plotgeometrybuilder.h

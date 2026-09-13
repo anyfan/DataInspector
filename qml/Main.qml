@@ -178,16 +178,32 @@ ApplicationWindow {
         }
     }
 
+    Shortcut { sequence: "Space"; onActivated: appController.fitPlots(true, true) }
+    Shortcut { sequence: "Ctrl+Alt+T"; onActivated: appController.fitPlots(true, false) }
+    Shortcut { sequence: "Ctrl+Alt+Y"; onActivated: appController.fitPlots(false, true) }
+    Shortcut { sequence: "Ctrl+Shift+Y"; onActivated: appController.fitPlots(false, true, true) }
+    Connections {
+        target: appController
+        function onRevealSignalRequested(row) {
+            signalSearch.clear()
+            const modelRow = appController.signalModel.revealSignal(row)
+            signalList.currentIndex = modelRow
+            signalList.positionViewAtIndex(modelRow, ListView.Center)
+        }
+    }
+
     header: ToolBar {
         RowLayout { anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
             Label { text: "DataInspector"; font.pixelSize: 18; font.weight: Font.DemiBold; color: accentColor }
             ToolSeparator { }
             ToolButton { text: "打开"; onClicked: fileDialog.open() }
-            ToolButton { text: "适应"; onClicked: appController.fitAllPlots() }
+            ToolButton { text: "适应"; onClicked: appController.fitPlots(true, true) }
+            ToolButton { text: "适应 X"; onClicked: appController.fitPlots(true, false) }
+            ToolButton { text: "适应 Y"; onClicked: appController.fitPlots(false, true) }
+            ToolButton { text: "全部 Y"; onClicked: appController.fitPlots(false, true, true) }
             ToolButton { text: "清空"; onClicked: appController.clear() }
             ToolButton { text: "主题"; onClicked: window.darkTheme = !window.darkTheme }
             ComboBox { id: cursorModeSelector; model: ["关闭游标", "单游标", "双游标"]; currentIndex: 0 }
-            ComboBox { id: legendModeSelector; model: ["顶部图例", "左上图例", "右上图例", "隐藏图例"]; currentIndex: appController.legendMode; onCurrentIndexChanged: appController.setLegendMode(currentIndex) }
             ToolButton { text: "1×1"; onClicked: appController.setLayout(1, 1) }
             ToolButton { text: "1×2"; onClicked: appController.setLayout(1, 2) }
             ToolButton { text: "2×1"; onClicked: appController.setLayout(2, 1) }

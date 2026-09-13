@@ -230,14 +230,31 @@ QVector<PlotSample> PlotSeriesStore::nearestSamples(const PlotSeriesSnapshot &sn
     return result;
 }
 
-std::optional<PlotBounds> PlotSeriesStore::bounds(const PlotSeriesSnapshot &snapshot)
+std::optional<PlotBounds> PlotSeriesStore::bounds(const PlotSeriesSnapshot &snapshot,
+                                                  double xMinimum, double xMaximum)
 {
     PlotBounds result;
     bool found = false;
     for (const PlotSeriesDataPtr &series : snapshot.series) {
-        for (qsizetype index = 0; index < series->sampleCount(); ++index) {
+        qsizetype first = 0, last = series->sampleCount();
+        if (series->monotonicTime) {
+            auto boundary = [&](double value, bool upper) {
+                qsizetype lo = 0, hi = series->sampleCount();
+                while (lo < hi) {
+                    const qsizetype mid = lo + (hi - lo) / 2;
+                    const double x = series->pointAt(mid).x();
+                    if (x < value || (upper && x == value)) lo = mid + 1;
+                    else hi = mid;
+                }
+                return lo;
+            };
+            first = boundary(xMinimum, false);
+            last = boundary(xMaximum, true);
+        }
+        for (qsizetype index = first; index < last; ++index) {
             const QPointF point = series->pointAt(index);
-            if (!qIsFinite(point.x()) || !qIsFinite(point.y()))
+            if (!qIsFinite(point.x()) || !qIsFinite(point.y())
+                || point.x() < xMinimum || point.x() > xMaximum)
                 continue;
             if (!found) {
                 result.xMinimum = result.xMaximum = point.x();
@@ -252,4 +269,24 @@ std::optional<PlotBounds> PlotSeriesStore::bounds(const PlotSeriesSnapshot &snap
         }
     }
     return found ? std::optional<PlotBounds>(result) : std::nullopt;
+}
+
+std::optional<QPair<double, double>> PlotSeriesStore::timeBounds(const PlotSeriesSnapshot &snapshot)
+{
+    std::optional<QPair<double, double>> result;
+    auto add = [&](double x) {
+        if (!qIsFinite(x)) return;
+        if (!result) result = qMakePair(x, x);
+        else { result->first = qMin(result->first, x); result->second = qMax(result->second, x); }
+    };
+    for (const auto &series : snapshot.series) {
+        if (series->sampleCount() == 0) continue;
+        if (series->monotonicTime) {
+            add(series->pointAt(0).x());
+            add(series->pointAt(series->sampleCount() - 1).x());
+        } else {
+            for (qsizetype i = 0; i < series->sampleCount(); ++i) add(series->pointAt(i).x());
+        }
+    }
+    return result;
 }

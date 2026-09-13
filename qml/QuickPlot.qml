@@ -19,10 +19,42 @@ Rectangle {
 
     readonly property real axisLeft: 64
     readonly property real axisRight: 18
-    readonly property real axisTop: controller.legendMode === 0 && legend.visible
+    readonly property real axisTop: legend.visible
                                     ? Math.max(30, legend.implicitHeight + 10) : 12
     readonly property real axisBottom: 38
+    property var rawReadouts: ({})
     property alias renderer: plotItem
+    function toggleReadout(key) {
+        const next = Object.assign({}, rawReadouts)
+        next[key] = !next[key]
+        rawReadouts = next
+    }
+    function formatRaw(value) {
+        return Number(value).toFixed(12).replace(/\.?0+$/, "")
+    }
+    readonly property var positionedReadouts: {
+        const entries = plotItem.cursorReadouts.map(function(item) {
+            return Object.assign({}, item, {labelY: root.yPixel(item.y) - 9})
+        })
+        for (let cursor = 1; cursor <= 2; ++cursor) {
+            const group = entries.filter(function(item) { return item.cursorIndex === cursor })
+            group.sort(function(a, b) { return a.labelY - b.labelY })
+            let bottom = -2
+            for (const item of group) {
+                item.labelY = Math.max(2, item.labelY, bottom + 2)
+                bottom = item.labelY + 18
+            }
+            // Shift the stack back inside the plot when there is sufficient room.
+            if (group.length * 20 <= axisRect.height && bottom > axisRect.height - 2) {
+                let top = axisRect.height - 2
+                for (let i = group.length - 1; i >= 0; --i) {
+                    group[i].labelY = Math.min(group[i].labelY, top - 18)
+                    top = group[i].labelY - 2
+                }
+            }
+        }
+        return entries
+    }
 
     color: plotColor
     border.color: root.controller.activePlotIndex === root.plotIndex
@@ -95,23 +127,43 @@ Rectangle {
         }
 
         Repeater {
-            model: plotItem.cursorReadouts
+            model: root.positionedReadouts
             delegate: Label {
                 required property var modelData
-                property bool compactFormat: true
+                readonly property string formatKey: modelData.seriesId + ":" + modelData.cursorIndex
                 x: Math.max(2, Math.min(axisRect.width - width - 2,
                                        root.xPixel(modelData.x) + 5))
-                y: Math.max(2, Math.min(axisRect.height - height - 2,
-                                       root.yPixel(modelData.y) - height / 2))
-                text: compactFormat ? modelData.text : modelData.rawText
+                y: modelData.labelY
+                text: root.rawReadouts[formatKey] ? modelData.rawText : modelData.text
+                height: 18
+                padding: 2
+                background: Rectangle { color: root.plotColor; opacity: 0.88; radius: 2 }
                 color: modelData.color
                 font.pixelSize: 10
                 z: 4
                 MouseArea {
                     anchors.fill: parent
-                    onClicked: parent.compactFormat = !parent.compactFormat
+                    onClicked: root.toggleReadout(parent.formatKey)
                 }
             }
+        }
+    }
+
+    Repeater {
+        model: plotItem.cursorMode
+        delegate: Label {
+            required property int index
+            readonly property real value: index === 0 ? plotItem.cursorX1 : plotItem.cursorX2
+            readonly property string formatKey: "x:" + index
+            x: Math.max(root.axisLeft, Math.min(root.width - root.axisRight - width,
+                        root.axisLeft + root.xPixel(value) - width / 2))
+            y: axisRect.y + axisRect.height - height - 2
+            text: root.rawReadouts[formatKey] ? root.formatRaw(value) : Number(value).toPrecision(10)
+            padding: 3
+            color: index === 0 ? "#e34d59" : "#4e79e7"
+            background: Rectangle { color: root.plotColor; opacity: 0.9; radius: 2 }
+            z: 10
+            MouseArea { anchors.fill: parent; onClicked: root.toggleReadout(parent.formatKey) }
         }
     }
 
@@ -170,13 +222,30 @@ Rectangle {
         }
     }
 
+    MouseArea {
+        x: axisRect.x; y: axisRect.y + axisRect.height
+        width: axisRect.width; height: root.axisBottom
+        acceptedButtons: Qt.NoButton
+        onWheel: function(wheel) {
+            plotItem.zoomAxis(0, wheel.x / width, wheel.angleDelta.y / 120)
+            wheel.accepted = true
+        }
+    }
+    MouseArea {
+        x: 0; y: axisRect.y; width: root.axisLeft; height: axisRect.height
+        acceptedButtons: Qt.NoButton
+        onWheel: function(wheel) {
+            plotItem.zoomAxis(1, wheel.y / height, wheel.angleDelta.y / 120)
+            wheel.accepted = true
+        }
+    }
+
     Flow {
         id: legend
-        x: root.controller.legendMode === 2 ? root.width - width - 6
-           : root.controller.legendMode === 0 ? 30 : 6
-        y: root.controller.legendMode === 0 ? 4 : axisRect.y + 5
-        width: root.controller.legendMode === 0 ? root.width - 36 : root.width * 0.46
-        visible: root.controller.legendMode !== 3 && legendRepeater.count > 0
+        x: 30
+        y: 4
+        width: Math.max(1, root.width - 36)
+        visible: legendRepeater.count > 0
         spacing: 7
         z: 5
 
@@ -236,7 +305,19 @@ Rectangle {
                 }
                 MouseArea {
                     anchors.fill: parent
-                    onPressed: root.controller.setActivePlot(root.plotIndex)
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: function(mouse) {
+                        root.controller.setActivePlot(root.plotIndex)
+                        if (mouse.button === Qt.RightButton) legendMenu.popup()
+                        else root.controller.revealLegendSignal(root.plotIndex, parent.signalRow)
+                    }
+                    Menu {
+                        id: legendMenu
+                        MenuItem {
+                            text: "移除“" + root.controller.signalName(modelData) + "”"
+                            onTriggered: root.controller.removeLegendSignal(root.plotIndex, modelData)
+                        }
+                    }
                 }
             }
         }

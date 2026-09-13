@@ -99,6 +99,7 @@ bool AppController::removeFile(const QString &fileName)
 {
     if (m_loading || fileName.isEmpty()) return false;
     const QVector<int> removedRows = m_signals->removeFile(fileName);
+
     if (removedRows.isEmpty()) return false;
 
     m_seriesStore->removeSeries(QSet<int>(removedRows.cbegin(),
@@ -175,12 +176,18 @@ void AppController::setSignalPen(int row, const QColor &color,
     ++m_plotStateRevision;
     emit plotBindingsChanged();
 }
-void AppController::setLegendMode(int mode)
+void AppController::revealLegendSignal(int plotIndex, int row)
 {
-    const int normalized = qBound(0, mode, 3);
-    if (m_legendMode == normalized) return;
-    m_legendMode = normalized;
-    emit legendModeChanged();
+    if (!plotSignalEnabled(plotIndex, row)) return;
+    setActivePlot(plotIndex);
+    emit revealSignalRequested(row);
+}
+void AppController::removeLegendSignal(int plotIndex, int row)
+{
+    m_signals->setPlotChecked(plotIndex, row, false);
+    refreshPlot(plotIndex, false);
+    ++m_plotStateRevision;
+    emit plotBindingsChanged();
 }
 void AppController::attachPlot(QObject *plot, int index)
 {
@@ -263,6 +270,7 @@ void AppController::setLayout(int rows, int columns)
         if (m_plots.at(index))
             disconnect(m_plots.at(index), nullptr, this, nullptr);
     m_plots.resize(plotCount);
+
     ++m_plotStateRevision;
     const int previousActivePlot = m_signals->activePlot();
     m_plotRows = normalizedRows;
@@ -283,10 +291,33 @@ void AppController::setActivePlot(int index)
     m_signals->setActivePlot(index);
     emit activePlotChanged();
 }
-void AppController::fitAllPlots()
+void AppController::fitAllPlots() { fitPlots(true, true, true); }
+void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
 {
-    for (const QPointer<PlotItem> &plot : std::as_const(m_plots))
-        if (plot) plot->fitView();
+    if (fitX) {
+        QVector<PlotSeriesId> ids;
+        for (int index = 0; index < m_plotRows * m_plotColumns; ++index)
+            for (int id : m_signals->plotRows(index))
+                if (!ids.contains(id)) ids.append(id);
+        const auto bounds = PlotSeriesStore::timeBounds(m_seriesStore->snapshot(ids));
+        double xmin = 0, xmax = 10;
+        if (bounds) {
+            const double span = bounds->second - bounds->first;
+            const double padding = span > 0 ? span * .02 : .5;
+            xmin = bounds->first - padding;
+            xmax = bounds->second + padding;
+        }
+        m_sharedXMinimum = xmin; m_sharedXMaximum = xmax;
+        m_syncingRanges = true;
+        for (const auto &plot : std::as_const(m_plots)) if (plot) plot->setXRange(xmin, xmax);
+        m_syncingRanges = false;
+    }
+    if (fitY) {
+        for (int index = 0; index < m_plots.size(); ++index) {
+            if (!m_plots.at(index) || (!allPlots && index != activePlotIndex())) continue;
+            m_plots.at(index)->fitY();
+        }
+    }
 }
 void AppController::clear()
 {
@@ -471,8 +502,7 @@ void AppController::refreshPlot(int index, bool fitY)
     QVector<PlotSeriesId> visibleIds;
     visibleIds.reserve(sortedRows.size());
     for (int row : sortedRows)
-        if (row >= 0 && row < m_signalColors.size())
-            visibleIds.append(row);
+        if (row >= 0 && row < m_signalColors.size()) visibleIds.append(row);
     plot->setVisibleSeries(visibleIds);
     if (fitY) plot->fitY();
 }

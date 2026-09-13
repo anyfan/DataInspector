@@ -84,6 +84,10 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 4. 在绘图区拖动进行平移，滚轮以指针位置为中心缩放；点击“适应”恢复全量范围。
 5. 双击信号行右侧的线型预览可单独设置颜色、线宽和线型。
 6. “主题”在浅色和深色界面之间切换。
+7. 图例固定在顶部：左键定位信号树中的信号（自动清除搜索并展开父节点）；右键菜单从当前子图移除信号，保留加载数据和其他子图绑定。
+8. “适应”/空格适应全局时间轴和活动子图 Y；“适应 X”仅适应全局时间轴，“适应 Y”按当前时间窗口适应活动子图，“全部 Y”适应所有子图。对应快捷键 Ctrl+Alt+T、Ctrl+Alt+Y、Ctrl+Shift+Y。
+9. 鼠标位于 X/Y 轴刻度区域时，滚轮仅缩放对应轴。绘图区滚轮缩放双轴。
+10. 游标线位于曲线上层；X/Y 读数支持点击切换紧凑/原始格式，Y 读数按每根游标避让。标签总高度超过绘图区时会裁剪。
 
 ## 渲染内核与性能设计
 
@@ -93,15 +97,15 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 - 游标查询始终访问原始样本，不使用 LOD、不插值；原始快照替换后，旧快照仍可安全读取。
 - `PlotLodBuilder` 按视窗和屏幕桶生成结构化连续线段；每桶保留 min/max，NaN 分段，单调序列保留视窗两侧连接点。
 - `PlotGeometryBuilder` 按每个信号的画笔属性将 LOD 线段转换成有限、裁剪后的屏幕空间三角带或三角形列表，不依赖 `GL_LINE` 宽度。
-- `PlotItem` 只维护视图、交互和持久 QSG 节点；只在完整 LOD 请求键变化时重建同步缓存，Y 范围、线宽和游标变化只重建几何。
+- `PlotItem` 只维护视图、交互和持久 QSG 节点；通过 `PlotLodScheduler` 在最多两个后台线程生成 LOD；每子图合并最新请求，取消旧任务并丢弃过期结果。Y 范围和尺寸变化复用 LOD，游标移动复用曲线几何。
 - 曲线节点和材质在场景图中复用，平移、缩放和游标更新不再删除并重建整棵节点树。
 
 ## 当前限制与后续计划
 
 以下功能仍在迁移中，README 不再将其描述为已完成：
 
-- 当前仅保留每个子图最后一次精确 LOD 请求的同步缓存，尚未加入多级缓存、后台生成、取消和内存上限控制。
-- 渲染核心已完成 Store/LOD/Geometry 拆分，但尚未进行后台线程性能优化。
+- 当前每子图保留最后一份 LOD，等待后台结果期间使用旧 LOD 按新视窗投影。尚无多级缓存或按字节计量的内存预算。
+- LOD 已移至后台；原始样本游标查询、Y 轴适应和几何提交仍在前台线程。
 - 各子图维护独立信号集合和 Y 轴范围，X 轴范围保持同步；活动子图以蓝色边框标识。
 - 游标支持单/双游标和原始样本读数、ΔT；尚无 ΔY 面板，查询按原始样本吸附，不插值。
 - 图片导出尚未迁移；坐标轴与图例已迁移，悬停高亮仍待完善。
@@ -109,7 +113,7 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 - CSV 暂不支持跨行引号字段；数据目前整体读入内存，不是分块/流式架构。
 - MAT 依赖仓库内与 LLVM-MinGW 17 兼容的 matio/HDF5/zlib 静态库。
 
-建议下一阶段按以下顺序推进：多级 LOD 缓存和后台生成 → 导出与视图文件 → 重放与 Python API → 真实百万/千万点性能基准。
+建议下一阶段按以下顺序推进：多级 LOD 缓存和内存预算 → 导出与视图文件 → 重放与 Python API → 真实百万/千万点性能基准。
 
 ## 验证边界
 
@@ -121,7 +125,7 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 qml/Main.qml              Qt Quick 主界面
 qml/QuickPlot.qml         单个子图的 QML 外壳、坐标轴和图例
 src/quick/plotitem.*      Scene Graph GPU 曲线项、视图交互和节点提交
-src/quick/render/*        原始序列 Store、LOD 构建器、同步缓存和几何构建器
+src/quick/render/*        原始序列 Store、LOD 构建器、异步调度器和几何构建器
 src/quick/appcontroller.* 加载队列、会话状态、信号选择和子图绑定
 src/quick/dataloadworker.* 后台 CSV/TXT/MAT 解析及进度通知
 src/quick/loadedtable.h   加载结果值类型及跨线程元类型声明
