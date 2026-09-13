@@ -42,22 +42,34 @@ static void appendSeriesLod(const PlotSeriesData &series,
                             const LodRequestKey &key,
                             QVector<LodSegment> &output)
 {
-    const QVector<QPointF> &points = series.points;
-    auto first = points.cbegin();
-    auto last = points.cend();
+    const qsizetype pointCount = series.sampleCount();
+    qsizetype firstIndex = 0;
+    qsizetype lastIndex = pointCount;
     if (series.monotonicTime) {
-        first = std::lower_bound(points.cbegin(), points.cend(), key.xMinimum,
-                                 [](const QPointF &point, double x) {
-                                     return point.x() < x;
-                                 });
-        last = std::upper_bound(first, points.cend(), key.xMaximum,
-                                [](double x, const QPointF &point) {
-                                    return x < point.x();
-                                });
-        if (first != points.cbegin())
-            --first;
-        if (last != points.cend())
-            ++last;
+        auto lowerBound = [&](double target) {
+            qsizetype low = 0;
+            qsizetype high = pointCount;
+            while (low < high) {
+                const qsizetype middle = low + (high - low) / 2;
+                if (series.pointAt(middle).x() < target) low = middle + 1;
+                else high = middle;
+            }
+            return low;
+        };
+        auto upperBound = [&](double target) {
+            qsizetype low = 0;
+            qsizetype high = pointCount;
+            while (low < high) {
+                const qsizetype middle = low + (high - low) / 2;
+                if (target < series.pointAt(middle).x()) high = middle;
+                else low = middle + 1;
+            }
+            return low;
+        };
+        firstIndex = lowerBound(key.xMinimum);
+        lastIndex = upperBound(key.xMaximum);
+        if (firstIndex > 0) --firstIndex;
+        if (lastIndex < pointCount) ++lastIndex;
     }
 
     LodSegment current;
@@ -86,9 +98,9 @@ static void appendSeriesLod(const PlotSeriesData &series,
         currentBucket = -1;
     };
 
-    for (auto it = first; it != last; ++it) {
-        const int index = static_cast<int>(it - points.cbegin());
-        const QPointF &point = *it;
+    for (qsizetype position = firstIndex; position < lastIndex; ++position) {
+        const int index = static_cast<int>(position);
+        const QPointF point = series.pointAt(position);
         if (!qIsFinite(point.x()) || !qIsFinite(point.y())) {
             flushSegment();
             continue;

@@ -1,6 +1,8 @@
 #include "appcontroller.h"
 #include "plotitem.h"
 
+#include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -17,6 +19,7 @@ class AppControllerTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void detachedPlotsDoNotSynchronize();
     void loadedSignalsBindOnlyToTheActivePlot();
     void expandingLayoutKeepsExistingPlotAttached();
     void multipleFilesAppendAndPreserveExistingBindings();
@@ -25,10 +28,45 @@ private slots:
     void qmlUrlListImportsLocalFiles();
     void qmlJavaScriptArrayImportsLocalFiles();
     void qmlCanCallLegendModeSetter();
+    void quotedCsvFieldsAreImported();
+    void failedLoadReportsReason();
+    void legendDoesNotToggleSignalVisibility();
+    void realMatImportPerformanceWhenRequested();
     void addingSignalPreservesCurrentXRange();
     void attachingNewPlotPreservesSharedXRange();
     void removingFileKeepsRemainingSignalsAndBindings();
 };
+
+void AppControllerTest::detachedPlotsDoNotSynchronize()
+{
+    AppController controller;
+    controller.setLayout(1, 2);
+    PlotItem first;
+    PlotItem retired;
+    PlotItem replacement;
+    controller.attachPlot(&first, 0);
+    controller.attachPlot(&retired, 1);
+    controller.attachPlot(&replacement, 1);
+    first.setXRange(10.0, 20.0);
+    retired.setXRange(30.0, 40.0);
+    QCOMPARE(first.xMinimum(), 10.0);
+    QCOMPARE(replacement.xMinimum(), 10.0);
+    retired.setCursorMode(PlotItem::DoubleCursor);
+    QCOMPARE(first.cursorMode(), int(PlotItem::NoCursor));
+
+    // Delayed destruction must not detach the replacement.
+    controller.detachPlot(&retired, 1);
+    replacement.setXRange(50.0, 60.0);
+    QCOMPARE(first.xMinimum(), 50.0);
+    controller.detachPlot(&replacement, 1);
+    replacement.setXRange(70.0, 80.0);
+    QCOMPARE(first.xMinimum(), 50.0);
+
+    controller.attachPlot(&replacement, 1);
+    controller.setLayout(1, 1);
+    replacement.setXRange(90.0, 100.0);
+    QCOMPARE(first.xMinimum(), 50.0);
+}
 
 void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
 {
@@ -80,10 +118,6 @@ void AppControllerTest::loadedSignalsBindOnlyToTheActivePlot()
                                             SignalModel::CheckedRole).toBool());
     QVERIFY(!controller.signalModel()->data(controller.signalModel()->index(1),
                                              SignalModel::CheckedRole).toBool());
-
-    controller.togglePlotSignal(1, 1);
-    QCOMPARE(controller.plotSignalRows(1), secondPlotRows);
-    QVERIFY(!controller.plotSignalVisible(1, 1));
 
     const int revisionBeforeClear = controller.plotStateRevision();
     QSignalSpy bindingsChanged(&controller, &AppController::plotBindingsChanged);
@@ -296,6 +330,86 @@ void AppControllerTest::qmlJavaScriptArrayImportsLocalFiles()
                                       Q_RETURN_ARG(QVariant, accepted)));
     QCOMPARE(accepted.toInt(), 1);
     QTRY_COMPARE_WITH_TIMEOUT(controller.loadedFileCount(), 1, 5000);
+}
+
+void AppControllerTest::quotedCsvFieldsAreImported()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("quoted.csv"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    const QByteArray contents =
+        "\"time\",\"Pitch,deg\"\n\"0\",\"1.5\"\n\"1\",\"2.5\"\n";
+    QCOMPARE(file.write(contents), qint64(contents.size()));
+    file.close();
+
+    AppController controller;
+    PlotItem plot;
+    controller.attachPlot(&plot, 0);
+    QSignalSpy loaded(&controller, &AppController::currentFileChanged);
+
+    QVERIFY(controller.loadCsv(path));
+    QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 5000);
+    QCOMPARE(controller.signalCount(), 1);
+    QCOMPARE(controller.signalName(0), QStringLiteral("Pitch,deg"));
+}
+
+void AppControllerTest::failedLoadReportsReason()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("invalid.csv"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    const QByteArray contents = "time,Pitch\nnot-a-number,1\n";
+    QCOMPARE(file.write(contents), qint64(contents.size()));
+    file.close();
+
+    AppController controller;
+    QVERIFY(controller.loadCsv(path));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QVERIFY(controller.status().contains(QStringLiteral("没有读取到有效数据")));
+}
+
+void AppControllerTest::legendDoesNotToggleSignalVisibility()
+{
+    const QString sourcePath = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath())
+                                   .filePath(QStringLiteral("../qml/QuickPlot.qml"));
+    QFile source(sourcePath);
+    QVERIFY2(source.open(QIODevice::ReadOnly | QIODevice::Text),
+             qPrintable(source.errorString()));
+    const QByteArray qml = source.readAll();
+    QVERIFY(!qml.contains("togglePlotSignal"));
+}
+
+void AppControllerTest::realMatImportPerformanceWhenRequested()
+{
+    const QString path = QString::fromLocal8Bit(qgetenv("DATAINSPECTOR_PERF_MAT"));
+    if (path.isEmpty()) QSKIP("Set DATAINSPECTOR_PERF_MAT to run the large MAT integration test");
+    QVERIFY2(QFileInfo::exists(path), qPrintable(path));
+
+    AppController controller;
+    QElapsedTimer timer;
+    qint64 reached99Milliseconds = -1;
+    connect(&controller, &AppController::loadingProgressChanged, &controller,
+            [&]() {
+                if (reached99Milliseconds < 0
+                    && controller.loadingProgress() >= 99)
+                    reached99Milliseconds = timer.elapsed();
+            });
+
+    timer.start();
+    QVERIFY(controller.loadCsv(path));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 180000);
+    const qint64 totalMilliseconds = timer.elapsed();
+    const qint64 finishMilliseconds = reached99Milliseconds < 0
+        ? -1 : totalMilliseconds - reached99Milliseconds;
+    qInfo() << "MAT_IMPORT_MS" << totalMilliseconds
+            << "MAT_FINISH_AFTER_99_MS" << finishMilliseconds
+            << "SIGNALS" << controller.signalCount();
+    QCOMPARE(controller.loadedFileCount(), 1);
+    QVERIFY(controller.signalCount() > 0);
 }
 
 void AppControllerTest::addingSignalPreservesCurrentXRange()

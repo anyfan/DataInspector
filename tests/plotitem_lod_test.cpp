@@ -2,6 +2,7 @@
 #include "render/plotseriesstore.h"
 
 #include <QGuiApplication>
+#include <QElapsedTimer>
 #include <QSGGeometryNode>
 
 #include <iostream>
@@ -59,6 +60,39 @@ int main(int argc, char *argv[])
         delete root;
         return 1;
     }
+    // A cursor-only paint must leave existing curve vertex data untouched.
+    auto *savedVertices = static_cast<QSGGeometry::Point2D *>(lineNode->geometry()->vertexData());
+    savedVertices[0].x = 123.0f;
+    plot.setCursorMode(PlotItem::SingleCursor);
+    plot.setCursorPosition(0.5);
+    root = plot.paint(root);
+    if (savedVertices[0].x != 123.0f) {
+        std::cerr << "Cursor update unnecessarily uploaded curve geometry\n";
+        delete root;
+        return 1;
+    }
+    delete root;
+
+    QVector<PlotSeriesInput> inputs;
+    QVector<PlotSeriesId> ids;
+    QVector<double> time(100000), values(100000);
+    for (int i = 0; i < time.size(); ++i) { time[i] = i; values[i] = i % 101; }
+    for (int i = 0; i < 16; ++i) {
+        inputs.append({i, time, values, QColor("red")});
+        ids.append(i);
+    }
+    store->replaceSeries(inputs);
+    plot.setVisibleSeries(ids);
+    plot.fitView();
+    root = plot.paint();
+    QElapsedTimer timer;
+    timer.start();
+    for (int i = 0; i < 200; ++i) {
+        plot.setCursorX(20000 + i * 100);
+        root = plot.paint(root);
+    }
+    std::cout << "16 signals x 100000 samples, 200 cursor updates: "
+              << timer.elapsed() << " ms (CPU query and scene graph submission)\n";
     delete root;
     return 0;
 }

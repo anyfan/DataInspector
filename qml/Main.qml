@@ -42,27 +42,33 @@ ApplicationWindow {
         ColumnLayout {
             width: parent.width
             spacing: 10
-            Label { text: window.editingSignalIndex >= 0 ? appController.signalName(window.editingSignalIndex) : ""; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
+            Label { text: window.editingSignalIndex >= 0 ? appController.signalName(window.editingSignalIndex) : ""; color: window.treeTextColor; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
             RowLayout {
-                Label { text: "颜色"; Layout.preferredWidth: 54 }
-                Button {
+                Label { text: "颜色"; color: window.treeTextColor; Layout.preferredWidth: 54 }
+                Rectangle {
                     id: colorButton
                     property color selectedColor: "#4ea1ff"
                     Layout.fillWidth: true
-                    contentItem: Rectangle { color: colorButton.selectedColor; border.color: window.borderColor; implicitHeight: 22 }
-                    onClicked: {
-                        colorDialog.selectedColor = colorButton.selectedColor
-                        colorDialog.open()
+                    Layout.preferredHeight: 26
+                    color: selectedColor
+                    border.color: window.borderColor
+                    radius: 2
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: {
+                            colorDialog.selectedColor = colorButton.selectedColor
+                            colorDialog.open()
+                        }
                     }
                 }
             }
             RowLayout {
-                Label { text: "宽度"; Layout.preferredWidth: 54 }
+                Label { text: "宽度"; color: window.treeTextColor; Layout.preferredWidth: 54 }
                 SpinBox { id: widthSpin; from: 1; to: 20; editable: true; Layout.fillWidth: true }
-                Label { text: "px" }
+                Label { text: "px"; color: window.treeTextColor }
             }
             RowLayout {
-                Label { text: "线型"; Layout.preferredWidth: 54 }
+                Label { text: "线型"; color: window.treeTextColor; Layout.preferredWidth: 54 }
                 ComboBox { id: styleCombo; model: lineStyleModel; textRole: "text"; Layout.fillWidth: true }
             }
         }
@@ -90,10 +96,12 @@ ApplicationWindow {
         modal: true
         anchors.centerIn: parent
         standardButtons: Dialog.Ok | Dialog.Cancel
+        width: 380
         onAccepted: appController.removeFile(window.pendingFileRemoval)
         Label {
-            width: 320
+            width: parent.width - 24
             wrapMode: Text.Wrap
+            color: window.treeTextColor
             text: "确定移除文件 '" + window.pendingFileRemoval
                   + "' 及其所有曲线吗？"
         }
@@ -193,8 +201,8 @@ ApplicationWindow {
     RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 10
         Rectangle { Layout.preferredWidth: 280; Layout.fillHeight: true; color: panelColor; border.color: borderColor; radius: 5
             ColumnLayout { anchors.fill: parent; anchors.margins: 10; spacing: 8
-                Label { text: "信号 · 子图 " + (appController.activePlotIndex + 1); font.pixelSize: 15; font.weight: Font.DemiBold }
-                Label { text: appController.currentFile.length > 0 ? appController.currentFile : "未加载文件"; elide: Text.ElideMiddle; Layout.fillWidth: true; opacity: 0.62 }
+                Label { text: "信号 · 子图 " + (appController.activePlotIndex + 1); color: treeTextColor; font.pixelSize: 15; font.weight: Font.DemiBold }
+                Label { text: appController.currentFile.length > 0 ? appController.currentFile : "未加载文件"; color: treeTextColor; elide: Text.ElideMiddle; Layout.fillWidth: true; opacity: 0.78 }
                 RowLayout { Layout.fillWidth: true; spacing: 4
                     TextField { id: signalSearch; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: appController.filterSignals(text) }
                     ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered; ToolTip.text: "清除搜索" }
@@ -214,13 +222,22 @@ ApplicationWindow {
                         required property int nodeDepth
                         required property real signalWidth
                         required property int signalLineStyle
+                        property bool rowHovered: false
                         onSignalColorChanged: penPreview.requestPaint()
                         onSignalWidthChanged: penPreview.requestPaint()
                         onSignalLineStyleChanged: penPreview.requestPaint()
                         width: signalList.width
                         height: groupNode ? 28 : 30
 
-                        Rectangle { anchors.fill: parent; color: signalDelegate.index === signalList.currentIndex ? (window.darkTheme ? "#29333d" : "#e8f1fb") : "transparent" }
+                        Rectangle {
+                            anchors.fill: parent
+                            color: signalDelegate.index === signalList.currentIndex
+                                   ? (window.darkTheme ? "#29333d" : "#d9eafa")
+                                   : signalDelegate.rowHovered
+                                     ? (window.darkTheme ? "#252d35" : "#eef4fa")
+                                     : window.panelColor
+                        }
+                        HoverHandler { onHoveredChanged: signalDelegate.rowHovered = hovered }
 
                         RowLayout {
                             anchors.fill: parent
@@ -232,6 +249,7 @@ ApplicationWindow {
                                 Layout.preferredWidth: 24
                                 Layout.preferredHeight: 24
                                 text: signalDelegate.groupExpanded ? "▾" : "▸"
+                                palette.button: window.panelColor
                                 palette.buttonText: signalDelegate.groupNode
                                                     ? window.accentColor
                                                     : window.treeTextColor
@@ -243,6 +261,12 @@ ApplicationWindow {
                                 checked: signalDelegate.signalChecked
                                 Layout.preferredWidth: 24
                                 Layout.preferredHeight: 24
+                                palette.window: window.panelColor
+                                palette.base: window.panelColor
+                                palette.text: window.treeTextColor
+                                palette.buttonText: window.treeTextColor
+                                palette.highlight: window.accentColor
+                                palette.highlightedText: "#ffffff"
                                 onClicked: {
                                     signalList.currentIndex = signalDelegate.index
                                     appController.toggleSignal(signalDelegate.signalIndex)
@@ -269,6 +293,7 @@ ApplicationWindow {
                                 Layout.preferredWidth: 26
                                 Layout.preferredHeight: 24
                                 text: "×"
+                                palette.button: window.panelColor
                                 palette.buttonText: window.treeTextColor
                                 onClicked: window.requestRemoveFile(
                                                signalDelegate.groupName)

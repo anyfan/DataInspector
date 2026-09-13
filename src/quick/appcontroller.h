@@ -9,19 +9,10 @@
 #include <QVariantList>
 #include <memory>
 #include "signalmodel.h"
+#include "loadedtable.h"
+class DataLoadWorker;
 #include "render/plotseriesstore.h"
 class PlotItem;
-
-struct LoadedTable
-{
-    QString name;
-    QStringList signalNames;
-    QVector<double> time;
-    QVector<QVector<double>> values;
-    QVector<QVector<QPointF>> preparedPoints;
-    QVector<bool> monotonicTimes;
-    qsizetype rowCount = 0;
-};
 
 class AppController final : public QObject
 {
@@ -61,9 +52,7 @@ public:
     Q_INVOKABLE void filterSignals(const QString &text);
     Q_INVOKABLE void setAllSignalsChecked(bool checked);
     Q_INVOKABLE int checkedSignalCount() const { return m_signals->checkedCount(); }
-    Q_INVOKABLE void togglePlotSignal(int plotIndex, int row);
     Q_INVOKABLE bool plotSignalEnabled(int plotIndex, int row) const;
-    Q_INVOKABLE bool plotSignalVisible(int plotIndex, int row) const;
     Q_INVOKABLE QVariantList plotSignalRows(int plotIndex) const;
     Q_INVOKABLE QColor signalColor(int row) const { return m_signals->signalColor(row); }
     Q_INVOKABLE double signalWidth(int row) const { return m_signals->signalWidth(row); }
@@ -110,7 +99,7 @@ private:
     std::shared_ptr<PlotSeriesStore> m_seriesStore;
     QVector<QColor> m_signalColors;
     QThread *m_loadThread = nullptr;
-    QObject *m_loader = nullptr;
+    DataLoadWorker *m_loader = nullptr;
     bool m_loading = false;
     int m_loadingProgress = 0;
     int m_batchTotal = 0;
@@ -119,6 +108,7 @@ private:
     int m_batchSignals = 0;
     qint64 m_batchRows = 0;
     int m_batchSkipped = 0;
+    QString m_batchFirstError;
     bool m_syncingRanges = false;
     bool m_syncingCursors = false;
     double m_sharedXMinimum = 0.0;
@@ -126,7 +116,3 @@ private:
     int m_plotStateRevision = 0;
     int m_legendMode = 0;
 };
-
-Q_DECLARE_METATYPE(QVector<QVector<double>>)
-Q_DECLARE_METATYPE(LoadedTable)
-Q_DECLARE_METATYPE(QVector<LoadedTable>)

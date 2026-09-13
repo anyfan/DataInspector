@@ -21,17 +21,23 @@ struct PlotSeriesInput
     Qt::PenStyle lineStyle = Qt::SolidLine;
     QVector<QPointF> points;
     bool monotonicTime = true;
+    bool monotonicTimeKnown = false;
 };
 
 struct PlotSeriesData
 {
     PlotSeriesId id = -1;
+    QVector<double> time;
+    QVector<double> values;
     QColor color;
     double lineWidth = 2.0;
     Qt::PenStyle lineStyle = Qt::SolidLine;
     QVector<QPointF> points;
     bool monotonicTime = true;
     quint64 version = 0;
+
+    qsizetype sampleCount() const;
+    QPointF pointAt(qsizetype index) const;
 };
 
 using PlotSeriesDataPtr = std::shared_ptr<const PlotSeriesData>;

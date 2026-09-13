@@ -1,221 +1,14 @@
 #include "appcontroller.h"
 #include "plotitem.h"
-#include "signalmetadata.h"
+#include "dataloadworker.h"
 
-#include <QFile>
 #include <QFileInfo>
 #include <QJSValue>
-#include <QRegularExpression>
-#include <QStringView>
-#include <QTextStream>
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
 #include <QtMath>
-#include <limits>
 #include <utility>
-
-#ifdef ENABLE_MAT
-#include "matio.h"
-#endif
-
-namespace {
-
-#ifdef ENABLE_MAT
-static int utf8CharLength(unsigned char c)
-{
-    if (c < 0x80) return 1;
-    if ((c & 0xe0) == 0xc0) return 2;
-    if ((c & 0xf0) == 0xe0) return 3;
-    if ((c & 0xf8) == 0xf0) return 4;
-    return 1;
-}
-
-static QStringList readMatStrings(matvar_t *variable)
-{
-    QStringList result;
-    if (!variable || !variable->data || variable->rank != 2) return result;
-    const size_t rows = variable->dims[0], cols = variable->dims[1];
-    if (!rows || !cols) return result;
-    if (variable->data_type == MAT_T_UTF8) {
-        QVector<QByteArray> buffers(static_cast<int>(rows));
-        auto *scanner = static_cast<unsigned char *>(variable->data);
-        for (size_t col = 0; col < cols; ++col) for (size_t row = 0; row < rows; ++row) {
-            const int length = utf8CharLength(*scanner);
-            buffers[static_cast<int>(row)].append(reinterpret_cast<const char *>(scanner), length);
-            scanner += length;
-        }
-        for (const QByteArray &buffer : buffers) result.append(QString::fromUtf8(buffer).trimmed());
-    } else if (variable->data_type == MAT_T_INT8 || variable->data_type == MAT_T_UINT8) {
-        const auto *data = static_cast<const char *>(variable->data);
-        for (size_t row = 0; row < rows; ++row) {
-            QByteArray buffer;
-            for (size_t col = 0; col < cols; ++col) { const char c = data[col * rows + row]; if (!c) break; buffer.append(c); }
-            result.append(QString::fromLocal8Bit(buffer).trimmed());
-        }
-    }
-    return result;
-}
-
-static bool buildMatTable(int index, const QMap<QString, matvar_t *> &variables, LoadedTable &table)
-{
-    const QString name = QStringLiteral("p%1").arg(index);
-    matvar_t *dataVar = variables.value(name, nullptr);
-    if (!dataVar || dataVar->data_type != MAT_T_DOUBLE || dataVar->rank != 2 || dataVar->dims[1] < 2) return false;
-    const size_t rows = dataVar->dims[0], cols = dataVar->dims[1];
-    const int signalCount = static_cast<int>(cols - 1);
-    const QStringList title1 = readMatStrings(variables.value(name + QStringLiteral("_title"), nullptr));
-    const QStringList title2 = readMatStrings(variables.value(name + QStringLiteral("_title2"), nullptr));
-    table.name = name;
-    table.signalNames = composeMatSignalNames(title1, title2, signalCount, name);
-    const auto *raw = static_cast<const double *>(dataVar->data);
-    table.time.resize(static_cast<int>(rows));
-    for (size_t row = 0; row < rows; ++row) table.time[static_cast<int>(row)] = raw[row];
-    table.values.resize(signalCount);
-    for (int signal = 0; signal < signalCount; ++signal) {
-        table.values[signal].resize(static_cast<int>(rows));
-        const double *column = raw + (signal + 1) * rows;
-        std::copy(column, column + rows, table.values[signal].begin());
-    }
-    return true;
-}
-#endif
-
-static void prepareTableSeries(LoadedTable &table)
-{
-    table.rowCount = table.time.size();
-    table.preparedPoints.reserve(table.values.size());
-    table.monotonicTimes.reserve(table.values.size());
-    for (const QVector<double> &values : std::as_const(table.values)) {
-        const int count = qMin(table.time.size(), values.size());
-        QVector<QPointF> points;
-        points.reserve(count);
-        bool monotonic = true;
-        double previousTime = -std::numeric_limits<double>::infinity();
-        for (int index = 0; index < count; ++index) {
-            const double timestamp = table.time.at(index);
-            const double value = values.at(index);
-            if (!qIsFinite(timestamp)) {
-                monotonic = false;
-                points.append(QPointF(qQNaN(), qQNaN()));
-                continue;
-            }
-            if (timestamp < previousTime) monotonic = false;
-            previousTime = timestamp;
-            points.append(QPointF(timestamp,
-                                  qIsFinite(value) ? value : qQNaN()));
-        }
-        table.preparedPoints.append(std::move(points));
-        table.monotonicTimes.append(monotonic);
-    }
-    table.time.clear();
-    table.values.clear();
-}
-
-class DataLoadWorker final : public QObject
-{
-    Q_OBJECT
-public slots:
-    void loadFile(const QString &path)
-    {
-        if (path.endsWith(QStringLiteral(".mat"), Qt::CaseInsensitive)) {
-#ifdef ENABLE_MAT
-            loadMat(path);
-#else
-            emit finished(path, {}, 0, QStringLiteral("当前构建未启用 MAT 支持，请使用 -DENABLE_MAT=ON 并提供兼容 LLVM-MinGW 的 matio/HDF5 库"));
-#endif
-            return;
-        }
-        loadCsv(path);
-    }
-signals:
-    void progress(const QString &path, int percentage);
-    void finished(const QString &path, const QVector<LoadedTable> &tables, int skipped, const QString &error);
-private:
-    void loadCsv(const QString &path)
-    {
-        QFile file(path);
-        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) { emit finished(path, {}, 0, QStringLiteral("无法打开文件：%1").arg(path)); return; }
-        QTextStream stream(&file);
-        if (stream.atEnd()) { emit finished(path, {}, 0, QStringLiteral("文件为空：%1").arg(path)); return; }
-        const QString headerLine = stream.readLine();
-        const QStringList headers = headerLine.split(QLatin1Char(','));
-        if (headers.size() < 2) { emit finished(path, {}, 0, QStringLiteral("CSV 至少需要时间列和一个信号列")); return; }
-        LoadedTable table; table.name = QFileInfo(path).completeBaseName(); table.values.resize(headers.size() - 1);
-        for (int i = 1; i < headers.size(); ++i) { const QString n = headers.at(i).trimmed(); table.signalNames.append(n.isEmpty() ? QStringLiteral("Signal %1").arg(i) : n); }
-        const qint64 fileSize = file.size();
-        const qsizetype estimatedRows = fileSize > 0
-            ? static_cast<qsizetype>(fileSize / qMax<qsizetype>(headerLine.size(), 50)) : 0;
-        table.time.reserve(estimatedRows);
-        for (QVector<double> &values : table.values) values.reserve(estimatedRows);
-        int skipped = 0;
-        int lineCount = 0;
-        int lastProgress = 0;
-        emit progress(path, 0);
-        while (!stream.atEnd()) {
-            if (QThread::currentThread()->isInterruptionRequested()) return;
-            const QString line = stream.readLine();
-            ++lineCount;
-            if ((lineCount & 0xff) == 0 && fileSize > 0) {
-                const int percentage = qBound(0, static_cast<int>(stream.pos() * 90 / fileSize), 90);
-                if (percentage > lastProgress) {
-                    lastProgress = percentage;
-                    emit progress(path, percentage);
-                }
-            }
-            if (line.trimmed().isEmpty()) continue;
-            const QList<QStringView> fields = QStringView{line}.split(QLatin1Char(','));
-            if (fields.size() != headers.size()) { ++skipped; continue; }
-            bool timeOk = false; const double timestamp = fields.first().toDouble(&timeOk); if (!timeOk) { ++skipped; continue; }
-            table.time.append(timestamp);
-            for (int i = 1; i < fields.size(); ++i) { bool ok = false; const double value = fields.at(i).toDouble(&ok); table.values[i-1].append(ok ? value : qQNaN()); }
-        }
-        if (table.time.isEmpty()) { emit finished(path, {}, skipped, QStringLiteral("没有读取到有效数据：%1").arg(path)); return; }
-        emit progress(path, 92);
-        prepareTableSeries(table);
-        emit progress(path, 99);
-        emit finished(path, {table}, skipped, {});
-    }
- #ifdef ENABLE_MAT
-    void loadMat(const QString &path)
-    {
-        const QByteArray encoded = QFile::encodeName(path);
-        mat_t *file = Mat_Open(encoded.constData(), MAT_ACC_RDONLY);
-        if (!file) { emit finished(path, {}, 0, QStringLiteral("无法打开 MAT 文件：%1").arg(path)); return; }
-        QMap<QString, matvar_t *> variables;
-        QRegularExpression pExpression(QStringLiteral("^p\\d+$"));
-        QList<int> indices;
-        matvar_t *variable = nullptr;
-        while ((variable = Mat_VarReadNext(file)) != nullptr) {
-            const QString name = QString::fromLatin1(variable->name ? variable->name : "");
-            if (pExpression.match(name).hasMatch() || name.endsWith(QStringLiteral("_title")) || name.endsWith(QStringLiteral("_title2"))) {
-                variables.insert(name, variable);
-                if (pExpression.match(name).hasMatch()) indices.append(name.mid(1).toInt());
-            } else Mat_VarFree(variable);
-        }
-        emit progress(path, 10);
-        std::sort(indices.begin(), indices.end());
-        QVector<LoadedTable> tables;
-        for (int position = 0; position < indices.size(); ++position) {
-            LoadedTable table;
-            if (buildMatTable(indices.at(position), variables, table))
-                tables.append(std::move(table));
-            emit progress(path, 10 + 75 * (position + 1) / qMax(1, indices.size()));
-        }
-        for (matvar_t *entry : std::as_const(variables))
-            Mat_VarFree(entry);
-        Mat_Close(file);
-        if (tables.isEmpty()) { emit finished(path, {}, 0, QStringLiteral("MAT 文件中没有有效的 pN 数据变量")); return; }
-        for (int position = 0; position < tables.size(); ++position) {
-            prepareTableSeries(tables[position]);
-            emit progress(path, 85 + 14 * (position + 1) / tables.size());
-        }
-        emit finished(path, tables, 0, {});
-    }
- #endif
-};
-
-} // namespace
 
 AppController::AppController(QObject *parent)
     : QObject(parent), m_signals(new SignalModel(this)),
@@ -291,6 +84,7 @@ int AppController::loadFiles(const QVariant &filePaths)
         m_batchSignals = 0;
         m_batchRows = 0;
         m_batchSkipped = 0;
+        m_batchFirstError.clear();
         setLoadingProgress(0);
         m_loading = true;
         emit loadingChanged();
@@ -354,9 +148,7 @@ void AppController::toggleSignal(int row)
 }
 void AppController::filterSignals(const QString &text) { m_signals->setFilter(text); }
 void AppController::setAllSignalsChecked(bool checked) { m_signals->setAllChecked(checked); const int plotIndex = m_signals->activePlot(); if (plotIndex >= 0) refreshPlot(plotIndex); ++m_plotStateRevision; emit plotBindingsChanged(); }
-void AppController::togglePlotSignal(int plotIndex, int row) { if (plotIndex < 0 || plotIndex >= m_plots.size() || row < 0) return; m_signals->setPlotSignalVisible(plotIndex, row, !m_signals->plotSignalVisible(plotIndex, row)); refreshPlot(plotIndex); ++m_plotStateRevision; emit plotBindingsChanged(); }
 bool AppController::plotSignalEnabled(int plotIndex, int row) const { return m_signals->plotRows(plotIndex).contains(row); }
-bool AppController::plotSignalVisible(int plotIndex, int row) const { return m_signals->plotSignalVisible(plotIndex, row); }
 QString AppController::signalName(int row) const
 {
     return m_signals->nameAt(row);
@@ -398,6 +190,15 @@ void AppController::attachPlot(QObject *plot, int index)
         item->setSeriesStore(m_seriesStore);
         refreshPlot(index);
         return;
+    }
+    // Retired QML delegates can remain alive until deferred destruction.
+    if (index < m_plots.size() && m_plots.at(index))
+        disconnect(m_plots.at(index), nullptr, this, nullptr);
+    for (int previous = 0; previous < m_plots.size(); ++previous) {
+        if (m_plots.at(previous) == item) {
+            disconnect(item, nullptr, this, nullptr);
+            m_plots[previous].clear();
+        }
     }
     if (index >= m_plots.size()) m_plots.resize(index + 1);
     m_plots[index] = item;
@@ -444,7 +245,9 @@ void AppController::detachPlot(QObject *plot, int index)
 {
     auto *item = qobject_cast<PlotItem *>(plot);
     if (!item || index < 0 || index >= m_plots.size()) return;
-    if (m_plots.at(index) == item) m_plots[index].clear();
+    if (m_plots.at(index) != item) return;
+    disconnect(item, nullptr, this, nullptr);
+    m_plots[index].clear();
 }
 
 void AppController::setLayout(int rows, int columns)
@@ -455,7 +258,11 @@ void AppController::setLayout(int rows, int columns)
         return;
     // A numeric QML Repeater retains delegates whose indices still exist.
     // Preserve those attachments and leave new slots empty for attachPlot().
-    m_plots.resize(normalizedRows * normalizedColumns);
+    const int plotCount = normalizedRows * normalizedColumns;
+    for (int index = plotCount; index < m_plots.size(); ++index)
+        if (m_plots.at(index))
+            disconnect(m_plots.at(index), nullptr, this, nullptr);
+    m_plots.resize(plotCount);
     ++m_plotStateRevision;
     const int previousActivePlot = m_signals->activePlot();
     m_plotRows = normalizedRows;
@@ -527,6 +334,8 @@ void AppController::startNextLoad()
             summary += QStringLiteral("，跳过 %1 行").arg(m_batchSkipped);
         if (m_batchErrors > 0)
             summary += QStringLiteral("，%1 个文件失败").arg(m_batchErrors);
+        if (!m_batchFirstError.isEmpty())
+            summary += QStringLiteral("：%1").arg(m_batchFirstError);
         setStatus(summary);
         return;
     }
@@ -534,8 +343,8 @@ void AppController::startNextLoad()
     setStatus(QStringLiteral("正在加载 %1（%2/%3）…")
                   .arg(QFileInfo(m_activeLoadPath).fileName())
                   .arg(m_batchCompleted + 1).arg(m_batchTotal));
-    QMetaObject::invokeMethod(m_loader, "loadFile", Qt::QueuedConnection,
-                              Q_ARG(QString, m_activeLoadPath));
+    QMetaObject::invokeMethod(m_loader, &DataLoadWorker::loadFile,
+                              Qt::QueuedConnection, m_activeLoadPath);
 }
 
 void AppController::onLoadProgress(const QString &path, int percentage)
@@ -551,6 +360,8 @@ void AppController::onLoadFinished(const QString &path, const QVector<LoadedTabl
     m_pendingPaths.remove(path);
     if (!error.isEmpty()) {
         ++m_batchErrors;
+        if (m_batchFirstError.isEmpty())
+            m_batchFirstError = error;
     } else {
         QStringList names;
         QStringList groups;
@@ -584,9 +395,11 @@ void AppController::onLoadFinished(const QString &path, const QVector<LoadedTabl
                 PlotSeriesInput input;
                 input.id = signalId;
                 input.color = colors.at(signalId - firstSignalId);
-                input.points = table.preparedPoints.value(signalIndex);
+                input.time = table.time;
+                input.values = table.values.value(signalIndex);
                 input.monotonicTime = table.monotonicTimes.value(signalIndex,
                                                                   true);
+                input.monotonicTimeKnown = true;
                 inputs.append(std::move(input));
                 ++signalId;
             }
@@ -605,21 +418,29 @@ void AppController::onLoadFinished(const QString &path, const QVector<LoadedTabl
             : QStringLiteral("已加载 %1 个文件").arg(m_loadedFileNames.size());
         emit currentFileChanged();
         if (initializeSharedXRange) {
-            QVector<PlotSeriesId> allSeries;
-            allSeries.reserve(m_signalColors.size());
-            for (int id = 0; id < m_signalColors.size(); ++id)
-                allSeries.append(id);
-            const auto bounds = PlotSeriesStore::bounds(
-                m_seriesStore->snapshot(allSeries));
-            if (bounds.has_value()) {
-                if (qFuzzyCompare(bounds->xMinimum, bounds->xMaximum)) {
-                    m_sharedXMinimum = bounds->xMinimum - 0.5;
-                    m_sharedXMaximum = bounds->xMaximum + 0.5;
+            bool foundTimeBounds = false;
+            double timeMinimum = 0.0;
+            double timeMaximum = 0.0;
+            for (const LoadedTable &table : tables) {
+                if (!table.hasTimeBounds) continue;
+                if (!foundTimeBounds) {
+                    timeMinimum = table.timeMinimum;
+                    timeMaximum = table.timeMaximum;
+                    foundTimeBounds = true;
+                } else {
+                    timeMinimum = qMin(timeMinimum, table.timeMinimum);
+                    timeMaximum = qMax(timeMaximum, table.timeMaximum);
+                }
+            }
+            if (foundTimeBounds) {
+                if (qFuzzyCompare(timeMinimum, timeMaximum)) {
+                    m_sharedXMinimum = timeMinimum - 0.5;
+                    m_sharedXMaximum = timeMaximum + 0.5;
                 } else {
                     const double padding = qMax(
-                        (bounds->xMaximum - bounds->xMinimum) * 0.02, 1e-9);
-                    m_sharedXMinimum = bounds->xMinimum - padding;
-                    m_sharedXMaximum = bounds->xMaximum + padding;
+                        (timeMaximum - timeMinimum) * 0.02, 1e-9);
+                    m_sharedXMinimum = timeMinimum - padding;
+                    m_sharedXMaximum = timeMaximum + padding;
                 }
                 m_syncingRanges = true;
                 for (const QPointer<PlotItem> &plot : std::as_const(m_plots))
@@ -646,7 +467,7 @@ void AppController::refreshPlot(int index, bool fitY)
 {
     if (index < 0 || index >= m_plots.size() || !m_plots.at(index)) return;
     PlotItem *plot = m_plots.at(index);
-    const QVector<int> sortedRows = m_signals->visiblePlotRows(index);
+    const QVector<int> sortedRows = m_signals->plotRows(index);
     QVector<PlotSeriesId> visibleIds;
     visibleIds.reserve(sortedRows.size());
     for (int row : sortedRows)
@@ -655,5 +476,3 @@ void AppController::refreshPlot(int index, bool fitY)
     plot->setVisibleSeries(visibleIds);
     if (fitY) plot->fitY();
 }
-
-#include "appcontroller.moc"

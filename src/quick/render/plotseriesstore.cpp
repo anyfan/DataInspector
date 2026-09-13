@@ -22,27 +22,81 @@ PlotSeriesDataPtr makeSeriesData(const PlotSeriesInput &input, quint64 version)
         return data;
     }
 
-    const int count = qMin(input.time.size(), input.values.size());
-    data->points.reserve(count);
+    data->time = input.time;
+    data->values = input.values;
+    const int count = qMin(data->time.size(), data->values.size());
+    data->monotonicTime = input.monotonicTime;
+    if (input.monotonicTimeKnown) return data;
+    data->monotonicTime = true;
     double previousTime = -std::numeric_limits<double>::infinity();
     for (int index = 0; index < count; ++index) {
-        const double timestamp = input.time.at(index);
-        const double value = input.values.at(index);
+        const double timestamp = data->time.at(index);
         if (!qIsFinite(timestamp)) {
             data->monotonicTime = false;
-            data->points.append(QPointF(qQNaN(), qQNaN()));
             continue;
         }
         if (timestamp < previousTime)
             data->monotonicTime = false;
         previousTime = timestamp;
-        data->points.append(QPointF(timestamp,
-                                    qIsFinite(value) ? value : qQNaN()));
     }
     return data;
 }
 
+// Preserve original-index tie breaking, including duplicate timestamps.
+std::optional<QPointF> nearestPoint(const PlotSeriesData &series,
+                                   double target, bool requireY)
+{
+    std::optional<QPointF> best;
+    double distance = std::numeric_limits<double>::infinity();
+    auto consider = [&](qsizetype index) {
+        const QPointF point = series.pointAt(index);
+        if (!qIsFinite(point.x()) || (requireY && !qIsFinite(point.y()))) return;
+        const double delta = qAbs(point.x() - target);
+        if (!best || delta < distance) { best = point; distance = delta; }
+    };
+    const qsizetype count = series.sampleCount();
+    if (!series.monotonicTime) {
+        for (qsizetype i = 0; i < count; ++i) consider(i);
+        return best;
+    }
+    auto lowerBound = [&](double value) {
+        qsizetype lo = 0, hi = count;
+        while (lo < hi) {
+            const qsizetype mid = lo + (hi - lo) / 2;
+            if (series.pointAt(mid).x() < value) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    };
+    const qsizetype split = lowerBound(target);
+    qsizetype left = split - 1;
+    while (left >= 0 && requireY && !qIsFinite(series.pointAt(left).y())) --left;
+    if (left >= 0) {
+        const double timestamp = series.pointAt(left).x();
+        qsizetype first = lowerBound(timestamp);
+        while (first < left && requireY && !qIsFinite(series.pointAt(first).y())) ++first;
+        consider(first);
+    }
+    qsizetype right = split;
+    while (right < count && requireY && !qIsFinite(series.pointAt(right).y())) ++right;
+    if (right < count) consider(right);
+    return best;
+}
+
 } // namespace
+
+qsizetype PlotSeriesData::sampleCount() const
+{
+    return points.isEmpty() ? qMin(time.size(), values.size()) : points.size();
+}
+
+QPointF PlotSeriesData::pointAt(qsizetype index) const
+{
+    if (!points.isEmpty()) return points.at(index);
+    const double timestamp = time.at(index);
+    const double value = values.at(index);
+    return {timestamp, qIsFinite(value) ? value : qQNaN()};
+}
 
 void PlotSeriesStore::replaceSeries(const QVector<PlotSeriesInput> &inputs)
 {
@@ -148,15 +202,13 @@ std::optional<double> PlotSeriesStore::nearestX(const PlotSeriesSnapshot &snapsh
     double bestDistance = std::numeric_limits<double>::max();
     bool found = false;
     for (const PlotSeriesDataPtr &series : snapshot.series) {
-        for (const QPointF &point : series->points) {
-            if (!qIsFinite(point.x()))
-                continue;
-            const double distance = qAbs(point.x() - targetX);
-            if (distance < bestDistance) {
-                bestDistance = distance;
-                nearest = point.x();
-                found = true;
-            }
+        const auto point = nearestPoint(*series, targetX, false);
+        if (!point) continue;
+        const double distance = qAbs(point->x() - targetX);
+        if (!found || distance < bestDistance) {
+            bestDistance = distance;
+            nearest = point->x();
+            found = true;
         }
     }
     return found ? std::optional<double>(nearest) : std::nullopt;
@@ -171,19 +223,9 @@ QVector<PlotSample> PlotSeriesStore::nearestSamples(const PlotSeriesSnapshot &sn
 
     result.reserve(snapshot.series.size());
     for (const PlotSeriesDataPtr &series : snapshot.series) {
-        double bestDistance = std::numeric_limits<double>::max();
-        std::optional<PlotSample> nearest;
-        for (const QPointF &point : series->points) {
-            if (!qIsFinite(point.x()) || !qIsFinite(point.y()))
-                continue;
-            const double distance = qAbs(point.x() - targetX);
-            if (distance < bestDistance) {
-                bestDistance = distance;
-                nearest = PlotSample{series->id, point.x(), point.y(), series->color};
-            }
-        }
-        if (nearest.has_value())
-            result.append(*nearest);
+        const auto point = nearestPoint(*series, targetX, true);
+        if (point)
+            result.append({series->id, point->x(), point->y(), series->color});
     }
     return result;
 }
@@ -193,7 +235,8 @@ std::optional<PlotBounds> PlotSeriesStore::bounds(const PlotSeriesSnapshot &snap
     PlotBounds result;
     bool found = false;
     for (const PlotSeriesDataPtr &series : snapshot.series) {
-        for (const QPointF &point : series->points) {
+        for (qsizetype index = 0; index < series->sampleCount(); ++index) {
+            const QPointF point = series->pointAt(index);
             if (!qIsFinite(point.x()) || !qIsFinite(point.y()))
                 continue;
             if (!found) {

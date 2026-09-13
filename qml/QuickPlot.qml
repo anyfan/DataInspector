@@ -201,10 +201,6 @@ Rectangle {
                 implicitWidth: Math.min(legend.width,
                                         legendLabel.implicitWidth + 26)
                 implicitHeight: 18
-                opacity: root.controller.plotStateRevision >= 0
-                         && root.controller.plotSignalVisible(root.plotIndex,
-                                                              signalRow)
-                         ? 1.0 : 0.42
 
                 Canvas {
                     id: legendPreview
@@ -241,8 +237,6 @@ Rectangle {
                 MouseArea {
                     anchors.fill: parent
                     onPressed: root.controller.setActivePlot(root.plotIndex)
-                    onClicked: root.controller.togglePlotSignal(root.plotIndex,
-                                                                 parent.signalRow)
                 }
             }
         }

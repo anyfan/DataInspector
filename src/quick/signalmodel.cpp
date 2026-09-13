@@ -81,7 +81,6 @@ void SignalModel::setNames(const QStringList &names, const QStringList &groups,
     }
     rebuildVisibleNodes();
     for (QSet<int> &rows : m_plotRows) rows.clear();
-    for (QSet<int> &rows : m_hiddenPlotRows) rows.clear();
     endResetModel();
     emit checkedCountChanged();
 }
@@ -188,7 +187,6 @@ QVector<int> SignalModel::removeFile(const QString &fileName)
         rows = std::move(remapped);
     };
     for (QSet<int> &rows : m_plotRows) remapRows(rows);
-    for (QSet<int> &rows : m_hiddenPlotRows) remapRows(rows);
     for (auto it = m_expandedGroups.begin(); it != m_expandedGroups.end();) {
         if (*it == fileName || it->startsWith(fileName + QLatin1Char('/')))
             it = m_expandedGroups.erase(it);
@@ -205,7 +203,6 @@ void SignalModel::setAllChecked(bool checked)
 {
     if (m_activePlot < 0 || m_activePlot >= m_plotRows.size()) return;
     m_plotRows[m_activePlot].clear();
-    m_hiddenPlotRows[m_activePlot].clear();
     if (checked) {
         for (int row = 0; row < m_names.size(); ++row)
             m_plotRows[m_activePlot].insert(row);
@@ -232,7 +229,6 @@ void SignalModel::setPlotCount(int count)
     if (m_plotCount == normalized) return;
     if (m_plotRows.size() < normalized) {
         m_plotRows.resize(normalized);
-        m_hiddenPlotRows.resize(normalized);
     }
     m_plotCount = normalized;
     if (normalized == 0) m_activePlot = -1;
@@ -258,13 +254,8 @@ void SignalModel::setPlotChecked(int plotIndex, int row, bool checked)
         || row < 0 || row >= m_names.size()) return;
     const bool wasChecked = m_plotRows.at(plotIndex).contains(row);
     if (wasChecked == checked) return;
-    if (checked) {
-        m_plotRows[plotIndex].insert(row);
-        m_hiddenPlotRows[plotIndex].remove(row);
-    } else {
-        m_plotRows[plotIndex].remove(row);
-        m_hiddenPlotRows[plotIndex].remove(row);
-    }
+    if (checked) m_plotRows[plotIndex].insert(row);
+    else m_plotRows[plotIndex].remove(row);
     if (plotIndex == m_activePlot) {
         const int visibleRow = visibleModelRow(row);
         if (visibleRow >= 0)
@@ -279,31 +270,6 @@ QVector<int> SignalModel::plotRows(int plotIndex) const
     QVector<int> rows(m_plotRows.at(plotIndex).begin(), m_plotRows.at(plotIndex).end());
     std::sort(rows.begin(), rows.end());
     return rows;
-}
-
-QVector<int> SignalModel::visiblePlotRows(int plotIndex) const
-{
-    QVector<int> rows = plotRows(plotIndex);
-    if (plotIndex < 0 || plotIndex >= m_hiddenPlotRows.size()) return {};
-    rows.erase(std::remove_if(rows.begin(), rows.end(), [this, plotIndex](int row) {
-        return m_hiddenPlotRows.at(plotIndex).contains(row);
-    }), rows.end());
-    return rows;
-}
-
-bool SignalModel::plotSignalVisible(int plotIndex, int row) const
-{
-    return plotIndex >= 0 && plotIndex < m_plotCount
-        && m_plotRows.at(plotIndex).contains(row)
-        && !m_hiddenPlotRows.at(plotIndex).contains(row);
-}
-
-void SignalModel::setPlotSignalVisible(int plotIndex, int row, bool visible)
-{
-    if (plotIndex < 0 || plotIndex >= m_plotCount
-        || !m_plotRows.at(plotIndex).contains(row)) return;
-    if (visible) m_hiddenPlotRows[plotIndex].remove(row);
-    else m_hiddenPlotRows[plotIndex].insert(row);
 }
 
 QColor SignalModel::signalColor(int row) const

@@ -17,6 +17,9 @@ namespace {
 // every pan/zoom/cursor update.
 struct PlotRoot final : QSGNode {
     QVector<QSGGeometryNode *> lineNodes;
+    std::optional<LodRequestKey> curveKey;
+    QVector<double> curveView;
+    QVector<PlotSeriesDataPtr> curvePayloads;
     QSGGeometryNode *cursorNode = nullptr;
     QSGGeometryNode *cursorNode2 = nullptr;
 };
@@ -122,6 +125,7 @@ void PlotItem::setCursorX(double x, int cursorIndex)
         if (m_cursorMode == NoCursor) return;
         const double clamped = qBound(m_xMinimum, x, m_xMaximum);
         const double snapped = nearestRawX(clamped);
+        if ((cursorIndex == 2 ? m_cursorX2 : m_cursorX1) == snapped) return;
         if (cursorIndex == 2) m_cursorX2 = snapped;
         else { m_cursorX1 = snapped; m_cursorX = snapped; }
         m_cursorX = cursorIndex == 2 ? m_cursorX2 : m_cursorX1;
@@ -135,6 +139,7 @@ void PlotItem::setCursorPosition(double x, int cursorIndex)
         QMutexLocker lock(&m_dataMutex);
         if (m_cursorMode == NoCursor) return;
         const double clamped = qBound(m_xMinimum, x, m_xMaximum);
+        if ((cursorIndex == 2 ? m_cursorX2 : m_cursorX1) == clamped) return;
         if (cursorIndex == 2) m_cursorX2 = clamped;
         else { m_cursorX1 = clamped; m_cursorX = clamped; }
         m_cursorX = cursorIndex == 2 ? m_cursorX2 : m_cursorX1;
@@ -275,19 +280,19 @@ void PlotItem::updateCursorValuesLocked()
     if (m_cursorMode == NoCursor) return;
     m_cursorValues.resize(m_seriesSnapshot.series.size());
     const double keys[] = {m_cursorX1, m_cursorX2};
+    QHash<PlotSeriesId, PlotSample> samplesByCursor[2];
+    for (int c = 0; c < (m_cursorMode == DoubleCursor ? 2 : 1); ++c)
+        for (const auto &sample : PlotSeriesStore::nearestSamples(m_seriesSnapshot, keys[c]))
+            samplesByCursor[c].insert(sample.id, sample);
     for (int s = 0; s < m_seriesSnapshot.series.size(); ++s) {
         m_cursorValues[s].resize(m_cursorMode == DoubleCursor ? 2 : 1);
         for (int c = 0; c < m_cursorValues[s].size(); ++c) {
             double value = qQNaN();
             QColor color;
-            const QVector<PlotSample> samples = PlotSeriesStore::nearestSamples(
-                m_seriesSnapshot, keys[c]);
-            for (const PlotSample &sample : samples) {
-                if (sample.id == m_seriesSnapshot.series.at(s)->id) {
-                    value = sample.y;
-                    color = sample.color;
-                    break;
-                }
+            const auto sample = samplesByCursor[c].constFind(m_seriesSnapshot.series.at(s)->id);
+            if (sample != samplesByCursor[c].cend()) {
+                value = sample->y;
+                color = sample->color;
             }
             m_cursorValues[s][c] = value;
             if (qIsFinite(value)) {
@@ -329,24 +334,32 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                                m_xMaximum,
                                buckets,
                                1};
-    const LodResult &lod = m_lodCache.resolve(m_seriesSnapshot, lodKey);
-    const GeometryRequest geometryRequest{
-        {m_xMinimum, m_xMaximum, m_yMinimum, m_yMaximum, width(), height()},
-        m_lineWidth};
-    const GeometryResult geometry = PlotGeometryBuilder::build(
-        lod, geometryRequest);
+    const QVector<double> curveView{m_yMinimum, m_yMaximum, width(), height(), m_lineWidth};
+    if (!root->curveKey || !(*root->curveKey == lodKey) || root->curveView != curveView
+        || root->curvePayloads != m_seriesSnapshot.series) {
+        if (root->curvePayloads != m_seriesSnapshot.series) m_lodCache.clear();
+        const LodResult &lod = m_lodCache.resolve(m_seriesSnapshot, lodKey);
+        const GeometryRequest geometryRequest{
+            {m_xMinimum, m_xMaximum, m_yMinimum, m_yMaximum, width(), height()},
+            m_lineWidth};
+        const GeometryResult geometry = PlotGeometryBuilder::build(
+            lod, geometryRequest);
 
-    while (root->lineNodes.size() < geometry.segments.size())
-        createLineNode(root);
-    for (int i = 0; i < root->lineNodes.size(); ++i) {
-        auto *node = root->lineNodes.at(i);
-        if (i < geometry.segments.size()) {
-            uploadLineNode(node, geometry.segments.at(i));
-        } else if (node->geometry()) {
-            node->geometry()->allocate(0);
-            node->geometry()->markVertexDataDirty();
-            node->markDirty(QSGNode::DirtyGeometry);
+        while (root->lineNodes.size() < geometry.segments.size())
+            createLineNode(root);
+        for (int i = 0; i < root->lineNodes.size(); ++i) {
+            auto *node = root->lineNodes.at(i);
+            if (i < geometry.segments.size()) {
+                uploadLineNode(node, geometry.segments.at(i));
+            } else if (node->geometry()) {
+                node->geometry()->allocate(0);
+                node->geometry()->markVertexDataDirty();
+                node->markDirty(QSGNode::DirtyGeometry);
+            }
         }
+        root->curveKey = lodKey;
+        root->curveView = curveView;
+        root->curvePayloads = m_seriesSnapshot.series;
     }
     if (m_cursorMode != NoCursor && m_xMaximum > m_xMinimum) {
         const double x = (m_cursorX1 - m_xMinimum) / xs * width();

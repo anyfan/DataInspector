@@ -9,6 +9,7 @@ class RenderCoreTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void binaryCursorMatchesOriginalOrderScan();
     void storeGenerationAndSnapshotsAreImmutable();
     void storeQueriesRawSamplesWithoutInterpolation();
     void storeSkipsUnknownIdsAndIgnoresInvalidBounds();
@@ -27,7 +28,33 @@ private slots:
     void appendSeriesKeepsExistingSnapshots();
     void geometryKeepsFullWidthForOffscreenDiagonalEntry();
     void storeAcceptsWorkerPreparedPoints();
+    void storeKeepsLazyColumnSeriesUntilLodBuild();
 };
+
+void RenderCoreTest::binaryCursorMatchesOriginalOrderScan()
+{
+    for (bool allMissing : {false, true}) {
+        PlotSeriesInput input{1, {0, 0, 1, 2, 2, 2, 4, 5},
+            {qQNaN(), 3, qQNaN(), 7, 8, qQNaN(), 9, qQNaN()}, QColor("red")};
+        if (allMissing) input.values.fill(qQNaN());
+        PlotSeriesStore fast, reference;
+        fast.replaceSeries({input});
+        input.monotonicTimeKnown = true;
+        input.monotonicTime = false;
+        reference.replaceSeries({input});
+        for (double target = -1; target <= 6; target += 0.25) {
+            const auto a = fast.snapshot({1}), b = reference.snapshot({1});
+            QCOMPARE(PlotSeriesStore::nearestX(a, target), PlotSeriesStore::nearestX(b, target));
+            const auto actual = PlotSeriesStore::nearestSamples(a, target);
+            const auto expected = PlotSeriesStore::nearestSamples(b, target);
+            QCOMPARE(actual.size(), expected.size());
+            if (!actual.isEmpty()) {
+                QCOMPARE(actual.first().x, expected.first().x);
+                QCOMPARE(actual.first().y, expected.first().y);
+            }
+        }
+    }
+}
 
 void RenderCoreTest::storeGenerationAndSnapshotsAreImmutable()
 {
@@ -36,12 +63,12 @@ void RenderCoreTest::storeGenerationAndSnapshotsAreImmutable()
     const PlotSeriesSnapshot oldSnapshot = store.snapshot({4});
     QCOMPARE(oldSnapshot.generation, quint64(1));
     QCOMPARE(oldSnapshot.series.size(), 1);
-    QCOMPARE(oldSnapshot.series.at(0)->points.at(1), QPointF(1.0, 11.0));
+    QCOMPARE(oldSnapshot.series.at(0)->pointAt(1), QPointF(1.0, 11.0));
 
     store.replaceSeries({{4, {0.0, 1.0}, {20.0, 21.0}, QColor("blue")}});
     QCOMPARE(store.generation(), quint64(2));
-    QCOMPARE(oldSnapshot.series.at(0)->points.at(1), QPointF(1.0, 11.0));
-    QCOMPARE(store.snapshot({4}).series.at(0)->points.at(1), QPointF(1.0, 21.0));
+    QCOMPARE(oldSnapshot.series.at(0)->pointAt(1), QPointF(1.0, 11.0));
+    QCOMPARE(store.snapshot({4}).series.at(0)->pointAt(1), QPointF(1.0, 21.0));
 
     store.updateSeriesPen(4, QColor("green"), 7.0, Qt::DotLine);
     const PlotSeriesSnapshot styledSnapshot = store.snapshot({4});
@@ -353,6 +380,28 @@ void RenderCoreTest::storeAcceptsWorkerPreparedPoints()
     QCOMPARE(snapshot.series.first()->points,
              QVector<QPointF>({{0.0, 2.0}, {1.0, 4.0}}));
     QVERIFY(snapshot.series.first()->monotonicTime);
+}
+
+void RenderCoreTest::storeKeepsLazyColumnSeriesUntilLodBuild()
+{
+    PlotSeriesInput input;
+    input.id = 9;
+    input.color = QColor("cyan");
+    input.time = {0.0, 1.0, 2.0, 3.0};
+    input.values = {10.0, 11.0, 12.0, 13.0};
+    input.monotonicTime = true;
+
+    PlotSeriesStore store;
+    store.appendSeries({input});
+    const PlotSeriesSnapshot snapshot = store.snapshot({9});
+    QVERIFY(snapshot.series.first()->points.isEmpty());
+
+    const LodResult lod = PlotLodBuilder::build(
+        snapshot, LodRequestKey{snapshot.generation, {9}, 1.0, 2.0, 64, 1});
+    QCOMPARE(lod.segments.size(), 1);
+    QCOMPARE(lod.segments.first().points,
+             QVector<QPointF>({{0.0, 10.0}, {1.0, 11.0},
+                               {2.0, 12.0}, {3.0, 13.0}}));
 }
 
 QTEST_GUILESS_MAIN(RenderCoreTest)

@@ -17,6 +17,9 @@ qt_add_executable(DataInspector
     src/quick/main.cpp
     src/quick/appcontroller.cpp
     src/quick/appcontroller.h
+    src/quick/dataloadworker.cpp
+    src/quick/dataloadworker.h
+    src/quick/loadedtable.h
     src/quick/plotitem.cpp
     src/quick/plotitem.h
     src/quick/signalmodel.cpp
@@ -129,6 +132,9 @@ if(BUILD_TESTING)
         tests/appcontroller_test.cpp
         src/quick/appcontroller.cpp
         src/quick/appcontroller.h
+        src/quick/dataloadworker.cpp
+        src/quick/dataloadworker.h
+        src/quick/loadedtable.h
         src/quick/plotitem.cpp
         src/quick/plotitem.h
         src/quick/signalmetadata.cpp

@@ -14,7 +14,6 @@ private slots:
     void qmlRolesHaveUnambiguousNames();
     void checksFollowTheActivePlot();
     void resizingLayoutPreservesExistingPlotBindings();
-    void hiddenCurveRemainsInThePlotLegend();
     void groupsCanExpandAndCollapseWithoutLosingSignalRows();
     void eachSignalKeepsIndependentPenProperties();
     void appendingSignalsPreservesBindingsAndPenProperties();
@@ -114,20 +113,6 @@ void SignalSelectionTest::resizingLayoutPreservesExistingPlotBindings()
     QCOMPARE(model.plotRows(1), QVector<int>({1}));
     QVERIFY(model.plotRows(2).isEmpty());
     QVERIFY(model.plotRows(3).isEmpty());
-}
-
-void SignalSelectionTest::hiddenCurveRemainsInThePlotLegend()
-{
-    SignalModel model;
-    model.setNames({QStringLiteral("Pitch")});
-    model.setPlotCount(1);
-    model.setChecked(0, true);
-
-    model.setPlotSignalVisible(0, 0, false);
-
-    QCOMPARE(model.plotRows(0), QVector<int>({0}));
-    QVERIFY(model.visiblePlotRows(0).isEmpty());
-    QVERIFY(!model.plotSignalVisible(0, 0));
 }
 
 void SignalSelectionTest::groupsCanExpandAndCollapseWithoutLosingSignalRows()

@@ -51,9 +51,6 @@ public:
     int activePlot() const { return m_activePlot; }
     void setPlotChecked(int plotIndex, int row, bool checked);
     QVector<int> plotRows(int plotIndex) const;
-    QVector<int> visiblePlotRows(int plotIndex) const;
-    bool plotSignalVisible(int plotIndex, int row) const;
-    void setPlotSignalVisible(int plotIndex, int row, bool visible);
 signals:
     void checkedCountChanged();
 private:
@@ -74,7 +71,6 @@ private:
     QVector<VisibleNode> m_visibleNodes;
     QSet<QString> m_expandedGroups;
     QVector<QSet<int>> m_plotRows;
-    QVector<QSet<int>> m_hiddenPlotRows;
     int m_plotCount = 0;
     int m_activePlot = -1;
     QString m_filter;
