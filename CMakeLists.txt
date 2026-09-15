@@ -165,3 +165,15 @@ if(BUILD_TESTING)
             $<TARGET_FILE:appcontroller_test> -platform offscreen
     )
 endif()
+
+if(BUILD_TESTING)
+    add_executable(plotitem_raster_test tests/plotitem_raster_test.cpp src/quick/plotitem.cpp src/quick/plotitem.h)
+    target_link_libraries(plotitem_raster_test PRIVATE Qt6::Quick plot_render_core)
+    option(ENABLE_GPU_TESTS "Run native-window GPU raster regression (requires graphics session)" OFF)
+    if(ENABLE_GPU_TESTS)
+        add_test(NAME plotitem_raster_test COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_raster_test>)
+        set_tests_properties(plotitem_raster_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+    endif()
+endif()

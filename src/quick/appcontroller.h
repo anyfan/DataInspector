@@ -17,6 +17,7 @@ class PlotItem;
 class AppController final : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QVariantList presetColors READ presetColors CONSTANT)
     Q_PROPERTY(SignalModel *signalModel READ signalModel CONSTANT)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString currentFile READ currentFile NOTIFY currentFileChanged)
@@ -29,6 +30,7 @@ class AppController final : public QObject
     Q_PROPERTY(int activePlotIndex READ activePlotIndex NOTIFY activePlotChanged)
     Q_PROPERTY(int plotStateRevision READ plotStateRevision NOTIFY plotBindingsChanged)
 public:
+    QVariantList presetColors() const;
     explicit AppController(QObject *parent = nullptr);
     ~AppController() override;
     SignalModel *signalModel() const { return m_signals; }
@@ -99,6 +101,7 @@ private:
     QString m_activeLoadPath;
     std::shared_ptr<PlotSeriesStore> m_seriesStore;
     QVector<QColor> m_signalColors;
+    int m_nextColorIndex = 0;
     QThread *m_loadThread = nullptr;
     DataLoadWorker *m_loader = nullptr;
     bool m_loading = false;

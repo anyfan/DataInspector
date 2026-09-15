@@ -62,6 +62,26 @@ ApplicationWindow {
                     }
                 }
             }
+            Grid {
+                columns: 7
+                spacing: 6
+                Layout.alignment: Qt.AlignHCenter
+                Repeater {
+                    model: appController.presetColors
+                    delegate: Rectangle {
+                        required property color modelData
+                        width: 28; height: 24; radius: 2
+                        color: modelData
+                        border.width: colorButton.selectedColor === modelData ? 3 : 1
+                        border.color: colorButton.selectedColor === modelData
+                                      ? window.treeTextColor : window.borderColor
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: colorButton.selectedColor = parent.modelData
+                        }
+                    }
+                }
+            }
             RowLayout {
                 Label { text: "宽度"; color: window.treeTextColor; Layout.preferredWidth: 54 }
                 SpinBox { id: widthSpin; from: 1; to: 20; editable: true; Layout.fillWidth: true }

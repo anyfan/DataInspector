@@ -141,40 +141,66 @@ static QVector<QVector<QPointF>> strokePieces(const QVector<QPointF> &points,
     return result;
 }
 
-static std::optional<QVector<QPointF>> buildBand(const QVector<QPointF> &projected,
-                                                 double lineWidth)
+static std::optional<QVector<QPointF>> buildStraightBand(const QVector<QPointF> &projected,
+                                                         double lineWidth)
 {
     if (projected.size() < 2) return std::nullopt;
-    const double halfWidth = qMax(1.0, lineWidth) * 0.5;
+    const QPointF direction = projected.last() - projected.first();
+    if (!hasUsableLength(direction)) return std::nullopt;
+    const double length = qSqrt(QPointF::dotProduct(direction, direction));
+    const double radius = qMax(1.0, lineWidth) * .5;
+    const QPointF normal(-direction.y()/length*radius, direction.x()/length*radius);
     QVector<QPointF> vertices;
-    vertices.reserve(projected.size() * 2);
-    for (int i = 0; i < projected.size(); ++i) {
-        std::optional<QPointF> previous;
-        std::optional<QPointF> next;
-        for (int j = i - 1; j >= 0; --j) {
-            if (hasUsableLength(projected.at(i) - projected.at(j))) {
-                previous = projected.at(j);
-                break;
-            }
+    vertices.reserve(projected.size()*2);
+    for (const auto &point : projected) vertices << point+normal << point-normal;
+    return vertices;
+}
+
+static bool hasCorners(const QVector<QPointF> &points)
+{
+    for (int i = 1; i + 1 < points.size(); ++i) {
+        const QPointF a = points[i] - points[i - 1], b = points[i + 1] - points[i];
+        const double scale = qSqrt(QPointF::dotProduct(a,a) * QPointF::dotProduct(b,b));
+        if (QPointF::dotProduct(a,b) < 0 || qAbs(a.x()*b.y()-a.y()*b.x()) > scale * 1e-10)
+            return true;
+    }
+    return false;
+}
+
+static QVector<QPointF> roundedStroke(const QVector<QPointF> &points, double width)
+{
+    // A shared pair of vertices cannot preserve width on a tight reversal:
+    // limiting its miter collapses both adjoining segments. Give each segment
+    // its own constant-width quad and fill only the outside turn with an arc.
+    const double radius = qMax(1.0, width) * .5;
+    QVector<QPointF> vertices, directions, normals;
+    vertices.reserve(points.size() * 18);
+    for (int i = 1; i < points.size(); ++i) {
+        const QPointF delta = points[i] - points[i-1];
+        const double length = qSqrt(QPointF::dotProduct(delta,delta));
+        if (length <= 1e-12) return {};
+        const QPointF direction = delta/length;
+        const QPointF normal(-direction.y()*radius, direction.x()*radius);
+        directions.append(direction); normals.append(normal);
+        const QPointF a = points[i-1]+normal, b = points[i-1]-normal;
+        const QPointF c = points[i]+normal, d = points[i]-normal;
+        vertices << a << b << c << b << d << c;
+    }
+    for (int i = 1; i + 1 < points.size(); ++i) {
+        const auto &a = directions[i-1]; const auto &b = directions[i];
+        const double turn = qAtan2(a.x()*b.y()-a.y()*b.x(), QPointF::dotProduct(a,b));
+        if (qAbs(turn) < 1e-10) continue;
+        const QPointF start = normals[i-1] * (turn > 0 ? -1 : 1);
+        // Arc sagitta stays below about 0.1 logical pixels at supported widths.
+        const int steps = qMax(1, int(qCeil(qAbs(turn) / qMin(.4, qSqrt(.8/radius)))));
+        const double angle = qAtan2(start.y(), start.x());
+        QPointF previous = points[i]+start;
+        for (int step = 1; step <= steps; ++step) {
+            const double theta = angle+turn*step/steps;
+            const QPointF next = points[i]+QPointF(qCos(theta)*radius, qSin(theta)*radius);
+            vertices << points[i] << previous << next;
+            previous = next;
         }
-        for (int j = i + 1; j < projected.size(); ++j) {
-            if (hasUsableLength(projected.at(j) - projected.at(i))) {
-                next = projected.at(j);
-                break;
-            }
-        }
-        QPointF tangent;
-        if (previous.has_value() && next.has_value()) tangent = *next - *previous;
-        else if (next.has_value()) tangent = *next - projected.at(i);
-        else if (previous.has_value()) tangent = projected.at(i) - *previous;
-        if (!hasUsableLength(tangent)) return std::nullopt;
-        const double length = qSqrt(QPointF::dotProduct(tangent, tangent));
-        const QPointF normal(-tangent.y() / length * halfWidth,
-                             tangent.x() / length * halfWidth);
-        // The centerline was clipped before expansion. Keep both sides of the
-        // screen-space band; clamping them independently collapses corners.
-        vertices.append(projected.at(i) + normal);
-        vertices.append(projected.at(i) - normal);
     }
     return vertices;
 }
@@ -215,10 +241,17 @@ GeometryResult PlotGeometryBuilder::build(const LodResult &lod,
             const QVector<QVector<QPointF>> clippedPieces = clipPolyline(
                 pieces.first(), request.transform, width);
             for (const QVector<QPointF> &piece : clippedPieces) {
-                auto vertices = buildBand(piece, width);
-                if (vertices.has_value())
-                    result.segments.append({lodSegment.seriesId, lodSegment.color,
-                                            std::move(*vertices), false});
+                if (hasCorners(piece)) {
+                    auto vertices = roundedStroke(piece, width);
+                    if (!vertices.isEmpty())
+                        result.segments.append({lodSegment.seriesId, lodSegment.color,
+                                                std::move(vertices), true});
+                } else {
+                    auto vertices = buildStraightBand(piece, width);
+                    if (vertices.has_value())
+                        result.segments.append({lodSegment.seriesId, lodSegment.color,
+                                                std::move(*vertices), false});
+                }
             }
             continue;
         }
@@ -228,7 +261,11 @@ GeometryResult PlotGeometryBuilder::build(const LodResult &lod,
             const QVector<QVector<QPointF>> clippedPieces = clipPolyline(
                 piece, request.transform, width);
             for (const QVector<QPointF> &clippedPiece : clippedPieces) {
-                auto vertices = buildBand(clippedPiece, width);
+                if (hasCorners(clippedPiece)) {
+                    triangles.append(roundedStroke(clippedPiece, width));
+                    continue;
+                }
+                auto vertices = buildStraightBand(clippedPiece, width);
                 if (!vertices.has_value()) continue;
                 for (int index = 0; index + 3 < vertices->size(); index += 2) {
                     triangles.append(vertices->at(index));

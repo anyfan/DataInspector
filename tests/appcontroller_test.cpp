@@ -14,12 +14,17 @@
 #include <QtTest>
 
 #include <algorithm>
+#ifdef ENABLE_MAT
+#include "matio.h"
+#endif
 
 class AppControllerTest final : public QObject
 {
     Q_OBJECT
 
 private slots:
+    void cursorReadoutsFollowVisibleXRange();
+    void unicodeMatFileNameLoads();
     void detachedPlotsDoNotSynchronize();
     void loadedSignalsBindOnlyToTheActivePlot();
     void expandingLayoutKeepsExistingPlotAttached();
@@ -41,6 +46,49 @@ private slots:
     void attachingNewPlotPreservesSharedXRange();
     void removingFileKeepsRemainingSignalsAndBindings();
 };
+
+void AppControllerTest::cursorReadoutsFollowVisibleXRange()
+{
+    PlotItem plot;
+    auto store = std::make_shared<PlotSeriesStore>();
+    store->replaceSeries({{1, {0, 2, 8, 10}, {1, 2, 3, 4}, QColor("red")}});
+    plot.setSeriesStore(store); plot.setVisibleSeries({1}); plot.setXRange(0, 10);
+    plot.setCursorMode(PlotItem::DoubleCursor);
+    plot.setCursorPosition(2, 1); plot.setCursorPosition(8, 2);
+    QCOMPARE(plot.cursorReadouts().size(), 2);
+    plot.setXRange(3, 7);
+    QVERIFY(plot.cursorReadouts().isEmpty());
+    plot.setXRange(0, 5);
+    QCOMPARE(plot.cursorReadouts().size(), 1);
+    plot.setXRange(0, 10);
+    QCOMPARE(plot.cursorReadouts().size(), 2);
+    QCOMPARE(plot.cursorX2(), 8.0);
+}
+
+void AppControllerTest::unicodeMatFileNameLoads()
+{
+#ifdef ENABLE_MAT
+    QTemporaryDir directory;
+    const QString path = directory.filePath(QStringLiteral("11040237.DAT - 副本.mat"));
+    mat_t *file = Mat_CreateVer(path.toUtf8().constData(), nullptr, MAT_FT_MAT5);
+    QVERIFY(file);
+    size_t dimensions[] = {2, 2};
+    double values[] = {0, 1, 12, 34};
+    matvar_t *variable = Mat_VarCreate("p1", MAT_C_DOUBLE, MAT_T_DOUBLE, 2, dimensions, values, 0);
+    QVERIFY(variable);
+    const int written = Mat_VarWrite(file, variable, MAT_COMPRESSION_ZLIB);
+    Mat_VarFree(variable);
+    Mat_Close(file);
+    QCOMPARE(written, 0);
+    AppController controller;
+    QVERIFY(controller.loadCsv(path));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QVERIFY2(controller.loadedFileCount() == 1, qPrintable(controller.status()));
+    QCOMPARE(controller.signalCount(), 1);
+#else
+    QSKIP("MAT support disabled");
+#endif
+}
 
 void AppControllerTest::detachedPlotsDoNotSynchronize()
 {
@@ -380,6 +428,21 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QCoreApplication::processEvents();
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
     QCOMPARE(plot->cursorReadouts().size(), 4);
+    QCOMPARE(plot->cursorReadouts().first().toMap().value("sampleX").toDouble(), 0.0);
+    // QML Repeater delegates are visual children; their QObject parent is not guaranteed.
+    QList<QQuickItem *> visualMarkers, visualTimes;
+    std::function<void(QQuickItem *)> collect = [&](QQuickItem *parent) {
+        for (auto *child : parent->childItems()) {
+            if (child->objectName() == "cursorSampleMarker") visualMarkers.append(child);
+            if (child->objectName() == "cursorTimeLabel") visualTimes.append(child);
+            collect(child);
+        }
+    };
+    collect(qobject_cast<QQuickItem *>(object.get()));
+    QCOMPARE(visualMarkers.size(), 4);
+    QCOMPARE(visualTimes.size(), 2);
+    const double plotBottom = plot->parentItem()->y() + plot->height();
+    for (const auto *label : visualTimes) QVERIFY(label->y() > plotBottom);
     QQuickWindow window;
     window.resize(800, 400);
     auto *item = qobject_cast<QQuickItem *>(object.get());
@@ -390,11 +453,22 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QSignalSpy revealed(&controller, &AppController::revealSignalRequested);
     QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(40, 12));
     QTRY_COMPARE(revealed.count(), 1);
+    QCOMPARE(plot->highlightedSeries(), 0);
     QVERIFY(controller.plotSignalEnabled(0, 0));
     QTest::mouseClick(&window, Qt::RightButton, Qt::NoModifier, QPoint(40, 12));
     QTest::qWait(30);
     QTest::keyClick(&window, Qt::Key_Escape);
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+    QVariant formatted;
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "formatCompact", Q_RETURN_ARG(QVariant, formatted),
+                                     Q_ARG(QVariant, 1.25), Q_ARG(QVariant, 10)));
+    QCOMPARE(formatted.toString(), "1.25");
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "formatCompact", Q_RETURN_ARG(QVariant, formatted),
+                                     Q_ARG(QVariant, 100.0), Q_ARG(QVariant, 7)));
+    QCOMPARE(formatted.toString(), "100");
+    plot->setXRange(.6, .8);
+    QCoreApplication::processEvents();
+    for (const auto *label : visualTimes) QVERIFY(!label->isVisible());
     item->setParentItem(nullptr);
 }
 
@@ -532,7 +606,7 @@ void AppControllerTest::realMatImportPerformanceWhenRequested()
     qInfo() << "MAT_IMPORT_MS" << totalMilliseconds
             << "MAT_FINISH_AFTER_99_MS" << finishMilliseconds
             << "SIGNALS" << controller.signalCount();
-    QCOMPARE(controller.loadedFileCount(), 1);
+    QVERIFY2(controller.loadedFileCount() == 1, qPrintable(controller.status()));
     QVERIFY(controller.signalCount() > 0);
 }
 

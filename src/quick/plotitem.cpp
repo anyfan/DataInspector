@@ -90,6 +90,22 @@ void PlotItem::requestLod()
     { QMutexLocker lock(&m_dataMutex); m_lodResult = m_lodScheduler->result(); }
     emit lodChanged();
 }
+int PlotItem::highlightedSeries() const
+{
+    QMutexLocker lock(&m_dataMutex);
+    return m_highlightedSeries;
+}
+void PlotItem::setHighlightedSeries(int id)
+{
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (!m_visibleSeries.contains(id)) id = -1;
+        if (id == m_highlightedSeries) return;
+        m_highlightedSeries = id;
+    }
+    emit highlightedSeriesChanged();
+    update();
+}
 double PlotItem::xMinimum() const { QMutexLocker lock(&m_dataMutex); return m_xMinimum; }
 double PlotItem::xMaximum() const { QMutexLocker lock(&m_dataMutex); return m_xMaximum; }
 double PlotItem::yMinimum() const { QMutexLocker lock(&m_dataMutex); return m_yMinimum; }
@@ -195,6 +211,7 @@ void PlotItem::setVisibleSeries(const QVector<PlotSeriesId> &orderedIds)
         refreshSnapshotLocked();
         updateCursorValuesLocked();
     }
+    setHighlightedSeries(highlightedSeries());
     requestLod();
     emit cursorValuesChanged();
     update();
@@ -304,6 +321,7 @@ void PlotItem::updateCursorValuesLocked()
     const double keys[] = {m_cursorX1, m_cursorX2};
     QHash<PlotSeriesId, PlotSample> samplesByCursor[2];
     for (int c = 0; c < (m_cursorMode == DoubleCursor ? 2 : 1); ++c)
+        if (keys[c] >= m_xMinimum && keys[c] <= m_xMaximum)
         for (const auto &sample : PlotSeriesStore::nearestSamples(m_seriesSnapshot, keys[c]))
             samplesByCursor[c].insert(sample.id, sample);
     for (int s = 0; s < m_seriesSnapshot.series.size(); ++s) {
@@ -326,6 +344,7 @@ void PlotItem::updateCursorValuesLocked()
                                                     {QStringLiteral("y"), value},
                                                     {QStringLiteral("seriesId"), m_seriesSnapshot.series.at(s)->id},
                                                     {QStringLiteral("cursorIndex"), c + 1},
+                                                    {QStringLiteral("sampleX"), sample->x},
                                                     {QStringLiteral("text"), QString::number(value, 'g', 6)},
                                                     {QStringLiteral("rawText"), rawText},
                                                     {QStringLiteral("color"), color}});
@@ -352,10 +371,23 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
     const double xs = qMax(m_xMaximum - m_xMinimum, 1e-12);
     const QVector<double> curveView{m_xMinimum, m_xMaximum, m_yMinimum, m_yMaximum,
-                                    width(), height(), m_lineWidth};
+                                    width(), height(), m_lineWidth, double(m_highlightedSeries)};
     if (root->curveResult != m_lodResult || root->curveView != curveView) {
         const LodResult empty;
-        const LodResult &lod = m_lodResult ? *m_lodResult : empty;
+        LodResult lod = m_lodResult ? *m_lodResult : empty;
+        if (m_highlightedSeries >= 0) {
+            // Emphasize in geometry only: no data copy or new LOD job.
+            QVector<LodSegment> selected;
+            QVector<LodSegment> remaining;
+            for (auto segment : std::as_const(lod.segments)) {
+                if (segment.seriesId == m_highlightedSeries) {
+                    segment.lineWidth = (segment.lineWidth > 0 ? segment.lineWidth : m_lineWidth) + 2;
+                    selected.append(std::move(segment));
+                } else remaining.append(std::move(segment));
+            }
+            remaining.append(selected);
+            lod.segments = std::move(remaining);
+        }
         const GeometryRequest geometryRequest{
             {m_xMinimum, m_xMaximum, m_yMinimum, m_yMaximum, width(), height()},
             m_lineWidth};
@@ -445,7 +477,9 @@ void PlotItem::setRange(double xmin,double xmax,double ymin,double ymax)
         m_yMinimum = ymin;
         m_yMaximum = ymax;
         rebuildTicksLocked();
+        updateCursorValuesLocked();
     }
+    emit cursorValuesChanged();
     requestLod();
     emit viewChanged();
     emit rangeChanged(xmin, xmax, ymin, ymax);

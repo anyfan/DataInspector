@@ -265,7 +265,8 @@ void DataLoadWorker::loadCsv(const QString &path)
 #ifdef ENABLE_MAT
 void DataLoadWorker::loadMat(const QString &path)
 {
-    const QByteArray encoded = QFile::encodeName(path);
+    // MATIO uses UTF-8 paths on Windows, matching the legacy loader.
+    const QByteArray encoded = path.toUtf8();
     mat_t *file = Mat_Open(encoded.constData(), MAT_ACC_RDONLY);
     if (!file) { emit finished(path, {}, 0, QStringLiteral("无法打开 MAT 文件：%1").arg(path)); return; }
     const QRegularExpression variableExpression(

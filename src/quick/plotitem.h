@@ -13,6 +13,7 @@
 class PlotItem : public QQuickItem
 {
     Q_OBJECT
+    Q_PROPERTY(int highlightedSeries READ highlightedSeries WRITE setHighlightedSeries NOTIFY highlightedSeriesChanged)
     Q_PROPERTY(bool lodPending READ lodPending NOTIFY lodChanged)
     Q_PROPERTY(int cursorMode READ cursorMode WRITE setCursorMode NOTIFY cursorChanged)
     Q_PROPERTY(double xMinimum READ xMinimum NOTIFY viewChanged)
@@ -32,6 +33,8 @@ public:
     enum CursorMode { NoCursor = 0, SingleCursor = 1, DoubleCursor = 2 };
     Q_ENUM(CursorMode)
     explicit PlotItem(QQuickItem *parent = nullptr);
+    int highlightedSeries() const;
+    void setHighlightedSeries(int id);
     bool lodPending() const { return m_lodScheduler->pending(); }
     double xMinimum() const;
     double xMaximum() const;
@@ -60,6 +63,7 @@ public:
     Q_INVOKABLE void fitY();
     Q_INVOKABLE void setXRange(double xMinimum, double xMaximum);
 signals:
+    void highlightedSeriesChanged();
     void lodChanged();
     void viewChanged();
     void lineWidthChanged();
@@ -93,6 +97,7 @@ private:
     void requestLod();
     double m_xMinimum = 0.0, m_xMaximum = 1.0, m_yMinimum = -1.0, m_yMaximum = 1.0;
     double m_lineWidth = 2.0;
+    int m_highlightedSeries = -1;
     bool m_cursorEnabled = false;
     double m_cursorX = 0.0;
     int m_cursorMode = NoCursor;

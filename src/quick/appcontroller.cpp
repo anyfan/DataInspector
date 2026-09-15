@@ -10,6 +10,27 @@
 #include <QtMath>
 #include <utility>
 
+namespace {
+const QVector<QColor> &signalPalette()
+{
+    // Keep the legacy SignalBrowser / SignalPropertiesDialog palette and order.
+    static const QVector<QColor> colors{
+        QColor("#0072bd"), QColor("#d95319"), QColor("#edb120"),
+        QColor("#7e2f8e"), QColor("#77ac30"), QColor("#4dbeee"),
+        QColor("#a2142f"), QColor("#139fff"), QColor("#ff6929"),
+        QColor("#b746ff"), QColor("#64d413"), QColor("#ff13a6"),
+        QColor("#fe330a"), QColor("#22b573")};
+    return colors;
+}
+}
+
+QVariantList AppController::presetColors() const
+{
+    QVariantList colors;
+    for (const auto &color : signalPalette()) colors.append(color);
+    return colors;
+}
+
 AppController::AppController(QObject *parent)
     : QObject(parent), m_signals(new SignalModel(this)),
       m_seriesStore(std::make_shared<PlotSeriesStore>())
@@ -180,6 +201,8 @@ void AppController::revealLegendSignal(int plotIndex, int row)
 {
     if (!plotSignalEnabled(plotIndex, row)) return;
     setActivePlot(plotIndex);
+    if (plotIndex >= 0 && plotIndex < m_plots.size() && m_plots.at(plotIndex))
+        m_plots.at(plotIndex)->setHighlightedSeries(row);
     emit revealSignalRequested(row);
 }
 void AppController::removeLegendSignal(int plotIndex, int row)
@@ -327,6 +350,7 @@ void AppController::clear()
     }
     m_seriesStore->clear();
     m_signalColors.clear();
+    m_nextColorIndex = 0;
     m_signals->setNames({});
     m_loadedPaths.clear();
     m_loadedFileNames.clear();
@@ -413,9 +437,10 @@ void AppController::onLoadFinished(const QString &path, const QVector<LoadedTabl
         }
         const int firstSignalId = m_signalColors.size();
         colors.resize(names.size());
-        for (int i = 0; i < names.size(); ++i)
-            colors[i] = QColor::fromHsv(((firstSignalId + i) * 47) % 360,
-                                         190, 230);
+        for (int i = 0; i < names.size(); ++i) {
+            colors[i] = signalPalette().at(m_nextColorIndex);
+            m_nextColorIndex = (m_nextColorIndex + 1) % signalPalette().size();
+        }
 
         QVector<PlotSeriesInput> inputs;
         inputs.reserve(names.size());

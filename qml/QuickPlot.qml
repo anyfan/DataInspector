@@ -21,13 +21,21 @@ Rectangle {
     readonly property real axisRight: 18
     readonly property real axisTop: legend.visible
                                     ? Math.max(30, legend.implicitHeight + 10) : 12
-    readonly property real axisBottom: 38
+    readonly property real axisBottom: plotItem.cursorMode === 2 ? 76 : plotItem.cursorMode === 1 ? 58 : 38
     property var rawReadouts: ({})
     property alias renderer: plotItem
     function toggleReadout(key) {
         const next = Object.assign({}, rawReadouts)
         next[key] = !next[key]
         rawReadouts = next
+    }
+    function cursorInView(value) {
+        return value >= plotItem.xMinimum && value <= plotItem.xMaximum
+    }
+    function formatCompact(value, precision) {
+        const parts = Number(value).toPrecision(precision).split("e")
+        parts[0] = parts[0].replace(/(\.\d*?)0+$/, "$1").replace(/\.$/, "")
+        return parts.join("e")
     }
     function formatRaw(value) {
         return Number(value).toFixed(12).replace(/\.?0+$/, "")
@@ -127,17 +135,37 @@ Rectangle {
         }
 
         Repeater {
+            model: plotItem.cursorReadouts
+            delegate: Rectangle {
+                required property var modelData
+                objectName: "cursorSampleMarker"
+                width: 5; height: 5; radius: 2.5
+                x: root.xPixel(modelData.sampleX) - width / 2
+                y: root.yPixel(modelData.y) - height / 2
+                color: modelData.color
+                border.color: modelData.color
+                border.width: 1
+                z: 3
+            }
+        }
+
+        Repeater {
             model: root.positionedReadouts
             delegate: Label {
                 required property var modelData
+                objectName: "cursorValueLabel"
                 readonly property string formatKey: modelData.seriesId + ":" + modelData.cursorIndex
                 x: Math.max(2, Math.min(axisRect.width - width - 2,
-                                       root.xPixel(modelData.x) + 5))
+                                       root.xPixel(modelData.sampleX) + 5))
                 y: modelData.labelY
                 text: root.rawReadouts[formatKey] ? modelData.rawText : modelData.text
                 height: 18
-                padding: 2
-                background: Rectangle { color: root.plotColor; opacity: 0.88; radius: 2 }
+                leftPadding: 5; rightPadding: 5; topPadding: 2; bottomPadding: 2
+                background: Rectangle {
+                    color: Qt.rgba(root.plotColor.r, root.plotColor.g, root.plotColor.b, 0.71)
+                    border.color: modelData.color
+                    border.width: 1
+                }
                 color: modelData.color
                 font.pixelSize: 10
                 z: 4
@@ -155,13 +183,15 @@ Rectangle {
             required property int index
             readonly property real value: index === 0 ? plotItem.cursorX1 : plotItem.cursorX2
             readonly property string formatKey: "x:" + index
+            objectName: "cursorTimeLabel"
+            visible: root.cursorInView(value)
             x: Math.max(root.axisLeft, Math.min(root.width - root.axisRight - width,
                         root.axisLeft + root.xPixel(value) - width / 2))
-            y: axisRect.y + axisRect.height - height - 2
-            text: root.rawReadouts[formatKey] ? root.formatRaw(value) : Number(value).toPrecision(10)
+            y: axisRect.y + axisRect.height + 24
+            text: root.rawReadouts[formatKey] ? root.formatRaw(value) : root.formatCompact(value, 10)
             padding: 3
             color: index === 0 ? "#e34d59" : "#4e79e7"
-            background: Rectangle { color: root.plotColor; opacity: 0.9; radius: 2 }
+            background: Rectangle { color: root.plotColor; opacity: 0.9; border.color: root.textColor; border.width: 1 }
             z: 10
             MouseArea { anchors.fill: parent; onClicked: root.toggleReadout(parent.formatKey) }
         }
@@ -270,6 +300,12 @@ Rectangle {
                 implicitWidth: Math.min(legend.width,
                                         legendLabel.implicitWidth + 26)
                 implicitHeight: 18
+                Rectangle {
+                    anchors.fill: parent
+                    color: root.darkTheme ? "#334658" : "#dfedfa"
+                    visible: plotItem.highlightedSeries === parent.signalRow
+                    radius: 2
+                }
 
                 Canvas {
                     id: legendPreview
@@ -299,6 +335,7 @@ Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     width: Math.max(0, parent.width - 22)
                     text: root.controller.signalName(parent.signalRow)
+                    font.bold: plotItem.highlightedSeries === parent.signalRow
                     elide: Text.ElideRight
                     color: root.textColor
                     font.pixelSize: 10
@@ -338,8 +375,9 @@ Rectangle {
                              root.axisLeft
                              + root.xPixel((plotItem.cursorX1 + plotItem.cursorX2) * 0.5)
                              - width / 2))
-        y: axisRect.y + axisRect.height + 17
+        y: axisRect.y + axisRect.height + 50
         visible: plotItem.cursorMode === 2
+                 && root.cursorInView(plotItem.cursorX1) && root.cursorInView(plotItem.cursorX2)
         color: root.darkTheme ? "#26313d" : "#eef4fb"
         radius: 3
         border.color: root.frameColor
@@ -348,7 +386,7 @@ Rectangle {
         Label {
             id: deltaLabel
             anchors.centerIn: parent
-            text: "ΔT = " + Number(plotItem.cursorDeltaT).toPrecision(7)
+            text: "ΔT = " + root.formatCompact(plotItem.cursorDeltaT, 7)
             color: root.textColor
             font.pixelSize: 10
         }

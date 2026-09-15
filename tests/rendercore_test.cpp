@@ -9,6 +9,7 @@ class RenderCoreTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void geometryWidthIsIndependentOfSlopeAndSampleSpacing();
     void binaryCursorMatchesOriginalOrderScan();
     void storeGenerationAndSnapshotsAreImmutable();
     void storeQueriesRawSamplesWithoutInterpolation();
@@ -30,6 +31,40 @@ private slots:
     void storeAcceptsWorkerPreparedPoints();
     void storeKeepsLazyColumnSeriesUntilLodBuild();
 };
+
+void RenderCoreTest::geometryWidthIsIndependentOfSlopeAndSampleSpacing()
+{
+    const GeometryRequest request{{0, 100, 0, 100, 100, 100}, 6};
+    for (int degrees : {0, 15, 45, 75, 90}) {
+        const double angle = qDegreesToRadians(double(degrees));
+        const QPointF direction(qCos(angle), qSin(angle));
+        LodResult lod;
+        lod.segments.append({1, QColor("red"), {QPointF(50, 50) - direction * 20,
+                                                QPointF(50, 50) + direction * 20}});
+        const auto geometry = PlotGeometryBuilder::build(lod, request);
+        QCOMPARE(geometry.segments.size(), 1);
+        const auto &v = geometry.segments.first().vertices;
+        QVERIFY(qAbs(QLineF(v[0], v[1]).length() - 6) < 1e-10);
+    }
+    LodResult corner;
+    corner.segments.append({1, QColor("red"), {{10, 50}, {20, 50}, {20, 10}}});
+    const auto geometry = PlotGeometryBuilder::build(corner, request);
+    const auto &v = geometry.segments.first().vertices;
+    QVERIFY(geometry.segments.first().triangleList);
+    QVERIFY(v.size() >= 12);
+    QCOMPARE(QLineF(v[0],v[1]).length(), 6.0);
+    QCOMPARE(QLineF(v[6],v[7]).length(), 6.0);
+
+    LodResult zigzag;
+    zigzag.segments.append({1, QColor("red"), {{10,10},{12,90},{14,10},{16,90},{18,10}}});
+    const auto sharp = PlotGeometryBuilder::build(zigzag, request);
+    const auto &q = sharp.segments.first().vertices;
+    QVERIFY(sharp.segments.first().triangleList);
+    for (int i=0; i<4; ++i) {
+        QVERIFY(qAbs(QLineF(q[6*i],q[6*i+1]).length()-6) < 1e-10);
+        QVERIFY(qAbs(QLineF(q[6*i+2],q[6*i+4]).length()-6) < 1e-10);
+    }
+}
 
 void RenderCoreTest::binaryCursorMatchesOriginalOrderScan()
 {

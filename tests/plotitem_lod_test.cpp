@@ -59,6 +59,23 @@ int main(int argc, char *argv[])
         }
     }
 
+    const float originalY = vertices[0].y;
+    plot.setHighlightedSeries(7);
+    if (plot.lodPending()) {
+        std::cerr << "Highlight should not start a LOD job\n";
+        delete root;
+        return 1;
+    }
+    root = plot.paint(root);
+    const auto *highlighted = static_cast<const QSGGeometry::Point2D *>(lineNode->geometry()->vertexData());
+    if (highlighted[0].y == originalY) {
+        std::cerr << "Highlight did not increase the curve width\n";
+        delete root;
+        return 1;
+    }
+    plot.setHighlightedSeries(-1);
+    root = plot.paint(root);
+
     plot.setLineWidth(6.0);
     root = plot.paint(root);
     lineNode = dynamic_cast<QSGGeometryNode *>(root->firstChild());

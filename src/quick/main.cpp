@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QSurfaceFormat>
 #include <QFile>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -11,6 +12,10 @@
 int main(int argc, char *argv[])
 {
     QQuickStyle::setStyle(QStringLiteral("Fusion"));
+    // Antialias triangle edges consistently at every slope on the GPU backend.
+    QSurfaceFormat format = QSurfaceFormat::defaultFormat();
+    format.setSamples(4);
+    QSurfaceFormat::setDefaultFormat(format);
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("DataInspector"));
     app.setOrganizationName(QStringLiteral("DataInspector"));
