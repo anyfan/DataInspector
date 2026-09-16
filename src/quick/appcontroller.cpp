@@ -198,7 +198,8 @@ bool AppController::removeFile(const QString &fileName)
     return true;
 }
 
-bool AppController::exportXlsx(const QVariant &filePath, int scope)
+bool AppController::exportXlsx(const QVariant &filePath, int scope,
+                               bool zipCompressionEnabled)
 {
     if (!m_exporter || m_exporting || m_loading || signalCount() == 0)
         return false;
@@ -260,8 +261,9 @@ bool AppController::exportXlsx(const QVariant &filePath, int scope)
     setStatus(QStringLiteral("正在导出 Excel…"));
     QMetaObject::invokeMethod(
         m_exporter,
-        [exporter = m_exporter, path, tables = std::move(tables)]() {
-            exporter->exportWorkbook(path, tables);
+        [exporter = m_exporter, path, tables = std::move(tables),
+         zipCompressionEnabled]() {
+            exporter->exportWorkbook(path, tables, zipCompressionEnabled);
         }, Qt::QueuedConnection);
     return true;
 }

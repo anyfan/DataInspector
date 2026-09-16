@@ -15,7 +15,8 @@ public:
 
 public slots:
     void exportWorkbook(const QString &path,
-                        const QVector<XlsxExportTable> &tables);
+                        const QVector<XlsxExportTable> &tables,
+                        bool zipCompressionEnabled);
 
 signals:
     void progress(int percentage);

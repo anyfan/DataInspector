@@ -22,6 +22,7 @@ struct XlsxExportTable
 struct XlsxWriteOptions
 {
     qsizetype maxDataRowsPerSheet = 1048575;
+    bool zipCompressionEnabled = false;
 };
 
 struct XlsxWriteResult

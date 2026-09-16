@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QIODevice>
 #include <QSaveFile>
 #include <QSet>
 #include <QTemporaryDir>
@@ -14,6 +15,8 @@ namespace {
 
 constexpr qsizetype excelMaximumDataRows = 1048575;
 constexpr int excelMaximumColumns = 16384;
+constexpr qsizetype xmlBufferSize = 1024 * 1024;
+constexpr int archiveProgressLimit = 95;
 
 struct SheetPlan
 {
@@ -21,6 +24,78 @@ struct SheetPlan
     QString name;
     qsizetype firstRow = 0;
     qsizetype rowCount = 0;
+};
+
+class ProgressReporter
+{
+public:
+    explicit ProgressReporter(const std::function<void(int)> &callback)
+        : m_callback(callback)
+    {
+    }
+
+    void reportWork(long double completed, long double total)
+    {
+        const long double fraction = total > 0.0L ? completed / total : 1.0L;
+        report(qBound(0, int(fraction * archiveProgressLimit),
+                      archiveProgressLimit));
+    }
+
+    void reportCopy(qint64 completed, qint64 total)
+    {
+        const qint64 normalizedTotal = qMax<qint64>(1, total);
+        report(archiveProgressLimit
+               + int(qBound<qint64>(0, completed, normalizedTotal) * 4
+                     / normalizedTotal));
+    }
+
+    void report(int percentage)
+    {
+        const int normalized = qBound(0, percentage, 100);
+        if (!m_callback || normalized <= m_lastPercentage) return;
+        m_lastPercentage = normalized;
+        m_callback(normalized);
+    }
+
+private:
+    const std::function<void(int)> &m_callback;
+    int m_lastPercentage = -1;
+};
+
+class ProgressReadDevice final : public QIODevice
+{
+public:
+    ProgressReadDevice(QIODevice *source,
+                       const std::function<void(qint64, qint64)> &progress,
+                       const std::function<bool()> &isCancelled)
+        : m_source(source), m_progress(progress), m_isCancelled(isCancelled),
+          m_total(source ? source->size() : 0)
+    {
+        open(QIODevice::ReadOnly);
+    }
+
+    bool isSequential() const override { return true; }
+
+protected:
+    qint64 readData(char *data, qint64 maxSize) override
+    {
+        if (!m_source || (m_isCancelled && m_isCancelled())) return 0;
+        const qint64 count = m_source->read(data, maxSize);
+        if (count > 0) {
+            m_processed += count;
+            if (m_progress) m_progress(m_processed, m_total);
+        }
+        return count;
+    }
+
+    qint64 writeData(const char *, qint64) override { return -1; }
+
+private:
+    QIODevice *m_source = nullptr;
+    std::function<void(qint64, qint64)> m_progress;
+    std::function<bool()> m_isCancelled;
+    qint64 m_total = 0;
+    qint64 m_processed = 0;
 };
 
 QString columnName(int zeroBasedColumn)
@@ -173,19 +248,19 @@ void writeInlineCell(QXmlStreamWriter &xml, int column, qsizetype row,
     xml.writeEndElement();
 }
 
-void writeNumberCell(QXmlStreamWriter &xml, int column, qsizetype row,
-                     double value)
+void appendNumberCell(QByteArray *xml, const QByteArray &column,
+                      const QByteArray &row, double value)
 {
-    xml.writeStartElement(QStringLiteral("c"));
-    xml.writeAttribute(QStringLiteral("r"),
-                       columnName(column) + QString::number(row));
-    xml.writeTextElement(QStringLiteral("v"), QString::number(value, 'g', 17));
-    xml.writeEndElement();
+    xml->append("<c r=\"");
+    xml->append(column);
+    xml->append(row);
+    xml->append("\"><v>");
+    xml->append(QByteArray::number(value, 'g', 17));
+    xml->append("</v></c>");
 }
 
 bool writeWorksheet(const QString &path, const SheetPlan &sheet,
-                    qsizetype *processedRows, qsizetype totalRows,
-                    const std::function<void(int)> &reportProgress,
+                    const std::function<void(qsizetype)> &reportRows,
                     const std::function<bool()> &isCancelled,
                     QString *error)
 {
@@ -194,42 +269,64 @@ bool writeWorksheet(const QString &path, const SheetPlan &sheet,
         *error = QStringLiteral("无法创建临时工作表：%1").arg(file.errorString());
         return false;
     }
-    QXmlStreamWriter xml(&file);
-    xml.writeStartDocument();
-    xml.writeStartElement(QStringLiteral("worksheet"));
-    xml.writeDefaultNamespace(QStringLiteral(
-        "http://schemas.openxmlformats.org/spreadsheetml/2006/main"));
-    xml.writeStartElement(QStringLiteral("sheetData"));
-    xml.writeStartElement(QStringLiteral("row"));
-    xml.writeAttribute(QStringLiteral("r"), QStringLiteral("1"));
-    writeInlineCell(xml, 0, 1, QStringLiteral("Time"));
+    QByteArray xml;
+    xml.reserve(xmlBufferSize + 4096);
+    xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"
+               "<worksheet xmlns=\"http://schemas.openxmlformats.org/"
+               "spreadsheetml/2006/main\"><sheetData>");
+    QByteArray header;
+    QXmlStreamWriter headerWriter(&header);
+    headerWriter.writeStartElement(QStringLiteral("row"));
+    headerWriter.writeAttribute(QStringLiteral("r"), QStringLiteral("1"));
+    writeInlineCell(headerWriter, 0, 1, QStringLiteral("Time"));
     for (int column = 0; column < sheet.table->series.size(); ++column)
-        writeInlineCell(xml, column + 1, 1, sheet.table->series.at(column).name);
-    xml.writeEndElement();
+        writeInlineCell(headerWriter, column + 1, 1,
+                        sheet.table->series.at(column).name);
+    headerWriter.writeEndElement();
+    xml.append(header);
+
+    QVector<QByteArray> columns;
+    columns.reserve(sheet.table->series.size() + 1);
+    for (int column = 0; column <= sheet.table->series.size(); ++column)
+        columns.append(columnName(column).toLatin1());
+    auto flush = [&]() {
+        if (xml.isEmpty()) return true;
+        if (file.write(xml) != xml.size()) {
+            *error = QStringLiteral("写入临时工作表失败：%1")
+                         .arg(file.errorString());
+            return false;
+        }
+        xml.clear();
+        return true;
+    };
 
     const PlotSeriesDataPtr timeSeries = sheet.table->series.first().data;
     for (qsizetype offset = 0; offset < sheet.rowCount; ++offset) {
         if ((offset & 0xff) == 0 && isCancelled && isCancelled()) return false;
         const qsizetype sourceRow = sheet.firstRow + offset;
         const qsizetype excelRow = offset + 2;
-        xml.writeStartElement(QStringLiteral("row"));
-        xml.writeAttribute(QStringLiteral("r"), QString::number(excelRow));
+        const QByteArray row = QByteArray::number(excelRow);
+        xml.append("<row r=\"");
+        xml.append(row);
+        xml.append("\">");
         const QPointF timePoint = timeSeries->pointAt(sourceRow);
-        if (qIsFinite(timePoint.x())) writeNumberCell(xml, 0, excelRow, timePoint.x());
+        if (qIsFinite(timePoint.x()))
+            appendNumberCell(&xml, columns.first(), row, timePoint.x());
         for (int column = 0; column < sheet.table->series.size(); ++column) {
             const PlotSeriesDataPtr data = sheet.table->series.at(column).data;
             if (!data || sourceRow >= data->sampleCount()) continue;
             const double value = data->pointAt(sourceRow).y();
-            if (qIsFinite(value)) writeNumberCell(xml, column + 1, excelRow, value);
+            if (qIsFinite(value))
+                appendNumberCell(&xml, columns.at(column + 1), row, value);
         }
-        xml.writeEndElement();
-        ++*processedRows;
-        if (reportProgress && ((*processedRows & 0x3ff) == 0 || *processedRows == totalRows))
-            reportProgress(qBound(0, int(*processedRows * 90 / qMax<qsizetype>(1, totalRows)), 90));
+        xml.append("</row>");
+        if (xml.size() >= xmlBufferSize && !flush()) return false;
+        if (reportRows && (((offset + 1) & 0xff) == 0
+                           || offset + 1 == sheet.rowCount))
+            reportRows(offset + 1);
     }
-    xml.writeEndElement();
-    xml.writeEndElement();
-    xml.writeEndDocument();
+    xml.append("</sheetData></worksheet>");
+    if (!flush()) return false;
     file.close();
     if (file.error() != QFile::NoError) {
         *error = QStringLiteral("写入临时工作表失败：%1").arg(file.errorString());
@@ -255,7 +352,7 @@ XlsxWriteResult writeXlsxWorkbook(
         1, options.maxDataRowsPerSheet, excelMaximumDataRows);
     QVector<SheetPlan> sheets;
     QSet<QString> usedNames;
-    qsizetype totalRows = 0;
+    long double totalWork = 0.0L;
     for (const XlsxExportTable &table : tables) {
         if (table.series.isEmpty() || !table.series.first().data) continue;
         if (table.series.size() + 1 > excelMaximumColumns) {
@@ -266,7 +363,8 @@ XlsxWriteResult writeXlsxWorkbook(
         for (qsizetype first = 0; first < rowCount; first += rowsPerSheet) {
             sheets.append({&table, uniqueSheetName(table.name, &usedNames), first,
                            qMin(rowsPerSheet, rowCount - first)});
-            totalRows += sheets.last().rowCount;
+            totalWork += static_cast<long double>(sheets.last().rowCount)
+                * (table.series.size() + 1);
         }
     }
     if (sheets.isEmpty()) {
@@ -277,6 +375,8 @@ XlsxWriteResult writeXlsxWorkbook(
         result.cancelled = true;
         return result;
     }
+    ProgressReporter progress(reportProgress);
+    progress.report(0);
 
     const QFileInfo outputInfo(path);
     QDir outputDirectory(outputInfo.absolutePath());
@@ -298,7 +398,9 @@ XlsxWriteResult writeXlsxWorkbook(
         return result;
     }
     QZipWriter archive(&archiveFile);
-    archive.setCompressionPolicy(QZipWriter::AutoCompress);
+    archive.setCompressionPolicy(options.zipCompressionEnabled
+                                     ? QZipWriter::AlwaysCompress
+                                     : QZipWriter::NeverCompress);
     archive.addFile(QStringLiteral("[Content_Types].xml"), contentTypes(sheets.size()));
     archive.addFile(QStringLiteral("_rels/.rels"), rootRelationships());
     archive.addFile(QStringLiteral("xl/workbook.xml"), workbookXml(sheets));
@@ -306,7 +408,9 @@ XlsxWriteResult writeXlsxWorkbook(
                     workbookRelationships(sheets.size()));
     archive.addFile(QStringLiteral("xl/styles.xml"), stylesXml());
 
-    qsizetype processedRows = 0;
+    long double completedWork = 0.0L;
+    const long double worksheetGenerationShare = options.zipCompressionEnabled
+        ? 0.35L : 0.85L;
     const QString worksheetPath = temporary.filePath(QStringLiteral("sheet.xml"));
     for (int index = 0; index < sheets.size(); ++index) {
         if (isCancelled && isCancelled()) {
@@ -314,8 +418,21 @@ XlsxWriteResult writeXlsxWorkbook(
             archive.close();
             return result;
         }
-        if (!writeWorksheet(worksheetPath, sheets.at(index), &processedRows,
-                            totalRows, reportProgress, isCancelled, &result.error)) {
+        const SheetPlan &sheet = sheets.at(index);
+        const long double sheetWork = static_cast<long double>(sheet.rowCount)
+            * (sheet.table->series.size() + 1);
+        if (!writeWorksheet(
+                worksheetPath, sheet,
+                [&](qsizetype rowsWritten) {
+                    const long double fraction = sheet.rowCount > 0
+                        ? static_cast<long double>(rowsWritten) / sheet.rowCount
+                        : 1.0L;
+                    progress.reportWork(
+                        completedWork + sheetWork * worksheetGenerationShare
+                            * fraction,
+                        totalWork);
+                },
+                isCancelled, &result.error)) {
             result.cancelled = result.error.isEmpty() && isCancelled && isCancelled();
             archive.close();
             return result;
@@ -326,10 +443,27 @@ XlsxWriteResult writeXlsxWorkbook(
             archive.close();
             return result;
         }
+        ProgressReadDevice progressDevice(
+            &worksheet,
+            [&](qint64 bytesRead, qint64 byteCount) {
+                const long double fraction = byteCount > 0
+                    ? static_cast<long double>(bytesRead) / byteCount : 1.0L;
+                progress.reportWork(
+                    completedWork + sheetWork
+                        * (worksheetGenerationShare
+                           + (1.0L - worksheetGenerationShare) * fraction),
+                    totalWork);
+            },
+            isCancelled);
         archive.addFile(QStringLiteral("xl/worksheets/sheet%1.xml").arg(index + 1),
-                        &worksheet);
-        if (reportProgress)
-            reportProgress(90 + (index + 1) * 9 / sheets.size());
+                        &progressDevice);
+        if (isCancelled && isCancelled()) {
+            result.cancelled = true;
+            archive.close();
+            return result;
+        }
+        completedWork += sheetWork;
+        progress.reportWork(completedWork, totalWork);
     }
     archive.close();
     if (archive.status() != QZipWriter::NoError) {
@@ -351,6 +485,8 @@ XlsxWriteResult writeXlsxWorkbook(
         output.cancelWriting();
         return result;
     }
+    const qint64 archiveSize = archiveFile.size();
+    qint64 copiedBytes = 0;
     while (!archiveFile.atEnd()) {
         if (isCancelled && isCancelled()) {
             result.cancelled = true;
@@ -370,11 +506,13 @@ XlsxWriteResult writeXlsxWorkbook(
             output.cancelWriting();
             return result;
         }
+        copiedBytes += block.size();
+        progress.reportCopy(copiedBytes, archiveSize);
     }
     if (!output.commit()) {
         result.error = QStringLiteral("无法保存 Excel 文件：%1").arg(output.errorString());
         return result;
     }
-    if (reportProgress) reportProgress(100);
+    progress.report(100);
     return result;
 }

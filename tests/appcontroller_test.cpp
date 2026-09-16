@@ -53,6 +53,7 @@ private slots:
     void removingFileKeepsRemainingSignalsAndBindings();
     void exportsAllLoadedSignals();
     void exportsUnionOfSignalsDrawnAcrossPlots();
+    void exportCompressionOptionReachesWriter();
 };
 
 static void writeCsvFile(const QString &path, const QByteArray &contents)
@@ -111,6 +112,37 @@ void AppControllerTest::exportsUnionOfSignalsDrawnAcrossPlots()
     QCOMPARE(read.tables.size(), 2);
     QCOMPARE(read.tables.at(0).signalNames, QStringList({QStringLiteral("B")}));
     QCOMPARE(read.tables.at(1).signalNames, QStringList({QStringLiteral("C")}));
+}
+
+void AppControllerTest::exportCompressionOptionReachesWriter()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("repeated.csv"));
+    const QString storedOutput = directory.filePath(QStringLiteral("stored.xlsx"));
+    const QString compressedOutput = directory.filePath(
+        QStringLiteral("compressed.xlsx"));
+    QByteArray contents("time,A,B\n");
+    for (int row = 0; row < 4096; ++row)
+        contents += QByteArray::number(row) + ",1.25,1.25\n";
+    writeCsvFile(input, contents);
+
+    AppController controller;
+    QVERIFY(controller.loadCsv(input));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QVERIFY(controller.exportXlsx(storedOutput, AppController::AllLoadedData));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+    QVERIFY(controller.exportXlsx(compressedOutput,
+                                  AppController::AllLoadedData, true));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+
+    const XlsxReadResult stored = readXlsxWorkbook(storedOutput, {}, {});
+    const XlsxReadResult compressed = readXlsxWorkbook(compressedOutput, {}, {});
+    QVERIFY2(stored.error.isEmpty(), qPrintable(stored.error));
+    QVERIFY2(compressed.error.isEmpty(), qPrintable(compressed.error));
+    QCOMPARE(stored.tables.first().values, compressed.tables.first().values);
+    QVERIFY(QFileInfo(storedOutput).size()
+            > QFileInfo(compressedOutput).size() * 2);
 }
 
 void AppControllerTest::cursorReadoutsFollowVisibleXRange()

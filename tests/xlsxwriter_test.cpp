@@ -2,9 +2,12 @@
 #include "xlsxwriter.h"
 
 #include <QFile>
+#include <QElapsedTimer>
 #include <QTemporaryDir>
 #include <QtTest>
 #include <QtMath>
+
+#include <algorithm>
 
 static PlotSeriesDataPtr series(int id, QVector<double> time,
                                 QVector<double> values);
@@ -17,6 +20,9 @@ private slots:
     void roundTripPreservesTablesAndBlankValues();
     void splitsRowsAndMakesSheetNamesUnique();
     void cancellationPreservesExistingFile();
+    void progressIsMonotonicAcrossUnevenSheets();
+    void zipCompressionIsOptIn();
+    void largeExportPerformanceWhenRequested();
 };
 
 static PlotSeriesDataPtr series(int id, QVector<double> time,
@@ -110,6 +116,119 @@ void XlsxWriterTest::cancellationPreservesExistingFile()
 
     QVERIFY(original.open(QIODevice::ReadOnly));
     QCOMPARE(original.readAll(), QByteArray("original"));
+}
+
+void XlsxWriterTest::progressIsMonotonicAcrossUnevenSheets()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QVector<double> time(8192);
+    QVector<double> values(8192);
+    for (qsizetype row = 0; row < time.size(); ++row) {
+        time[row] = double(row);
+        values[row] = double(row) * 0.5;
+    }
+    const QVector<XlsxExportTable> tables = {
+        {QStringLiteral("Small"), {{QStringLiteral("A"),
+            series(0, {0.0}, {1.0})}}},
+        {QStringLiteral("Large"), {{QStringLiteral("B"),
+            series(1, time, values)}}}
+    };
+    for (const bool compressionEnabled : {false, true}) {
+        QVector<int> progress;
+        XlsxWriteOptions options;
+        options.zipCompressionEnabled = compressionEnabled;
+        const QString mode = compressionEnabled
+            ? QStringLiteral("compressed") : QStringLiteral("stored");
+
+        const XlsxWriteResult written = writeXlsxWorkbook(
+            directory.filePath(QStringLiteral("progress-%1.xlsx").arg(mode)),
+            tables, options,
+            [&](int percentage) { progress.append(percentage); });
+
+        QVERIFY2(written.error.isEmpty(), qPrintable(written.error));
+        QVERIFY2(!progress.isEmpty(), qPrintable(mode));
+        QCOMPARE(progress.last(), 100);
+        QVERIFY2(std::is_sorted(progress.cbegin(), progress.cend()),
+                 qPrintable(QStringLiteral("%1 模式进度发生回退：%2")
+                                .arg(mode, QVariant::fromValue(progress).toString())));
+        for (qsizetype index = 1; index < progress.size(); ++index) {
+            QVERIFY2(progress.at(index) - progress.at(index - 1) <= 10,
+                     qPrintable(QStringLiteral("%1 模式导出进度出现不合理跳变")
+                                    .arg(mode)));
+        }
+    }
+}
+
+void XlsxWriterTest::zipCompressionIsOptIn()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QVector<double> time(4096);
+    QVector<double> values(4096, 1.25);
+    for (qsizetype row = 0; row < time.size(); ++row)
+        time[row] = double(row);
+    const QVector<XlsxExportTable> tables = {{QStringLiteral("Data"), {
+        {QStringLiteral("A"), series(0, time, values)},
+        {QStringLiteral("B"), series(1, time, values)}
+    }}};
+    const QString storedPath = directory.filePath(QStringLiteral("stored.xlsx"));
+    const QString compressedPath = directory.filePath(
+        QStringLiteral("compressed.xlsx"));
+
+    const XlsxWriteResult stored = writeXlsxWorkbook(storedPath, tables);
+    XlsxWriteOptions compressedOptions;
+    compressedOptions.zipCompressionEnabled = true;
+    const XlsxWriteResult compressed = writeXlsxWorkbook(
+        compressedPath, tables, compressedOptions);
+
+    QVERIFY2(stored.error.isEmpty(), qPrintable(stored.error));
+    QVERIFY2(compressed.error.isEmpty(), qPrintable(compressed.error));
+    const XlsxReadResult storedRead = readXlsxWorkbook(storedPath, {}, {});
+    const XlsxReadResult compressedRead = readXlsxWorkbook(compressedPath, {}, {});
+    QVERIFY2(storedRead.error.isEmpty(), qPrintable(storedRead.error));
+    QVERIFY2(compressedRead.error.isEmpty(), qPrintable(compressedRead.error));
+    QCOMPARE(storedRead.tables.first().time, compressedRead.tables.first().time);
+    QCOMPARE(storedRead.tables.first().values,
+             compressedRead.tables.first().values);
+    QVERIFY(QFileInfo(storedPath).size()
+            > QFileInfo(compressedPath).size() * 2);
+}
+
+void XlsxWriterTest::largeExportPerformanceWhenRequested()
+{
+    if (qEnvironmentVariableIsEmpty("DATAINSPECTOR_PERF_XLSX"))
+        QSKIP("Set DATAINSPECTOR_PERF_XLSX to run the XLSX export benchmark");
+    const int rowCount = qMax(1, qEnvironmentVariableIntValue(
+                                      "DATAINSPECTOR_PERF_XLSX_ROWS"));
+    const int signalCount = qMax(1, qEnvironmentVariableIntValue(
+                                         "DATAINSPECTOR_PERF_XLSX_SIGNALS"));
+    QVector<double> time(rowCount);
+    for (int row = 0; row < rowCount; ++row) time[row] = row * 0.01;
+    QVector<XlsxExportSeries> exportSeries;
+    exportSeries.reserve(signalCount);
+    for (int signalIndex = 0; signalIndex < signalCount; ++signalIndex) {
+        QVector<double> values(rowCount);
+        for (int row = 0; row < rowCount; ++row)
+            values[row] = row * 0.25 + signalIndex;
+        exportSeries.append({QStringLiteral("Signal %1").arg(signalIndex + 1),
+                             series(signalIndex, time, std::move(values))});
+    }
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("benchmark.xlsx"));
+    QElapsedTimer timer;
+    timer.start();
+    XlsxWriteOptions options;
+    options.zipCompressionEnabled = qEnvironmentVariableIntValue(
+        "DATAINSPECTOR_PERF_XLSX_COMPRESS") != 0;
+    const XlsxWriteResult result = writeXlsxWorkbook(
+        path, {{QStringLiteral("Data"), std::move(exportSeries)}}, options);
+    const qint64 elapsed = timer.elapsed();
+    QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+    qInfo() << "XLSX_EXPORT_MS" << elapsed << "ROWS" << rowCount
+            << "SIGNALS" << signalCount << "COMPRESSED"
+            << options.zipCompressionEnabled << "BYTES" << QFileInfo(path).size();
 }
 
 QTEST_GUILESS_MAIN(XlsxWriterTest)

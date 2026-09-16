@@ -54,7 +54,8 @@ public:
     Q_INVOKABLE bool loadCsv(const QString &filePath);
     Q_INVOKABLE int loadFiles(const QVariant &filePaths);
     Q_INVOKABLE bool removeFile(const QString &fileName);
-    Q_INVOKABLE bool exportXlsx(const QVariant &filePath, int scope);
+    Q_INVOKABLE bool exportXlsx(const QVariant &filePath, int scope,
+                                bool zipCompressionEnabled = false);
     Q_INVOKABLE void cancelExport();
     Q_INVOKABLE void selectSignal(int row);
     Q_INVOKABLE void toggleSignal(int row);

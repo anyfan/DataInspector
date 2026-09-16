@@ -37,6 +37,7 @@ ApplicationWindow {
     property int editingSignalIndex: -1
     property string pendingFileRemoval: ""
     property int pendingExportScope: 0
+    property bool exportZipCompression: true
 
     ListModel {
         id: lineStyleModel
@@ -177,8 +178,9 @@ ApplicationWindow {
         nameFilters: ["Excel 工作簿 (*.xlsx)"]
         fileMode: FileDialog.SaveFile
         defaultSuffix: "xlsx"
-        onAccepted: appController.exportXlsx(selectedFile,
-                                              window.pendingExportScope)
+        onAccepted: appController.exportXlsx(
+                        selectedFile, window.pendingExportScope,
+                        window.exportZipCompression)
     }
 
     Dialog {
@@ -319,6 +321,13 @@ ApplicationWindow {
                             window.pendingExportScope = 1
                             exportDialog.open()
                         }
+                    }
+                    MenuSeparator { }
+                    MenuItem {
+                        text: "ZIP 压缩"
+                        checkable: true
+                        checked: window.exportZipCompression
+                        onTriggered: window.exportZipCompression = checked
                     }
                 }
             }
