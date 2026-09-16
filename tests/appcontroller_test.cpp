@@ -455,6 +455,20 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QTRY_COMPARE(revealed.count(), 1);
     QCOMPARE(plot->highlightedSeries(), 0);
     QVERIFY(controller.plotSignalEnabled(0, 0));
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(400, 200));
+    QCOMPARE(plot->highlightedSeries(), -1);
+    QCOMPARE(revealed.count(), 1);
+    QVERIFY(controller.plotSignalEnabled(0, 0));
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(40, 12));
+    QCOMPARE(plot->highlightedSeries(), 0);
+    QCOMPARE(revealed.count(), 2);
+    // Clicking outside the plot item must also clear the selection.
+    window.resize(900, 500);
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(850, 450));
+    QCOMPARE(plot->highlightedSeries(), -1);
+    QVERIFY(controller.plotSignalEnabled(0, 0));
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(40, 12));
+    QCOMPARE(plot->highlightedSeries(), 0);
     QTest::mouseClick(&window, Qt::RightButton, Qt::NoModifier, QPoint(40, 12));
     QTest::qWait(30);
     QTest::keyClick(&window, Qt::Key_Escape);
@@ -469,6 +483,42 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     plot->setXRange(.6, .8);
     QCoreApplication::processEvents();
     for (const auto *label : visualTimes) QVERIFY(!label->isVisible());
+    controller.setLayout(1, 2);
+    std::unique_ptr<QObject> target(component.createWithInitialProperties({
+        {"plotIndex", 1}, {"controller", QVariant::fromValue<QObject *>(&controller)},
+        {"x", 800}, {"width", 800}, {"height", 400}}));
+    QVERIFY2(target, qPrintable(component.errorString()));
+    auto *targetItem = qobject_cast<QQuickItem *>(target.get());
+    targetItem->setParentItem(window.contentItem());
+    window.resize(1600, 400);
+    QTest::qWait(30);
+    QCOMPARE(item->property("axisLeft"), targetItem->property("axisLeft"));
+    QCOMPARE(item->property("axisTop"), targetItem->property("axisTop"));
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "formatYTick", Q_RETURN_ARG(QVariant, formatted),
+                                     Q_ARG(QVariant, 12000.0)));
+    QCOMPARE(formatted.toString(), "1.20e+4");
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, QPoint(40, 12));
+    QTest::mouseMove(&window, QPoint(1000, 100), 30);
+    QTRY_VERIFY(targetItem->property("dropHighlighted").toBool());
+    QVERIFY(item->property("legendDragging").toBool());
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, QPoint(1000, 100));
+    QTRY_VERIFY(controller.plotSignalEnabled(1, 0));
+    QVERIFY(!item->property("legendDragging").toBool());
+    QVERIFY(!controller.plotSignalEnabled(0, 0));
+    QVERIFY(controller.plotSignalEnabled(0, 1));
+    QCOMPARE(controller.activePlotIndex(), 1);
+    QVERIFY(!targetItem->property("dropHighlighted").toBool());
+    // Dropping on itself or outside the layout must not remove the signal.
+    controller.moveLegendSignal(1, 1, 0);
+    controller.moveLegendSignal(1, 99, 0);
+    QVERIFY(controller.plotSignalEnabled(1, 0));
+    // Moving to a plot that already contains the signal must not duplicate it.
+    controller.signalModel()->setPlotChecked(0, 0, true);
+    controller.moveLegendSignal(1, 0, 0);
+    QVERIFY(!controller.plotSignalEnabled(1, 0));
+    QCOMPARE(controller.plotSignalRows(0).count(0), 1);
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+    targetItem->setParentItem(nullptr);
     item->setParentItem(nullptr);
 }
 

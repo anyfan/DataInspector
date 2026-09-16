@@ -17,11 +17,51 @@ Rectangle {
     property color plotColor: darkTheme ? "#14181d" : "#ffffff"
     property color frameColor: darkTheme ? "#3b4652" : "#d7dfe8"
 
-    readonly property real axisLeft: 64
-    readonly property real axisRight: 18
-    readonly property real axisTop: legend.visible
-                                    ? Math.max(30, legend.implicitHeight + 10) : 12
-    readonly property real axisBottom: plotItem.cursorMode === 2 ? 76 : plotItem.cursorMode === 1 ? 58 : 38
+    // Reserve the same compact scientific-label width in every subplot.
+    readonly property real axisLeft: Math.ceil(yTickMetrics.advanceWidth) + 10
+    TextMetrics {
+        id: yTickMetrics
+        font.pixelSize: 10
+        text: "-9.99e-308"
+    }
+    readonly property real axisRight: 1
+    readonly property real axisTop: Math.max(20, legend.implicitHeight + 2)
+    function formatYTick(value) {
+        if (value === 0) return "0"
+        const compact = root.formatCompact(value, 4)
+        if (Math.abs(value) >= 1000 || Math.abs(value) < 0.001 || compact.length > 7)
+            return Number(value).toExponential(2).replace(/e([+-])0+/, "e$1")
+        return compact
+    }
+    property bool legendDragging: false
+    Rectangle {
+        id: dragPreview
+        objectName: "legendDragPreview"
+        parent: root.Window.window ? root.Window.window.contentItem : root
+        visible: root.legendDragging
+        z: 10000
+        width: Math.min(260, previewText.implicitWidth + 34)
+        height: 26
+        color: root.plotColor
+        border.color: root.axisColor
+        radius: 3
+        property string signalName: ""
+        property color signalColor: "transparent"
+        Rectangle {
+            x: 8; anchors.verticalCenter: parent.verticalCenter
+            width: 8; height: 8; color: dragPreview.signalColor
+        }
+        Label {
+            id: previewText
+            x: 23; width: parent.width - 29
+            anchors.verticalCenter: parent.verticalCenter
+            text: dragPreview.signalName
+            color: root.textColor
+            elide: Text.ElideRight
+            font.pixelSize: 11
+        }
+    }
+    readonly property real axisBottom: 22
     property var rawReadouts: ({})
     property alias renderer: plotItem
     function toggleReadout(key) {
@@ -31,6 +71,15 @@ Rectangle {
     }
     function cursorInView(value) {
         return value >= plotItem.xMinimum && value <= plotItem.xMaximum
+    }
+    function tickCovered(value) {
+        const px = root.axisLeft + root.xPixel(value)
+        for (let i = 0; i < cursorTimes.count; ++i) {
+            const label = cursorTimes.itemAt(i)
+            if (label && label.visible && px + 22 > label.x && px - 22 < label.x + label.width)
+                return true
+        }
+        return deltaBadge.visible && px + 22 > deltaBadge.x && px - 22 < deltaBadge.x + deltaBadge.width
     }
     function formatCompact(value, precision) {
         const parts = Number(value).toPrecision(precision).split("e")
@@ -64,11 +113,12 @@ Rectangle {
         return entries
     }
 
+    property bool dropHighlighted: false
     color: plotColor
-    border.color: root.controller.activePlotIndex === root.plotIndex
+    border.color: root.dropHighlighted || root.controller.activePlotIndex === root.plotIndex
                   ? "#0078d4" : frameColor
     border.width: root.controller.activePlotIndex === root.plotIndex ? 2 : 1
-    radius: 3
+    radius: 0
     clip: true
 
     function xPixel(value) {
@@ -156,13 +206,16 @@ Rectangle {
                 objectName: "cursorValueLabel"
                 readonly property string formatKey: modelData.seriesId + ":" + modelData.cursorIndex
                 x: Math.max(2, Math.min(axisRect.width - width - 2,
-                                       root.xPixel(modelData.sampleX) + 5))
+                                       root.xPixel(modelData.sampleX)
+                                       + ((plotItem.cursorMode === 1 ||
+                                           (modelData.cursorIndex === 1 ? plotItem.cursorX1 <= plotItem.cursorX2 : plotItem.cursorX2 < plotItem.cursorX1))
+                                          ? -width - 7 : 7)))
                 y: modelData.labelY
                 text: root.rawReadouts[formatKey] ? modelData.rawText : modelData.text
                 height: 18
                 leftPadding: 5; rightPadding: 5; topPadding: 2; bottomPadding: 2
                 background: Rectangle {
-                    color: Qt.rgba(root.plotColor.r, root.plotColor.g, root.plotColor.b, 0.71)
+                    color: root.plotColor
                     border.color: modelData.color
                     border.width: 1
                 }
@@ -178,6 +231,7 @@ Rectangle {
     }
 
     Repeater {
+        id: cursorTimes
         model: plotItem.cursorMode
         delegate: Label {
             required property int index
@@ -187,11 +241,11 @@ Rectangle {
             visible: root.cursorInView(value)
             x: Math.max(root.axisLeft, Math.min(root.width - root.axisRight - width,
                         root.axisLeft + root.xPixel(value) - width / 2))
-            y: axisRect.y + axisRect.height + 24
+            y: axisRect.y + axisRect.height + 3
             text: root.rawReadouts[formatKey] ? root.formatRaw(value) : root.formatCompact(value, 10)
             padding: 3
-            color: index === 0 ? "#e34d59" : "#4e79e7"
-            background: Rectangle { color: root.plotColor; opacity: 0.9; border.color: root.textColor; border.width: 1 }
+            color: "#ffffff"
+            background: Rectangle { color: "#59636e" }
             z: 10
             MouseArea { anchors.fill: parent; onClicked: root.toggleReadout(parent.formatKey) }
         }
@@ -214,10 +268,11 @@ Rectangle {
             Label {
                 anchors.top: parent.top
                 anchors.topMargin: 6
-                anchors.horizontalCenter: parent.horizontalCenter
-                width: 90
+                x: Math.max(-parent.x, Math.min(root.width - parent.x - width, -width / 2))
+                width: implicitWidth
                 horizontalAlignment: Text.AlignHCenter
                 text: modelData.label
+                visible: !root.tickCovered(modelData.value)
                 color: root.textColor
                 font.pixelSize: 10
             }
@@ -245,7 +300,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 width: root.axisLeft - 10
                 horizontalAlignment: Text.AlignRight
-                text: modelData.label
+                text: root.formatYTick(modelData.value)
                 color: root.textColor
                 font.pixelSize: 10
             }
@@ -273,7 +328,7 @@ Rectangle {
     Flow {
         id: legend
         x: 30
-        y: 4
+        y: 1
         width: Math.max(1, root.width - 36)
         visible: legendRepeater.count > 0
         spacing: 7
@@ -290,13 +345,6 @@ Rectangle {
                 property color previewColor: styleRevision >= 0
                                              ? root.controller.signalColor(signalRow)
                                              : "transparent"
-                property real previewWidth: styleRevision >= 0
-                                            ? root.controller.signalWidth(signalRow) : 2
-                property int previewStyle: styleRevision >= 0
-                                           ? root.controller.signalStyle(signalRow) : 1
-                onPreviewColorChanged: legendPreview.requestPaint()
-                onPreviewWidthChanged: legendPreview.requestPaint()
-                onPreviewStyleChanged: legendPreview.requestPaint()
                 implicitWidth: Math.min(legend.width,
                                         legendLabel.implicitWidth + 26)
                 implicitHeight: 18
@@ -307,26 +355,15 @@ Rectangle {
                     radius: 2
                 }
 
-                Canvas {
-                    id: legendPreview
-                    width: 18
-                    height: 14
+                Rectangle {
+                    objectName: "legendColorSquare"
+                    width: 8
+                    height: 8
+                    radius: 0
+                    anchors.left: parent.left
+                    anchors.leftMargin: 4
                     anchors.verticalCenter: parent.verticalCenter
-                    onPaint: {
-                        const context = getContext("2d")
-                        context.reset()
-                        context.strokeStyle = parent.previewColor
-                        context.lineWidth = parent.previewWidth
-                        if (parent.previewStyle === 2) context.setLineDash([6, 3])
-                        else if (parent.previewStyle === 3) context.setLineDash([2, 3])
-                        else if (parent.previewStyle === 4) context.setLineDash([6, 3, 2, 3])
-                        else if (parent.previewStyle === 5) context.setLineDash([6, 3, 2, 3, 2, 3])
-                        else context.setLineDash([])
-                        context.beginPath()
-                        context.moveTo(1, height / 2)
-                        context.lineTo(width - 1, height / 2)
-                        context.stroke()
-                    }
+                    color: parent.previewColor
                 }
                 Label {
                     id: legendLabel
@@ -341,9 +378,58 @@ Rectangle {
                     font.pixelSize: 10
                 }
                 MouseArea {
+                    id: legendMouse
                     anchors.fill: parent
                     acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    property point pressPoint
+                    property bool moving: false
+                    property var destination: null
+                    cursorShape: moving ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                    function clearDestination() {
+                        if (destination) destination.dropHighlighted = false
+                        destination = null
+                    }
+                    onPressed: function(mouse) {
+                        pressPoint = Qt.point(mouse.x, mouse.y)
+                        moving = false
+                    }
+                    onPositionChanged: function(mouse) {
+                        if (!(pressedButtons & Qt.LeftButton)) return
+                        if (!moving && Math.hypot(mouse.x - pressPoint.x, mouse.y - pressPoint.y) < 8) return
+                        moving = true
+                        const previewPoint = mapToItem(dragPreview.parent, mouse.x, mouse.y)
+                        dragPreview.x = Math.max(0, Math.min(dragPreview.parent.width - dragPreview.width, previewPoint.x + 14))
+                        dragPreview.y = Math.max(0, Math.min(dragPreview.parent.height - dragPreview.height, previewPoint.y + 16))
+                        dragPreview.signalName = root.controller.signalName(parent.signalRow)
+                        dragPreview.signalColor = parent.previewColor
+                        root.legendDragging = true
+                        clearDestination()
+                        for (const candidate of root.parent.children) {
+                            if (candidate === root || !candidate.visible || candidate.renderer === undefined) continue
+                            const point = mapToItem(candidate, mouse.x, mouse.y)
+                            if (point.x >= 0 && point.y >= 0 && point.x < candidate.width && point.y < candidate.height) {
+                                destination = candidate
+                                destination.dropHighlighted = true
+                                break
+                            }
+                        }
+                    }
+                    onReleased: {
+                        root.legendDragging = false
+                        if (moving && destination) {
+                            const controller = root.controller
+                            const from = root.plotIndex
+                            const to = destination.plotIndex
+                            const row = parent.signalRow
+                            // Moving changes the legend models and destroys this delegate.
+                            Qt.callLater(function() { controller.moveLegendSignal(from, to, row) })
+                        }
+                        clearDestination()
+                    }
+                    onCanceled: { root.legendDragging = false; moving = false; clearDestination() }
+                    Component.onDestruction: root.legendDragging = false
                     onClicked: function(mouse) {
+                        if (moving) return
                         root.controller.setActivePlot(root.plotIndex)
                         if (mouse.button === Qt.RightButton) legendMenu.popup()
                         else root.controller.revealLegendSignal(root.plotIndex, parent.signalRow)
@@ -370,15 +456,21 @@ Rectangle {
     }
 
     Rectangle {
+        id: deltaBadge
         x: Math.max(root.axisLeft,
                     Math.min(root.width - root.axisRight - width,
                              root.axisLeft
                              + root.xPixel((plotItem.cursorX1 + plotItem.cursorX2) * 0.5)
                              - width / 2))
-        y: axisRect.y + axisRect.height + 50
+        y: axisRect.y + axisRect.height + 3
+        z: 9
         visible: plotItem.cursorMode === 2
                  && root.cursorInView(plotItem.cursorX1) && root.cursorInView(plotItem.cursorX2)
-        color: root.darkTheme ? "#26313d" : "#eef4fb"
+                 && cursorTimes.count === 2
+                 && Math.abs(root.xPixel(plotItem.cursorX2) - root.xPixel(plotItem.cursorX1))
+                    > width + Math.max(cursorTimes.itemAt(0) ? cursorTimes.itemAt(0).width : 0,
+                                       cursorTimes.itemAt(1) ? cursorTimes.itemAt(1).width : 0) + 12
+        color: "#59636e"
         radius: 3
         border.color: root.frameColor
         implicitWidth: deltaLabel.implicitWidth + 14
@@ -387,7 +479,7 @@ Rectangle {
             id: deltaLabel
             anchors.centerIn: parent
             text: "ΔT = " + root.formatCompact(plotItem.cursorDeltaT, 7)
-            color: root.textColor
+            color: "#ffffff"
             font.pixelSize: 10
         }
     }

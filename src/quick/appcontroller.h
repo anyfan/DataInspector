@@ -67,6 +67,7 @@ public:
     Q_INVOKABLE void fitAllPlots();
     Q_INVOKABLE void fitPlots(bool fitX, bool fitY, bool allPlots = false);
     Q_INVOKABLE void revealLegendSignal(int plotIndex, int row);
+    Q_INVOKABLE void moveLegendSignal(int fromPlot, int toPlot, int row);
     Q_INVOKABLE void removeLegendSignal(int plotIndex, int row);
 
     Q_INVOKABLE void clear();
@@ -79,6 +80,8 @@ signals:
     void layoutChanged();
     void plotBindingsChanged();
     void activePlotChanged();
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
 private:
     void onLoadFinished(const QString &path,
                         const QVector<LoadedTable> &tables,

@@ -3,6 +3,9 @@
 #include "dataloadworker.h"
 
 #include <QFileInfo>
+#include <QCoreApplication>
+#include <QEvent>
+#include <QQuickWindow>
 #include <QJSValue>
 #include <QThread>
 #include <QTimer>
@@ -35,6 +38,7 @@ AppController::AppController(QObject *parent)
     : QObject(parent), m_signals(new SignalModel(this)),
       m_seriesStore(std::make_shared<PlotSeriesStore>())
 {
+    QCoreApplication::instance()->installEventFilter(this);
     m_signals->setPlotCount(1);
     qRegisterMetaType<LoadedTable>();
     qRegisterMetaType<QVector<LoadedTable>>();
@@ -51,6 +55,21 @@ AppController::AppController(QObject *parent)
 AppController::~AppController()
 {
     if (m_loadThread) { m_loadThread->requestInterruption(); m_loadThread->quit(); m_loadThread->wait(); }
+}
+
+bool AppController::eventFilter(QObject *watched, QEvent *event)
+{
+    // Clear before dispatch, so a legend click can select its entry afterwards.
+    // Observing the window also covers axes, other subplots, and toolbar controls
+    // without intercepting their normal pan, cursor, or button interactions.
+    if (qobject_cast<QQuickWindow *>(watched)
+        && (event->type() == QEvent::MouseButtonPress
+            || event->type() == QEvent::MouseButtonDblClick
+            || event->type() == QEvent::TouchBegin)) {
+        for (const auto &plot : m_plots)
+            if (plot) plot->setHighlightedSeries(-1);
+    }
+    return QObject::eventFilter(watched, event);
 }
 
 bool AppController::loadCsv(const QString &filePath)
@@ -205,6 +224,19 @@ void AppController::revealLegendSignal(int plotIndex, int row)
         m_plots.at(plotIndex)->setHighlightedSeries(row);
     emit revealSignalRequested(row);
 }
+void AppController::moveLegendSignal(int fromPlot, int toPlot, int row)
+{
+    if (fromPlot == toPlot || toPlot < 0 || toPlot >= m_plotRows * m_plotColumns
+        || !plotSignalEnabled(fromPlot, row)) return;
+    m_signals->setPlotChecked(toPlot, row, true);
+    m_signals->setPlotChecked(fromPlot, row, false);
+    refreshPlot(fromPlot, false);
+    refreshPlot(toPlot, true);
+    setActivePlot(toPlot);
+    ++m_plotStateRevision;
+    emit plotBindingsChanged();
+}
+
 void AppController::removeLegendSignal(int plotIndex, int row)
 {
     m_signals->setPlotChecked(plotIndex, row, false);

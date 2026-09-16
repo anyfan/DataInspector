@@ -90,7 +90,7 @@ void SignalPropertiesDialog::onColorButtonClicked()
     //  使用 QColorDialog 实例并设置自定义颜色 
     QColorDialog dialog(m_selectedColor, this);
     dialog.setWindowTitle(tr("Select Signal Color"));
-    dialog.setOptions(QColorDialog::ShowAlphaChannel); // 允许设置透明度
+    // dialog.setOptions(QColorDialog::ColorDialogOption::ShowAlphaChannel); // 允许设置透明度 - Qt 6 中可能不支持
 
     // 设置14种自定义颜色
     for (int i = 0; i < matlabColors.size() && i < 16; ++i) // QColorDialog 最多支持 16 个自定义颜色

@@ -10,7 +10,25 @@ ApplicationWindow {
     height: 900
     visible: true
     title: appController.currentFile.length > 0 ? "DataInspector · " + appController.currentFile : "DataInspector"
-    color: "#edf1f5"
+    color: panelColor
+    // Keep every Fusion control in the app theme, independent of the OS theme.
+    palette.window: panelColor
+    palette.windowText: treeTextColor
+    palette.base: darkTheme ? "#171c22" : "#ffffff"
+    palette.alternateBase: panelColor
+    palette.text: treeTextColor
+    palette.button: darkTheme ? "#303842" : "#edf1f5"
+    palette.buttonText: treeTextColor
+    palette.placeholderText: darkTheme ? "#a2adba" : "#667380"
+    palette.highlight: accentColor
+    palette.highlightedText: "#ffffff"
+    palette.toolTipBase: panelColor
+    palette.toolTipText: treeTextColor
+    palette.light: darkTheme ? "#53606d" : "#ffffff"
+    palette.midlight: darkTheme ? "#424d59" : "#e5eaf0"
+    palette.mid: borderColor
+    palette.dark: darkTheme ? "#11161c" : "#84909c"
+    palette.shadow: darkTheme ? "#080c10" : "#667380"
     property color panelColor: darkTheme ? "#20252b" : "#f7f9fb"
     property color borderColor: darkTheme ? "#3b4652" : "#d7dfe8"
     property color accentColor: "#0078d4"
@@ -201,9 +219,9 @@ ApplicationWindow {
     Shortcut { sequence: "Space"; onActivated: appController.fitPlots(true, true) }
     Shortcut { sequence: "Ctrl+Alt+T"; onActivated: appController.fitPlots(true, false) }
     Shortcut { sequence: "Ctrl+Alt+Y"; onActivated: appController.fitPlots(false, true) }
-    Shortcut { sequence: "Ctrl+Shift+Y"; onActivated: appController.fitPlots(false, true, true) }
     Connections {
         target: appController
+        function onLayoutChanged() { window.subplotMaximized = false }
         function onRevealSignalRequested(row) {
             signalSearch.clear()
             const modelRow = appController.signalModel.revealSignal(row)
@@ -212,30 +230,174 @@ ApplicationWindow {
         }
     }
 
+    property bool subplotMaximized: false
+    property int visibilityBeforeFullscreen: Window.Windowed
+    function toggleFullscreen() {
+        if (visibility === Window.FullScreen)
+            visibility = visibilityBeforeFullscreen
+        else {
+            visibilityBeforeFullscreen = visibility === Window.Maximized ? Window.Maximized : Window.Windowed
+            showFullScreen()
+        }
+    }
+    Shortcut { sequence: "F11"; onActivated: window.toggleFullscreen() }
+    Shortcut {
+        sequence: "Escape"
+        enabled: window.visibility === Window.FullScreen || window.subplotMaximized
+        onActivated: {
+            if (window.visibility === Window.FullScreen) window.toggleFullscreen()
+            else window.subplotMaximized = false
+        }
+    }
+    property int selectedCursorMode: 0
+    function zoomCurrent(axis, steps) {
+        const plot = plotRepeater.itemAt(appController.activePlotIndex)
+        if (!plot) return
+        if (axis !== 1) plot.renderer.zoomAxis(0, 0.5, steps)
+        if (axis !== 0) plot.renderer.zoomAxis(1, 0.5, steps)
+    }
+    Shortcut { sequence: "Ctrl+I"; onActivated: window.selectedCursorMode = window.selectedCursorMode === 1 ? 0 : 1 }
+    Shortcut { sequence: "Ctrl++"; onActivated: window.zoomCurrent(2, 1) }
+    Shortcut { sequence: "Ctrl+-"; onActivated: window.zoomCurrent(2, -1) }
+    Shortcut { sequence: "Ctrl+Shift+T"; onActivated: window.zoomCurrent(0, 1) }
+    Shortcut { sequence: "Ctrl+Shift+Y"; onActivated: window.zoomCurrent(1, 1) }
+
+    component IconTool: ToolButton {
+        property string hint: ""
+        property bool menuArrow: true
+        display: AbstractButton.TextBesideIcon
+        text: menuArrow ? "▾" : ""
+        icon.width: 24; icon.height: 24
+        icon.color: checked ? window.accentColor : window.treeTextColor
+        implicitHeight: 40
+        implicitWidth: menuArrow ? 54 : 40
+        Accessible.name: hint
+        ToolTip.visible: hovered
+        ToolTip.delay: 400
+        ToolTip.text: hint
+    }
     header: ToolBar {
-        RowLayout { anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 12; spacing: 8
-            Label { text: "DataInspector"; font.pixelSize: 18; font.weight: Font.DemiBold; color: accentColor }
-            ToolSeparator { }
-            ToolButton { text: "打开"; onClicked: fileDialog.open() }
-            ToolButton { text: "适应"; onClicked: appController.fitPlots(true, true) }
-            ToolButton { text: "适应 X"; onClicked: appController.fitPlots(true, false) }
-            ToolButton { text: "适应 Y"; onClicked: appController.fitPlots(false, true) }
-            ToolButton { text: "全部 Y"; onClicked: appController.fitPlots(false, true, true) }
-            ToolButton { text: "清空"; onClicked: appController.clear() }
-            ToolButton { text: "主题"; onClicked: window.darkTheme = !window.darkTheme }
-            ComboBox { id: cursorModeSelector; model: ["关闭游标", "单游标", "双游标"]; currentIndex: 0 }
-            ToolButton { text: "1×1"; onClicked: appController.setLayout(1, 1) }
-            ToolButton { text: "1×2"; onClicked: appController.setLayout(1, 2) }
-            ToolButton { text: "2×1"; onClicked: appController.setLayout(2, 1) }
-            ToolButton { text: "2×2"; onClicked: appController.setLayout(2, 2) }
-            ToolButton { text: "布局…"; onClicked: layoutDialog.open() }
+        height: 48
+        background: Rectangle { color: window.panelColor; border.color: window.borderColor }
+        RowLayout {
+            anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 8; spacing: 3
+            Label { text: "DataInspector"; font.pixelSize: 17; font.weight: Font.DemiBold; color: window.accentColor }
+            ToolButton { text: "打开…"; onClicked: fileDialog.open() }
             Item { Layout.fillWidth: true }
-            Label { text: "Qt Quick · Scene Graph"; opacity: 0.62 }
+            IconTool {
+                id: layoutTool
+                icon.source: "qrc:/icons/grid.svg"
+                hint: "子图布局"
+                onClicked: layoutPopup.open()
+                Popup {
+                    id: layoutPopup
+                    y: parent.height
+                    x: Math.min(0, window.width - layoutTool.mapToItem(window.contentItem, 0, 0).x - width - 8)
+                    width: 290
+                    height: 142
+                    padding: 14
+                    ColumnLayout {
+                        anchors.fill: parent
+                        Label { text: "基本布局"; font.bold: true }
+                        RowLayout {
+                            Repeater {
+                                model: [ {r: 1, c: 1, svg: "layout-single"}, {r: 2, c: 1, svg: "layout-rows"}, {r: 1, c: 2, svg: "layout-columns"}, {r: 2, c: 2, svg: "grid"} ]
+                                delegate: IconTool {
+                                    required property var modelData
+                                    menuArrow: false
+                                    Layout.preferredWidth: 58
+                                    icon.width: 38; icon.height: 38
+                                    icon.source: "qrc:/icons/" + modelData.svg + ".svg"
+                                    hint: modelData.r + " 行 × " + modelData.c + " 列"
+                                    checked: appController.plotRows === modelData.r && appController.plotColumns === modelData.c
+                                    onClicked: { appController.setLayout(modelData.r, modelData.c); layoutPopup.close() }
+                                }
+                            }
+                        }
+                        Button { text: "自定义行列…"; Layout.fillWidth: true; onClicked: { layoutPopup.close(); layoutDialog.open() } }
+                    }
+                }
+            }
+            ToolSeparator { }
+            IconTool {
+                icon.source: window.selectedCursorMode === 2 ? "qrc:/icons/cursor_2.svg" : "qrc:/icons/cursor_1.svg"
+                checked: window.selectedCursorMode !== 0
+                hint: "游标"
+                onClicked: cursorMenu.popup()
+                Menu {
+                    id: cursorMenu
+                    MenuItem { text: "关闭游标"; checkable: true; checked: window.selectedCursorMode === 0; onTriggered: window.selectedCursorMode = 0 }
+                    MenuItem { text: "单游标    Ctrl+I"; icon.source: "qrc:/icons/cursor_1.svg"; checkable: true; checked: window.selectedCursorMode === 1; onTriggered: window.selectedCursorMode = 1 }
+                    MenuItem { text: "双游标"; icon.source: "qrc:/icons/cursor_2.svg"; checkable: true; checked: window.selectedCursorMode === 2; onTriggered: window.selectedCursorMode = 2 }
+                }
+            }
+            IconTool {
+                icon.source: "qrc:/icons/zoom-x.svg"
+                hint: "缩放"
+                onClicked: zoomMenu.popup()
+                Menu {
+                    id: zoomMenu
+                    MenuItem { text: "放大    Ctrl++"; icon.source: "qrc:/icons/zoom-in.svg"; onTriggered: window.zoomCurrent(2, 1) }
+                    MenuItem { text: "缩小    Ctrl+-"; icon.source: "qrc:/icons/zoom-out.svg"; onTriggered: window.zoomCurrent(2, -1) }
+                    MenuSeparator { }
+                    MenuItem { text: "放大时间轴    Ctrl+Shift+T"; icon.source: "qrc:/icons/zoom-x.svg"; onTriggered: window.zoomCurrent(0, 1) }
+                    MenuItem { text: "放大 Y 轴    Ctrl+Shift+Y"; icon.source: "qrc:/icons/zoom-y.svg"; onTriggered: window.zoomCurrent(1, 1) }
+                }
+            }
+            IconTool {
+                icon.source: "qrc:/icons/fit-view.svg"
+                hint: "自适应视图（空格）"
+                onClicked: fitMenu.popup()
+                Menu {
+                    id: fitMenu
+                    MenuItem { text: "自适应视图    Space"; icon.source: "qrc:/icons/fit-view.svg"; onTriggered: appController.fitPlots(true, true) }
+                    MenuItem { text: "自适应时间轴    Ctrl+Alt+T"; icon.source: "qrc:/icons/arrows_left_right.svg"; onTriggered: appController.fitPlots(true, false) }
+                    MenuItem { text: "自适应当前 Y 轴    Ctrl+Alt+Y"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: appController.fitPlots(false, true) }
+                    MenuItem { text: "自适应全部 Y 轴"; onTriggered: appController.fitPlots(false, true, true) }
+                }
+            }
+            ToolSeparator { }
+            IconTool {
+                menuArrow: false
+                icon.source: window.subplotMaximized ? "qrc:/icons/arrows-angle-contract.svg" : "qrc:/icons/arrows-angle-expand.svg"
+                hint: window.subplotMaximized ? "恢复子图平铺（Esc）" : "最大化当前选中子图"
+                checked: window.subplotMaximized
+                enabled: appController.plotRows * appController.plotColumns > 1
+                onClicked: window.subplotMaximized = !window.subplotMaximized
+            }
+            IconTool {
+                menuArrow: false
+                icon.source: window.visibility === Window.FullScreen ? "qrc:/icons/fullscreen-exit.svg" : "qrc:/icons/fullscreen.svg"
+                hint: window.visibility === Window.FullScreen ? "退出全屏（F11 / Esc）" : "程序全屏（F11）"
+                checked: window.visibility === Window.FullScreen
+                onClicked: window.toggleFullscreen()
+            }
+            IconTool {
+                icon.source: "qrc:/icons/settings.svg"
+                hint: "设置"
+                onClicked: settingsMenu.popup()
+                Menu {
+                    id: settingsMenu
+                    MenuItem { text: "深色主题"; checkable: true; checked: window.darkTheme; onTriggered: window.darkTheme = !window.darkTheme }
+                    MenuItem { text: "清空数据"; icon.source: "qrc:/icons/clear.svg"; onTriggered: appController.clear() }
+                }
+            }
         }
     }
 
-    RowLayout { anchors.fill: parent; anchors.margins: 10; spacing: 10
-        Rectangle { Layout.preferredWidth: 280; Layout.fillHeight: true; color: panelColor; border.color: borderColor; radius: 5
+    SplitView {
+        anchors.fill: parent
+        orientation: Qt.Horizontal
+        handle: Rectangle {
+            implicitWidth: 6
+            color: SplitHandle.pressed ? window.accentColor : SplitHandle.hovered ? "#a9cbed" : window.borderColor
+            HoverHandler { cursorShape: Qt.SplitHCursor }
+        }
+        Rectangle {
+            SplitView.preferredWidth: 280
+            SplitView.minimumWidth: 180
+            SplitView.maximumWidth: Math.max(180, window.width - 320)
+            color: panelColor
             ColumnLayout { anchors.fill: parent; anchors.margins: 10; spacing: 8
                 Label { text: "信号 · 子图 " + (appController.activePlotIndex + 1); color: treeTextColor; font.pixelSize: 15; font.weight: Font.DemiBold }
                 Label { text: appController.currentFile.length > 0 ? appController.currentFile : "未加载文件"; color: treeTextColor; elide: Text.ElideMiddle; Layout.fillWidth: true; opacity: 0.78 }
@@ -379,31 +541,45 @@ ApplicationWindow {
                     }
                     ScrollBar.vertical: ScrollBar { }
                 }
+                Label {
+                    Layout.fillWidth: true
+                    text: appController.status
+                    color: window.treeTextColor
+                    font.pixelSize: 11
+                    elide: Text.ElideRight
+                    ToolTip.visible: statusHover.hovered
+                    ToolTip.text: text
+                    HoverHandler { id: statusHover }
+                }
             }
         }
-        Rectangle { id: plotPanel; Layout.fillWidth: true; Layout.fillHeight: true; color: darkTheme ? "#14181d" : "#ffffff"; border.color: borderColor; radius: 5; clip: true
-            GridLayout { anchors.fill: parent; anchors.margins: 42; rows: appController.plotRows; columns: appController.plotColumns; columnSpacing: 10; rowSpacing: 10
-                Repeater { model: appController.plotRows * appController.plotColumns
+        Rectangle { id: plotPanel; SplitView.fillWidth: true; SplitView.minimumWidth: 280; color: darkTheme ? "#14181d" : "#ffffff"; clip: true
+            GridLayout { anchors.fill: parent; rows: window.subplotMaximized ? 1 : appController.plotRows; columns: window.subplotMaximized ? 1 : appController.plotColumns; columnSpacing: 0; rowSpacing: 0; uniformCellWidths: true; uniformCellHeights: true
+                Repeater { id: plotRepeater; model: appController.plotRows * appController.plotColumns
                     delegate: QuickPlot {
                         required property int index
                         plotIndex: index
+                        visible: !window.subplotMaximized || index === appController.activePlotIndex
                         controller: appController
                         graphLineWidth: 2
-                        graphCursorMode: cursorModeSelector.currentIndex
+                        graphCursorMode: window.selectedCursorMode
                         darkTheme: window.darkTheme
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        Layout.minimumWidth: 0
+                        Layout.minimumHeight: 0
+                        Layout.preferredWidth: 1
+                        Layout.preferredHeight: 1
                     }
                 }
             }
-            Label { anchors.left: parent.left; anchors.leftMargin: 10; anchors.top: parent.top; anchors.topMargin: 10; text: appController.status; elide: Text.ElideRight; width: parent.width - 20; opacity: 0.7 }
             ProgressBar {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
-                anchors.topMargin: 30
+                anchors.topMargin: 0
                 from: 0
                 to: 100
                 value: appController.loadingProgress

@@ -36,6 +36,31 @@ qt_add_qml_module(DataInspector
     QML_FILES qml/Main.qml qml/QuickPlot.qml
 )
 
+qt_add_resources(DataInspector toolbar_icons
+    PREFIX "/icons"
+    BASE assets/icon
+    FILES
+        assets/icon/zoom-in.svg
+        assets/icon/zoom-out.svg
+        assets/icon/zoom-x.svg
+        assets/icon/zoom-y.svg
+        assets/icon/fullscreen.svg
+        assets/icon/fullscreen-exit.svg
+        assets/icon/arrows-angle-expand.svg
+        assets/icon/arrows-angle-contract.svg
+        assets/icon/fit-view.svg
+        assets/icon/settings.svg
+        assets/icon/layout-single.svg
+        assets/icon/layout-rows.svg
+        assets/icon/layout-columns.svg
+        assets/icon/grid.svg
+        assets/icon/cursor_1.svg
+        assets/icon/cursor_2.svg
+        assets/icon/clear.svg
+        assets/icon/arrows_left_right.svg
+        assets/icon/arrows_up_down.svg
+)
+
 target_include_directories(DataInspector PRIVATE src/quick)
 target_include_directories(DataInspector PRIVATE
     third_libs/matio-1.5.28/include
