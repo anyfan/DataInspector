@@ -106,6 +106,7 @@ int AppController::loadFiles(const QVariant &filePaths)
         const QString suffix = QFileInfo(path).suffix().toLower();
         if (path.isEmpty() || (suffix != QStringLiteral("csv")
                                && suffix != QStringLiteral("txt")
+                               && suffix != QStringLiteral("xlsx")
                                && suffix != QStringLiteral("mat"))) continue;
         if (m_loadedPaths.contains(path) || m_pendingPaths.contains(path)
             || m_activeLoadPath == path) continue;

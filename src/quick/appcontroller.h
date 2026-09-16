@@ -95,7 +95,7 @@ private:
     QVector<QPointer<PlotItem>> m_plots;
     int m_plotRows = 1;
     int m_plotColumns = 1;
-    QString m_status = QStringLiteral("打开 CSV 或 TXT 文件开始查看");
+    QString m_status = QStringLiteral("打开 CSV、TXT、Excel 或 MAT 文件开始查看");
     QString m_currentFile;
     QStringList m_loadedFileNames;
     QSet<QString> m_loadedPaths;

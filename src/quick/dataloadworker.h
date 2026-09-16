@@ -15,6 +15,7 @@ signals:
                   int skipped, const QString &error);
 private:
     void loadCsv(const QString &path);
+    void loadXlsx(const QString &path);
 #ifdef ENABLE_MAT
     void loadMat(const QString &path);
 #endif

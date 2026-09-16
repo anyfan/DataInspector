@@ -7,7 +7,7 @@ DataInspector 是面向工程时间序列数据的高性能查看器。当前分
 ## 当前可用功能
 
 - Qt Quick 主窗口和 Qt Quick Controls 界面，支持浅色/深色主题切换。
-- CSV/TXT/MAT 时间序列后台批量加载，支持文件选择器多选和从资源管理器拖放；第一列为时间，其余列为信号。
+- CSV/TXT/XLSX/MAT 时间序列后台批量加载，支持文件选择器多选和从资源管理器拖放；第一列为时间，其余列为信号。
 - 左侧信号树按“文件 → `pN` 数据表 → 信号”展开/折叠；信号行依次显示勾选状态、名称和线型预览。
 - 1×1、1×2、2×1、2×2 快捷布局和 1–8 行、1–8 列自定义布局；改变布局会保留仍存在子图的信号绑定。
 - 文件读取在后台串行执行并显示批量总进度；新增文件以增量方式加入序列仓库，不重建已加载曲线。
@@ -33,6 +33,13 @@ Time,Signal A,Signal B
 - 时间无法转换的行会被跳过；信号无法转换时保存为 `NaN`，该位置在图上断线。
 - 自动识别逗号、分号和制表符；支持单行内带引号的字段和双引号转义，暂不支持跨行引号字段。
 
+### Excel XLSX
+
+- 读取全部有效工作表，每张工作表作为一个数据表，信号树按“文件 → 工作表 → 信号”分组。
+- 每张工作表第一行作为表头，第一列作为时间，其余列作为信号；稀疏或非法信号单元格保存为 `NaN`。
+- 支持共享字符串、内联字符串及公式的已保存缓存值；程序不会重新计算 Excel 公式。
+- 当前仅支持 `.xlsx`，不支持旧版二进制 `.xls`。
+
 ### MATLAB MAT（可选）
 
 源码包含 MAT 读取路径，可识别名称为 `p1`、`p2` 等二维 `double` 变量：第一列是时间，其余列是信号，`pN_title`/`pN_title2` 用作标题。当前仓库已提供 LLVM-MinGW 17 兼容静态库，默认配置开启 MAT：
@@ -42,7 +49,7 @@ cmake -S . -B build_qt6 -G Ninja `
   -DENABLE_MAT=ON
 ```
 
-如果替换或删除了仓库内的兼容库，可暂时使用 `-DENABLE_MAT=OFF` 构建 CSV/TXT 版本；启用 MAT 时必须确保 matio、HDF5 和 zlib 均使用同一 LLVM-MinGW 工具链构建。
+如果替换或删除了仓库内的兼容库，可暂时使用 `-DENABLE_MAT=OFF` 构建 CSV/TXT/XLSX 版本；启用 MAT 时必须确保 matio、HDF5 和 zlib 均使用同一 LLVM-MinGW 工具链构建。
 
 ## 构建环境
 
@@ -79,7 +86,7 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 
 ## 使用方法
 
-1. 启动 `DataInspector.exe`，点击“打开”多选数据文件，或把 CSV/TXT/MAT 文件拖入窗口。
+1. 启动 `DataInspector.exe`，点击“打开”多选数据文件，或把 CSV/TXT/XLSX/MAT 文件拖入窗口。
 2. 先点击目标子图，再在左侧信号树展开文件和 `pN` 路径并勾选需要显示的信号；“清空”移除当前数据。
 3. 使用快捷按钮切换常用布局，或通过“布局…”设置 1–8 行、1–8 列。
 4. 在绘图区拖动进行平移，滚轮以指针位置为中心缩放；点击“适应”恢复全量范围。
@@ -128,7 +135,8 @@ qml/QuickPlot.qml         单个子图的 QML 外壳、坐标轴和图例
 src/quick/plotitem.*      Scene Graph GPU 曲线项、视图交互和节点提交
 src/quick/render/*        原始序列 Store、LOD 构建器、异步调度器和几何构建器
 src/quick/appcontroller.* 加载队列、会话状态、信号选择和子图绑定
-src/quick/dataloadworker.* 后台 CSV/TXT/MAT 解析及进度通知
+src/quick/dataloadworker.* 后台加载调度及 CSV/TXT/MAT 解析
+src/quick/xlsxreader.*     XLSX 工作簿、多工作表和单元格解析
 src/quick/loadedtable.h   加载结果值类型及跨线程元类型声明
 src/quick/signalmodel.*   QML 信号列表模型
 renderer_research.md      后端选型与性能设计调研

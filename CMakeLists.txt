@@ -19,6 +19,8 @@ qt_add_executable(DataInspector
     src/quick/appcontroller.h
     src/quick/dataloadworker.cpp
     src/quick/dataloadworker.h
+    src/quick/xlsxreader.cpp
+    src/quick/xlsxreader.h
     src/quick/loadedtable.h
     src/quick/plotitem.cpp
     src/quick/plotitem.h
@@ -80,7 +82,7 @@ if(ENABLE_MAT)
     target_link_libraries(matio_qt6 INTERFACE hdf5_qt6)
 endif()
 target_link_libraries(DataInspector PRIVATE
-    Qt6::Core Qt6::Gui Qt6::Qml Qt6::Quick
+    Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Qml Qt6::Quick
     Qt6::QuickControls2 Qt6::QuickDialogs2 plot_render_core
 )
 if(ENABLE_MAT)
@@ -162,6 +164,8 @@ if(BUILD_TESTING)
         src/quick/appcontroller.h
         src/quick/dataloadworker.cpp
         src/quick/dataloadworker.h
+        src/quick/xlsxreader.cpp
+        src/quick/xlsxreader.h
         src/quick/loadedtable.h
         src/quick/plotitem.cpp
         src/quick/plotitem.h
@@ -172,7 +176,7 @@ if(BUILD_TESTING)
     )
     target_include_directories(appcontroller_test PRIVATE src/quick)
     target_link_libraries(appcontroller_test PRIVATE
-        Qt6::Core Qt6::Gui Qt6::Quick Qt6::Test plot_render_core
+        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core
     )
     if(ENABLE_MAT)
         target_include_directories(appcontroller_test PRIVATE

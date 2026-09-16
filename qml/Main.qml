@@ -165,7 +165,7 @@ ApplicationWindow {
     FileDialog {
         id: fileDialog
         title: "打开数据文件"
-        nameFilters: ["数据文件 (*.csv *.txt *.mat)", "CSV/TXT 文件 (*.csv *.txt)", "MAT 文件 (*.mat)", "所有文件 (*)"]
+        nameFilters: ["数据文件 (*.csv *.txt *.xlsx *.mat)", "CSV/TXT 文件 (*.csv *.txt)", "Excel 文件 (*.xlsx)", "MAT 文件 (*.mat)", "所有文件 (*)"]
         fileMode: FileDialog.OpenFiles
         onAccepted: appController.loadFiles(selectedFiles)
     }

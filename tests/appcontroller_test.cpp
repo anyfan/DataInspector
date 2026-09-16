@@ -1,5 +1,6 @@
 #include "appcontroller.h"
 #include "plotitem.h"
+#include "xlsxreader.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -11,6 +12,7 @@
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QUrl>
+#include <QtCore/private/qzipwriter_p.h>
 #include <QtTest>
 
 #include <algorithm>
@@ -35,6 +37,9 @@ private slots:
     void qmlJavaScriptArrayImportsLocalFiles();
     void legendNavigationAndRemoval();
     void quotedCsvFieldsAreImported();
+    void xlsxWorkbookImportsAllWorksheets();
+    void xlsxParserHandlesSparseAndCachedCells();
+    void invalidSignalValuesDoNotDiscardRows();
     void failedLoadReportsReason();
     void legendDoesNotToggleSignalVisibility();
     void fitAndAxisZoomFollowLegacyRanges();
@@ -42,6 +47,7 @@ private slots:
     void asynchronousLodKeepsLatestRequest();
     void quickPlotLoadsWithLegendAndCursors();
     void realMatImportPerformanceWhenRequested();
+    void realCsvImportPerformanceWhenRequested();
     void addingSignalPreservesCurrentXRange();
     void attachingNewPlotPreservesSharedXRange();
     void removingFileKeepsRemainingSignalsAndBindings();
@@ -603,6 +609,114 @@ void AppControllerTest::quotedCsvFieldsAreImported()
     QCOMPARE(controller.signalName(0), QStringLiteral("Pitch,deg"));
 }
 
+void AppControllerTest::xlsxWorkbookImportsAllWorksheets()
+{
+    const QString path = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath())
+                             .filePath(QStringLiteral(
+                                 "../test_file/2026-09-05_06-43-26.dat.xlsx"));
+    QVERIFY2(QFileInfo::exists(path), qPrintable(path));
+
+    AppController controller;
+    QVERIFY(controller.loadCsv(path));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 10000);
+    QVERIFY2(controller.loadedFileCount() == 1, qPrintable(controller.status()));
+    QCOMPARE(controller.signalCount(), 80);
+    QVERIFY2(controller.status().contains(QStringLiteral("12105 行")),
+             qPrintable(controller.status()));
+
+    QStringList worksheetGroups;
+    SignalModel *model = controller.signalModel();
+    for (int row = 0; row < model->rowCount(); ++row) {
+        const QModelIndex index = model->index(row);
+        if (model->data(index, SignalModel::GroupNodeRole).toBool()
+            && model->data(index, SignalModel::DepthRole).toInt() == 1) {
+            worksheetGroups.append(
+                model->data(index, SignalModel::NameRole).toString());
+        }
+    }
+    QCOMPARE(worksheetGroups, QStringList({QStringLiteral("1"),
+                                           QStringLiteral("2"),
+                                           QStringLiteral("17")}));
+}
+
+void AppControllerTest::xlsxParserHandlesSparseAndCachedCells()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("minimal.xlsx"));
+    QZipWriter archive(path);
+    QVERIFY(archive.isWritable());
+    archive.addFile(QStringLiteral("[Content_Types].xml"), QByteArrayLiteral(
+        "<?xml version=\"1.0\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">"
+        "<Default Extension=\"xml\" ContentType=\"application/xml\"/>"
+        "<Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/>"
+        "<Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"
+        "<Override PartName=\"/xl/sharedStrings.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml\"/>"
+        "</Types>"));
+    archive.addFile(QStringLiteral("_rels/.rels"), QByteArrayLiteral(
+        "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/>"
+        "</Relationships>"));
+    archive.addFile(QStringLiteral("xl/workbook.xml"), QByteArrayLiteral(
+        "<?xml version=\"1.0\"?><workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" "
+        "xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">"
+        "<sheets><sheet name=\"Data\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"));
+    archive.addFile(QStringLiteral("xl/_rels/workbook.xml.rels"), QByteArrayLiteral(
+        "<?xml version=\"1.0\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">"
+        "<Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
+        "<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings\" Target=\"sharedStrings.xml\"/>"
+        "</Relationships>"));
+    archive.addFile(QStringLiteral("xl/sharedStrings.xml"), QByteArrayLiteral(
+        "<?xml version=\"1.0\"?><sst xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">"
+        "<si><t>Time</t></si><si><r><t>Ya</t></r><r><t>w</t></r></si></sst>"));
+    archive.addFile(QStringLiteral("xl/worksheets/sheet1.xml"), QByteArrayLiteral(
+        "<?xml version=\"1.0\"?><worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>"
+        "<row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\" t=\"inlineStr\"><is><t>Pitch</t></is></c><c r=\"D1\" t=\"s\"><v>1</v></c></row>"
+        "<row r=\"2\"><c r=\"A2\"><v>0</v></c><c r=\"B2\"><v>1.5</v></c><c r=\"D2\"><f>1+2</f><v>3</v></c></row>"
+        "<row r=\"3\"><c r=\"A3\"><v>1</v></c><c r=\"D3\"><v>4</v></c></row>"
+        "</sheetData></worksheet>"));
+    archive.close();
+    QCOMPARE(archive.status(), QZipWriter::NoError);
+
+    const XlsxReadResult result = readXlsxWorkbook(path, {}, {});
+    QVERIFY2(result.error.isEmpty(), qPrintable(result.error));
+    QCOMPARE(result.tables.size(), 1);
+    const LoadedTable &table = result.tables.first();
+    QCOMPARE(table.name, QStringLiteral("Data"));
+    QCOMPARE(table.signalNames,
+             QStringList({QStringLiteral("Pitch"), QStringLiteral("Signal 2"),
+                          QStringLiteral("Yaw")}));
+    QCOMPARE(table.time, QVector<double>({0.0, 1.0}));
+    QCOMPARE(table.values.at(0).at(0), 1.5);
+    QVERIFY(qIsNaN(table.values.at(0).at(1)));
+    QVERIFY(qIsNaN(table.values.at(1).at(0)));
+    QVERIFY(qIsNaN(table.values.at(1).at(1)));
+    QCOMPARE(table.values.at(2), QVector<double>({3.0, 4.0}));
+    QCOMPARE(result.skippedRows, 0);
+}
+
+void AppControllerTest::invalidSignalValuesDoNotDiscardRows()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("gaps.csv"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+    const QByteArray contents =
+        "time,Pitch,Roll\r\n0,1,2\r\n1,,4\r\n2,5,not-a-number\r\n";
+    QCOMPARE(file.write(contents), qint64(contents.size()));
+    file.close();
+
+    AppController controller;
+    QVERIFY(controller.loadCsv(path));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QCOMPARE(controller.signalCount(), 2);
+    QVERIFY2(controller.status().contains(QStringLiteral("3 行")),
+             qPrintable(controller.status()));
+    QVERIFY2(!controller.status().contains(QStringLiteral("跳过")),
+             qPrintable(controller.status()));
+}
+
 void AppControllerTest::failedLoadReportsReason()
 {
     QTemporaryDir directory;
@@ -658,6 +772,38 @@ void AppControllerTest::realMatImportPerformanceWhenRequested()
             << "SIGNALS" << controller.signalCount();
     QVERIFY2(controller.loadedFileCount() == 1, qPrintable(controller.status()));
     QVERIFY(controller.signalCount() > 0);
+}
+
+void AppControllerTest::realCsvImportPerformanceWhenRequested()
+{
+    const QString path = QString::fromLocal8Bit(qgetenv("DATAINSPECTOR_PERF_CSV"));
+    if (path.isEmpty())
+        QSKIP("Set DATAINSPECTOR_PERF_CSV to run the large CSV integration test");
+    QVERIFY2(QFileInfo::exists(path), qPrintable(path));
+
+    AppController controller;
+    QElapsedTimer timer;
+    qint64 reached99Milliseconds = -1;
+    connect(&controller, &AppController::loadingProgressChanged, &controller,
+            [&]() {
+                if (reached99Milliseconds < 0
+                    && controller.loadingProgress() >= 99)
+                    reached99Milliseconds = timer.elapsed();
+            });
+
+    timer.start();
+    QVERIFY(controller.loadCsv(path));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 60000);
+    const qint64 totalMilliseconds = timer.elapsed();
+    const qint64 finishMilliseconds = reached99Milliseconds < 0
+        ? -1 : totalMilliseconds - reached99Milliseconds;
+    qInfo() << "CSV_IMPORT_MS" << totalMilliseconds
+            << "CSV_FINISH_AFTER_99_MS" << finishMilliseconds
+            << "SIGNALS" << controller.signalCount();
+    QCOMPARE(controller.loadedFileCount(), 1);
+    QCOMPARE(controller.signalCount(), 12);
+    QVERIFY2(controller.status().contains(QStringLiteral("1280000 行")),
+             qPrintable(controller.status()));
 }
 
 void AppControllerTest::addingSignalPreservesCurrentXRange()
