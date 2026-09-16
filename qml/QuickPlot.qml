@@ -34,6 +34,97 @@ Rectangle {
         return compact
     }
     property bool legendDragging: false
+    property bool axisSelecting: false
+    property int axisSelection: -1
+    property real axisSelectionStart: 0
+    property real axisSelectionCurrent: 0
+    property bool axisCursorVisible: false
+    property string axisCursorSource: ""
+    property real axisCursorX: 0
+    property real axisCursorY: 0
+    function applyAxisSelection(axis, startFraction, endFraction) {
+        const start = Math.max(0, Math.min(1, Math.min(startFraction, endFraction)))
+        const end = Math.max(0, Math.min(1, Math.max(startFraction, endFraction)))
+        if (end - start < 1e-6)
+            return false
+        if (axis === 0) {
+            const span = plotItem.xMaximum - plotItem.xMinimum
+            plotItem.setXRange(plotItem.xMinimum + start * span,
+                               plotItem.xMinimum + end * span)
+        } else if (axis === 1) {
+            const span = plotItem.yMaximum - plotItem.yMinimum
+            plotItem.setYRange(plotItem.yMaximum - end * span,
+                               plotItem.yMaximum - start * span)
+        } else {
+            return false
+        }
+        return true
+    }
+    function beginAxisSelection(axis, position) {
+        axisSelecting = true
+        axisSelection = axis
+        axisSelectionStart = position
+        axisSelectionCurrent = position
+    }
+    function updateAxisSelection(position) {
+        if (axisSelecting)
+            axisSelectionCurrent = position
+    }
+    function finishAxisSelection() {
+        if (!axisSelecting)
+            return
+        const axis = axisSelection
+        const start = axisSelectionStart
+        const end = axisSelectionCurrent
+        axisSelecting = false
+        axisSelection = -1
+        applyAxisSelection(axis, start, end)
+    }
+    function updateAxisCursor(source, x, y, visible) {
+        axisCursorSource = source
+        axisCursorX = Math.max(0, Math.min(root.width - axisCursorImage.width, x + 2))
+        axisCursorY = Math.max(0, Math.min(root.height - axisCursorImage.height, y + 2))
+        axisCursorVisible = visible
+    }
+    Image {
+        id: axisCursorImage
+        objectName: "axisZoomCursor"
+        visible: root.axisCursorVisible
+        source: root.axisCursorSource
+        x: root.axisCursorX
+        y: root.axisCursorY
+        width: 24
+        height: 24
+        z: 1000
+    }
+    Rectangle {
+        id: xSelectionOverlay
+        objectName: "xAxisSelection"
+        visible: root.axisSelecting && root.axisSelection === 0
+        x: axisRect.x + Math.min(root.axisSelectionStart, root.axisSelectionCurrent) * axisRect.width
+        y: axisRect.y
+        width: Math.max(1, Math.abs(root.axisSelectionCurrent - root.axisSelectionStart) * axisRect.width)
+        height: axisRect.height
+        color: root.axisColor
+        opacity: 0.18
+        border.color: root.axisColor
+        border.width: 1
+        z: 6
+    }
+    Rectangle {
+        id: ySelectionOverlay
+        objectName: "yAxisSelection"
+        visible: root.axisSelecting && root.axisSelection === 1
+        x: axisRect.x
+        y: axisRect.y + Math.min(root.axisSelectionStart, root.axisSelectionCurrent) * axisRect.height
+        width: axisRect.width
+        height: Math.max(1, Math.abs(root.axisSelectionCurrent - root.axisSelectionStart) * axisRect.height)
+        color: root.axisColor
+        opacity: 0.18
+        border.color: root.axisColor
+        border.width: 1
+        z: 6
+    }
     Rectangle {
         id: dragPreview
         objectName: "legendDragPreview"
@@ -310,7 +401,30 @@ Rectangle {
     MouseArea {
         x: axisRect.x; y: axisRect.y + axisRect.height
         width: axisRect.width; height: root.axisBottom
-        acceptedButtons: Qt.NoButton
+        acceptedButtons: Qt.LeftButton
+        hoverEnabled: true
+        cursorShape: Qt.BlankCursor
+        onEntered: root.updateAxisCursor("qrc:/icons/zoom-x.svg", x + mouseX, y + mouseY, true)
+        onExited: if (!root.axisSelecting) root.updateAxisCursor("", 0, 0, false)
+        onPressed: function(mouse) {
+            root.updateAxisCursor("qrc:/icons/zoom-x.svg", x + mouse.x, y + mouse.y, true)
+            root.beginAxisSelection(0, Math.max(0, Math.min(1, mouse.x / width)))
+        }
+        onPositionChanged: function(mouse) {
+            root.updateAxisCursor("qrc:/icons/zoom-x.svg", x + mouse.x, y + mouse.y, true)
+            if (root.axisSelecting && root.axisSelection === 0)
+                root.updateAxisSelection(Math.max(0, Math.min(1, mouse.x / width)))
+        }
+        onReleased: function(mouse) {
+            root.finishAxisSelection()
+            if (!containsMouse)
+                root.updateAxisCursor("", 0, 0, false)
+        }
+        onCanceled: {
+            root.axisSelecting = false
+            root.axisSelection = -1
+            root.updateAxisCursor("", 0, 0, false)
+        }
         onWheel: function(wheel) {
             plotItem.zoomAxis(0, wheel.x / width, wheel.angleDelta.y / 120)
             wheel.accepted = true
@@ -318,7 +432,30 @@ Rectangle {
     }
     MouseArea {
         x: 0; y: axisRect.y; width: root.axisLeft; height: axisRect.height
-        acceptedButtons: Qt.NoButton
+        acceptedButtons: Qt.LeftButton
+        hoverEnabled: true
+        cursorShape: Qt.BlankCursor
+        onEntered: root.updateAxisCursor("qrc:/icons/zoom-y.svg", x + mouseX, y + mouseY, true)
+        onExited: if (!root.axisSelecting) root.updateAxisCursor("", 0, 0, false)
+        onPressed: function(mouse) {
+            root.updateAxisCursor("qrc:/icons/zoom-y.svg", x + mouse.x, y + mouse.y, true)
+            root.beginAxisSelection(1, Math.max(0, Math.min(1, mouse.y / height)))
+        }
+        onPositionChanged: function(mouse) {
+            root.updateAxisCursor("qrc:/icons/zoom-y.svg", x + mouse.x, y + mouse.y, true)
+            if (root.axisSelecting && root.axisSelection === 1)
+                root.updateAxisSelection(Math.max(0, Math.min(1, mouse.y / height)))
+        }
+        onReleased: function(mouse) {
+            root.finishAxisSelection()
+            if (!containsMouse)
+                root.updateAxisCursor("", 0, 0, false)
+        }
+        onCanceled: {
+            root.axisSelecting = false
+            root.axisSelection = -1
+            root.updateAxisCursor("", 0, 0, false)
+        }
         onWheel: function(wheel) {
             plotItem.zoomAxis(1, wheel.y / height, wheel.angleDelta.y / 120)
             wheel.accepted = true

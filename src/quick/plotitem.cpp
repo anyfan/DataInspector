@@ -257,15 +257,14 @@ void PlotItem::fitY()
 void PlotItem::zoomAxis(int axis, double fraction, double steps)
 {
     if ((axis != 0 && axis != 1) || !qIsFinite(fraction) || !qIsFinite(steps) || steps == 0) return;
-    fraction = qBound(0.0, fraction, 1.0);
     const double factor = qPow(.85, qBound(-20.0, steps, 20.0));
     double xmin = xMinimum(), xmax = xMaximum(), ymin = yMinimum(), ymax = yMaximum();
     if (axis == 0) {
-        const double anchor = xmin + fraction * (xmax - xmin);
+        const double anchor = xmin + 0.5 * (xmax - xmin);
         xmin = anchor + (xmin - anchor) * factor;
         xmax = anchor + (xmax - anchor) * factor;
     } else {
-        const double anchor = ymax - fraction * (ymax - ymin);
+        const double anchor = ymin + 0.5 * (ymax - ymin);
         ymin = anchor + (ymin - anchor) * factor;
         ymax = anchor + (ymax - anchor) * factor;
     }
@@ -276,6 +275,12 @@ void PlotItem::setXRange(double xmin, double xmax)
 {
     double ymin, ymax;
     { QMutexLocker lock(&m_dataMutex); ymin = m_yMinimum; ymax = m_yMaximum; }
+    setRange(xmin, xmax, ymin, ymax);
+}
+void PlotItem::setYRange(double ymin, double ymax)
+{
+    double xmin, xmax;
+    { QMutexLocker lock(&m_dataMutex); xmin = m_xMinimum; xmax = m_xMaximum; }
     setRange(xmin, xmax, ymin, ymax);
 }
 

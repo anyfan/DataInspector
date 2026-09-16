@@ -62,6 +62,7 @@ public:
     Q_INVOKABLE void zoomAxis(int axis, double fraction, double steps);
     Q_INVOKABLE void fitY();
     Q_INVOKABLE void setXRange(double xMinimum, double xMaximum);
+    Q_INVOKABLE void setYRange(double yMinimum, double yMaximum);
 signals:
     void highlightedSeriesChanged();
     void lodChanged();

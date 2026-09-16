@@ -187,6 +187,13 @@ if(BUILD_TESTING)
     target_link_libraries(appcontroller_test PRIVATE
         Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core
     )
+    qt_add_resources(appcontroller_test test_axis_cursor_icons
+        PREFIX "/icons"
+        BASE assets/icon
+        FILES
+            assets/icon/zoom-x.svg
+            assets/icon/zoom-y.svg
+    )
     if(ENABLE_MAT)
         target_include_directories(appcontroller_test PRIVATE
             third_libs/matio-1.5.28/include

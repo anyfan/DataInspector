@@ -43,6 +43,8 @@ private slots:
     void failedLoadReportsReason();
     void legendDoesNotToggleSignalVisibility();
     void fitAndAxisZoomFollowLegacyRanges();
+    void axisZoomKeepsCurrentMidpoint();
+    void axisSelectionAppliesRange();
     void fittingUsesUnionOfSubplotTimeRanges();
     void asynchronousLodKeepsLatestRequest();
     void quickPlotLoadsWithLegendAndCursors();
@@ -495,6 +497,33 @@ void AppControllerTest::fitAndAxisZoomFollowLegacyRanges()
     QVERIFY(plot.yMinimum() > 9.5);
 }
 
+void AppControllerTest::axisZoomKeepsCurrentMidpoint()
+{
+    PlotItem plot;
+    plot.setXRange(2.0, 10.0);
+
+    const double initialXMidpoint = (plot.xMinimum() + plot.xMaximum()) / 2.0;
+    plot.zoomAxis(0, 0.1, 1.0);
+    QVERIFY(qAbs((plot.xMinimum() + plot.xMaximum()) / 2.0 - initialXMidpoint) < 1e-12);
+
+    plot.fitY();
+    const double initialYMidpoint = (plot.yMinimum() + plot.yMaximum()) / 2.0;
+    plot.zoomAxis(1, 0.9, -1.0);
+    QVERIFY(qAbs((plot.yMinimum() + plot.yMaximum()) / 2.0 - initialYMidpoint) < 1e-12);
+}
+
+void AppControllerTest::axisSelectionAppliesRange()
+{
+    PlotItem plot;
+    plot.setXRange(2.0, 10.0);
+    plot.setYRange(-3.0, 7.0);
+
+    QCOMPARE(plot.xMinimum(), 2.0);
+    QCOMPARE(plot.xMaximum(), 10.0);
+    QCOMPARE(plot.yMinimum(), -3.0);
+    QCOMPARE(plot.yMaximum(), 7.0);
+}
+
 void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
 {
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
@@ -548,6 +577,37 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     item->setParentItem(window.contentItem());
     window.show();
     QTest::qWait(50);
+    auto *axisCursor = item->findChild<QQuickItem *>("axisZoomCursor");
+    QVERIFY(axisCursor);
+    plot->setXRange(0.0, 10.0);
+    plot->setYRange(-20.0, 20.0);
+    const QPointF plotOrigin = plot->mapToItem(item, QPointF(0, 0));
+    const QPoint xStart = item->mapToItem(window.contentItem(),
+                                          QPointF(plotOrigin.x() + plot->width() * .2,
+                                                  plotOrigin.y() + plot->height() + 10)).toPoint();
+    const QPoint xEnd = item->mapToItem(window.contentItem(),
+                                                  QPointF(plotOrigin.x() + plot->width() * .8,
+                                                  plotOrigin.y() + plot->height() + 10)).toPoint();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, xStart);
+    QVERIFY(axisCursor->property("visible").toBool());
+    QCOMPARE(axisCursor->property("source").toUrl(), QUrl("qrc:/icons/zoom-x.svg"));
+    QTest::mouseMove(&window, xEnd, 30);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, xEnd);
+    QVERIFY(qAbs(plot->xMinimum() - 2.0) < .01);
+    QVERIFY(qAbs(plot->xMaximum() - 8.0) < .01);
+
+    const QPoint yStart = item->mapToItem(window.contentItem(),
+                                          QPointF(10, plotOrigin.y() + plot->height() * .25)).toPoint();
+    const QPoint yEnd = item->mapToItem(window.contentItem(),
+                                        QPointF(10, plotOrigin.y() + plot->height() * .75)).toPoint();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, yStart);
+    QVERIFY(axisCursor->property("visible").toBool());
+    QCOMPARE(axisCursor->property("source").toUrl(), QUrl("qrc:/icons/zoom-y.svg"));
+    QTest::mouseMove(&window, yEnd, 30);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, yEnd);
+    QVERIFY(qAbs(plot->yMinimum() + 10.0) < .1);
+    QVERIFY(qAbs(plot->yMaximum() - 10.0) < .1);
+
     QSignalSpy revealed(&controller, &AppController::revealSignalRequested);
     QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(40, 12));
     QTRY_COMPARE(revealed.count(), 1);
@@ -595,6 +655,16 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QVERIFY(QMetaObject::invokeMethod(object.get(), "formatYTick", Q_RETURN_ARG(QVariant, formatted),
                                      Q_ARG(QVariant, 12000.0)));
     QCOMPARE(formatted.toString(), "1.20e+4");
+    plot->setXRange(0.0, 10.0);
+    plot->setYRange(-20.0, 20.0);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "applyAxisSelection",
+                                      Q_ARG(QVariant, 0), Q_ARG(QVariant, .2), Q_ARG(QVariant, .8)));
+    QCOMPARE(plot->xMinimum(), 2.0);
+    QCOMPARE(plot->xMaximum(), 8.0);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "applyAxisSelection",
+                                      Q_ARG(QVariant, 1), Q_ARG(QVariant, .25), Q_ARG(QVariant, .75)));
+    QCOMPARE(plot->yMinimum(), -10.0);
+    QCOMPARE(plot->yMaximum(), 10.0);
     QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, QPoint(40, 12));
     QTest::mouseMove(&window, QPoint(1000, 100), 30);
     QTRY_VERIFY(targetItem->property("dropHighlighted").toBool());
