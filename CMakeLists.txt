@@ -19,8 +19,12 @@ qt_add_executable(DataInspector
     src/quick/appcontroller.h
     src/quick/dataloadworker.cpp
     src/quick/dataloadworker.h
+    src/quick/dataexportworker.cpp
+    src/quick/dataexportworker.h
     src/quick/xlsxreader.cpp
     src/quick/xlsxreader.h
+    src/quick/xlsxwriter.cpp
+    src/quick/xlsxwriter.h
     src/quick/loadedtable.h
     src/quick/plotitem.cpp
     src/quick/plotitem.h
@@ -59,6 +63,7 @@ qt_add_resources(DataInspector toolbar_icons
         assets/icon/cursor_1.svg
         assets/icon/cursor_2.svg
         assets/icon/clear.svg
+        assets/icon/download.svg
         assets/icon/arrows_left_right.svg
         assets/icon/arrows_up_down.svg
 )
@@ -164,8 +169,12 @@ if(BUILD_TESTING)
         src/quick/appcontroller.h
         src/quick/dataloadworker.cpp
         src/quick/dataloadworker.h
+        src/quick/dataexportworker.cpp
+        src/quick/dataexportworker.h
         src/quick/xlsxreader.cpp
         src/quick/xlsxreader.h
+        src/quick/xlsxwriter.cpp
+        src/quick/xlsxwriter.h
         src/quick/loadedtable.h
         src/quick/plotitem.cpp
         src/quick/plotitem.h
@@ -192,6 +201,24 @@ if(BUILD_TESTING)
         COMMAND ${CMAKE_COMMAND} -E env
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             $<TARGET_FILE:appcontroller_test> -platform offscreen
+    )
+
+    add_executable(xlsxwriter_test
+        tests/xlsxwriter_test.cpp
+        src/quick/xlsxwriter.cpp
+        src/quick/xlsxwriter.h
+        src/quick/xlsxreader.cpp
+        src/quick/xlsxreader.h
+        src/quick/loadedtable.h
+    )
+    target_include_directories(xlsxwriter_test PRIVATE src/quick)
+    target_link_libraries(xlsxwriter_test PRIVATE
+        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Test plot_render_core
+    )
+    add_test(NAME xlsxwriter_test
+        COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            $<TARGET_FILE:xlsxwriter_test>
     )
 endif()
 

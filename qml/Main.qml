@@ -36,6 +36,7 @@ ApplicationWindow {
     property bool darkTheme: false
     property int editingSignalIndex: -1
     property string pendingFileRemoval: ""
+    property int pendingExportScope: 0
 
     ListModel {
         id: lineStyleModel
@@ -170,6 +171,16 @@ ApplicationWindow {
         onAccepted: appController.loadFiles(selectedFiles)
     }
 
+    FileDialog {
+        id: exportDialog
+        title: "导出 Excel"
+        nameFilters: ["Excel 工作簿 (*.xlsx)"]
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "xlsx"
+        onAccepted: appController.exportXlsx(selectedFile,
+                                              window.pendingExportScope)
+    }
+
     Dialog {
         id: layoutDialog
         title: "自定义子图布局"
@@ -282,7 +293,35 @@ ApplicationWindow {
         RowLayout {
             anchors.fill: parent; anchors.leftMargin: 12; anchors.rightMargin: 8; spacing: 3
             Label { text: "DataInspector"; font.pixelSize: 17; font.weight: Font.DemiBold; color: window.accentColor }
-            ToolButton { text: "打开…"; onClicked: fileDialog.open() }
+            ToolButton {
+                text: "打开…"
+                enabled: !appController.loading && !appController.exporting
+                onClicked: fileDialog.open()
+            }
+            IconTool {
+                icon.source: "qrc:/icons/download.svg"
+                hint: "导出 Excel"
+                enabled: appController.signalCount > 0
+                         && !appController.loading && !appController.exporting
+                onClicked: exportMenu.popup()
+                Menu {
+                    id: exportMenu
+                    MenuItem {
+                        text: "全部已加载数据"
+                        onTriggered: {
+                            window.pendingExportScope = 0
+                            exportDialog.open()
+                        }
+                    }
+                    MenuItem {
+                        text: "当前所有子图已绘制的信号"
+                        onTriggered: {
+                            window.pendingExportScope = 1
+                            exportDialog.open()
+                        }
+                    }
+                }
+            }
             Item { Layout.fillWidth: true }
             IconTool {
                 id: layoutTool
@@ -573,18 +612,33 @@ ApplicationWindow {
                     }
                 }
             }
-            ProgressBar {
+            RowLayout {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.top: parent.top
                 anchors.leftMargin: 10
                 anchors.rightMargin: 10
                 anchors.topMargin: 0
-                from: 0
-                to: 100
-                value: appController.loadingProgress
-                visible: appController.loading
+                spacing: 4
+                visible: appController.loading || appController.exporting
                 z: 20
+                ProgressBar {
+                    Layout.fillWidth: true
+                    from: 0
+                    to: 100
+                    value: appController.exporting
+                           ? appController.exportProgress
+                           : appController.loadingProgress
+                }
+                ToolButton {
+                    visible: appController.exporting
+                    Layout.preferredWidth: 30
+                    Layout.preferredHeight: 30
+                    text: "×"
+                    onClicked: appController.cancelExport()
+                    ToolTip.visible: hovered
+                    ToolTip.text: "取消导出"
+                }
             }
         }
     }

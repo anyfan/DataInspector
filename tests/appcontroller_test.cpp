@@ -51,7 +51,67 @@ private slots:
     void addingSignalPreservesCurrentXRange();
     void attachingNewPlotPreservesSharedXRange();
     void removingFileKeepsRemainingSignalsAndBindings();
+    void exportsAllLoadedSignals();
+    void exportsUnionOfSignalsDrawnAcrossPlots();
 };
+
+static void writeCsvFile(const QString &path, const QByteArray &contents)
+{
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(contents), qint64(contents.size()));
+}
+
+void AppControllerTest::exportsAllLoadedSignals()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.csv"));
+    const QString output = directory.filePath(QStringLiteral("all.xlsx"));
+    writeCsvFile(input, "time,Pitch,Roll\n0,1,2\n1,3,4\n");
+
+    AppController controller;
+    QVERIFY(controller.loadCsv(input));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QVERIFY(controller.exportXlsx(output, AppController::AllLoadedData));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+    QCOMPARE(controller.exportProgress(), 100);
+
+    const XlsxReadResult read = readXlsxWorkbook(output, {}, {});
+    QVERIFY2(read.error.isEmpty(), qPrintable(read.error));
+    QCOMPARE(read.tables.size(), 1);
+    QCOMPARE(read.tables.first().signalNames,
+             QStringList({QStringLiteral("Pitch"), QStringLiteral("Roll")}));
+}
+
+void AppControllerTest::exportsUnionOfSignalsDrawnAcrossPlots()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString first = directory.filePath(QStringLiteral("first.csv"));
+    const QString second = directory.filePath(QStringLiteral("second.csv"));
+    const QString output = directory.filePath(QStringLiteral("plotted.xlsx"));
+    writeCsvFile(first, "time,A,B\n0,1,2\n1,3,4\n");
+    writeCsvFile(second, "time,C\n10,5\n11,6\n");
+
+    AppController controller;
+    controller.setLayout(1, 2);
+    QCOMPARE(controller.loadFiles(QVariantList{first, second}), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    controller.setActivePlot(0);
+    controller.toggleSignal(1);
+    controller.setActivePlot(1);
+    controller.toggleSignal(1);
+    controller.toggleSignal(2);
+
+    QVERIFY(controller.exportXlsx(output, AppController::PlottedSignals));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+    const XlsxReadResult read = readXlsxWorkbook(output, {}, {});
+    QVERIFY2(read.error.isEmpty(), qPrintable(read.error));
+    QCOMPARE(read.tables.size(), 2);
+    QCOMPARE(read.tables.at(0).signalNames, QStringList({QStringLiteral("B")}));
+    QCOMPARE(read.tables.at(1).signalNames, QStringList({QStringLiteral("C")}));
+}
 
 void AppControllerTest::cursorReadoutsFollowVisibleXRange()
 {

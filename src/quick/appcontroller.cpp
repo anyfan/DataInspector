@@ -1,8 +1,10 @@
 #include "appcontroller.h"
 #include "plotitem.h"
 #include "dataloadworker.h"
+#include "dataexportworker.h"
 
 #include <QFileInfo>
+#include <QHash>
 #include <QCoreApplication>
 #include <QEvent>
 #include <QQuickWindow>
@@ -50,11 +52,38 @@ AppController::AppController(QObject *parent)
     connect(worker, &DataLoadWorker::finished, this, &AppController::onLoadFinished, Qt::QueuedConnection);
     connect(m_loadThread, &QThread::finished, worker, &QObject::deleteLater);
     m_loadThread->start();
+
+    m_exportThread = new QThread(this);
+    auto *exporter = new DataExportWorker;
+    m_exporter = exporter;
+    exporter->moveToThread(m_exportThread);
+    connect(exporter, &DataExportWorker::progress, this,
+            [this](int percentage) { setExportProgress(percentage); },
+            Qt::QueuedConnection);
+    connect(exporter, &DataExportWorker::finished, this,
+            [this](const QString &path, const QString &error, bool cancelled) {
+                m_exporting = false;
+                emit exportingChanged();
+                if (cancelled) {
+                    setStatus(QStringLiteral("已取消导出"));
+                } else if (!error.isEmpty()) {
+                    setStatus(QStringLiteral("导出失败：%1").arg(error));
+                } else {
+                    setExportProgress(100);
+                    setStatus(QStringLiteral("已导出 Excel：%1")
+                                  .arg(QFileInfo(path).fileName()));
+                }
+            }, Qt::QueuedConnection);
+    connect(m_exportThread, &QThread::finished, exporter,
+            &QObject::deleteLater);
+    m_exportThread->start();
 }
 
 AppController::~AppController()
 {
     if (m_loadThread) { m_loadThread->requestInterruption(); m_loadThread->quit(); m_loadThread->wait(); }
+    if (m_exporter) m_exporter->requestCancel();
+    if (m_exportThread) { m_exportThread->quit(); m_exportThread->wait(); }
 }
 
 bool AppController::eventFilter(QObject *watched, QEvent *event)
@@ -79,7 +108,7 @@ bool AppController::loadCsv(const QString &filePath)
 
 int AppController::loadFiles(const QVariant &filePaths)
 {
-    if (!m_loader) return 0;
+    if (!m_loader || m_exporting) return 0;
     QVariantList paths;
     if (filePaths.typeId() == qMetaTypeId<QJSValue>()) {
         const QVariant converted = filePaths.value<QJSValue>().toVariant();
@@ -138,7 +167,7 @@ int AppController::loadFiles(const QVariant &filePaths)
 
 bool AppController::removeFile(const QString &fileName)
 {
-    if (m_loading || fileName.isEmpty()) return false;
+    if (m_loading || m_exporting || fileName.isEmpty()) return false;
     const QVector<int> removedRows = m_signals->removeFile(fileName);
 
     if (removedRows.isEmpty()) return false;
@@ -167,6 +196,82 @@ bool AppController::removeFile(const QString &fileName)
     emit plotBindingsChanged();
     setStatus(QStringLiteral("已移除文件：%1").arg(fileName));
     return true;
+}
+
+bool AppController::exportXlsx(const QVariant &filePath, int scope)
+{
+    if (!m_exporter || m_exporting || m_loading || signalCount() == 0)
+        return false;
+    const QUrl url = filePath.canConvert<QUrl>()
+        ? filePath.toUrl() : QUrl(filePath.toString());
+    QString path = url.isLocalFile() ? url.toLocalFile() : filePath.toString();
+    if (path.startsWith(QStringLiteral("file:"))) path = QUrl(path).toLocalFile();
+    if (path.isEmpty()) return false;
+    if (!path.endsWith(QStringLiteral(".xlsx"), Qt::CaseInsensitive))
+        path += QStringLiteral(".xlsx");
+
+    QVector<int> rows;
+    if (scope == PlottedSignals) {
+        QSet<int> uniqueRows;
+        for (int plotIndex = 0; plotIndex < m_plotRows * m_plotColumns;
+             ++plotIndex) {
+            const QVector<int> plotRows = m_signals->plotRows(plotIndex);
+            for (int row : plotRows) uniqueRows.insert(row);
+        }
+        rows = QVector<int>(uniqueRows.cbegin(), uniqueRows.cend());
+        std::sort(rows.begin(), rows.end());
+    } else if (scope == AllLoadedData) {
+        rows.reserve(signalCount());
+        for (int row = 0; row < signalCount(); ++row) rows.append(row);
+    } else {
+        return false;
+    }
+    if (rows.isEmpty()) {
+        setStatus(QStringLiteral("当前所有子图中没有已绘制的信号"));
+        return false;
+    }
+
+    const PlotSeriesSnapshot snapshot = m_seriesStore->snapshot(rows);
+    QHash<int, PlotSeriesDataPtr> dataById;
+    for (const PlotSeriesDataPtr &data : snapshot.series)
+        if (data) dataById.insert(data->id, data);
+
+    QVector<XlsxExportTable> tables;
+    QHash<QString, int> tableByGroup;
+    for (int row : std::as_const(rows)) {
+        const PlotSeriesDataPtr data = dataById.value(row);
+        if (!data) continue;
+        QString group = m_signals->groupAt(row);
+        if (group.isEmpty()) group = QStringLiteral("Data");
+        int tableIndex = tableByGroup.value(group, -1);
+        if (tableIndex < 0) {
+            tableIndex = tables.size();
+            tableByGroup.insert(group, tableIndex);
+            tables.append({group, {}});
+        }
+        tables[tableIndex].series.append({m_signals->nameAt(row), data});
+    }
+    if (tables.isEmpty()) return false;
+
+    m_exporter->resetCancellation();
+    setExportProgress(0);
+    m_exporting = true;
+    emit exportingChanged();
+    setStatus(QStringLiteral("正在导出 Excel…"));
+    QMetaObject::invokeMethod(
+        m_exporter,
+        [exporter = m_exporter, path, tables = std::move(tables)]() {
+            exporter->exportWorkbook(path, tables);
+        }, Qt::QueuedConnection);
+    return true;
+}
+
+void AppController::cancelExport()
+{
+    if (m_exporting && m_exporter) {
+        m_exporter->requestCancel();
+        setStatus(QStringLiteral("正在取消导出…"));
+    }
 }
 
 void AppController::selectSignal(int row)
@@ -377,8 +482,9 @@ void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
 }
 void AppController::clear()
 {
-    if (m_loading) {
-        setStatus(QStringLiteral("文件正在加载，完成后再清空"));
+    if (m_loading || m_exporting) {
+        setStatus(m_loading ? QStringLiteral("文件正在加载，完成后再清空")
+                            : QStringLiteral("数据正在导出，完成后再清空"));
         return;
     }
     m_seriesStore->clear();
@@ -396,6 +502,15 @@ void AppController::clear()
     emit plotBindingsChanged();
     setLoadingProgress(0);
     setStatus(QStringLiteral("已清空"));
+}
+
+void AppController::setExportProgress(int progress)
+{
+    const int normalized = qBound(0, progress, 100);
+    if (m_exporting && normalized < m_exportProgress) return;
+    if (m_exportProgress == normalized) return;
+    m_exportProgress = normalized;
+    emit exportProgressChanged();
 }
 void AppController::setStatus(const QString &status) { if (m_status == status) return; m_status = status; emit statusChanged(); }
 

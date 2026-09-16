@@ -11,6 +11,7 @@
 #include "signalmodel.h"
 #include "loadedtable.h"
 class DataLoadWorker;
+class DataExportWorker;
 #include "render/plotseriesstore.h"
 class PlotItem;
 
@@ -23,6 +24,8 @@ class AppController final : public QObject
     Q_PROPERTY(QString currentFile READ currentFile NOTIFY currentFileChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(int loadingProgress READ loadingProgress NOTIFY loadingProgressChanged)
+    Q_PROPERTY(bool exporting READ exporting NOTIFY exportingChanged)
+    Q_PROPERTY(int exportProgress READ exportProgress NOTIFY exportProgressChanged)
     Q_PROPERTY(int loadedFileCount READ loadedFileCount NOTIFY currentFileChanged)
     Q_PROPERTY(int signalCount READ signalCount NOTIFY currentFileChanged)
     Q_PROPERTY(int plotRows READ plotRows NOTIFY layoutChanged)
@@ -30,6 +33,8 @@ class AppController final : public QObject
     Q_PROPERTY(int activePlotIndex READ activePlotIndex NOTIFY activePlotChanged)
     Q_PROPERTY(int plotStateRevision READ plotStateRevision NOTIFY plotBindingsChanged)
 public:
+    enum ExportScope { AllLoadedData = 0, PlottedSignals = 1 };
+    Q_ENUM(ExportScope)
     QVariantList presetColors() const;
     explicit AppController(QObject *parent = nullptr);
     ~AppController() override;
@@ -38,6 +43,8 @@ public:
     QString currentFile() const { return m_currentFile; }
     bool loading() const { return m_loading; }
     int loadingProgress() const { return m_loadingProgress; }
+    bool exporting() const { return m_exporting; }
+    int exportProgress() const { return m_exportProgress; }
     int loadedFileCount() const { return m_loadedFileNames.size(); }
     int signalCount() const { return m_signals->sourceCount(); }
     int plotRows() const { return m_plotRows; }
@@ -47,6 +54,8 @@ public:
     Q_INVOKABLE bool loadCsv(const QString &filePath);
     Q_INVOKABLE int loadFiles(const QVariant &filePaths);
     Q_INVOKABLE bool removeFile(const QString &fileName);
+    Q_INVOKABLE bool exportXlsx(const QVariant &filePath, int scope);
+    Q_INVOKABLE void cancelExport();
     Q_INVOKABLE void selectSignal(int row);
     Q_INVOKABLE void toggleSignal(int row);
     Q_INVOKABLE void filterSignals(const QString &text);
@@ -77,6 +86,8 @@ signals:
     void currentFileChanged();
     void loadingChanged();
     void loadingProgressChanged();
+    void exportingChanged();
+    void exportProgressChanged();
     void layoutChanged();
     void plotBindingsChanged();
     void activePlotChanged();
@@ -89,6 +100,7 @@ private:
     void onLoadProgress(const QString &path, int percentage);
     void startNextLoad();
     void setLoadingProgress(int progress);
+    void setExportProgress(int progress);
     void setStatus(const QString &status);
     void refreshPlot(int index, bool fitY = true);
     SignalModel *m_signals;
@@ -107,8 +119,12 @@ private:
     int m_nextColorIndex = 0;
     QThread *m_loadThread = nullptr;
     DataLoadWorker *m_loader = nullptr;
+    QThread *m_exportThread = nullptr;
+    DataExportWorker *m_exporter = nullptr;
     bool m_loading = false;
     int m_loadingProgress = 0;
+    bool m_exporting = false;
+    int m_exportProgress = 0;
     int m_batchTotal = 0;
     int m_batchCompleted = 0;
     int m_batchErrors = 0;

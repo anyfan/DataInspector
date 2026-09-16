@@ -46,6 +46,7 @@ public:
     void setSignalPen(int row, const QColor &color, double width,
                       Qt::PenStyle style);
     QString nameAt(int row) const { return m_names.value(row); }
+    QString groupAt(int row) const { return m_groups.value(row); }
     void setChecked(int row, bool checked);
     void setPlotCount(int count);
     void setActivePlot(int plotIndex);
