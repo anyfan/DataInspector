@@ -229,7 +229,6 @@ ApplicationWindow {
         }
     }
 
-    Shortcut { sequence: "Space"; onActivated: appController.fitPlots(true, true) }
     Shortcut { sequence: "Ctrl+Alt+T"; onActivated: appController.fitPlots(true, false) }
     Shortcut { sequence: "Ctrl+Alt+Y"; onActivated: appController.fitPlots(false, true) }
     Connections {
@@ -263,13 +262,31 @@ ApplicationWindow {
         }
     }
     property int selectedCursorMode: 0
+    property int preferredCursorMode: 1
+    property bool zoomToolEnabled: false
+    property int selectedZoomMode: 1
+    readonly property int activeZoomMode: zoomToolEnabled ? selectedZoomMode : 0
+    function toggleCursorTool() {
+        selectedCursorMode = selectedCursorMode === 0 ? preferredCursorMode : 0
+    }
+    function selectCursorMode(mode) {
+        preferredCursorMode = mode
+        if (selectedCursorMode !== 0)
+            selectedCursorMode = mode
+    }
+    function toggleZoomTool() {
+        zoomToolEnabled = !zoomToolEnabled
+    }
+    function selectZoomMode(mode) {
+        selectedZoomMode = mode
+    }
     function zoomCurrent(axis, steps) {
         const plot = plotRepeater.itemAt(appController.activePlotIndex)
         if (!plot) return
         if (axis !== 1) plot.renderer.zoomAxis(0, 0.5, steps)
         if (axis !== 0) plot.renderer.zoomAxis(1, 0.5, steps)
     }
-    Shortcut { sequence: "Ctrl+I"; onActivated: window.selectedCursorMode = window.selectedCursorMode === 1 ? 0 : 1 }
+    Shortcut { sequence: "Ctrl+I"; onActivated: window.toggleCursorTool() }
     Shortcut { sequence: "Ctrl++"; onActivated: window.zoomCurrent(2, 1) }
     Shortcut { sequence: "Ctrl+-"; onActivated: window.zoomCurrent(2, -1) }
     Shortcut { sequence: "Ctrl+Shift+T"; onActivated: window.zoomCurrent(0, 1) }
@@ -288,6 +305,46 @@ ApplicationWindow {
         ToolTip.visible: hovered
         ToolTip.delay: 400
         ToolTip.text: hint
+    }
+    component SplitIconTool: Item {
+        id: splitTool
+        property url iconSource
+        property string hint: ""
+        property bool checked: false
+        signal primaryClicked()
+        signal arrowClicked()
+        implicitWidth: 58
+        implicitHeight: 40
+
+        Row {
+            anchors.fill: parent
+            spacing: 0
+            ToolButton {
+                width: 40
+                height: parent.height
+                icon.source: splitTool.iconSource
+                icon.width: 24
+                icon.height: 24
+                icon.color: splitTool.checked ? window.accentColor : window.treeTextColor
+                highlighted: splitTool.checked
+                onClicked: splitTool.primaryClicked()
+                Accessible.name: splitTool.hint
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: splitTool.hint
+            }
+            ToolButton {
+                width: 18
+                height: parent.height
+                text: "▾"
+                font.pixelSize: 10
+                onClicked: splitTool.arrowClicked()
+                Accessible.name: "选择" + splitTool.hint + "模式"
+                ToolTip.visible: hovered
+                ToolTip.delay: 400
+                ToolTip.text: "选择" + splitTool.hint + "模式"
+            }
+        }
     }
     header: ToolBar {
         height: 48
@@ -334,6 +391,8 @@ ApplicationWindow {
             Item { Layout.fillWidth: true }
             IconTool {
                 id: layoutTool
+                objectName: "layoutTool"
+                menuArrow: false
                 icon.source: "qrc:/icons/grid.svg"
                 hint: "子图布局"
                 onClicked: layoutPopup.open()
@@ -367,38 +426,44 @@ ApplicationWindow {
                 }
             }
             ToolSeparator { }
-            IconTool {
-                icon.source: window.selectedCursorMode === 2 ? "qrc:/icons/cursor_2.svg" : "qrc:/icons/cursor_1.svg"
+            SplitIconTool {
+                objectName: "cursorSplitTool"
+                iconSource: (window.selectedCursorMode === 2 ||
+                             (window.selectedCursorMode === 0 && window.preferredCursorMode === 2))
+                            ? "qrc:/icons/cursor_2.svg" : "qrc:/icons/cursor_1.svg"
                 checked: window.selectedCursorMode !== 0
                 hint: "游标"
-                onClicked: cursorMenu.popup()
+                onPrimaryClicked: window.toggleCursorTool()
+                onArrowClicked: cursorMenu.popup()
                 Menu {
                     id: cursorMenu
-                    MenuItem { text: "关闭游标"; checkable: true; checked: window.selectedCursorMode === 0; onTriggered: window.selectedCursorMode = 0 }
-                    MenuItem { text: "单游标    Ctrl+I"; icon.source: "qrc:/icons/cursor_1.svg"; checkable: true; checked: window.selectedCursorMode === 1; onTriggered: window.selectedCursorMode = 1 }
-                    MenuItem { text: "双游标"; icon.source: "qrc:/icons/cursor_2.svg"; checkable: true; checked: window.selectedCursorMode === 2; onTriggered: window.selectedCursorMode = 2 }
+                    MenuItem { text: "单游标"; icon.source: "qrc:/icons/cursor_1.svg"; checkable: true; checked: window.preferredCursorMode === 1; onTriggered: window.selectCursorMode(1) }
+                    MenuItem { text: "双游标"; icon.source: "qrc:/icons/cursor_2.svg"; checkable: true; checked: window.preferredCursorMode === 2; onTriggered: window.selectCursorMode(2) }
                 }
             }
-            IconTool {
-                icon.source: "qrc:/icons/zoom-x.svg"
+            SplitIconTool {
+                objectName: "zoomSplitTool"
+                iconSource: window.selectedZoomMode === 1 ? "qrc:/icons/zoom-in.svg"
+                            : window.selectedZoomMode === 2 ? "qrc:/icons/zoom-x.svg"
+                            : "qrc:/icons/zoom-y.svg"
+                checked: window.zoomToolEnabled
                 hint: "缩放"
-                onClicked: zoomMenu.popup()
+                onPrimaryClicked: window.toggleZoomTool()
+                onArrowClicked: zoomMenu.popup()
                 Menu {
                     id: zoomMenu
-                    MenuItem { text: "放大    Ctrl++"; icon.source: "qrc:/icons/zoom-in.svg"; onTriggered: window.zoomCurrent(2, 1) }
-                    MenuItem { text: "缩小    Ctrl+-"; icon.source: "qrc:/icons/zoom-out.svg"; onTriggered: window.zoomCurrent(2, -1) }
-                    MenuSeparator { }
-                    MenuItem { text: "放大时间轴    Ctrl+Shift+T"; icon.source: "qrc:/icons/zoom-x.svg"; onTriggered: window.zoomCurrent(0, 1) }
-                    MenuItem { text: "放大 Y 轴    Ctrl+Shift+Y"; icon.source: "qrc:/icons/zoom-y.svg"; onTriggered: window.zoomCurrent(1, 1) }
+                    MenuItem { text: "区域缩放"; icon.source: "qrc:/icons/zoom-in.svg"; checkable: true; checked: window.selectedZoomMode === 1; onTriggered: window.selectZoomMode(1) }
+                    MenuItem { text: "X 轴缩放"; icon.source: "qrc:/icons/zoom-x.svg"; checkable: true; checked: window.selectedZoomMode === 2; onTriggered: window.selectZoomMode(2) }
+                    MenuItem { text: "Y 轴缩放"; icon.source: "qrc:/icons/zoom-y.svg"; checkable: true; checked: window.selectedZoomMode === 3; onTriggered: window.selectZoomMode(3) }
                 }
             }
             IconTool {
                 icon.source: "qrc:/icons/fit-view.svg"
-                hint: "自适应视图（空格）"
+                hint: "自适应视图"
                 onClicked: fitMenu.popup()
                 Menu {
                     id: fitMenu
-                    MenuItem { text: "自适应视图    Space"; icon.source: "qrc:/icons/fit-view.svg"; onTriggered: appController.fitPlots(true, true) }
+                    MenuItem { text: "自适应视图"; icon.source: "qrc:/icons/fit-view.svg"; onTriggered: appController.fitPlots(true, true) }
                     MenuItem { text: "自适应时间轴    Ctrl+Alt+T"; icon.source: "qrc:/icons/arrows_left_right.svg"; onTriggered: appController.fitPlots(true, false) }
                     MenuItem { text: "自适应当前 Y 轴    Ctrl+Alt+Y"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: appController.fitPlots(false, true) }
                     MenuItem { text: "自适应全部 Y 轴"; onTriggered: appController.fitPlots(false, true, true) }
@@ -611,6 +676,7 @@ ApplicationWindow {
                         controller: appController
                         graphLineWidth: 2
                         graphCursorMode: window.selectedCursorMode
+                        graphZoomMode: window.activeZoomMode
                         darkTheme: window.darkTheme
                         Layout.fillWidth: true
                         Layout.fillHeight: true

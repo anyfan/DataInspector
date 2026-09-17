@@ -10,6 +10,8 @@ Rectangle {
     required property var controller
     property real graphLineWidth: 2
     property int graphCursorMode: 0
+    // 0: disabled, 1: X/Y region, 2: X only, 3: Y only.
+    property int graphZoomMode: 0
     property bool darkTheme: false
     property color axisColor: darkTheme ? "#8f9aa7" : "#59636e"
     property color gridColor: darkTheme ? "#53606d" : "#c9d1d9"
@@ -35,6 +37,7 @@ Rectangle {
     }
     property bool legendDragging: false
     property bool axisSelecting: false
+    property int hoveredAxis: -1
     property int axisSelection: -1
     property real axisSelectionStart: 0
     property real axisSelectionCurrent: 0
@@ -42,6 +45,11 @@ Rectangle {
     property string axisCursorSource: ""
     property real axisCursorX: 0
     property real axisCursorY: 0
+    property bool graphSelecting: false
+    property real graphSelectionStartX: 0
+    property real graphSelectionStartY: 0
+    property real graphSelectionCurrentX: 0
+    property real graphSelectionCurrentY: 0
     function applyAxisSelection(axis, startFraction, endFraction) {
         const start = Math.max(0, Math.min(1, Math.min(startFraction, endFraction)))
         const end = Math.max(0, Math.min(1, Math.max(startFraction, endFraction)))
@@ -85,6 +93,49 @@ Rectangle {
         axisCursorX = Math.max(0, Math.min(root.width - axisCursorImage.width, x + 2))
         axisCursorY = Math.max(0, Math.min(root.height - axisCursorImage.height, y + 2))
         axisCursorVisible = visible
+    }
+    function beginGraphSelection(xFraction, yFraction) {
+        graphSelecting = true
+        graphSelectionStartX = xFraction
+        graphSelectionStartY = yFraction
+        graphSelectionCurrentX = xFraction
+        graphSelectionCurrentY = yFraction
+        controller.setActivePlot(plotIndex)
+    }
+    function updateGraphSelection(xFraction, yFraction) {
+        if (!graphSelecting)
+            return
+        graphSelectionCurrentX = Math.max(0, Math.min(1, xFraction))
+        graphSelectionCurrentY = Math.max(0, Math.min(1, yFraction))
+    }
+    function finishGraphSelection() {
+        if (!graphSelecting)
+            return false
+        const mode = graphZoomMode
+        const left = Math.min(graphSelectionStartX, graphSelectionCurrentX)
+        const right = Math.max(graphSelectionStartX, graphSelectionCurrentX)
+        const top = Math.min(graphSelectionStartY, graphSelectionCurrentY)
+        const bottom = Math.max(graphSelectionStartY, graphSelectionCurrentY)
+        const xSpan = plotItem.xMaximum - plotItem.xMinimum
+        const ySpan = plotItem.yMaximum - plotItem.yMinimum
+        graphSelecting = false
+        if ((mode === 1 || mode === 2) && right - left < 2 / Math.max(1, axisRect.width))
+            return false
+        if ((mode === 1 || mode === 3) && bottom - top < 2 / Math.max(1, axisRect.height))
+            return false
+        if (mode === 1 || mode === 2)
+            plotItem.setXRange(plotItem.xMinimum + left * xSpan,
+                               plotItem.xMinimum + right * xSpan)
+        if (mode === 1 || mode === 3)
+            plotItem.setYRange(plotItem.yMaximum - bottom * ySpan,
+                               plotItem.yMaximum - top * ySpan)
+        return mode >= 1 && mode <= 3
+    }
+    Shortcut {
+        sequence: "Space"
+        enabled: root.hoveredAxis >= 0
+        onActivated: root.controller.fitPlots(root.hoveredAxis === 0,
+                                              root.hoveredAxis === 1)
     }
     Image {
         id: axisCursorImage
@@ -268,6 +319,44 @@ Rectangle {
         }
 
         Rectangle {
+            id: graphSelectionOverlay
+            objectName: "graphZoomSelection"
+            visible: root.graphSelecting && root.graphZoomMode > 0
+            x: root.graphZoomMode === 3 ? 0
+               : Math.min(root.graphSelectionStartX, root.graphSelectionCurrentX) * axisRect.width
+            y: root.graphZoomMode === 2 ? 0
+               : Math.min(root.graphSelectionStartY, root.graphSelectionCurrentY) * axisRect.height
+            width: root.graphZoomMode === 3 ? axisRect.width
+                   : Math.max(1, Math.abs(root.graphSelectionCurrentX - root.graphSelectionStartX) * axisRect.width)
+            height: root.graphZoomMode === 2 ? axisRect.height
+                    : Math.max(1, Math.abs(root.graphSelectionCurrentY - root.graphSelectionStartY) * axisRect.height)
+            color: root.axisColor
+            opacity: 0.18
+            border.color: root.axisColor
+            border.width: 1
+            z: 8
+        }
+
+        MouseArea {
+            id: graphZoomArea
+            objectName: "graphZoomArea"
+            anchors.fill: parent
+            enabled: root.graphZoomMode > 0
+            acceptedButtons: Qt.LeftButton
+            cursorShape: Qt.CrossCursor
+            preventStealing: true
+            z: 9
+            onPressed: function(mouse) {
+                root.beginGraphSelection(mouse.x / width, mouse.y / height)
+            }
+            onPositionChanged: function(mouse) {
+                root.updateGraphSelection(mouse.x / width, mouse.y / height)
+            }
+            onReleased: root.finishGraphSelection()
+            onCanceled: root.graphSelecting = false
+        }
+
+        Rectangle {
             anchors.fill: parent
             color: "transparent"
             border.color: root.axisColor
@@ -404,8 +493,14 @@ Rectangle {
         acceptedButtons: Qt.LeftButton
         hoverEnabled: true
         cursorShape: Qt.BlankCursor
-        onEntered: root.updateAxisCursor("qrc:/icons/zoom-x.svg", x + mouseX, y + mouseY, true)
-        onExited: if (!root.axisSelecting) root.updateAxisCursor("", 0, 0, false)
+        onEntered: {
+            root.hoveredAxis = 0
+            root.updateAxisCursor("qrc:/icons/zoom-x.svg", x + mouseX, y + mouseY, true)
+        }
+        onExited: if (!root.axisSelecting) {
+            root.hoveredAxis = -1
+            root.updateAxisCursor("", 0, 0, false)
+        }
         onPressed: function(mouse) {
             root.updateAxisCursor("qrc:/icons/zoom-x.svg", x + mouse.x, y + mouse.y, true)
             root.beginAxisSelection(0, Math.max(0, Math.min(1, mouse.x / width)))
@@ -417,12 +512,15 @@ Rectangle {
         }
         onReleased: function(mouse) {
             root.finishAxisSelection()
-            if (!containsMouse)
+            if (!containsMouse) {
+                root.hoveredAxis = -1
                 root.updateAxisCursor("", 0, 0, false)
+            }
         }
         onCanceled: {
             root.axisSelecting = false
             root.axisSelection = -1
+            root.hoveredAxis = -1
             root.updateAxisCursor("", 0, 0, false)
         }
         onWheel: function(wheel) {
@@ -435,8 +533,14 @@ Rectangle {
         acceptedButtons: Qt.LeftButton
         hoverEnabled: true
         cursorShape: Qt.BlankCursor
-        onEntered: root.updateAxisCursor("qrc:/icons/zoom-y.svg", x + mouseX, y + mouseY, true)
-        onExited: if (!root.axisSelecting) root.updateAxisCursor("", 0, 0, false)
+        onEntered: {
+            root.hoveredAxis = 1
+            root.updateAxisCursor("qrc:/icons/zoom-y.svg", x + mouseX, y + mouseY, true)
+        }
+        onExited: if (!root.axisSelecting) {
+            root.hoveredAxis = -1
+            root.updateAxisCursor("", 0, 0, false)
+        }
         onPressed: function(mouse) {
             root.updateAxisCursor("qrc:/icons/zoom-y.svg", x + mouse.x, y + mouse.y, true)
             root.beginAxisSelection(1, Math.max(0, Math.min(1, mouse.y / height)))
@@ -448,12 +552,15 @@ Rectangle {
         }
         onReleased: function(mouse) {
             root.finishAxisSelection()
-            if (!containsMouse)
+            if (!containsMouse) {
+                root.hoveredAxis = -1
                 root.updateAxisCursor("", 0, 0, false)
+            }
         }
         onCanceled: {
             root.axisSelecting = false
             root.axisSelection = -1
+            root.hoveredAxis = -1
             root.updateAxisCursor("", 0, 0, false)
         }
         onWheel: function(wheel) {

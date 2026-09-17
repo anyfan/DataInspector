@@ -48,6 +48,7 @@ private slots:
     void fittingUsesUnionOfSubplotTimeRanges();
     void asynchronousLodKeepsLatestRequest();
     void quickPlotLoadsWithLegendAndCursors();
+    void toolbarModesToggleAndRememberSelection();
     void realMatImportPerformanceWhenRequested();
     void realCsvImportPerformanceWhenRequested();
     void addingSignalPreservesCurrentXRange();
@@ -579,6 +580,73 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QTest::qWait(50);
     auto *axisCursor = item->findChild<QQuickItem *>("axisZoomCursor");
     QVERIFY(axisCursor);
+
+    QVERIFY(item->setProperty("hoveredAxis", -1));
+    plot->setXRange(.2, .8);
+    plot->setYRange(100.0, 200.0);
+    QTest::keyClick(&window, Qt::Key_Space);
+    QCOMPARE(plot->xMinimum(), .2);
+    QCOMPARE(plot->xMaximum(), .8);
+    QCOMPARE(plot->yMinimum(), 100.0);
+    QCOMPARE(plot->yMaximum(), 200.0);
+
+    QVERIFY(item->setProperty("hoveredAxis", 0));
+    QTest::keyClick(&window, Qt::Key_Space);
+    QCOMPARE(plot->xMinimum(), -.02);
+    QCOMPARE(plot->xMaximum(), 1.02);
+    QCOMPARE(plot->yMinimum(), 100.0);
+    QCOMPARE(plot->yMaximum(), 200.0);
+
+    plot->setXRange(0.0, 1.0);
+    QVERIFY(item->setProperty("hoveredAxis", 1));
+    QTest::keyClick(&window, Qt::Key_Space);
+    QCOMPARE(plot->xMinimum(), 0.0);
+    QCOMPARE(plot->xMaximum(), 1.0);
+    QCOMPARE(plot->yMinimum(), .95);
+    QCOMPARE(plot->yMaximum(), 2.05);
+    item->setProperty("hoveredAxis", -1);
+
+    const QPointF graphOrigin = plot->mapToItem(item, QPointF(0, 0));
+    const auto graphPoint = [&](double xFraction, double yFraction) {
+        return item->mapToItem(window.contentItem(),
+                               QPointF(graphOrigin.x() + plot->width() * xFraction,
+                                       graphOrigin.y() + plot->height() * yFraction)).toPoint();
+    };
+
+    QVERIFY(item->setProperty("graphZoomMode", 1));
+    plot->setXRange(0.0, 10.0);
+    plot->setYRange(-20.0, 20.0);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, graphPoint(.2, .25));
+    QTest::mouseMove(&window, graphPoint(.8, .75), 30);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, graphPoint(.8, .75));
+    QVERIFY(qAbs(plot->xMinimum() - 2.0) < .02);
+    QVERIFY(qAbs(plot->xMaximum() - 8.0) < .02);
+    QVERIFY(qAbs(plot->yMinimum() + 10.0) < .15);
+    QVERIFY(qAbs(plot->yMaximum() - 10.0) < .15);
+
+    QVERIFY(item->setProperty("graphZoomMode", 2));
+    plot->setXRange(0.0, 10.0);
+    plot->setYRange(-20.0, 20.0);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, graphPoint(.25, .1));
+    QTest::mouseMove(&window, graphPoint(.75, .9), 30);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, graphPoint(.75, .9));
+    QVERIFY(qAbs(plot->xMinimum() - 2.5) < .02);
+    QVERIFY(qAbs(plot->xMaximum() - 7.5) < .02);
+    QCOMPARE(plot->yMinimum(), -20.0);
+    QCOMPARE(plot->yMaximum(), 20.0);
+
+    QVERIFY(item->setProperty("graphZoomMode", 3));
+    plot->setXRange(0.0, 10.0);
+    plot->setYRange(-20.0, 20.0);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, graphPoint(.1, .25));
+    QTest::mouseMove(&window, graphPoint(.9, .75), 30);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, graphPoint(.9, .75));
+    QCOMPARE(plot->xMinimum(), 0.0);
+    QCOMPARE(plot->xMaximum(), 10.0);
+    QVERIFY(qAbs(plot->yMinimum() + 10.0) < .15);
+    QVERIFY(qAbs(plot->yMaximum() - 10.0) < .15);
+    item->setProperty("graphZoomMode", 0);
+
     plot->setXRange(0.0, 10.0);
     plot->setYRange(-20.0, 20.0);
     const QPointF plotOrigin = plot->mapToItem(item, QPointF(0, 0));
@@ -769,6 +837,53 @@ void AppControllerTest::quotedCsvFieldsAreImported()
     QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 5000);
     QCOMPARE(controller.signalCount(), 1);
     QCOMPARE(controller.signalName(0), QStringLiteral("Pitch,deg"));
+}
+
+void AppControllerTest::toolbarModesToggleAndRememberSelection()
+{
+    qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
+    AppController controller;
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("appController", &controller);
+    const QDir qmlDirectory = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml");
+    qmlRegisterType(QUrl::fromLocalFile(qmlDirectory.filePath("QuickPlot.qml")),
+                    "DataInspector", 1, 0, "QuickPlot");
+    const QString path = qmlDirectory.filePath("Main.qml");
+    QQmlComponent component(&engine, QUrl::fromLocalFile(path));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{"visible", false}}));
+    QVERIFY2(object, qPrintable(component.errorString()));
+
+    auto *layoutTool = object->findChild<QObject *>("layoutTool");
+    auto *cursorTool = object->findChild<QObject *>("cursorSplitTool");
+    auto *zoomTool = object->findChild<QObject *>("zoomSplitTool");
+    QVERIFY(layoutTool);
+    QVERIFY(cursorTool);
+    QVERIFY(zoomTool);
+    QCOMPARE(layoutTool->property("menuArrow").toBool(), false);
+
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleCursorTool"));
+    QCOMPARE(object->property("selectedCursorMode").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "selectCursorMode", Q_ARG(QVariant, 2)));
+    QCOMPARE(object->property("selectedCursorMode").toInt(), 2);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleCursorTool"));
+    QCOMPARE(object->property("selectedCursorMode").toInt(), 0);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "selectCursorMode", Q_ARG(QVariant, 1)));
+    QCOMPARE(object->property("selectedCursorMode").toInt(), 0);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleCursorTool"));
+    QCOMPARE(object->property("selectedCursorMode").toInt(), 1);
+
+    QCOMPARE(object->property("activeZoomMode").toInt(), 0);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleZoomTool"));
+    QCOMPARE(object->property("activeZoomMode").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "selectZoomMode", Q_ARG(QVariant, 3)));
+    QCOMPARE(object->property("activeZoomMode").toInt(), 3);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleZoomTool"));
+    QCOMPARE(object->property("activeZoomMode").toInt(), 0);
+    QCOMPARE(object->property("selectedZoomMode").toInt(), 3);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "selectZoomMode", Q_ARG(QVariant, 2)));
+    QCOMPARE(object->property("activeZoomMode").toInt(), 0);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleZoomTool"));
+    QCOMPARE(object->property("activeZoomMode").toInt(), 2);
 }
 
 void AppControllerTest::xlsxWorkbookImportsAllWorksheets()

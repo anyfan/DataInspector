@@ -191,8 +191,26 @@ if(BUILD_TESTING)
         PREFIX "/icons"
         BASE assets/icon
         FILES
+            assets/icon/zoom-in.svg
+            assets/icon/zoom-out.svg
             assets/icon/zoom-x.svg
             assets/icon/zoom-y.svg
+            assets/icon/fullscreen.svg
+            assets/icon/fullscreen-exit.svg
+            assets/icon/arrows-angle-expand.svg
+            assets/icon/arrows-angle-contract.svg
+            assets/icon/fit-view.svg
+            assets/icon/settings.svg
+            assets/icon/layout-single.svg
+            assets/icon/layout-rows.svg
+            assets/icon/layout-columns.svg
+            assets/icon/grid.svg
+            assets/icon/cursor_1.svg
+            assets/icon/cursor_2.svg
+            assets/icon/clear.svg
+            assets/icon/download.svg
+            assets/icon/arrows_left_right.svg
+            assets/icon/arrows_up_down.svg
     )
     if(ENABLE_MAT)
         target_include_directories(appcontroller_test PRIVATE
