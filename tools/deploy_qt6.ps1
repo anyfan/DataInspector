@@ -25,6 +25,10 @@ foreach ($runtime in @("libc++.dll", "libunwind.dll")) {
     if (Test-Path $runtimePath) { Copy-Item $runtimePath $OutputDir -Force }
 }
 Copy-Item (Join-Path $qtPlugins "platforms") (Join-Path $OutputDir "platforms") -Recurse -Force
+# Toolbar/QML icons use SVG files from qrc:/icons; Qt::Svg plus the imageformat
+# plugin are required or packaged builds render blank icons.
+Copy-Item (Join-Path $qtPlugins "imageformats") (Join-Path $OutputDir "imageformats") -Recurse -Force
+Copy-Item (Join-Path $qtPlugins "iconengines") (Join-Path $OutputDir "iconengines") -Recurse -Force
 
 # Qt Quick Controls, Dialogs and Layouts are QML modules, not just DLLs.
 $qmlOutput = Join-Path $OutputDir "qml"
