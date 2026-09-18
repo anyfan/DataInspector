@@ -1,19 +1,28 @@
 #pragma once
-#include <QObject>
-#include <QVector>
-#include <QThread>
 #include <QColor>
-#include <QSet>
+#include <QObject>
 #include <QPointer>
 #include <QQueue>
+#include <QSet>
 #include <QVariantList>
+#include <QVector>
 #include <memory>
-#include "signalmodel.h"
+
 #include "loadedtable.h"
-class DataLoadWorker;
-class DataExportWorker;
 #include "render/plotseriesstore.h"
+#include "signalmodel.h"
+
+class DataExportWorker;
+class DataLoadWorker;
 class PlotItem;
+class QThread;
+
+// GUI-thread session controller: owns the signal model, the shared series
+// store, the loader/exporter worker threads and coordinates every subplot.
+// Implementation is split by responsibility:
+//   appcontroller.cpp          lifetime, status and progress plumbing
+//   appcontroller_loading.cpp  import queue, file removal, Excel export
+//   appcontroller_plots.cpp    subplot bindings, legend actions, fitting
 
 class AppController final : public QObject
 {
@@ -35,9 +44,12 @@ class AppController final : public QObject
 public:
     enum ExportScope { AllLoadedData = 0, PlottedSignals = 1 };
     Q_ENUM(ExportScope)
-    QVariantList presetColors() const;
     explicit AppController(QObject *parent = nullptr);
     ~AppController() override;
+    static const QVector<QColor> &signalPalette();
+    QVariantList presetColors() const;
+
+    // Properties
     SignalModel *signalModel() const { return m_signals; }
     QString status() const { return m_status; }
     QString currentFile() const { return m_currentFile; }
@@ -51,12 +63,16 @@ public:
     int plotColumns() const { return m_plotColumns; }
     int activePlotIndex() const { return m_signals->activePlot(); }
     int plotStateRevision() const { return m_plotStateRevision; }
+
+    // Import / export
     Q_INVOKABLE bool loadCsv(const QString &filePath);
     Q_INVOKABLE int loadFiles(const QVariant &filePaths);
     Q_INVOKABLE bool removeFile(const QString &fileName);
     Q_INVOKABLE bool exportXlsx(const QVariant &filePath, int scope,
                                 bool zipCompressionEnabled = false);
     Q_INVOKABLE void cancelExport();
+
+    // Signal selection and styling
     Q_INVOKABLE void selectSignal(int row);
     Q_INVOKABLE void toggleSignal(int row);
     Q_INVOKABLE void filterSignals(const QString &text);
@@ -70,6 +86,8 @@ public:
     Q_INVOKABLE void setSignalPen(int row, const QColor &color,
                                   double width, int style);
     Q_INVOKABLE QString signalName(int row) const;
+
+    // Subplots
     Q_INVOKABLE void attachPlot(QObject *plot, int index = 0);
     Q_INVOKABLE void detachPlot(QObject *plot, int index = 0);
     Q_INVOKABLE void setLayout(int rows, int columns);
@@ -83,6 +101,7 @@ public:
     Q_INVOKABLE void clearAllPlotSignals();
     Q_INVOKABLE void fitPlotY(int plotIndex);
 
+    // Drops every loaded file and signal. Use clearAllPlotSignals() to keep data.
     Q_INVOKABLE void clear();
 signals:
     void revealSignalRequested(int row);
@@ -103,10 +122,18 @@ private:
                         int skipped, const QString &error);
     void onLoadProgress(const QString &path, int percentage);
     void startNextLoad();
+    void appendLoadedTables(const QString &path, const QVector<LoadedTable> &tables);
     void setLoadingProgress(int progress);
     void setExportProgress(int progress);
     void setStatus(const QString &status);
+    void updateCurrentFileLabel();
+    void notifyPlotBindingsChanged();
     void refreshPlot(int index, bool fitY = true);
+    bool unbindPlotSignals(int plotIndex);
+    PlotItem *plotAt(int index) const;
+    void applySharedXRange(double xMinimum, double xMaximum, PlotItem *except = nullptr);
+    static void syncCursorsFrom(PlotItem *source, PlotItem *target);
+
     SignalModel *m_signals;
     QVector<QPointer<PlotItem>> m_plots;
     int m_plotRows = 1;

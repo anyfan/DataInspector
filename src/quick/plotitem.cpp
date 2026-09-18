@@ -529,13 +529,27 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
             if (!root->cursorNode2) {
                 auto *second = new QSGGeometryNode;
                 auto *g2 = new QSGGeometry(QSGGeometry::defaultAttributes_Point2D(), 4);
-                g2->setDrawingMode(QSGGeometry::DrawTriangleStrip); second->setGeometry(g2); second->setFlag(QSGNode::OwnsGeometry);
-                auto *m2 = new QSGFlatColorMaterial; m2->setColor(QColor("#4e79e7")); second->setMaterial(m2); second->setFlag(QSGNode::OwnsMaterial); root->appendChildNode(second); root->cursorNode2 = second;
+                g2->setDrawingMode(QSGGeometry::DrawTriangleStrip);
+                second->setGeometry(g2);
+                second->setFlag(QSGNode::OwnsGeometry);
+                auto *m2 = new QSGFlatColorMaterial;
+                m2->setColor(QColor("#4e79e7"));
+                second->setMaterial(m2);
+                second->setFlag(QSGNode::OwnsMaterial);
+                root->appendChildNode(second);
+                root->cursorNode2 = second;
             }
             auto *second = root->cursorNode2;
             const double x2 = (m_cursorX2 - m_xMinimum) / xs * width();
-            auto *g2 = second->geometry(); g2->allocate(4); auto *v2 = static_cast<QSGGeometry::Point2D *>(g2->vertexData());
-            v2[0].set(x2 - .75, 0); v2[1].set(x2 + .75, 0); v2[2].set(x2 - .75, height()); v2[3].set(x2 + .75, height()); g2->markVertexDataDirty(); second->markDirty(QSGNode::DirtyGeometry);
+            auto *g2 = second->geometry();
+            g2->allocate(4);
+            auto *v2 = static_cast<QSGGeometry::Point2D *>(g2->vertexData());
+            v2[0].set(x2 - .75, 0);
+            v2[1].set(x2 + .75, 0);
+            v2[2].set(x2 - .75, height());
+            v2[3].set(x2 + .75, height());
+            g2->markVertexDataDirty();
+            second->markDirty(QSGNode::DirtyGeometry);
         } else if (root->cursorNode2 && root->cursorNode2->geometry()) {
             root->cursorNode2->geometry()->allocate(0);
             root->cursorNode2->geometry()->markVertexDataDirty();
@@ -553,8 +567,37 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     }
     return root;
 }
-void PlotItem::geometryChange(const QRectF &n,const QRectF &o){QQuickItem::geometryChange(n,o);requestLod();update();}
-void PlotItem::mousePressEvent(QMouseEvent *e){if(e->button()!=Qt::LeftButton&&e->button()!=Qt::MiddleButton)return;emit activated();int cursorIndex=0;{QMutexLocker lock(&m_dataMutex);if(cursorHit(e->position().x(),&cursorIndex)){m_cursorDragIndex=cursorIndex;m_dragging=false;e->accept();return;}}m_cursorDragIndex=0;m_dragging=true;m_dragStartPixel=e->position();m_dragStartXMinimum=m_xMinimum;m_dragStartXMaximum=m_xMaximum;m_dragStartYMinimum=m_yMinimum;m_dragStartYMaximum=m_yMaximum;e->accept();}
+void PlotItem::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
+{
+    QQuickItem::geometryChange(newGeometry, oldGeometry);
+    requestLod();
+    update();
+}
+
+void PlotItem::mousePressEvent(QMouseEvent *e)
+{
+    if (e->button() != Qt::LeftButton && e->button() != Qt::MiddleButton) return;
+    emit activated();
+    int cursorIndex = 0;
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (cursorHit(e->position().x(), &cursorIndex)) {
+            m_cursorDragIndex = cursorIndex;
+            m_dragging = false;
+            e->accept();
+            return;
+        }
+    }
+    m_cursorDragIndex = 0;
+    m_dragging = true;
+    m_dragStartPixel = e->position();
+    m_dragStartXMinimum = m_xMinimum;
+    m_dragStartXMaximum = m_xMaximum;
+    m_dragStartYMinimum = m_yMinimum;
+    m_dragStartYMaximum = m_yMaximum;
+    e->accept();
+}
+
 void PlotItem::mouseMoveEvent(QMouseEvent *e)
 {
     if (m_cursorDragIndex) {
@@ -577,9 +620,31 @@ void PlotItem::mouseMoveEvent(QMouseEvent *e)
              m_dragStartYMinimum + d.y() / qMax(height(), 1.) * ys, m_dragStartYMaximum + d.y() / qMax(height(), 1.) * ys);
     e->accept();
 }
-void PlotItem::mouseReleaseEvent(QMouseEvent *e){m_dragging=false;m_cursorDragIndex=0;e->accept();}
-void PlotItem::hoverMoveEvent(QHoverEvent *e){Q_UNUSED(e);}
-void PlotItem::wheelEvent(QWheelEvent *e){const double f=e->angleDelta().y()>0?.85:1/.85;const QPointF a=pixelToData(e->position());setRange(a.x()-(a.x()-m_xMinimum)*f,a.x()+(m_xMaximum-a.x())*f,a.y()-(a.y()-m_yMinimum)*f,a.y()+(m_yMaximum-a.y())*f);e->accept();}
+
+void PlotItem::mouseReleaseEvent(QMouseEvent *e)
+{
+    m_dragging = false;
+    m_cursorDragIndex = 0;
+    e->accept();
+}
+
+void PlotItem::hoverMoveEvent(QHoverEvent *e)
+{
+    Q_UNUSED(e);
+}
+
+void PlotItem::wheelEvent(QWheelEvent *e)
+{
+    // Zoom both axes around the pointer position.
+    const double factor = e->angleDelta().y() > 0 ? .85 : 1 / .85;
+    const QPointF anchor = pixelToData(e->position());
+    setRange(anchor.x() - (anchor.x() - m_xMinimum) * factor,
+             anchor.x() + (m_xMaximum - anchor.x()) * factor,
+             anchor.y() - (anchor.y() - m_yMinimum) * factor,
+             anchor.y() + (m_yMaximum - anchor.y()) * factor);
+    e->accept();
+}
+
 void PlotItem::setRange(double xmin,double xmax,double ymin,double ymax)
 {
     if (!qIsFinite(xmin) || !qIsFinite(xmax) || !qIsFinite(ymin) || !qIsFinite(ymax)

@@ -532,218 +532,34 @@ Rectangle {
         }
     }
 
-    MouseArea {
+    PlotAxisArea {
+        objectName: "xAxisArea"
+        axis: 0
+        plot: root
+        renderer: plotItem
         x: axisRect.x; y: axisRect.y + axisRect.height
         width: axisRect.width; height: root.axisBottom
-        acceptedButtons: Qt.LeftButton
-        hoverEnabled: true
-        cursorShape: Qt.BlankCursor
-        onEntered: {
-            root.hoveredAxis = 0
-            root.updateAxisCursor("qrc:/icons/zoom-x.svg", x + mouseX, y + mouseY, true)
-        }
-        onExited: if (!root.axisSelecting) {
-            root.hoveredAxis = -1
-            root.updateAxisCursor("", 0, 0, false)
-        }
-        onPressed: function(mouse) {
-            root.updateAxisCursor("qrc:/icons/zoom-x.svg", x + mouse.x, y + mouse.y, true)
-            root.beginAxisSelection(0, Math.max(0, Math.min(1, mouse.x / width)))
-        }
-        onPositionChanged: function(mouse) {
-            root.updateAxisCursor("qrc:/icons/zoom-x.svg", x + mouse.x, y + mouse.y, true)
-            if (root.axisSelecting && root.axisSelection === 0)
-                root.updateAxisSelection(Math.max(0, Math.min(1, mouse.x / width)))
-        }
-        onReleased: function(mouse) {
-            root.finishAxisSelection()
-            if (!containsMouse) {
-                root.hoveredAxis = -1
-                root.updateAxisCursor("", 0, 0, false)
-            }
-        }
-        onCanceled: {
-            root.axisSelecting = false
-            root.axisSelection = -1
-            root.hoveredAxis = -1
-            root.updateAxisCursor("", 0, 0, false)
-        }
-        onWheel: function(wheel) {
-            plotItem.zoomAxis(0, wheel.x / width, wheel.angleDelta.y / 120)
-            wheel.accepted = true
-        }
     }
-    MouseArea {
-        x: 0; y: axisRect.y; width: root.axisLeft; height: axisRect.height
-        acceptedButtons: Qt.LeftButton
-        hoverEnabled: true
-        cursorShape: Qt.BlankCursor
-        onEntered: {
-            root.hoveredAxis = 1
-            root.updateAxisCursor("qrc:/icons/zoom-y.svg", x + mouseX, y + mouseY, true)
-        }
-        onExited: if (!root.axisSelecting) {
-            root.hoveredAxis = -1
-            root.updateAxisCursor("", 0, 0, false)
-        }
-        onPressed: function(mouse) {
-            root.updateAxisCursor("qrc:/icons/zoom-y.svg", x + mouse.x, y + mouse.y, true)
-            root.beginAxisSelection(1, Math.max(0, Math.min(1, mouse.y / height)))
-        }
-        onPositionChanged: function(mouse) {
-            root.updateAxisCursor("qrc:/icons/zoom-y.svg", x + mouse.x, y + mouse.y, true)
-            if (root.axisSelecting && root.axisSelection === 1)
-                root.updateAxisSelection(Math.max(0, Math.min(1, mouse.y / height)))
-        }
-        onReleased: function(mouse) {
-            root.finishAxisSelection()
-            if (!containsMouse) {
-                root.hoveredAxis = -1
-                root.updateAxisCursor("", 0, 0, false)
-            }
-        }
-        onCanceled: {
-            root.axisSelecting = false
-            root.axisSelection = -1
-            root.hoveredAxis = -1
-            root.updateAxisCursor("", 0, 0, false)
-        }
-        onWheel: function(wheel) {
-            plotItem.zoomAxis(1, wheel.y / height, wheel.angleDelta.y / 120)
-            wheel.accepted = true
-        }
+    PlotAxisArea {
+        objectName: "yAxisArea"
+        axis: 1
+        plot: root
+        renderer: plotItem
+        x: 0; y: axisRect.y
+        width: root.axisLeft; height: axisRect.height
     }
-
-    Flow {
+    PlotLegend {
         id: legend
         x: 30
         y: 1
         width: Math.max(1, root.width - 36)
-        visible: legendRepeater.count > 0
-        spacing: 0
         z: 5
-
-        Repeater {
-            id: legendRepeater
-            model: root.controller.plotStateRevision >= 0
-                   ? root.controller.plotSignalRows(root.plotIndex) : []
-            delegate: Item {
-                required property int modelData
-                property int signalRow: modelData
-                property int styleRevision: root.controller.plotStateRevision
-                property color previewColor: styleRevision >= 0
-                                             ? root.controller.signalColor(signalRow)
-                                             : "transparent"
-                implicitWidth: Math.min(legend.width,
-                                        legendLabel.implicitWidth + 30)
-                implicitHeight: Math.max(14, legendLabel.implicitHeight + 1)
-                Rectangle {
-                    anchors.fill: parent
-                    color: root.darkTheme ? "#334658" : "#dfedfa"
-                    visible: plotItem.highlightedSeries === parent.signalRow
-                    radius: 2
-                }
-
-                Rectangle {
-                    objectName: "legendColorSquare"
-                    width: 8
-                    height: 8
-                    radius: 0
-                    anchors.left: parent.left
-                    anchors.leftMargin: 4
-                    anchors.verticalCenter: parent.verticalCenter
-                    color: parent.previewColor
-                }
-                Label {
-                    id: legendLabel
-                    anchors.left: parent.left
-                    anchors.leftMargin: 22
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: Math.max(0, parent.width - 22)
-                    text: root.controller.signalName(parent.signalRow)
-                    font.bold: plotItem.highlightedSeries === parent.signalRow
-                    elide: Text.ElideRight
-                    color: root.textColor
-                    font.pixelSize: 10
-                }
-                MouseArea {
-                    id: legendMouse
-                    anchors.fill: parent
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    property point pressPoint
-                    property bool moving: false
-                    property var destination: null
-                    cursorShape: moving ? Qt.ClosedHandCursor : Qt.OpenHandCursor
-                    function clearDestination() {
-                        if (destination) destination.dropHighlighted = false
-                        destination = null
-                    }
-                    onPressed: function(mouse) {
-                        pressPoint = Qt.point(mouse.x, mouse.y)
-                        moving = false
-                    }
-                    onPositionChanged: function(mouse) {
-                        if (!(pressedButtons & Qt.LeftButton)) return
-                        if (!moving && Math.hypot(mouse.x - pressPoint.x, mouse.y - pressPoint.y) < 8) return
-                        moving = true
-                        const previewPoint = mapToItem(dragPreview.parent, mouse.x, mouse.y)
-                        dragPreview.x = Math.max(0, Math.min(dragPreview.parent.width - dragPreview.width, previewPoint.x + 14))
-                        dragPreview.y = Math.max(0, Math.min(dragPreview.parent.height - dragPreview.height, previewPoint.y + 16))
-                        dragPreview.signalName = root.controller.signalName(parent.signalRow)
-                        dragPreview.signalColor = parent.previewColor
-                        root.legendDragging = true
-                        clearDestination()
-                        for (const candidate of root.parent.children) {
-                            if (candidate === root || !candidate.visible || candidate.renderer === undefined) continue
-                            const point = mapToItem(candidate, mouse.x, mouse.y)
-                            if (point.x >= 0 && point.y >= 0 && point.x < candidate.width && point.y < candidate.height) {
-                                destination = candidate
-                                destination.dropHighlighted = true
-                                break
-                            }
-                        }
-                    }
-                    onReleased: {
-                        root.legendDragging = false
-                        if (moving && destination) {
-                            const controller = root.controller
-                            const from = root.plotIndex
-                            const to = destination.plotIndex
-                            const row = parent.signalRow
-                            // Moving changes the legend models and destroys this delegate.
-                            Qt.callLater(function() { controller.moveLegendSignal(from, to, row) })
-                        }
-                        clearDestination()
-                    }
-                    onCanceled: { root.legendDragging = false; moving = false; clearDestination() }
-                    Component.onDestruction: root.legendDragging = false
-                    onClicked: function(mouse) {
-                        if (moving) return
-                        root.controller.setActivePlot(root.plotIndex)
-                        if (mouse.button === Qt.RightButton) legendMenu.popup()
-                        else root.controller.revealLegendSignal(root.plotIndex, parent.signalRow)
-                    }
-                    Menu {
-                        id: legendMenu
-                        MenuItem {
-                            text: "移除“" + root.controller.signalName(modelData) + "”"
-                            onTriggered: root.controller.removeLegendSignal(root.plotIndex, modelData)
-                        }
-                        MenuSeparator { }
-                        MenuItem {
-                            text: "自适应当前 Y 轴"
-                            icon.source: "qrc:/icons/arrows_up_down.svg"
-                            onTriggered: root.controller.fitPlotY(root.plotIndex)
-                        }
-                        MenuItem {
-                            text: "清除当前子图所有信号"
-                            icon.source: "qrc:/icons/clear.svg"
-                            onTriggered: root.controller.clearPlotSignals(root.plotIndex)
-                        }
-                    }
-                }
-            }
-        }
+        plot: root
+        controller: root.controller
+        renderer: plotItem
+        dragPreview: dragPreview
+        darkTheme: root.darkTheme
+        textColor: root.textColor
     }
 
     Label {

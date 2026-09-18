@@ -140,17 +140,27 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 ## 项目结构
 
 ```text
-qml/Main.qml              Qt Quick 主界面
-qml/QuickPlot.qml         单个子图的 QML 外壳、坐标轴和图例
-src/quick/plotitem.*      Scene Graph GPU 曲线项、视图交互和节点提交
-src/quick/render/*        原始序列 Store、LOD 构建器、异步调度器和几何构建器
-src/quick/appcontroller.* 加载队列、会话状态、信号选择和子图绑定
-src/quick/dataloadworker.* 后台加载调度及 CSV/TXT/MAT 解析
-src/quick/dataexportworker.* 后台 Excel 导出调度、进度和取消
-src/quick/xlsxreader.*     XLSX 工作簿、多工作表和单元格解析
-src/quick/xlsxwriter.*     XLSX 工作簿写入、工作表拆分和原子保存
-src/quick/loadedtable.h   加载结果值类型及跨线程元类型声明
-src/quick/signalmodel.*   QML 信号列表模型
-renderer_research.md      后端选型与性能设计调研
-tools/deploy_qt6.ps1      Windows 部署脚本
+qml/Main.qml                       Qt Quick 主界面、工具栏、信号树和子图网格
+qml/QuickPlot.qml                  单个子图：坐标轴、网格、游标读数、右键菜单
+qml/PlotLegend.qml                 子图顶部换行图例（点击定位、拖拽跨图移动、右键菜单）
+qml/PlotAxisArea.qml               X/Y 轴留白区的悬停、框选与滚轮缩放
+src/quick/plotitem.*               Scene Graph GPU 曲线项、视图交互和节点提交
+src/quick/render/*                 原始序列 Store、LOD 构建器、异步调度器和几何构建器
+src/quick/appcontroller.h          会话控制器接口
+src/quick/appcontroller.cpp        生命周期、工作线程、状态/进度
+src/quick/appcontroller_loading.cpp 导入队列、文件移除、Excel 导出
+src/quick/appcontroller_plots.cpp  子图绑定、图例动作、布局与自适应
+src/quick/dataloadworker.*         后台加载调度及 CSV/TXT/MAT 解析
+src/quick/dataexportworker.*       后台 Excel 导出调度、进度和取消
+src/quick/xlsxreader.*             XLSX 工作簿、多工作表和单元格解析
+src/quick/xlsxwriter.*             XLSX 工作簿写入、工作表拆分和原子保存
+src/quick/loadedtable.h            加载结果值类型及跨线程元类型声明
+src/quick/signalmodel.*            QML 信号树模型
+tests/                             CTest 套件（渲染核心、LOD、信号选择、控制器、XLSX）
+tools/deploy_qt6.ps1               Windows 部署脚本
+docs/mcp-*.md                      各次功能/修复的说明
+docs/archive/                      历史设计、计划与调研（renderer_research 等）
 ```
+
+旧版 QWidget/QCustomPlot 实现（`src/core`、`src/plot`、`src/ui`、`src/script`、`src/data`）已于提交
+`8d2b6bb` 之后移除，如需参考请查看 git 历史。

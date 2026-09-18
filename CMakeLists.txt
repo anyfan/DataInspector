@@ -9,95 +9,163 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 QuickDialogs2)
 option(ENABLE_MAT "Enable MAT file loading (requires LLVM-MinGW compatible matio/HDF5)" ON)
+option(ENABLE_GPU_TESTS "Run native-window GPU raster regression (requires graphics session)" OFF)
+set(DATAINSPECTOR_BIN_DIR "bin" CACHE STRING "Application output subdirectory")
+
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 QuickDialogs2)
 qt_standard_project_setup(REQUIRES 6.8)
 
-qt_add_executable(DataInspector
-    src/quick/main.cpp
-    src/quick/appcontroller.cpp
-    src/quick/appcontroller.h
-    src/quick/dataloadworker.cpp
-    src/quick/dataloadworker.h
-    src/quick/dataexportworker.cpp
-    src/quick/dataexportworker.h
-    src/quick/xlsxreader.cpp
-    src/quick/xlsxreader.h
-    src/quick/xlsxwriter.cpp
-    src/quick/xlsxwriter.h
-    src/quick/loadedtable.h
-    src/quick/plotitem.cpp
-    src/quick/plotitem.h
-    src/quick/signalmodel.cpp
-    src/quick/signalmodel.h
-    src/quick/signalmetadata.cpp
-    src/quick/signalmetadata.h
+# ---------------------------------------------------------------------------
+# Shared source lists
+# ---------------------------------------------------------------------------
+set(DI_QUICK_DIR ${CMAKE_SOURCE_DIR}/src/quick)
+
+set(DI_RENDER_SOURCES
+    ${DI_QUICK_DIR}/render/plotseriesstore.cpp
+    ${DI_QUICK_DIR}/render/plotseriesstore.h
+    ${DI_QUICK_DIR}/render/plotlodbuilder.cpp
+    ${DI_QUICK_DIR}/render/plotlodbuilder.h
+    ${DI_QUICK_DIR}/render/plotlodscheduler.cpp
+    ${DI_QUICK_DIR}/render/plotlodscheduler.h
+    ${DI_QUICK_DIR}/render/plotgeometrybuilder.cpp
+    ${DI_QUICK_DIR}/render/plotgeometrybuilder.h
 )
 
-set_source_files_properties(qml/Main.qml PROPERTIES QT_RESOURCE_ALIAS Main.qml)
-set_source_files_properties(qml/QuickPlot.qml PROPERTIES QT_RESOURCE_ALIAS QuickPlot.qml)
-qt_add_qml_module(DataInspector
-    URI DataInspector
-    VERSION 1.0
-    QML_FILES qml/Main.qml qml/QuickPlot.qml
+set(DI_PLOTITEM_SOURCES
+    ${DI_QUICK_DIR}/plotitem.cpp
+    ${DI_QUICK_DIR}/plotitem.h
 )
 
-qt_add_resources(DataInspector toolbar_icons
-    PREFIX "/icons"
-    BASE assets/icon
-    FILES
-        assets/icon/zoom-in.svg
-        assets/icon/zoom-out.svg
-        assets/icon/zoom-x.svg
-        assets/icon/zoom-y.svg
-        assets/icon/fullscreen.svg
-        assets/icon/fullscreen-exit.svg
-        assets/icon/arrows-angle-expand.svg
-        assets/icon/arrows-angle-contract.svg
-        assets/icon/fit-view.svg
-        assets/icon/settings.svg
-        assets/icon/layout-single.svg
-        assets/icon/layout-rows.svg
-        assets/icon/layout-columns.svg
-        assets/icon/grid.svg
-        assets/icon/cursor_1.svg
-        assets/icon/cursor_2.svg
-        assets/icon/clear.svg
-        assets/icon/download.svg
-        assets/icon/arrows_left_right.svg
-        assets/icon/arrows_up_down.svg
+set(DI_SIGNAL_SOURCES
+    ${DI_QUICK_DIR}/signalmetadata.cpp
+    ${DI_QUICK_DIR}/signalmetadata.h
+    ${DI_QUICK_DIR}/signalmodel.cpp
+    ${DI_QUICK_DIR}/signalmodel.h
 )
 
-target_include_directories(DataInspector PRIVATE src/quick)
-target_include_directories(DataInspector PRIVATE
-    third_libs/matio-1.5.28/include
-    third_libs/hdf5-1.14.6/include
-    third_libs/zlib131/include
+set(DI_XLSX_SOURCES
+    ${DI_QUICK_DIR}/xlsxreader.cpp
+    ${DI_QUICK_DIR}/xlsxreader.h
+    ${DI_QUICK_DIR}/xlsxwriter.cpp
+    ${DI_QUICK_DIR}/xlsxwriter.h
+    ${DI_QUICK_DIR}/loadedtable.h
 )
 
+set(DI_CONTROLLER_SOURCES
+    ${DI_QUICK_DIR}/appcontroller.cpp
+    ${DI_QUICK_DIR}/appcontroller_loading.cpp
+    ${DI_QUICK_DIR}/appcontroller_plots.cpp
+    ${DI_QUICK_DIR}/appcontroller.h
+    ${DI_QUICK_DIR}/dataloadworker.cpp
+    ${DI_QUICK_DIR}/dataloadworker.h
+    ${DI_QUICK_DIR}/dataexportworker.cpp
+    ${DI_QUICK_DIR}/dataexportworker.h
+    ${DI_XLSX_SOURCES}
+    ${DI_PLOTITEM_SOURCES}
+    ${DI_SIGNAL_SOURCES}
+)
+
+set(DI_ICON_FILES
+    assets/icon/zoom-in.svg
+    assets/icon/zoom-out.svg
+    assets/icon/zoom-x.svg
+    assets/icon/zoom-y.svg
+    assets/icon/fullscreen.svg
+    assets/icon/fullscreen-exit.svg
+    assets/icon/arrows-angle-expand.svg
+    assets/icon/arrows-angle-contract.svg
+    assets/icon/fit-view.svg
+    assets/icon/settings.svg
+    assets/icon/layout-single.svg
+    assets/icon/layout-rows.svg
+    assets/icon/layout-columns.svg
+    assets/icon/grid.svg
+    assets/icon/cursor_1.svg
+    assets/icon/cursor_2.svg
+    assets/icon/clear.svg
+    assets/icon/download.svg
+    assets/icon/arrows_left_right.svg
+    assets/icon/arrows_up_down.svg
+)
+
+set(DI_QML_FILES
+    qml/Main.qml
+    qml/QuickPlot.qml
+    qml/PlotLegend.qml
+    qml/PlotAxisArea.qml
+)
+
+# Adds the qrc:/icons resource set to a target.
+function(di_add_icon_resources target)
+    qt_add_resources(${target} ${target}_icons
+        PREFIX "/icons"
+        BASE assets/icon
+        FILES ${DI_ICON_FILES}
+    )
+endfunction()
+
+# ---------------------------------------------------------------------------
+# Optional MAT (matio + HDF5 + zlib, prebuilt for LLVM-MinGW)
+# ---------------------------------------------------------------------------
 if(ENABLE_MAT)
     add_compile_definitions(ENABLE_MAT)
     add_library(zlib_qt6 STATIC IMPORTED)
-    set_target_properties(zlib_qt6 PROPERTIES IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/zlib131/lib/libzlibstatic.a")
+    set_target_properties(zlib_qt6 PROPERTIES
+        IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/zlib131/lib/libzlibstatic.a")
     add_library(hdf5_qt6 STATIC IMPORTED)
-    set_target_properties(hdf5_qt6 PROPERTIES IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/hdf5-1.14.6/lib/libhdf5.a")
+    set_target_properties(hdf5_qt6 PROPERTIES
+        IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/hdf5-1.14.6/lib/libhdf5.a")
     target_link_libraries(hdf5_qt6 INTERFACE zlib_qt6)
     add_library(matio_qt6 STATIC IMPORTED)
-    set_target_properties(matio_qt6 PROPERTIES IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/matio-1.5.28/lib/libmatio.a")
+    set_target_properties(matio_qt6 PROPERTIES
+        IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/third_libs/matio-1.5.28/lib/libmatio.a")
     target_link_libraries(matio_qt6 INTERFACE hdf5_qt6)
+
+    # Interface target that carries includes plus the transitive system
+    # libraries HDF5's static Windows archive does not record itself.
+    add_library(di_mat INTERFACE)
+    target_include_directories(di_mat INTERFACE
+        third_libs/matio-1.5.28/include
+        third_libs/hdf5-1.14.6/include
+        third_libs/zlib131/include
+    )
+    target_link_libraries(di_mat INTERFACE matio_qt6 m ws2_32 wsock32 shlwapi advapi32)
 endif()
+
+# ---------------------------------------------------------------------------
+# Render core (no QObject GUI dependencies; shared by app and tests)
+# ---------------------------------------------------------------------------
+add_library(plot_render_core STATIC ${DI_RENDER_SOURCES})
+target_include_directories(plot_render_core PUBLIC src/quick)
+target_link_libraries(plot_render_core PUBLIC Qt6::Core Qt6::Gui)
+
+# ---------------------------------------------------------------------------
+# Application
+# ---------------------------------------------------------------------------
+qt_add_executable(DataInspector
+    src/quick/main.cpp
+    ${DI_CONTROLLER_SOURCES}
+)
+
+foreach(qml_file IN LISTS DI_QML_FILES)
+    get_filename_component(qml_alias ${qml_file} NAME)
+    set_source_files_properties(${qml_file} PROPERTIES QT_RESOURCE_ALIAS ${qml_alias})
+endforeach()
+qt_add_qml_module(DataInspector
+    URI DataInspector
+    VERSION 1.0
+    QML_FILES ${DI_QML_FILES}
+)
+di_add_icon_resources(DataInspector)
+
+target_include_directories(DataInspector PRIVATE src/quick)
 target_link_libraries(DataInspector PRIVATE
     Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Qml Qt6::Quick
     Qt6::QuickControls2 Qt6::QuickDialogs2 plot_render_core
 )
 if(ENABLE_MAT)
-    # HDF5's static Windows build does not carry transitive system libraries
-    # in the archive. Keep them explicit so the same LLVM-MinGW ABI is used
-    # regardless of which Qt module happens to pull them in first.
-    target_link_libraries(DataInspector PRIVATE
-        matio_qt6
-        m ws2_32 wsock32 shlwapi advapi32
-    )
+    target_link_libraries(DataInspector PRIVATE di_mat)
 endif()
 
 if(MSVC)
@@ -106,151 +174,67 @@ else()
     target_compile_options(DataInspector PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
-set(DATAINSPECTOR_BIN_DIR "bin" CACHE STRING "Application output subdirectory")
 set_target_properties(DataInspector PROPERTIES
     WIN32_EXECUTABLE TRUE
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${DATAINSPECTOR_BIN_DIR}"
 )
 
-add_library(plot_render_core STATIC
-    src/quick/render/plotseriesstore.cpp
-    src/quick/render/plotseriesstore.h
-    src/quick/render/plotlodbuilder.cpp
-    src/quick/render/plotlodscheduler.cpp
-    src/quick/render/plotlodscheduler.h
-    src/quick/render/plotlodbuilder.h
-    src/quick/render/plotgeometrybuilder.cpp
-    src/quick/render/plotgeometrybuilder.h
-)
-target_include_directories(plot_render_core PUBLIC src/quick)
-target_link_libraries(plot_render_core PUBLIC Qt6::Core Qt6::Gui)
-
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
 if(BUILD_TESTING)
     find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+
+    # Registers a CTest that can find the Qt DLLs; extra args are passed to the binary.
+    function(di_add_test target)
+        add_test(NAME ${target}
+            COMMAND ${CMAKE_COMMAND} -E env
+                "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+                $<TARGET_FILE:${target}> ${ARGN}
+        )
+    endfunction()
+
     add_executable(rendercore_test tests/rendercore_test.cpp)
     target_link_libraries(rendercore_test PRIVATE plot_render_core Qt6::Test)
-    add_test(NAME rendercore_test
-        COMMAND ${CMAKE_COMMAND} -E env
-            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
-            $<TARGET_FILE:rendercore_test>
-    )
+    di_add_test(rendercore_test)
 
-    add_executable(plotitem_lod_test
-        tests/plotitem_lod_test.cpp
-        src/quick/plotitem.cpp
-        src/quick/plotitem.h
-    )
+    add_executable(plotitem_lod_test tests/plotitem_lod_test.cpp ${DI_PLOTITEM_SOURCES})
     target_include_directories(plotitem_lod_test PRIVATE src/quick)
     target_link_libraries(plotitem_lod_test PRIVATE Qt6::Core Qt6::Gui Qt6::Quick plot_render_core)
-    add_test(NAME plotitem_lod_test
-        COMMAND ${CMAKE_COMMAND} -E env
-            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
-            $<TARGET_FILE:plotitem_lod_test> -platform offscreen
-    )
+    di_add_test(plotitem_lod_test -platform offscreen)
 
-    add_executable(signalselection_test
-        tests/signalselection_test.cpp
-        src/quick/signalmetadata.cpp
-        src/quick/signalmetadata.h
-        src/quick/signalmodel.cpp
-        src/quick/signalmodel.h
-    )
+    add_executable(signalselection_test tests/signalselection_test.cpp ${DI_SIGNAL_SOURCES})
     target_include_directories(signalselection_test PRIVATE src/quick)
     target_link_libraries(signalselection_test PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
-    add_test(NAME signalselection_test
-        COMMAND ${CMAKE_COMMAND} -E env
-            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
-            $<TARGET_FILE:signalselection_test>
-    )
+    di_add_test(signalselection_test)
 
-    add_executable(appcontroller_test
-        tests/appcontroller_test.cpp
-        src/quick/appcontroller.cpp
-        src/quick/appcontroller.h
-        src/quick/dataloadworker.cpp
-        src/quick/dataloadworker.h
-        src/quick/dataexportworker.cpp
-        src/quick/dataexportworker.h
-        src/quick/xlsxreader.cpp
-        src/quick/xlsxreader.h
-        src/quick/xlsxwriter.cpp
-        src/quick/xlsxwriter.h
-        src/quick/loadedtable.h
-        src/quick/plotitem.cpp
-        src/quick/plotitem.h
-        src/quick/signalmetadata.cpp
-        src/quick/signalmetadata.h
-        src/quick/signalmodel.cpp
-        src/quick/signalmodel.h
-    )
+    add_executable(appcontroller_test tests/appcontroller_test.cpp ${DI_CONTROLLER_SOURCES})
     target_include_directories(appcontroller_test PRIVATE src/quick)
     target_link_libraries(appcontroller_test PRIVATE
         Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core
     )
-    qt_add_resources(appcontroller_test test_axis_cursor_icons
-        PREFIX "/icons"
-        BASE assets/icon
-        FILES
-            assets/icon/zoom-in.svg
-            assets/icon/zoom-out.svg
-            assets/icon/zoom-x.svg
-            assets/icon/zoom-y.svg
-            assets/icon/fullscreen.svg
-            assets/icon/fullscreen-exit.svg
-            assets/icon/arrows-angle-expand.svg
-            assets/icon/arrows-angle-contract.svg
-            assets/icon/fit-view.svg
-            assets/icon/settings.svg
-            assets/icon/layout-single.svg
-            assets/icon/layout-rows.svg
-            assets/icon/layout-columns.svg
-            assets/icon/grid.svg
-            assets/icon/cursor_1.svg
-            assets/icon/cursor_2.svg
-            assets/icon/clear.svg
-            assets/icon/download.svg
-            assets/icon/arrows_left_right.svg
-            assets/icon/arrows_up_down.svg
+    di_add_icon_resources(appcontroller_test)
+    # The QML tests load qml/*.qml from the source tree; sibling components
+    # resolve through the module qmldir, which prefers the qrc copy.
+    qt_add_resources(appcontroller_test appcontroller_test_qml
+        PREFIX "/qt/qml/DataInspector"
+        BASE qml
+        FILES ${DI_QML_FILES}
     )
     if(ENABLE_MAT)
-        target_include_directories(appcontroller_test PRIVATE
-            third_libs/matio-1.5.28/include
-            third_libs/hdf5-1.14.6/include
-            third_libs/zlib131/include
-        )
-        target_link_libraries(appcontroller_test PRIVATE
-            matio_qt6 m ws2_32 wsock32 shlwapi advapi32
-        )
+        target_link_libraries(appcontroller_test PRIVATE di_mat)
     endif()
-    add_test(NAME appcontroller_test
-        COMMAND ${CMAKE_COMMAND} -E env
-            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
-            $<TARGET_FILE:appcontroller_test> -platform offscreen
-    )
+    di_add_test(appcontroller_test -platform offscreen)
 
-    add_executable(xlsxwriter_test
-        tests/xlsxwriter_test.cpp
-        src/quick/xlsxwriter.cpp
-        src/quick/xlsxwriter.h
-        src/quick/xlsxreader.cpp
-        src/quick/xlsxreader.h
-        src/quick/loadedtable.h
-    )
+    add_executable(xlsxwriter_test tests/xlsxwriter_test.cpp ${DI_XLSX_SOURCES})
     target_include_directories(xlsxwriter_test PRIVATE src/quick)
     target_link_libraries(xlsxwriter_test PRIVATE
         Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Test plot_render_core
     )
-    add_test(NAME xlsxwriter_test
-        COMMAND ${CMAKE_COMMAND} -E env
-            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
-            $<TARGET_FILE:xlsxwriter_test>
-    )
-endif()
+    di_add_test(xlsxwriter_test)
 
-if(BUILD_TESTING)
-    add_executable(plotitem_raster_test tests/plotitem_raster_test.cpp src/quick/plotitem.cpp src/quick/plotitem.h)
+    add_executable(plotitem_raster_test tests/plotitem_raster_test.cpp ${DI_PLOTITEM_SOURCES})
     target_link_libraries(plotitem_raster_test PRIVATE Qt6::Quick plot_render_core)
-    option(ENABLE_GPU_TESTS "Run native-window GPU raster regression (requires graphics session)" OFF)
     if(ENABLE_GPU_TESTS)
         add_test(NAME plotitem_raster_test COMMAND ${CMAKE_COMMAND} -E env
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"

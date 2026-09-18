@@ -245,7 +245,10 @@ void DataLoadWorker::loadCsv(const QString &path)
     table.name = QFileInfo(path).completeBaseName();
     table.values.resize(headers.size() - 1);
     table.monotonicTimes.fill(true, headers.size() - 1);
-    for (int i = 1; i < headers.size(); ++i) { const QString n = headers.at(i).trimmed(); table.signalNames.append(n.isEmpty() ? QStringLiteral("Signal %1").arg(i) : n); }
+    for (int i = 1; i < headers.size(); ++i) {
+        const QString name = headers.at(i).trimmed();
+        table.signalNames.append(name.isEmpty() ? QStringLiteral("Signal %1").arg(i) : name);
+    }
     const qsizetype estimatedRows = fileSize > 0
         ? static_cast<qsizetype>(fileSize / qMax<qsizetype>(headerLine.size(), 50)) : 0;
     table.time.reserve(estimatedRows);
