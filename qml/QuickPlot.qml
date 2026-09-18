@@ -256,6 +256,9 @@ Rectangle {
     }
 
     property bool dropHighlighted: false
+    focus: root.controller.activePlotIndex === root.plotIndex && root.graphCursorMode !== 0
+    Keys.onLeftPressed: plotItem.stepCursor(-1)
+    Keys.onRightPressed: plotItem.stepCursor(1)
     color: plotColor
     border.color: root.dropHighlighted || root.controller.activePlotIndex === root.plotIndex
                   ? "#0078d4" : frameColor

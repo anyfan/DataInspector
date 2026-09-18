@@ -58,6 +58,9 @@ public:
     QVector<PlotSeriesId> visibleSeriesIds() const;
     Q_INVOKABLE void setCursorX(double x, int cursorIndex = 1);
     void setCursorPosition(double x, int cursorIndex = 1);
+    // direction < 0 moves to the previous raw sample, direction > 0 to the next;
+    // cursorIndex 0 steps every cursor enabled by the current mode.
+    Q_INVOKABLE void stepCursor(int direction, int cursorIndex = 0);
     Q_INVOKABLE void fitView();
     Q_INVOKABLE void zoomAxis(int axis, double fraction, double steps);
     Q_INVOKABLE void fitY();

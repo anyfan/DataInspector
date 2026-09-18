@@ -60,6 +60,54 @@ static void uploadLineNode(QSGGeometryNode *node,
     node->markDirty(QSGNode::DirtyGeometry | QSGNode::DirtyMaterial);
 }
 
+std::optional<double> adjacentRawX(const PlotSeriesSnapshot &snapshot,
+                                   double currentX, int direction)
+{
+    if (!qIsFinite(currentX) || direction == 0)
+        return std::nullopt;
+
+    const bool forward = direction > 0;
+    std::optional<double> best;
+    const auto consider = [&](double x) {
+        if (!qIsFinite(x) || (forward ? x <= currentX : x >= currentX))
+            return;
+        if (!best || (forward ? x < *best : x > *best))
+            best = x;
+    };
+
+    for (const PlotSeriesDataPtr &series : snapshot.series) {
+        if (!series) continue;
+        const qsizetype count = series->sampleCount();
+        if (series->monotonicTime) {
+            qsizetype lo = 0;
+            qsizetype hi = count;
+            while (lo < hi) {
+                const qsizetype mid = lo + (hi - lo) / 2;
+                const double x = series->pointAt(mid).x();
+                if (forward ? x <= currentX : x < currentX)
+                    lo = mid + 1;
+                else
+                    hi = mid;
+            }
+            if (forward) {
+                for (qsizetype i = lo; i < count; ++i) {
+                    const double x = series->pointAt(i).x();
+                    if (qIsFinite(x)) { consider(x); break; }
+                }
+            } else {
+                for (qsizetype i = lo - 1; i >= 0; --i) {
+                    const double x = series->pointAt(i).x();
+                    if (qIsFinite(x)) { consider(x); break; }
+                }
+            }
+        } else {
+            for (qsizetype i = 0; i < count; ++i)
+                consider(series->pointAt(i).x());
+        }
+    }
+    return best;
+}
+
 } // namespace
 
 PlotItem::PlotItem(QQuickItem *parent) : QQuickItem(parent)
@@ -183,6 +231,47 @@ void PlotItem::setCursorPosition(double x, int cursorIndex)
         updateCursorValuesLocked();
     }
     emit cursorChanged(); emit cursorDeltaTChanged(); emit cursorValuesChanged(); update();
+}
+
+void PlotItem::stepCursor(int direction, int cursorIndex)
+{
+    if (direction == 0 || cursorIndex < 0 || cursorIndex > 2)
+        return;
+
+    bool changed = false;
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (m_cursorMode == NoCursor)
+            return;
+
+        const int lastTarget = m_cursorMode == DoubleCursor ? 2 : 1;
+        for (int target = 1; target <= lastTarget; ++target) {
+            if (cursorIndex != 0 && target != cursorIndex)
+                continue;
+            const double current = target == 2 ? m_cursorX2 : m_cursorX1;
+            const auto next = adjacentRawX(m_seriesSnapshot, current, direction);
+            if (!next)
+                continue;
+            const double clamped = qBound(m_xMinimum, *next, m_xMaximum);
+            if (clamped == current)
+                continue;
+            if (target == 2)
+                m_cursorX2 = clamped;
+            else
+                m_cursorX1 = clamped;
+            m_cursorX = clamped;
+            changed = true;
+        }
+
+        if (!changed)
+            return;
+        updateCursorValuesLocked();
+    }
+
+    emit cursorChanged();
+    emit cursorDeltaTChanged();
+    emit cursorValuesChanged();
+    update();
 }
 void PlotItem::setSeriesStore(const std::shared_ptr<const PlotSeriesStore> &store)
 {

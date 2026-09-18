@@ -26,6 +26,7 @@ class AppControllerTest final : public QObject
 
 private slots:
     void cursorReadoutsFollowVisibleXRange();
+    void cursorKeyboardStepsAcrossRawSamples();
     void unicodeMatFileNameLoads();
     void detachedPlotsDoNotSynchronize();
     void loadedSignalsBindOnlyToTheActivePlot();
@@ -164,6 +165,61 @@ void AppControllerTest::cursorReadoutsFollowVisibleXRange()
     plot.setXRange(0, 10);
     QCOMPARE(plot.cursorReadouts().size(), 2);
     QCOMPARE(plot.cursorX2(), 8.0);
+}
+
+void AppControllerTest::cursorKeyboardStepsAcrossRawSamples()
+{
+    PlotItem plot;
+    auto store = std::make_shared<PlotSeriesStore>();
+    store->replaceSeries({
+        {1, {0, 2, 5, 9, 10}, {10, 20, 50, 90, 100}, QColor("red")},
+        {2, {0, 3, 4, 5, 12}, {1, 2, 3, 4, 5}, QColor("blue")},
+    });
+    plot.setSeriesStore(store);
+    plot.setVisibleSeries({1, 2});
+    plot.setXRange(0, 12);
+    plot.setCursorMode(PlotItem::DoubleCursor);
+
+    plot.setCursorX(3.4, 1);
+    QCOMPARE(plot.cursorX1(), 3.0);
+    plot.setCursorX(5.4, 2);
+    QCOMPARE(plot.cursorX2(), 5.0);
+
+    plot.stepCursor(1, 1);
+    QCOMPARE(plot.cursorX1(), 4.0);
+    plot.stepCursor(1, 2);
+    QCOMPARE(plot.cursorX2(), 9.0);
+    plot.stepCursor(-1, 2);
+    QCOMPARE(plot.cursorX2(), 5.0);
+    plot.stepCursor(0, 1);
+    QCOMPARE(plot.cursorX1(), 4.0);
+
+    plot.stepCursor(1);
+    QCOMPARE(plot.cursorX1(), 5.0);
+    QCOMPARE(plot.cursorX2(), 9.0);
+    plot.stepCursor(-1);
+    QCOMPARE(plot.cursorX1(), 4.0);
+    QCOMPARE(plot.cursorX2(), 5.0);
+
+    PlotItem duplicates;
+    auto duplicateStore = std::make_shared<PlotSeriesStore>();
+    duplicateStore->replaceSeries({{3, {0, 1, 4, 4, 7}, {0, 1, 2, 3, 4}, QColor("green")}});
+    duplicates.setSeriesStore(duplicateStore);
+    duplicates.setVisibleSeries({3});
+    duplicates.setXRange(0, 7);
+    duplicates.setCursorMode(PlotItem::SingleCursor);
+    duplicates.setCursorX(3.9);
+    QCOMPARE(duplicates.cursorX1(), 4.0);
+    duplicates.stepCursor(1);
+    QCOMPARE(duplicates.cursorX1(), 7.0);
+    duplicates.stepCursor(-1);
+    QCOMPARE(duplicates.cursorX1(), 4.0);
+    duplicates.setCursorX(0.0);
+    duplicates.stepCursor(-1);
+    QCOMPARE(duplicates.cursorX1(), 0.0);
+    duplicates.setCursorX(7.0);
+    duplicates.stepCursor(1);
+    QCOMPARE(duplicates.cursorX1(), 7.0);
 }
 
 void AppControllerTest::unicodeMatFileNameLoads()
@@ -578,6 +634,9 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     item->setParentItem(window.contentItem());
     window.show();
     QTest::qWait(50);
+    item->forceActiveFocus();
+    QTest::keyClick(&window, Qt::Key_Right);
+    QCOMPARE(plot->cursorX1(), 1.0);
     auto *axisCursor = item->findChild<QQuickItem *>("axisZoomCursor");
     QVERIFY(axisCursor);
 
