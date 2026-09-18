@@ -352,6 +352,36 @@ void AppController::removeLegendSignal(int plotIndex, int row)
     ++m_plotStateRevision;
     emit plotBindingsChanged();
 }
+void AppController::clearPlotSignals(int plotIndex)
+{
+    const QVector<int> rows = m_signals->plotRows(plotIndex);
+    if (rows.isEmpty()) return;
+    for (int row : rows) m_signals->setPlotChecked(plotIndex, row, false);
+    refreshPlot(plotIndex, false);
+    ++m_plotStateRevision;
+    emit plotBindingsChanged();
+}
+void AppController::clearAllPlotSignals()
+{
+    // Unbind every drawn signal but keep loaded files and series data.
+    bool changed = false;
+    for (int plotIndex = 0; plotIndex < m_plotRows * m_plotColumns; ++plotIndex) {
+        const QVector<int> rows = m_signals->plotRows(plotIndex);
+        if (rows.isEmpty()) continue;
+        for (int row : rows) m_signals->setPlotChecked(plotIndex, row, false);
+        refreshPlot(plotIndex, false);
+        changed = true;
+    }
+    if (!changed) return;
+    ++m_plotStateRevision;
+    emit plotBindingsChanged();
+    setStatus(QStringLiteral("已清除所有信号"));
+}
+void AppController::fitPlotY(int plotIndex)
+{
+    if (plotIndex < 0 || plotIndex >= m_plots.size() || !m_plots.at(plotIndex)) return;
+    m_plots.at(plotIndex)->fitY();
+}
 void AppController::attachPlot(QObject *plot, int index)
 {
     auto *item = qobject_cast<PlotItem *>(plot);

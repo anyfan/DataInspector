@@ -27,6 +27,7 @@ class AppControllerTest final : public QObject
 private slots:
     void cursorReadoutsFollowVisibleXRange();
     void cursorKeyboardStepsAcrossRawSamples();
+    void draggingCursorPastTheOtherSwapsDrag();
     void unicodeMatFileNameLoads();
     void detachedPlotsDoNotSynchronize();
     void loadedSignalsBindOnlyToTheActivePlot();
@@ -165,6 +166,45 @@ void AppControllerTest::cursorReadoutsFollowVisibleXRange()
     plot.setXRange(0, 10);
     QCOMPARE(plot.cursorReadouts().size(), 2);
     QCOMPARE(plot.cursorX2(), 8.0);
+}
+
+void AppControllerTest::draggingCursorPastTheOtherSwapsDrag()
+{
+    QQuickWindow window;
+    window.resize(400, 200);
+    PlotItem plot;
+    plot.setParentItem(window.contentItem());
+    plot.setSize(QSizeF(400, 200));
+    auto store = std::make_shared<PlotSeriesStore>();
+    QVector<double> xs, ys;
+    for (int i = 0; i <= 100; ++i) { xs.append(i); ys.append(i); }
+    store->replaceSeries({{1, xs, ys, QColor("red")}});
+    plot.setSeriesStore(store); plot.setVisibleSeries({1}); plot.setXRange(0, 100);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    plot.setCursorMode(PlotItem::DoubleCursor);
+    QCOMPARE(plot.cursorX1(), 25.0);
+    QCOMPARE(plot.cursorX2(), 75.0);
+    // Drag cursor 1 (100 px) rightwards past cursor 2 (300 px): the drag hands over.
+    plot.setCursorMode(PlotItem::NoCursor);
+    plot.setXRange(0.4, 100);
+    plot.setCursorMode(PlotItem::DoubleCursor);
+    QCOMPARE(plot.cursorX1(), 25.0); // 25.3 snapped to raw sample
+    QCOMPARE(plot.cursorX2(), 75.0); // 75.1 snapped to raw sample
+    plot.setCursorMode(PlotItem::NoCursor);
+    plot.setXRange(0, 100);
+    plot.setCursorMode(PlotItem::DoubleCursor);
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, QPoint(100, 100));
+    QTest::mouseMove(&window, QPoint(200, 100), 20);
+    QCOMPARE(plot.cursorX1(), 50.0);
+    QCOMPARE(plot.cursorX2(), 75.0);
+    QTest::mouseMove(&window, QPoint(360, 100), 20);
+    QCOMPARE(plot.cursorX1(), 75.0);
+    QCOMPARE(plot.cursorX2(), 90.0);
+    QTest::mouseMove(&window, QPoint(320, 100), 20);
+    QCOMPARE(plot.cursorX1(), 75.0);
+    QCOMPARE(plot.cursorX2(), 80.0);
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, QPoint(320, 100));
 }
 
 void AppControllerTest::cursorKeyboardStepsAcrossRawSamples()
@@ -508,6 +548,19 @@ void AppControllerTest::legendNavigationAndRemoval()
     QCOMPARE(controller.signalModel()->data(controller.signalModel()->index(row), SignalModel::NameRole).toString(), "B");
     controller.removeLegendSignal(0, 1);
     QVERIFY(!controller.plotSignalEnabled(0, 1));
+    QCOMPARE(controller.signalCount(), 2);
+    controller.signalModel()->setPlotChecked(0, 0, true);
+    controller.signalModel()->setPlotChecked(0, 1, true);
+    controller.clearPlotSignals(0);
+    QVERIFY(!controller.plotSignalEnabled(0, 0));
+    QVERIFY(!controller.plotSignalEnabled(0, 1));
+    QCOMPARE(controller.signalCount(), 2);
+    controller.setLayout(1, 2);
+    controller.signalModel()->setPlotChecked(0, 0, true);
+    controller.signalModel()->setPlotChecked(1, 1, true);
+    controller.clearAllPlotSignals();
+    QVERIFY(!controller.plotSignalEnabled(0, 0));
+    QVERIFY(!controller.plotSignalEnabled(1, 1));
     QCOMPARE(controller.signalCount(), 2);
 }
 

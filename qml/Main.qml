@@ -492,7 +492,7 @@ ApplicationWindow {
                 Menu {
                     id: settingsMenu
                     MenuItem { text: "深色主题"; checkable: true; checked: window.darkTheme; onTriggered: window.darkTheme = !window.darkTheme }
-                    MenuItem { text: "清空数据"; icon.source: "qrc:/icons/clear.svg"; onTriggered: appController.clear() }
+                    MenuItem { text: "清除所有信号"; icon.source: "qrc:/icons/clear.svg"; onTriggered: appController.clearAllPlotSignals() }
                 }
             }
         }
@@ -667,6 +667,17 @@ ApplicationWindow {
             }
         }
         Rectangle { id: plotPanel; SplitView.fillWidth: true; SplitView.minimumWidth: 280; color: darkTheme ? "#14181d" : "#ffffff"; clip: true
+            // Shared Y gutter: every visible subplot uses the widest measured
+            // tick-label width so their X axes line up column by column.
+            property real sharedAxisLeft: 0
+            function updateSharedAxisLeft() {
+                let widest = 0
+                for (let i = 0; i < plotRepeater.count; ++i) {
+                    const item = plotRepeater.itemAt(i)
+                    if (item && item.visible) widest = Math.max(widest, item.measuredAxisLeft)
+                }
+                if (widest !== sharedAxisLeft) sharedAxisLeft = widest
+            }
             GridLayout { anchors.fill: parent; rows: window.subplotMaximized ? 1 : appController.plotRows; columns: window.subplotMaximized ? 1 : appController.plotColumns; columnSpacing: 0; rowSpacing: 0; uniformCellWidths: true; uniformCellHeights: true
                 Repeater { id: plotRepeater; model: appController.plotRows * appController.plotColumns
                     delegate: QuickPlot {
@@ -674,6 +685,11 @@ ApplicationWindow {
                         plotIndex: index
                         visible: !window.subplotMaximized || index === appController.activePlotIndex
                         controller: appController
+                        sharedAxisLeft: plotPanel.sharedAxisLeft
+                        onMeasuredAxisLeftChanged: plotPanel.updateSharedAxisLeft()
+                        onVisibleChanged: plotPanel.updateSharedAxisLeft()
+                        Component.onCompleted: plotPanel.updateSharedAxisLeft()
+                        Component.onDestruction: Qt.callLater(plotPanel.updateSharedAxisLeft)
                         graphLineWidth: 2
                         graphCursorMode: window.selectedCursorMode
                         graphZoomMode: window.activeZoomMode

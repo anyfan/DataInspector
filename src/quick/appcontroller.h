@@ -79,6 +79,9 @@ public:
     Q_INVOKABLE void revealLegendSignal(int plotIndex, int row);
     Q_INVOKABLE void moveLegendSignal(int fromPlot, int toPlot, int row);
     Q_INVOKABLE void removeLegendSignal(int plotIndex, int row);
+    Q_INVOKABLE void clearPlotSignals(int plotIndex);
+    Q_INVOKABLE void clearAllPlotSignals();
+    Q_INVOKABLE void fitPlotY(int plotIndex);
 
     Q_INVOKABLE void clear();
 signals:

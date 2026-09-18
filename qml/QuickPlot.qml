@@ -19,12 +19,27 @@ Rectangle {
     property color plotColor: darkTheme ? "#14181d" : "#ffffff"
     property color frameColor: darkTheme ? "#3b4652" : "#d7dfe8"
 
-    // Keep every subplot on the same compact scientific-label gutter.
-    readonly property real axisLeft: Math.ceil(yTickMetrics.advanceWidth) + 4
+    // Size the Y gutter from the widest label currently shown so short
+    // tick texts such as "0.8" do not reserve scientific-notation width.
+    readonly property string widestYTickLabel: {
+        let widest = "0.0"
+        const ticks = plotItem.yTicks
+        for (let i = 0; i < ticks.length; ++i) {
+            const label = root.formatYTick(ticks[i].value)
+            if (label.length > widest.length) widest = label
+        }
+        return widest
+    }
+    readonly property real yTickLabelMargin: 6
+    // Width this subplot needs on its own; the parent may widen it via
+    // sharedAxisLeft so all subplots keep identical X-axis extents.
+    readonly property real measuredAxisLeft: Math.ceil(yTickMetrics.advanceWidth) + yTickLabelMargin + 2
+    property real sharedAxisLeft: 0
+    readonly property real axisLeft: Math.max(measuredAxisLeft, sharedAxisLeft)
     TextMetrics {
         id: yTickMetrics
         font.pixelSize: 10
-        text: "-9.99e-308"
+        text: root.widestYTickLabel
     }
     readonly property real axisRight: 1
     readonly property real axisTop: Math.max(20, legend.implicitHeight + 2)
@@ -479,14 +494,41 @@ Rectangle {
             }
             Label {
                 anchors.right: parent.right
-                anchors.rightMargin: 2
+                anchors.rightMargin: root.yTickLabelMargin
                 anchors.verticalCenter: parent.verticalCenter
-                width: root.axisLeft - 2
+                width: root.axisLeft - root.yTickLabelMargin
                 horizontalAlignment: Text.AlignRight
                 text: root.formatYTick(modelData.value)
                 color: root.textColor
                 font.pixelSize: 10
             }
+        }
+    }
+
+    Menu {
+        id: plotContextMenu
+        objectName: "plotContextMenu"
+        MenuItem {
+            text: "自适应当前 Y 轴"
+            icon.source: "qrc:/icons/arrows_up_down.svg"
+            onTriggered: root.controller.fitPlotY(root.plotIndex)
+        }
+        MenuItem {
+            text: "清除当前子图所有信号"
+            icon.source: "qrc:/icons/clear.svg"
+            onTriggered: root.controller.clearPlotSignals(root.plotIndex)
+        }
+    }
+    MouseArea {
+        id: plotContextArea
+        objectName: "plotContextArea"
+        x: axisRect.x; y: axisRect.y
+        width: axisRect.width; height: axisRect.height
+        acceptedButtons: Qt.RightButton
+        z: 4
+        onClicked: function(mouse) {
+            root.controller.setActivePlot(root.plotIndex)
+            plotContextMenu.popup()
         }
     }
 
@@ -578,7 +620,7 @@ Rectangle {
         y: 1
         width: Math.max(1, root.width - 36)
         visible: legendRepeater.count > 0
-        spacing: 3
+        spacing: 0
         z: 5
 
         Repeater {
@@ -593,8 +635,8 @@ Rectangle {
                                              ? root.controller.signalColor(signalRow)
                                              : "transparent"
                 implicitWidth: Math.min(legend.width,
-                                        legendLabel.implicitWidth + 34)
-                implicitHeight: 15
+                                        legendLabel.implicitWidth + 30)
+                implicitHeight: Math.max(14, legendLabel.implicitHeight + 1)
                 Rectangle {
                     anchors.fill: parent
                     color: root.darkTheme ? "#334658" : "#dfedfa"
@@ -687,6 +729,17 @@ Rectangle {
                             text: "移除“" + root.controller.signalName(modelData) + "”"
                             onTriggered: root.controller.removeLegendSignal(root.plotIndex, modelData)
                         }
+                        MenuSeparator { }
+                        MenuItem {
+                            text: "自适应当前 Y 轴"
+                            icon.source: "qrc:/icons/arrows_up_down.svg"
+                            onTriggered: root.controller.fitPlotY(root.plotIndex)
+                        }
+                        MenuItem {
+                            text: "清除当前子图所有信号"
+                            icon.source: "qrc:/icons/clear.svg"
+                            onTriggered: root.controller.clearPlotSignals(root.plotIndex)
+                        }
                     }
                 }
             }
@@ -725,7 +778,7 @@ Rectangle {
         Label {
             id: deltaLabel
             anchors.centerIn: parent
-            text: "ΔT = " + root.formatCompact(plotItem.cursorDeltaT, 7)
+            text: root.formatCompact(plotItem.cursorDeltaT, 7)
             color: "#ffffff"
             font.pixelSize: 10
         }

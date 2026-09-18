@@ -191,8 +191,9 @@ void PlotItem::setCursorMode(int mode)
         m_cursorEnabled = normalized != NoCursor;
         if (wasDisabled && m_cursorEnabled) {
             const double span = qMax(m_xMaximum - m_xMinimum, 1e-12);
-            m_cursorX1 = m_xMinimum + span * .05;
-            m_cursorX2 = m_xMinimum + span * .95;
+            // Snap the initial positions to raw samples like an interactive drag would.
+            m_cursorX1 = nearestRawX(m_xMinimum + span * .25);
+            m_cursorX2 = nearestRawX(m_xMinimum + span * .75);
         }
         m_cursorX = m_cursorX1;
         updateCursorValuesLocked();
@@ -554,7 +555,28 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 }
 void PlotItem::geometryChange(const QRectF &n,const QRectF &o){QQuickItem::geometryChange(n,o);requestLod();update();}
 void PlotItem::mousePressEvent(QMouseEvent *e){if(e->button()!=Qt::LeftButton&&e->button()!=Qt::MiddleButton)return;emit activated();int cursorIndex=0;{QMutexLocker lock(&m_dataMutex);if(cursorHit(e->position().x(),&cursorIndex)){m_cursorDragIndex=cursorIndex;m_dragging=false;e->accept();return;}}m_cursorDragIndex=0;m_dragging=true;m_dragStartPixel=e->position();m_dragStartXMinimum=m_xMinimum;m_dragStartXMaximum=m_xMaximum;m_dragStartYMinimum=m_yMinimum;m_dragStartYMaximum=m_yMaximum;e->accept();}
-void PlotItem::mouseMoveEvent(QMouseEvent *e){if(m_cursorDragIndex){setCursorX(pixelToData(e->position()).x(),m_cursorDragIndex);e->accept();return;}if(!m_dragging)return;QPointF d=e->position()-m_dragStartPixel;double xs=m_dragStartXMaximum-m_dragStartXMinimum,ys=m_dragStartYMaximum-m_dragStartYMinimum;setRange(m_dragStartXMinimum-d.x()/qMax(width(),1.)*xs,m_dragStartXMaximum-d.x()/qMax(width(),1.)*xs,m_dragStartYMinimum+d.y()/qMax(height(),1.)*ys,m_dragStartYMaximum+d.y()/qMax(height(),1.)*ys);e->accept();}
+void PlotItem::mouseMoveEvent(QMouseEvent *e)
+{
+    if (m_cursorDragIndex) {
+        const double x = pixelToData(e->position()).x();
+        if (m_cursorMode == DoubleCursor) {
+            // Cursors never cross: dragging one past the other hands the drag to the other cursor.
+            double x1, x2;
+            { QMutexLocker lock(&m_dataMutex); x1 = m_cursorX1; x2 = m_cursorX2; }
+            if (m_cursorDragIndex == 1 && x > x2) { setCursorX(x2, 1); m_cursorDragIndex = 2; }
+            else if (m_cursorDragIndex == 2 && x < x1) { setCursorX(x1, 2); m_cursorDragIndex = 1; }
+        }
+        setCursorX(x, m_cursorDragIndex);
+        e->accept();
+        return;
+    }
+    if (!m_dragging) return;
+    QPointF d = e->position() - m_dragStartPixel;
+    double xs = m_dragStartXMaximum - m_dragStartXMinimum, ys = m_dragStartYMaximum - m_dragStartYMinimum;
+    setRange(m_dragStartXMinimum - d.x() / qMax(width(), 1.) * xs, m_dragStartXMaximum - d.x() / qMax(width(), 1.) * xs,
+             m_dragStartYMinimum + d.y() / qMax(height(), 1.) * ys, m_dragStartYMaximum + d.y() / qMax(height(), 1.) * ys);
+    e->accept();
+}
 void PlotItem::mouseReleaseEvent(QMouseEvent *e){m_dragging=false;m_cursorDragIndex=0;e->accept();}
 void PlotItem::hoverMoveEvent(QHoverEvent *e){Q_UNUSED(e);}
 void PlotItem::wheelEvent(QWheelEvent *e){const double f=e->angleDelta().y()>0?.85:1/.85;const QPointF a=pixelToData(e->position());setRange(a.x()-(a.x()-m_xMinimum)*f,a.x()+(m_xMaximum-a.x())*f,a.y()-(a.y()-m_yMinimum)*f,a.y()+(m_yMaximum-a.y())*f);e->accept();}
