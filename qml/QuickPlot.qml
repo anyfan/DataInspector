@@ -19,8 +19,8 @@ Rectangle {
     property color plotColor: darkTheme ? "#14181d" : "#ffffff"
     property color frameColor: darkTheme ? "#3b4652" : "#d7dfe8"
 
-    // Reserve the same compact scientific-label width in every subplot.
-    readonly property real axisLeft: Math.ceil(yTickMetrics.advanceWidth) + 10
+    // Keep every subplot on the same compact scientific-label gutter.
+    readonly property real axisLeft: Math.ceil(yTickMetrics.advanceWidth) + 4
     TextMetrics {
         id: yTickMetrics
         font.pixelSize: 10
@@ -479,9 +479,9 @@ Rectangle {
             }
             Label {
                 anchors.right: parent.right
-                anchors.rightMargin: 8
+                anchors.rightMargin: 2
                 anchors.verticalCenter: parent.verticalCenter
-                width: root.axisLeft - 10
+                width: root.axisLeft - 2
                 horizontalAlignment: Text.AlignRight
                 text: root.formatYTick(modelData.value)
                 color: root.textColor
@@ -578,7 +578,7 @@ Rectangle {
         y: 1
         width: Math.max(1, root.width - 36)
         visible: legendRepeater.count > 0
-        spacing: 7
+        spacing: 3
         z: 5
 
         Repeater {
@@ -593,8 +593,8 @@ Rectangle {
                                              ? root.controller.signalColor(signalRow)
                                              : "transparent"
                 implicitWidth: Math.min(legend.width,
-                                        legendLabel.implicitWidth + 26)
-                implicitHeight: 18
+                                        legendLabel.implicitWidth + 34)
+                implicitHeight: 15
                 Rectangle {
                     anchors.fill: parent
                     color: root.darkTheme ? "#334658" : "#dfedfa"
