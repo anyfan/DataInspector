@@ -26,6 +26,7 @@ class AppControllerTest final : public QObject
 
 private slots:
     void cursorReadoutsFollowVisibleXRange();
+    void normalizeYKeepsRawCursorValues();
     void cursorKeyboardStepsAcrossRawSamples();
     void draggingCursorPastTheOtherSwapsDrag();
     void unicodeMatFileNameLoads();
@@ -166,6 +167,29 @@ void AppControllerTest::cursorReadoutsFollowVisibleXRange()
     plot.setXRange(0, 10);
     QCOMPARE(plot.cursorReadouts().size(), 2);
     QCOMPARE(plot.cursorX2(), 8.0);
+}
+
+void AppControllerTest::normalizeYKeepsRawCursorValues()
+{
+    PlotItem plot;
+    auto store = std::make_shared<PlotSeriesStore>();
+    store->replaceSeries({{1, {0, 5, 10}, {10, 20, 30}, QColor("red")},
+                          {2, {0, 5, 10}, {7, 7, 7}, QColor("blue")}});
+    plot.setSeriesStore(store); plot.setVisibleSeries({1, 2}); plot.setXRange(0, 10);
+    plot.setCursorMode(PlotItem::SingleCursor);
+    plot.setCursorPosition(5);
+    QVERIFY(!plot.normalizeY());
+    plot.setNormalizeY(true);
+    QVERIFY(plot.normalizeY());
+    const QVariantList readouts = plot.cursorReadouts();
+    QCOMPARE(readouts.size(), 2);
+    QCOMPARE(readouts.at(0).toMap().value("y").toDouble(), 20.0);
+    QCOMPARE(readouts.at(0).toMap().value("displayY").toDouble(), 0.5);
+    QCOMPARE(readouts.at(1).toMap().value("y").toDouble(), 7.0);
+    QCOMPARE(readouts.at(1).toMap().value("displayY").toDouble(), 0.5);
+    QVERIFY(plot.yMinimum() < 0.0 && plot.yMaximum() > 1.0 && plot.yMaximum() < 2.0);
+    plot.setNormalizeY(false);
+    QCOMPARE(plot.cursorReadouts().at(0).toMap().value("displayY").toDouble(), 20.0);
 }
 
 void AppControllerTest::draggingCursorPastTheOtherSwapsDrag()

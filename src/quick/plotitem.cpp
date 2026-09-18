@@ -318,6 +318,54 @@ void PlotItem::refreshSnapshotLocked()
     m_seriesSnapshot = m_seriesStore
             ? m_seriesStore->snapshot(m_visibleSeries) : PlotSeriesSnapshot{};
     m_cursorValues.resize(m_seriesSnapshot.series.size());
+    rebuildNormalizationLocked();
+}
+
+void PlotItem::rebuildNormalizationLocked()
+{
+    m_normalization.clear();
+    if (!m_normalizeY) return;
+    for (const PlotSeriesDataPtr &series : std::as_const(m_seriesSnapshot.series)) {
+        if (!series) continue;
+        double minimum = qInf(), maximum = -qInf();
+        for (double value : series->values) {
+            if (!qIsFinite(value)) continue;
+            minimum = qMin(minimum, value);
+            maximum = qMax(maximum, value);
+        }
+        if (!qIsFinite(minimum)) continue;
+        // A constant series is drawn at 0.5.
+        m_normalization.insert(series->id, {minimum, maximum > minimum ? maximum - minimum : 0.0});
+    }
+}
+
+double PlotItem::normalizedYLocked(PlotSeriesId id, double y) const
+{
+    if (!m_normalizeY || !qIsFinite(y)) return y;
+    const auto it = m_normalization.constFind(id);
+    if (it == m_normalization.cend()) return y;
+    return it->second > 0.0 ? (y - it->first) / it->second : 0.5;
+}
+
+bool PlotItem::normalizeY() const
+{
+    QMutexLocker lock(&m_dataMutex);
+    return m_normalizeY;
+}
+
+void PlotItem::setNormalizeY(bool enabled)
+{
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (m_normalizeY == enabled) return;
+        m_normalizeY = enabled;
+        rebuildNormalizationLocked();
+        updateCursorValuesLocked();
+    }
+    emit normalizeYChanged();
+    emit cursorValuesChanged();
+    fitY();
+    update();
 }
 
 void PlotItem::fitView()
@@ -334,11 +382,14 @@ void PlotItem::fitY()
 {
     double xmin, xmax;
     std::optional<PlotBounds> bounds;
+    bool normalized = false;
     {
         QMutexLocker lock(&m_dataMutex);
         xmin = m_xMinimum; xmax = m_xMaximum;
+        normalized = m_normalizeY && !m_normalization.isEmpty();
         bounds = PlotSeriesStore::bounds(m_seriesSnapshot, xmin, xmax);
     }
+    if (normalized) { setRange(xmin, xmax, -.05, 1.05); return; }
     if (!bounds) { setRange(xmin, xmax, 0, 1); return; }
     const double span = bounds->yMaximum - bounds->yMinimum;
     const double padding = span == 0 ? (bounds->yMinimum == 0 ? .5 : .05) : span * .05;
@@ -437,6 +488,7 @@ void PlotItem::updateCursorValuesLocked()
                 if (rawText.endsWith(QLatin1Char('.'))) rawText.chop(1);
                 m_cursorReadouts.append(QVariantMap{{QStringLiteral("x"), keys[c]},
                                                     {QStringLiteral("y"), value},
+                                                    {QStringLiteral("displayY"), normalizedYLocked(m_seriesSnapshot.series.at(s)->id, value)},
                                                     {QStringLiteral("seriesId"), m_seriesSnapshot.series.at(s)->id},
                                                     {QStringLiteral("cursorIndex"), c + 1},
                                                     {QStringLiteral("sampleX"), sample->x},
@@ -466,10 +518,21 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 
     const double xs = qMax(m_xMaximum - m_xMinimum, 1e-12);
     const QVector<double> curveView{m_xMinimum, m_xMaximum, m_yMinimum, m_yMaximum,
-                                    width(), height(), m_lineWidth, double(m_highlightedSeries)};
+                                    width(), height(), m_lineWidth, double(m_highlightedSeries),
+                                    m_normalizeY ? 1.0 : 0.0};
     if (root->curveResult != m_lodResult || root->curveView != curveView) {
         const LodResult empty;
         LodResult lod = m_lodResult ? *m_lodResult : empty;
+        if (m_normalizeY) {
+            // Rescale in place on the GUI copy; the shared LOD stays raw.
+            for (LodSegment &segment : lod.segments) {
+                const auto it = m_normalization.constFind(segment.seriesId);
+                if (it == m_normalization.cend()) continue;
+                for (QPointF &point : segment.points)
+                    if (qIsFinite(point.y()))
+                        point.setY(it->second > 0.0 ? (point.y() - it->first) / it->second : 0.5);
+            }
+        }
         if (m_highlightedSeries >= 0) {
             // Emphasize in geometry only: no data copy or new LOD job.
             QVector<LodSegment> selected;

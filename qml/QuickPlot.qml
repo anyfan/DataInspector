@@ -248,7 +248,7 @@ Rectangle {
     }
     readonly property var positionedReadouts: {
         const entries = plotItem.cursorReadouts.map(function(item) {
-            return Object.assign({}, item, {labelY: root.yPixel(item.y) - 9})
+            return Object.assign({}, item, {labelY: root.yPixel(item.displayY) - 9})
         })
         for (let cursor = 1; cursor <= 2; ++cursor) {
             const group = entries.filter(function(item) { return item.cursorIndex === cursor })
@@ -389,7 +389,7 @@ Rectangle {
                 objectName: "cursorSampleMarker"
                 width: 5; height: 5; radius: 2.5
                 x: root.xPixel(modelData.sampleX) - width / 2
-                y: root.yPixel(modelData.y) - height / 2
+                y: root.yPixel(modelData.displayY) - height / 2
                 color: modelData.color
                 border.color: modelData.color
                 border.width: 1
@@ -517,6 +517,17 @@ Rectangle {
             text: "清除当前子图所有信号"
             icon.source: "qrc:/icons/clear.svg"
             onTriggered: root.controller.clearPlotSignals(root.plotIndex)
+        }
+        MenuSeparator { }
+        Menu {
+            title: "设置"
+            icon.source: "qrc:/icons/settings.svg"
+            MenuItem {
+                text: "归一化 Y 轴 (Normalize y-axis)"
+                checkable: true
+                checked: plotItem.normalizeY
+                onTriggered: plotItem.normalizeY = !plotItem.normalizeY
+            }
         }
     }
     MouseArea {

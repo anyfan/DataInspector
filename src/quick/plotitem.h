@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QVector>
 #include <QMutex>
+#include <QHash>
 #include <QVariantList>
 #include <memory>
 
@@ -29,6 +30,9 @@ class PlotItem : public QQuickItem
     Q_PROPERTY(QVariantList xTicks READ xTicks NOTIFY axisTicksChanged)
     Q_PROPERTY(QVariantList yTicks READ yTicks NOTIFY axisTicksChanged)
     Q_PROPERTY(QVariantList cursorReadouts READ cursorReadouts NOTIFY cursorValuesChanged)
+    // Draw every series scaled to [0, 1] by its own min/max. Cursor readouts
+    // keep reporting raw values; only the drawn position is normalized.
+    Q_PROPERTY(bool normalizeY READ normalizeY WRITE setNormalizeY NOTIFY normalizeYChanged)
 public:
     enum CursorMode { NoCursor = 0, SingleCursor = 1, DoubleCursor = 2 };
     Q_ENUM(CursorMode)
@@ -50,6 +54,8 @@ public:
     QVariantList xTicks() const;
     QVariantList yTicks() const;
     QVariantList cursorReadouts() const;
+    bool normalizeY() const;
+    void setNormalizeY(bool enabled);
     void setLineWidth(double width);
     void setCursorEnabled(bool enabled);
     void setCursorMode(int mode);
@@ -67,6 +73,7 @@ public:
     Q_INVOKABLE void setXRange(double xMinimum, double xMaximum);
     Q_INVOKABLE void setYRange(double yMinimum, double yMaximum);
 signals:
+    void normalizeYChanged();
     void highlightedSeriesChanged();
     void lodChanged();
     void viewChanged();
@@ -91,11 +98,16 @@ private:
     void rebuildTicksLocked();
     bool cursorHit(double pixelX, int *cursorIndex) const;
     void refreshSnapshotLocked();
+    void rebuildNormalizationLocked();
+    double normalizedYLocked(PlotSeriesId id, double y) const;
     void setRange(double xMinimum, double xMaximum, double yMinimum, double yMaximum);
     QPointF pixelToData(const QPointF &pixel) const;
     std::shared_ptr<const PlotSeriesStore> m_seriesStore;
     QVector<PlotSeriesId> m_visibleSeries;
     PlotSeriesSnapshot m_seriesSnapshot;
+    bool m_normalizeY = false;
+    // Per-series (minimum, span) used when m_normalizeY is set.
+    QHash<PlotSeriesId, QPair<double, double>> m_normalization;
     PlotLodScheduler *m_lodScheduler;
     std::shared_ptr<const LodResult> m_lodResult;
     void requestLod();
