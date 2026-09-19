@@ -1,8 +1,9 @@
-// AppController: file import queue, session bookkeeping and Excel export.
+// AppController: file import queue, session bookkeeping and Excel/MAT export.
 #include "appcontroller.h"
 #include "plotitem.h"
 #include "dataloadworker.h"
 #include "dataexportworker.h"
+#include "matwriter.h"
 
 #include <QFileInfo>
 #include <QHash>
@@ -110,17 +111,14 @@ bool AppController::removeFile(const QString &fileName)
     return true;
 }
 
-bool AppController::exportXlsx(const QVariant &filePath, int scope,
-                               bool zipCompressionEnabled)
+bool AppController::matExportSupported() const
 {
-    if (!m_exporter || m_exporting || m_loading || signalCount() == 0)
-        return false;
-    QString path = localPathFrom(filePath);
-    if (path.isEmpty()) return false;
-    if (!path.endsWith(QStringLiteral(".xlsx"), Qt::CaseInsensitive))
-        path += QStringLiteral(".xlsx");
+    return ::matExportSupported();
+}
 
-
+bool AppController::collectExportTables(int scope, QVector<DataExportTable> *tables)
+{
+    tables->clear();
     QVector<int> rows;
     if (scope == PlottedSignals) {
         QSet<int> uniqueRows;
@@ -147,7 +145,6 @@ bool AppController::exportXlsx(const QVariant &filePath, int scope,
     for (const PlotSeriesDataPtr &data : snapshot.series)
         if (data) dataById.insert(data->id, data);
 
-    QVector<XlsxExportTable> tables;
     QHash<QString, int> tableByGroup;
     for (int row : std::as_const(rows)) {
         const PlotSeriesDataPtr data = dataById.value(row);
@@ -156,24 +153,69 @@ bool AppController::exportXlsx(const QVariant &filePath, int scope,
         if (group.isEmpty()) group = QStringLiteral("Data");
         int tableIndex = tableByGroup.value(group, -1);
         if (tableIndex < 0) {
-            tableIndex = tables.size();
+            tableIndex = tables->size();
             tableByGroup.insert(group, tableIndex);
-            tables.append({group, {}});
+            tables->append({group, {}});
         }
-        tables[tableIndex].series.append({m_signals->nameAt(row), data});
+        (*tables)[tableIndex].series.append({m_signals->nameAt(row), data});
     }
-    if (tables.isEmpty()) return false;
+    return !tables->isEmpty();
+}
 
+void AppController::beginExport(const QString &kind)
+{
+    m_exportKind = kind;
     m_exporter->resetCancellation();
     setExportProgress(0);
     m_exporting = true;
     emit exportingChanged();
-    setStatus(QStringLiteral("正在导出 Excel…"));
+    setStatus(QStringLiteral("正在导出 %1…").arg(kind));
+}
+
+bool AppController::exportXlsx(const QVariant &filePath, int scope,
+                               bool zipCompressionEnabled)
+{
+    if (!m_exporter || m_exporting || m_loading || signalCount() == 0)
+        return false;
+    QString path = localPathFrom(filePath);
+    if (path.isEmpty()) return false;
+    if (!path.endsWith(QStringLiteral(".xlsx"), Qt::CaseInsensitive))
+        path += QStringLiteral(".xlsx");
+
+    QVector<DataExportTable> tables;
+    if (!collectExportTables(scope, &tables)) return false;
+
+    beginExport(QStringLiteral("Excel"));
     QMetaObject::invokeMethod(
         m_exporter,
         [exporter = m_exporter, path, tables = std::move(tables),
          zipCompressionEnabled]() {
             exporter->exportWorkbook(path, tables, zipCompressionEnabled);
+        }, Qt::QueuedConnection);
+    return true;
+}
+
+bool AppController::exportMat(const QVariant &filePath, int scope)
+{
+    if (!m_exporter || m_exporting || m_loading || signalCount() == 0)
+        return false;
+    if (!matExportSupported()) {
+        setStatus(QStringLiteral("当前版本未启用 MAT 支持"));
+        return false;
+    }
+    QString path = localPathFrom(filePath);
+    if (path.isEmpty()) return false;
+    if (!path.endsWith(QStringLiteral(".mat"), Qt::CaseInsensitive))
+        path += QStringLiteral(".mat");
+
+    QVector<DataExportTable> tables;
+    if (!collectExportTables(scope, &tables)) return false;
+
+    beginExport(QStringLiteral("MAT"));
+    QMetaObject::invokeMethod(
+        m_exporter,
+        [exporter = m_exporter, path, tables = std::move(tables)]() {
+            exporter->exportMat(path, tables);
         }, Qt::QueuedConnection);
     return true;
 }

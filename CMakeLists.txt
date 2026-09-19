@@ -49,7 +49,13 @@ set(DI_XLSX_SOURCES
     ${DI_QUICK_DIR}/xlsxreader.h
     ${DI_QUICK_DIR}/xlsxwriter.cpp
     ${DI_QUICK_DIR}/xlsxwriter.h
+    ${DI_QUICK_DIR}/exporttable.h
     ${DI_QUICK_DIR}/loadedtable.h
+)
+
+set(DI_MAT_SOURCES
+    ${DI_QUICK_DIR}/matwriter.cpp
+    ${DI_QUICK_DIR}/matwriter.h
 )
 
 set(DI_CONTROLLER_SOURCES
@@ -62,6 +68,7 @@ set(DI_CONTROLLER_SOURCES
     ${DI_QUICK_DIR}/dataexportworker.cpp
     ${DI_QUICK_DIR}/dataexportworker.h
     ${DI_XLSX_SOURCES}
+    ${DI_MAT_SOURCES}
     ${DI_PLOTITEM_SOURCES}
     ${DI_SIGNAL_SOURCES}
 )

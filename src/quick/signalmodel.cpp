@@ -307,6 +307,26 @@ void SignalModel::setSignalPen(int row, const QColor &color, double width,
                          {ColorRole, WidthRole, LineStyleRole});
 }
 
+bool SignalModel::renameSignal(int row, const QString &name)
+{
+    const QString normalized = name.trimmed();
+    if (row < 0 || row >= m_names.size() || normalized.isEmpty()) return false;
+    if (m_names.at(row) == normalized) return true;
+    m_names[row] = normalized;
+    if (!m_filter.isEmpty()) {
+        // The search filter matches on names, so visibility may change.
+        beginResetModel();
+        rebuildVisibleNodes();
+        endResetModel();
+        return true;
+    }
+    const int modelRow = visibleModelRow(row);
+    if (modelRow >= 0)
+        emit dataChanged(index(modelRow), index(modelRow),
+                         {Qt::DisplayRole, NameRole});
+    return true;
+}
+
 void SignalModel::rebuildVisibleNodes()
 {
     m_visibleNodes.clear();

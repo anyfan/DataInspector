@@ -45,6 +45,8 @@ public:
     Qt::PenStyle signalStyle(int row) const;
     void setSignalPen(int row, const QColor &color, double width,
                       Qt::PenStyle style);
+    // Renames one source row; rejects invalid rows and blank names.
+    bool renameSignal(int row, const QString &name);
     QString nameAt(int row) const { return m_names.value(row); }
     QString groupAt(int row) const { return m_groups.value(row); }
     void setChecked(int row, bool checked);

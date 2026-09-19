@@ -1,5 +1,6 @@
 #pragma once
 
+#include "matwriter.h"
 #include "xlsxwriter.h"
 
 #include <QObject>
@@ -17,6 +18,7 @@ public slots:
     void exportWorkbook(const QString &path,
                         const QVector<XlsxExportTable> &tables,
                         bool zipCompressionEnabled);
+    void exportMat(const QString &path, const QVector<DataExportTable> &tables);
 
 signals:
     void progress(int percentage);

@@ -44,6 +44,19 @@ QString AppController::signalName(int row) const
     return m_signals->nameAt(row);
 }
 
+bool AppController::renameSignal(int row, const QString &name)
+{
+    const QString previous = m_signals->nameAt(row);
+    if (!m_signals->renameSignal(row, name)) return false;
+    if (m_signals->nameAt(row) == previous) return true;
+    // Legends read names through the controller, so bump the revision the
+    // same way a pen edit does to rebuild their entries.
+    notifyPlotBindingsChanged();
+    setStatus(QStringLiteral("已重命名信号：%1 → %2")
+                  .arg(previous, m_signals->nameAt(row)));
+    return true;
+}
+
 QVariantList AppController::plotSignalRows(int plotIndex) const
 {
     QVariantList rows;

@@ -65,8 +65,8 @@ AppController::AppController(QObject *parent)
                     setStatus(QStringLiteral("导出失败：%1").arg(error));
                 } else {
                     setExportProgress(100);
-                    setStatus(QStringLiteral("已导出 Excel：%1")
-                                  .arg(QFileInfo(path).fileName()));
+                    setStatus(QStringLiteral("已导出 %1：%2")
+                                  .arg(m_exportKind, QFileInfo(path).fileName()));
                 }
             }, Qt::QueuedConnection);
     connect(m_exportThread, &QThread::finished, exporter,

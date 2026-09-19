@@ -60,6 +60,9 @@ private slots:
     void exportsAllLoadedSignals();
     void exportsUnionOfSignalsDrawnAcrossPlots();
     void exportCompressionOptionReachesWriter();
+    void renamingSignalUpdatesModelLegendsAndExport();
+    void matExportMirrorsImportLayout();
+    void matExportKeepsSourceTableNumbers();
 };
 
 static void writeCsvFile(const QString &path, const QByteArray &contents)
@@ -1333,6 +1336,185 @@ void AppControllerTest::removingFileKeepsRemainingSignalsAndBindings()
     remainingRows.append(0);
     QCOMPARE(controller.plotSignalRows(0), remainingRows);
     QCOMPARE(plot.visibleSeriesIds(), QVector<PlotSeriesId>({0}));
+}
+
+void AppControllerTest::renamingSignalUpdatesModelLegendsAndExport()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("flight.csv"));
+    const QString output = directory.filePath(QStringLiteral("renamed.xlsx"));
+    writeCsvFile(input, "time,Pitch,Roll\n0,1,2\n1,3,4\n");
+
+    AppController controller;
+    QVERIFY(controller.loadCsv(input));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QSignalSpy revisions(&controller, &AppController::plotBindingsChanged);
+
+    QVERIFY(!controller.renameSignal(0, QStringLiteral("   ")));
+    QVERIFY(!controller.renameSignal(7, QStringLiteral("Nope")));
+    QCOMPARE(controller.signalName(0), QStringLiteral("Pitch"));
+    QCOMPARE(revisions.count(), 0);
+
+    QVERIFY(controller.renameSignal(0, QStringLiteral("  俯仰角  ")));
+    QCOMPARE(controller.signalName(0), QStringLiteral("俯仰角"));
+    // Legends rebuild from the plot state revision, like pen edits.
+    QCOMPARE(revisions.count(), 1);
+    QVERIFY(controller.status().contains(QStringLiteral("俯仰角")));
+    // Renaming to the same name is accepted without another rebuild.
+    QVERIFY(controller.renameSignal(0, QStringLiteral("俯仰角")));
+    QCOMPARE(revisions.count(), 1);
+
+    SignalModel *model = controller.signalModel();
+    const int modelRow = model->revealSignal(0);
+    QVERIFY(modelRow >= 0);
+    QCOMPARE(model->data(model->index(modelRow), SignalModel::NameRole).toString(),
+             QStringLiteral("俯仰角"));
+    QCOMPARE(model->data(model->index(modelRow), SignalModel::IndexRole).toInt(), 0);
+
+    // The search filter follows the new name.
+    controller.filterSignals(QStringLiteral("Pitch"));
+    QCOMPARE(model->revealSignal(0) >= 0, true);
+    controller.filterSignals(QStringLiteral("俯仰"));
+    QCOMPARE(model->rowCount(), 2);
+    controller.filterSignals(QString());
+
+    QVERIFY(controller.exportXlsx(output, AppController::AllLoadedData));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+    const XlsxReadResult read = readXlsxWorkbook(output, {}, {});
+    QVERIFY2(read.error.isEmpty(), qPrintable(read.error));
+    QCOMPARE(read.tables.first().signalNames,
+             QStringList({QStringLiteral("俯仰角"), QStringLiteral("Roll")}));
+}
+
+void AppControllerTest::matExportMirrorsImportLayout()
+{
+#ifdef ENABLE_MAT
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString first = directory.filePath(QStringLiteral("first.csv"));
+    const QString second = directory.filePath(QStringLiteral("second.csv"));
+    const QString output = directory.filePath(QStringLiteral("导出结果.mat"));
+    writeCsvFile(first, "time,A,B\n0,1,2\n1,abc,4\n");
+    writeCsvFile(second, "time,C\n10,5\n11,6\n");
+
+    AppController controller;
+    QVERIFY(controller.matExportSupported());
+    QCOMPARE(controller.loadFiles(QVariantList{first, second}), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QVERIFY(controller.renameSignal(1, QStringLiteral("B 俯仰角")));
+    QVERIFY(controller.exportMat(output, AppController::AllLoadedData));
+    QVERIFY(controller.exporting());
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+    QCOMPARE(controller.exportProgress(), 100);
+    QVERIFY2(controller.status().startsWith(QStringLiteral("已导出 MAT")),
+             qPrintable(controller.status()));
+
+    // Raw layout: uncompressed double pN with time first, UTF-8 pN_title
+    // with one row per column, exactly what the loader expects.
+    mat_t *file = Mat_Open(output.toUtf8().constData(), MAT_ACC_RDONLY);
+    QVERIFY(file);
+    matvar_t *p1 = Mat_VarRead(file, "p1");
+    QVERIFY(p1);
+    QCOMPARE(int(p1->class_type), int(MAT_C_DOUBLE));
+    QCOMPARE(int(p1->data_type), int(MAT_T_DOUBLE));
+    QCOMPARE(p1->rank, 2);
+    QCOMPARE(int(p1->dims[0]), 2);
+    QCOMPARE(int(p1->dims[1]), 3);
+    const auto *values = static_cast<const double *>(p1->data);
+    QCOMPARE(values[0], 0.0);
+    QCOMPARE(values[1], 1.0);
+    QCOMPARE(values[2], 1.0);
+    QVERIFY(qIsNaN(values[3]));
+    QCOMPARE(values[4], 2.0);
+    QCOMPARE(values[5], 4.0);
+    Mat_VarFree(p1);
+    matvar_t *title = Mat_VarRead(file, "p1_title");
+    QVERIFY(title);
+    QCOMPARE(int(title->class_type), int(MAT_C_CHAR));
+    QCOMPARE(int(title->data_type), int(MAT_T_UTF8));
+    QCOMPARE(int(title->dims[0]), 3);
+    QCOMPARE(int(title->dims[1]), int(QStringLiteral("B 俯仰角").size()));
+    Mat_VarFree(title);
+    matvar_t *p2 = Mat_VarReadInfo(file, "p2");
+    QVERIFY(p2);
+    QCOMPARE(int(p2->dims[0]), 2);
+    QCOMPARE(int(p2->dims[1]), 2);
+    Mat_VarFree(p2);
+    QVERIFY(!Mat_VarReadInfo(file, "p3"));
+    Mat_Close(file);
+
+    // Round trip through the application loader.
+    AppController reader;
+    QVERIFY(reader.loadCsv(output));
+    QTRY_VERIFY_WITH_TIMEOUT(!reader.loading(), 5000);
+    QVERIFY2(reader.loadedFileCount() == 1, qPrintable(reader.status()));
+    QCOMPARE(reader.signalCount(), 3);
+    QCOMPARE(reader.signalName(0), QStringLiteral("A"));
+    QCOMPARE(reader.signalName(1), QStringLiteral("B 俯仰角"));
+    QCOMPARE(reader.signalName(2), QStringLiteral("C"));
+    QCOMPARE(reader.signalModel()->groupAt(0), QStringLiteral("导出结果.mat/p1"));
+    QCOMPARE(reader.signalModel()->groupAt(2), QStringLiteral("导出结果.mat/p2"));
+#else
+    QSKIP("MAT support disabled");
+#endif
+}
+
+void AppControllerTest::matExportKeepsSourceTableNumbers()
+{
+#ifdef ENABLE_MAT
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString input = directory.filePath(QStringLiteral("source.mat"));
+    const QString csv = directory.filePath(QStringLiteral("extra.csv"));
+    const QString output = directory.filePath(QStringLiteral("again"));
+    writeCsvFile(csv, "time,X\n0,1\n");
+
+    mat_t *file = Mat_CreateVer(input.toUtf8().constData(), nullptr, MAT_FT_MAT5);
+    QVERIFY(file);
+    size_t dimensions[] = {2, 2};
+    double p3Values[] = {0, 1, 12, 34};
+    double p1Values[] = {5, 6, 78, 90};
+    for (const auto &entry : {std::make_pair("p3", p3Values), std::make_pair("p1", p1Values)}) {
+        matvar_t *variable = Mat_VarCreate(entry.first, MAT_C_DOUBLE, MAT_T_DOUBLE, 2,
+                                           dimensions, entry.second, 0);
+        QVERIFY(variable);
+        QCOMPARE(Mat_VarWrite(file, variable, MAT_COMPRESSION_ZLIB), 0);
+        Mat_VarFree(variable);
+    }
+    Mat_Close(file);
+
+    AppController controller;
+    QCOMPARE(controller.loadFiles(QVariantList{input, csv}), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QCOMPARE(controller.signalCount(), 3);
+    QVERIFY(controller.exportMat(output, AppController::AllLoadedData));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+
+    // p1/p3 keep their numbers, the CSV table takes the first free slot (p2),
+    // and a missing suffix is appended.
+    mat_t *exported = Mat_Open((output + QStringLiteral(".mat")).toUtf8().constData(),
+                               MAT_ACC_RDONLY);
+    QVERIFY(exported);
+    for (const char *name : {"p1", "p2", "p3", "p1_title", "p2_title", "p3_title"}) {
+        matvar_t *variable = Mat_VarReadInfo(exported, name);
+        QVERIFY2(variable, name);
+        Mat_VarFree(variable);
+    }
+    QVERIFY(!Mat_VarReadInfo(exported, "p4"));
+    matvar_t *p3 = Mat_VarRead(exported, "p3");
+    QVERIFY(p3);
+    QCOMPARE(static_cast<const double *>(p3->data)[2], 12.0);
+    Mat_VarFree(p3);
+    matvar_t *p2 = Mat_VarRead(exported, "p2");
+    QVERIFY(p2);
+    QCOMPARE(int(p2->dims[0]), 1);
+    QCOMPARE(static_cast<const double *>(p2->data)[1], 1.0);
+    Mat_VarFree(p2);
+    Mat_Close(exported);
+#else
+    QSKIP("MAT support disabled");
+#endif
 }
 
 QTEST_MAIN(AppControllerTest)

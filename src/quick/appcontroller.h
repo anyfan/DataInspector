@@ -9,6 +9,7 @@
 #include <memory>
 
 #include "loadedtable.h"
+#include "exporttable.h"
 #include "render/plotseriesstore.h"
 #include "signalmodel.h"
 
@@ -21,7 +22,7 @@ class QThread;
 // store, the loader/exporter worker threads and coordinates every subplot.
 // Implementation is split by responsibility:
 //   appcontroller.cpp          lifetime, status and progress plumbing
-//   appcontroller_loading.cpp  import queue, file removal, Excel export
+//   appcontroller_loading.cpp  import queue, file removal, Excel/MAT export
 //   appcontroller_plots.cpp    subplot bindings, legend actions, fitting
 
 class AppController final : public QObject
@@ -35,6 +36,7 @@ class AppController final : public QObject
     Q_PROPERTY(int loadingProgress READ loadingProgress NOTIFY loadingProgressChanged)
     Q_PROPERTY(bool exporting READ exporting NOTIFY exportingChanged)
     Q_PROPERTY(int exportProgress READ exportProgress NOTIFY exportProgressChanged)
+    Q_PROPERTY(bool matExportSupported READ matExportSupported CONSTANT)
     Q_PROPERTY(int loadedFileCount READ loadedFileCount NOTIFY currentFileChanged)
     Q_PROPERTY(int signalCount READ signalCount NOTIFY currentFileChanged)
     Q_PROPERTY(int plotRows READ plotRows NOTIFY layoutChanged)
@@ -59,6 +61,7 @@ public:
     int loadingProgress() const { return m_loadingProgress; }
     bool exporting() const { return m_exporting; }
     int exportProgress() const { return m_exportProgress; }
+    bool matExportSupported() const;
     int loadedFileCount() const { return m_loadedFileNames.size(); }
     int signalCount() const { return m_signals->sourceCount(); }
     int plotRows() const { return m_plotRows; }
@@ -73,6 +76,8 @@ public:
     Q_INVOKABLE bool removeFile(const QString &fileName);
     Q_INVOKABLE bool exportXlsx(const QVariant &filePath, int scope,
                                 bool zipCompressionEnabled = false);
+    // Writes pN / pN_title variables in the same layout the MAT loader reads.
+    Q_INVOKABLE bool exportMat(const QVariant &filePath, int scope);
     Q_INVOKABLE void cancelExport();
 
     // Signal selection and styling
@@ -89,6 +94,8 @@ public:
     Q_INVOKABLE void setSignalPen(int row, const QColor &color,
                                   double width, int style);
     Q_INVOKABLE QString signalName(int row) const;
+    // Changes the display name used by the tree, legends and exports.
+    Q_INVOKABLE bool renameSignal(int row, const QString &name);
 
     // Subplots
     Q_INVOKABLE void attachPlot(QObject *plot, int index = 0);
@@ -131,6 +138,9 @@ private:
     void appendLoadedTables(const QString &path, const QVector<LoadedTable> &tables);
     void setLoadingProgress(int progress);
     void setExportProgress(int progress);
+    // Collects the export tables for a scope; false when nothing applies.
+    bool collectExportTables(int scope, QVector<DataExportTable> *tables);
+    void beginExport(const QString &kind);
     void setStatus(const QString &status);
     void updateCurrentFileLabel();
     void notifyPlotBindingsChanged();
@@ -166,6 +176,7 @@ private:
     int m_loadingProgress = 0;
     bool m_exporting = false;
     int m_exportProgress = 0;
+    QString m_exportKind;
     int m_batchTotal = 0;
     int m_batchCompleted = 0;
     int m_batchErrors = 0;

@@ -1,23 +1,14 @@
 #pragma once
 
-#include "render/plotseriesstore.h"
+#include "exporttable.h"
 
 #include <QString>
 #include <QVector>
 
 #include <functional>
 
-struct XlsxExportSeries
-{
-    QString name;
-    PlotSeriesDataPtr data;
-};
-
-struct XlsxExportTable
-{
-    QString name;
-    QVector<XlsxExportSeries> series;
-};
+using XlsxExportSeries = DataExportSeries;
+using XlsxExportTable = DataExportTable;
 
 struct XlsxWriteOptions
 {

@@ -130,6 +130,58 @@ ApplicationWindow {
         }
     }
 
+    Menu {
+        id: signalContextMenu
+        property int signalIndex: -1
+        MenuItem {
+            text: "重命名…"
+            onTriggered: window.requestRenameSignal(signalContextMenu.signalIndex)
+        }
+        MenuItem {
+            text: "线条属性…"
+            onTriggered: window.editSignalPen(signalContextMenu.signalIndex)
+        }
+    }
+
+    Dialog {
+        id: renameSignalDialog
+        property int signalIndex: -1
+        readonly property bool nameValid: renameField.text.trim().length > 0
+        title: "重命名信号"
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        width: 380
+        onAboutToShow: {
+            // The footer buttons exist by now; keep OK disabled for blank names.
+            const okButton = standardButton(Dialog.Ok)
+            if (okButton) okButton.enabled = Qt.binding(function() { return renameSignalDialog.nameValid })
+            renameField.text = appController.signalName(signalIndex)
+            renameField.selectAll()
+            renameField.forceActiveFocus()
+        }
+        onAccepted: appController.renameSignal(signalIndex, renameField.text)
+        ColumnLayout {
+            width: parent.width
+            spacing: 8
+            Label {
+                text: "原名称：" + (renameSignalDialog.signalIndex >= 0
+                                   ? appController.signalName(renameSignalDialog.signalIndex) : "")
+                color: window.treeTextColor
+                opacity: 0.78
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+            }
+            TextField {
+                id: renameField
+                Layout.fillWidth: true
+                placeholderText: "新名称"
+                selectByMouse: true
+                onAccepted: if (renameSignalDialog.nameValid) renameSignalDialog.accept()
+            }
+        }
+    }
+
     Dialog {
         id: removeFileDialog
         title: "移除文件"
@@ -164,6 +216,12 @@ ApplicationWindow {
         removeFileDialog.open()
     }
 
+    function requestRenameSignal(signalIndex) {
+        if (signalIndex < 0) return
+        renameSignalDialog.signalIndex = signalIndex
+        renameSignalDialog.open()
+    }
+
     FileDialog {
         id: fileDialog
         title: "打开数据文件"
@@ -181,6 +239,15 @@ ApplicationWindow {
         onAccepted: appController.exportXlsx(
                         selectedFile, window.pendingExportScope,
                         window.exportZipCompression)
+    }
+
+    FileDialog {
+        id: exportMatDialog
+        title: "导出 MAT"
+        nameFilters: ["MAT 文件 (*.mat)"]
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "mat"
+        onAccepted: appController.exportMat(selectedFile, window.pendingExportScope)
     }
 
     Dialog {
@@ -373,29 +440,46 @@ ApplicationWindow {
             }
             IconTool {
                 icon.source: "qrc:/icons/download.svg"
-                hint: "导出 Excel"
+                hint: "导出数据"
                 enabled: appController.signalCount > 0
                          && !appController.loading && !appController.exporting
                 onClicked: exportMenu.popup()
                 Menu {
                     id: exportMenu
                     MenuItem {
-                        text: "全部已加载数据"
+                        text: "Excel · 全部已加载数据"
                         onTriggered: {
                             window.pendingExportScope = 0
                             exportDialog.open()
                         }
                     }
                     MenuItem {
-                        text: "当前所有子图已绘制的信号"
+                        text: "Excel · 当前所有子图已绘制的信号"
                         onTriggered: {
                             window.pendingExportScope = 1
                             exportDialog.open()
                         }
                     }
+                    MenuSeparator { visible: appController.matExportSupported }
+                    MenuItem {
+                        text: "MAT · 全部已加载数据"
+                        visible: appController.matExportSupported
+                        onTriggered: {
+                            window.pendingExportScope = 0
+                            exportMatDialog.open()
+                        }
+                    }
+                    MenuItem {
+                        text: "MAT · 当前所有子图已绘制的信号"
+                        visible: appController.matExportSupported
+                        onTriggered: {
+                            window.pendingExportScope = 1
+                            exportMatDialog.open()
+                        }
+                    }
                     MenuSeparator { }
                     MenuItem {
-                        text: "ZIP 压缩"
+                        text: "ZIP 压缩（Excel）"
                         checkable: true
                         checked: window.exportZipCompression
                         onTriggered: window.exportZipCompression = checked
@@ -653,20 +737,26 @@ ApplicationWindow {
                                 MouseArea {
                                     anchors.fill: parent
                                     acceptedButtons: Qt.LeftButton
-                                    onDoubleClicked: window.editSignalPen(signalDelegate.signalIndex)
-                                    ToolTip.visible: containsMouse
-                                    ToolTip.text: "双击编辑信号线属性"
-                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        signalList.currentIndex = signalDelegate.index
+                                        window.editSignalPen(signalDelegate.signalIndex)
+                                    }
                                 }
                             }
                         }
                         TapHandler {
                             acceptedButtons: Qt.RightButton
-                            enabled: signalDelegate.fileNode
+                            enabled: signalDelegate.fileNode || !signalDelegate.groupNode
                             onTapped: {
                                 signalList.currentIndex = signalDelegate.index
-                                fileContextMenu.fileName = signalDelegate.groupName
-                                fileContextMenu.popup()
+                                if (signalDelegate.fileNode) {
+                                    fileContextMenu.fileName = signalDelegate.groupName
+                                    fileContextMenu.popup()
+                                } else {
+                                    signalContextMenu.signalIndex = signalDelegate.signalIndex
+                                    signalContextMenu.popup()
+                                }
                             }
                         }
                     }

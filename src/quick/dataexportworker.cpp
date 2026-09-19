@@ -22,3 +22,13 @@ void DataExportWorker::exportWorkbook(
         [this]() { return m_cancelled.load(std::memory_order_relaxed); });
     emit finished(path, result.error, result.cancelled);
 }
+
+void DataExportWorker::exportMat(const QString &path,
+                                 const QVector<DataExportTable> &tables)
+{
+    const MatWriteResult result = writeMatFile(
+        path, tables,
+        [this](int percentage) { emit progress(percentage); },
+        [this]() { return m_cancelled.load(std::memory_order_relaxed); });
+    emit finished(path, result.error, result.cancelled);
+}
