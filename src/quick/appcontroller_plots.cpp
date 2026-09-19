@@ -214,6 +214,8 @@ void AppController::setLayout(int rows, int columns)
 
     ++m_plotStateRevision;
     const int previousActivePlot = m_signals->activePlot();
+    // The maximized subplot may not exist in the new grid.
+    setSoloPlot(-1);
     m_plotRows = normalizedRows;
     m_plotColumns = normalizedColumns;
     m_signals->setPlotCount(m_plotRows * m_plotColumns);
@@ -233,6 +235,15 @@ void AppController::setActivePlot(int index)
     emit activePlotChanged();
 }
 
+void AppController::setSoloPlot(int index)
+{
+    const int plotCount = m_plotRows * m_plotColumns;
+    const int normalized = index >= 0 && index < plotCount ? index : -1;
+    if (m_soloPlotIndex == normalized) return;
+    m_soloPlotIndex = normalized;
+    emit soloPlotChanged();
+}
+
 void AppController::fitAllPlots()
 {
     fitPlots(true, true, true);
@@ -241,11 +252,8 @@ void AppController::fitAllPlots()
 void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
 {
     if (fitX) {
-        QVector<PlotSeriesId> ids;
-        for (int index = 0; index < m_plotRows * m_plotColumns; ++index)
-            for (int id : m_signals->plotRows(index))
-                if (!ids.contains(id)) ids.append(id);
-        const auto bounds = PlotSeriesStore::timeBounds(m_seriesStore->snapshot(ids));
+        const auto bounds = PlotSeriesStore::timeBounds(
+                    m_seriesStore->snapshot(fitSourceRows(allPlots)));
         double xmin = 0, xmax = 10;
         if (bounds) {
             const double span = bounds->second - bounds->first;
@@ -253,14 +261,36 @@ void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
             xmin = bounds->first - padding;
             xmax = bounds->second + padding;
         }
+        // The time axis is shared, so the fitted range always lands on every
+        // subplot; only the set of signals that defines it varies.
         applySharedXRange(xmin, xmax);
     }
     if (fitY) {
         for (int index = 0; index < m_plots.size(); ++index) {
-            if (!m_plots.at(index) || (!allPlots && index != activePlotIndex())) continue;
+            if (!m_plots.at(index)) continue;
+            if (!fitScopeIncludes(index, allPlots)) continue;
             m_plots.at(index)->fitY();
         }
     }
+}
+
+// A maximized subplot is the only one the user can see, so it always wins over
+// an "all subplots" request; otherwise "current" means the active subplot.
+bool AppController::fitScopeIncludes(int plotIndex, bool allPlots) const
+{
+    if (m_soloPlotIndex >= 0) return plotIndex == m_soloPlotIndex;
+    return allPlots || plotIndex == activePlotIndex();
+}
+
+QVector<PlotSeriesId> AppController::fitSourceRows(bool allPlots) const
+{
+    QVector<PlotSeriesId> ids;
+    for (int index = 0; index < m_plotRows * m_plotColumns; ++index) {
+        if (!fitScopeIncludes(index, allPlots)) continue;
+        for (int id : m_signals->plotRows(index))
+            if (!ids.contains(id)) ids.append(id);
+    }
+    return ids;
 }
 
 void AppController::refreshPlot(int index, bool fitY)

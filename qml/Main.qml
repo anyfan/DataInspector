@@ -229,8 +229,13 @@ ApplicationWindow {
         }
     }
 
-    Shortcut { sequence: "Ctrl+Alt+T"; onActivated: appController.fitPlots(true, false) }
-    Shortcut { sequence: "Ctrl+Alt+Y"; onActivated: appController.fitPlots(false, true) }
+    // Fit scope: plain shortcut = current subplot, +Shift = every subplot.
+    Shortcut { sequence: "Ctrl+Alt+F"; onActivated: appController.fitPlots(true, true, false) }
+    Shortcut { sequence: "Ctrl+Alt+Shift+F"; onActivated: appController.fitPlots(true, true, true) }
+    Shortcut { sequence: "Ctrl+Alt+T"; onActivated: appController.fitPlots(true, false, false) }
+    Shortcut { sequence: "Ctrl+Alt+Shift+T"; onActivated: appController.fitPlots(true, false, true) }
+    Shortcut { sequence: "Ctrl+Alt+Y"; onActivated: appController.fitPlots(false, true, false) }
+    Shortcut { sequence: "Ctrl+Alt+Shift+Y"; onActivated: appController.fitPlots(false, true, true) }
     Connections {
         target: appController
         function onLayoutChanged() { window.subplotMaximized = false }
@@ -243,6 +248,15 @@ ApplicationWindow {
     }
 
     property bool subplotMaximized: false
+    // Mirror the maximize state into the controller so X/Y fitting only
+    // considers the subplot the user can actually see.
+    onSubplotMaximizedChanged: appController.setSoloPlot(
+                                   window.subplotMaximized ? appController.activePlotIndex : -1)
+    Connections {
+        target: appController
+        enabled: window.subplotMaximized
+        function onActivePlotChanged() { appController.setSoloPlot(appController.activePlotIndex) }
+    }
     property int visibilityBeforeFullscreen: Window.Windowed
     function toggleFullscreen() {
         if (visibility === Window.FullScreen)
@@ -463,10 +477,14 @@ ApplicationWindow {
                 onClicked: fitMenu.popup()
                 Menu {
                     id: fitMenu
-                    MenuItem { text: "自适应视图"; icon.source: "qrc:/icons/fit-view.svg"; onTriggered: appController.fitPlots(true, true) }
-                    MenuItem { text: "自适应时间轴    Ctrl+Alt+T"; icon.source: "qrc:/icons/arrows_left_right.svg"; onTriggered: appController.fitPlots(true, false) }
-                    MenuItem { text: "自适应当前 Y 轴    Ctrl+Alt+Y"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: appController.fitPlots(false, true) }
-                    MenuItem { text: "自适应全部 Y 轴"; onTriggered: appController.fitPlots(false, true, true) }
+                    MenuItem { text: "自适应当前视图    Ctrl+Alt+F"; icon.source: "qrc:/icons/fit-view.svg"; onTriggered: appController.fitPlots(true, true, false) }
+                    MenuItem { text: "自适应全部视图    Ctrl+Alt+Shift+F"; icon.source: "qrc:/icons/fit-view.svg"; onTriggered: appController.fitPlots(true, true, true) }
+                    MenuSeparator { }
+                    MenuItem { text: "自适应当前时间轴    Ctrl+Alt+T"; icon.source: "qrc:/icons/arrows_left_right.svg"; onTriggered: appController.fitPlots(true, false, false) }
+                    MenuItem { text: "自适应全部时间轴    Ctrl+Alt+Shift+T"; icon.source: "qrc:/icons/arrows_left_right.svg"; onTriggered: appController.fitPlots(true, false, true) }
+                    MenuSeparator { }
+                    MenuItem { text: "自适应当前 Y 轴    Ctrl+Alt+Y"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: appController.fitPlots(false, true, false) }
+                    MenuItem { text: "自适应全部 Y 轴    Ctrl+Alt+Shift+Y"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: appController.fitPlots(false, true, true) }
                 }
             }
             ToolSeparator { }

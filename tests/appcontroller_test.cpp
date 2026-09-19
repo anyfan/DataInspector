@@ -609,6 +609,34 @@ void AppControllerTest::fittingUsesUnionOfSubplotTimeRanges()
     QCOMPARE(second.xMinimum(), -4.0); QCOMPARE(second.xMaximum(), 204.0);
     QCOMPARE(first.yMinimum(), .95); QCOMPARE(first.yMaximum(), 1.05);
     QCOMPARE(second.yMinimum(), 1.95); QCOMPARE(second.yMaximum(), 2.05);
+
+    // "当前时间轴" fits only the active subplot's signals; the shared X axis
+    // still applies the result to every subplot.
+    controller.setActivePlot(0);
+    controller.fitPlots(true, false, false);
+    QCOMPARE(first.xMinimum(), -.2); QCOMPARE(first.xMaximum(), 10.2);
+    QCOMPARE(second.xMinimum(), -.2); QCOMPARE(second.xMaximum(), 10.2);
+    controller.setActivePlot(1);
+    controller.fitPlots(true, false, false);
+    QCOMPARE(first.xMinimum(), 98.0); QCOMPARE(first.xMaximum(), 202.0);
+    QCOMPARE(second.xMinimum(), 98.0); QCOMPARE(second.xMaximum(), 202.0);
+    // "全部时间轴" goes back to the union of every subplot.
+    controller.fitPlots(true, false, true);
+    QCOMPARE(first.xMinimum(), -4.0); QCOMPARE(first.xMaximum(), 204.0);
+
+    // A maximized subplot fits only the time span of its own signals.
+    controller.setSoloPlot(1);
+    QCOMPARE(controller.soloPlotIndex(), 1);
+    controller.fitPlots(true, false, true);
+    QCOMPARE(second.xMinimum(), 98.0); QCOMPARE(second.xMaximum(), 202.0);
+    controller.setSoloPlot(0);
+    controller.fitPlots(true, false, true);
+    QCOMPARE(first.xMinimum(), -.2); QCOMPARE(first.xMaximum(), 10.2);
+    // Restoring the tiled layout fits the union again.
+    controller.setSoloPlot(-1);
+    controller.fitPlots(true, false, true);
+    QCOMPARE(first.xMinimum(), -4.0); QCOMPARE(first.xMaximum(), 204.0);
+    QCOMPARE(second.xMinimum(), -4.0); QCOMPARE(second.xMaximum(), 204.0);
 }
 
 void AppControllerTest::fitAndAxisZoomFollowLegacyRanges()
@@ -703,7 +731,8 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QCOMPARE(visualMarkers.size(), 4);
     QCOMPARE(visualTimes.size(), 2);
     const double plotBottom = plot->parentItem()->y() + plot->height();
-    for (const auto *label : visualTimes) QVERIFY(label->y() > plotBottom);
+    // Cursor time badges sit flush on the X axis, with no gap below the plot.
+    for (const auto *label : visualTimes) QCOMPARE(label->y(), plotBottom);
     QQuickWindow window;
     window.resize(800, 400);
     auto *item = qobject_cast<QQuickItem *>(object.get());

@@ -41,6 +41,8 @@ class AppController final : public QObject
     Q_PROPERTY(int plotColumns READ plotColumns NOTIFY layoutChanged)
     Q_PROPERTY(int activePlotIndex READ activePlotIndex NOTIFY activePlotChanged)
     Q_PROPERTY(int plotStateRevision READ plotStateRevision NOTIFY plotBindingsChanged)
+    // >= 0 while a single subplot is shown maximized; -1 while tiled.
+    Q_PROPERTY(int soloPlotIndex READ soloPlotIndex WRITE setSoloPlot NOTIFY soloPlotChanged)
 public:
     enum ExportScope { AllLoadedData = 0, PlottedSignals = 1 };
     Q_ENUM(ExportScope)
@@ -63,6 +65,7 @@ public:
     int plotColumns() const { return m_plotColumns; }
     int activePlotIndex() const { return m_signals->activePlot(); }
     int plotStateRevision() const { return m_plotStateRevision; }
+    int soloPlotIndex() const { return m_soloPlotIndex; }
 
     // Import / export
     Q_INVOKABLE bool loadCsv(const QString &filePath);
@@ -92,6 +95,8 @@ public:
     Q_INVOKABLE void detachPlot(QObject *plot, int index = 0);
     Q_INVOKABLE void setLayout(int rows, int columns);
     Q_INVOKABLE void setActivePlot(int index);
+    // Restricts X fitting to one maximized subplot; pass -1 to fit the union again.
+    Q_INVOKABLE void setSoloPlot(int index);
     Q_INVOKABLE void fitAllPlots();
     Q_INVOKABLE void fitPlots(bool fitX, bool fitY, bool allPlots = false);
     Q_INVOKABLE void revealLegendSignal(int plotIndex, int row);
@@ -114,6 +119,7 @@ signals:
     void layoutChanged();
     void plotBindingsChanged();
     void activePlotChanged();
+    void soloPlotChanged();
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 private:
@@ -131,6 +137,10 @@ private:
     void refreshPlot(int index, bool fitY = true);
     bool unbindPlotSignals(int plotIndex);
     PlotItem *plotAt(int index) const;
+    // Fit scope helpers: which subplots a fit request applies to, and the
+    // signal rows whose time bounds define the fitted X range.
+    bool fitScopeIncludes(int plotIndex, bool allPlots) const;
+    QVector<PlotSeriesId> fitSourceRows(bool allPlots) const;
     void applySharedXRange(double xMinimum, double xMaximum, PlotItem *except = nullptr);
     static void syncCursorsFrom(PlotItem *source, PlotItem *target);
 
@@ -168,4 +178,5 @@ private:
     double m_sharedXMinimum = 0.0;
     double m_sharedXMaximum = 1.0;
     int m_plotStateRevision = 0;
+    int m_soloPlotIndex = -1;
 };
