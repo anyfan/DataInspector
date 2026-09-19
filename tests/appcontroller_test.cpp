@@ -46,7 +46,7 @@ private slots:
     void failedLoadReportsReason();
     void legendDoesNotToggleSignalVisibility();
     void fitAndAxisZoomFollowLegacyRanges();
-    void axisZoomKeepsCurrentMidpoint();
+    void axisZoomAnchorsOnPointerPosition();
     void axisSelectionAppliesRange();
     void fittingUsesUnionOfSubplotTimeRanges();
     void asynchronousLodKeepsLatestRequest();
@@ -659,19 +659,29 @@ void AppControllerTest::fitAndAxisZoomFollowLegacyRanges()
     QVERIFY(plot.yMinimum() > 9.5);
 }
 
-void AppControllerTest::axisZoomKeepsCurrentMidpoint()
+void AppControllerTest::axisZoomAnchorsOnPointerPosition()
 {
     PlotItem plot;
     plot.setXRange(2.0, 10.0);
 
-    const double initialXMidpoint = (plot.xMinimum() + plot.xMaximum()) / 2.0;
-    plot.zoomAxis(0, 0.1, 1.0);
-    QVERIFY(qAbs((plot.xMinimum() + plot.xMaximum()) / 2.0 - initialXMidpoint) < 1e-12);
+    // X: fraction is measured left to right, so the data value under the
+    // pointer must stay put while the range shrinks around it.
+    const double xAnchor = plot.xMinimum() + .1 * (plot.xMaximum() - plot.xMinimum());
+    plot.zoomAxis(0, .1, 1.0);
+    QVERIFY(plot.xMaximum() - plot.xMinimum() < 8.0);
+    QVERIFY(qAbs(plot.xMinimum() + .1 * (plot.xMaximum() - plot.xMinimum()) - xAnchor) < 1e-12);
 
-    plot.fitY();
-    const double initialYMidpoint = (plot.yMinimum() + plot.yMaximum()) / 2.0;
-    plot.zoomAxis(1, 0.9, -1.0);
-    QVERIFY(qAbs((plot.yMinimum() + plot.yMaximum()) / 2.0 - initialYMidpoint) < 1e-12);
+    // Y: fraction is measured top to bottom, matching the axis gutter.
+    plot.setYRange(-3.0, 7.0);
+    const double yAnchor = plot.yMaximum() - .9 * (plot.yMaximum() - plot.yMinimum());
+    plot.zoomAxis(1, .9, -1.0);
+    QVERIFY(plot.yMaximum() - plot.yMinimum() > 10.0);
+    QVERIFY(qAbs(plot.yMaximum() - .9 * (plot.yMaximum() - plot.yMinimum()) - yAnchor) < 1e-12);
+
+    // A centred pointer still behaves like the previous midpoint zoom.
+    plot.setXRange(2.0, 10.0);
+    plot.zoomAxis(0, .5, 1.0);
+    QVERIFY(qAbs((plot.xMinimum() + plot.xMaximum()) / 2.0 - 6.0) < 1e-12);
 }
 
 void AppControllerTest::axisSelectionAppliesRange()

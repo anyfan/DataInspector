@@ -406,12 +406,17 @@ void PlotItem::zoomAxis(int axis, double fraction, double steps)
     if ((axis != 0 && axis != 1) || !qIsFinite(fraction) || !qIsFinite(steps) || steps == 0) return;
     const double factor = qPow(.85, qBound(-20.0, steps, 20.0));
     double xmin = xMinimum(), xmax = xMaximum(), ymin = yMinimum(), ymax = yMaximum();
+    // `fraction` is the pointer position inside the axis gutter: 0..1 left to
+    // right for X, and top to bottom for Y (same convention as
+    // PlotAxisArea.fraction() and applyAxisSelection). Anchoring the zoom
+    // there keeps the data value under the cursor stationary.
+    const double position = qBound(0.0, fraction, 1.0);
     if (axis == 0) {
-        const double anchor = xmin + 0.5 * (xmax - xmin);
+        const double anchor = xmin + position * (xmax - xmin);
         xmin = anchor + (xmin - anchor) * factor;
         xmax = anchor + (xmax - anchor) * factor;
     } else {
-        const double anchor = ymin + 0.5 * (ymax - ymin);
+        const double anchor = ymax - position * (ymax - ymin);
         ymin = anchor + (ymin - anchor) * factor;
         ymax = anchor + (ymax - anchor) * factor;
     }
