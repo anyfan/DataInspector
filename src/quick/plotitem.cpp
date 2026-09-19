@@ -656,14 +656,17 @@ void PlotItem::mousePressEvent(QMouseEvent *e)
             e->accept();
             return;
         }
+        // The range members are written under the lock (setRange may run from
+        // range syncing while a press is delivered), so snapshot them here
+        // instead of reading them unguarded.
+        m_dragStartXMinimum = m_xMinimum;
+        m_dragStartXMaximum = m_xMaximum;
+        m_dragStartYMinimum = m_yMinimum;
+        m_dragStartYMaximum = m_yMaximum;
     }
     m_cursorDragIndex = 0;
     m_dragging = true;
     m_dragStartPixel = e->position();
-    m_dragStartXMinimum = m_xMinimum;
-    m_dragStartXMaximum = m_xMaximum;
-    m_dragStartYMinimum = m_yMinimum;
-    m_dragStartYMaximum = m_yMaximum;
     e->accept();
 }
 
@@ -671,7 +674,7 @@ void PlotItem::mouseMoveEvent(QMouseEvent *e)
 {
     if (m_cursorDragIndex) {
         const double x = pixelToData(e->position()).x();
-        if (m_cursorMode == DoubleCursor) {
+        if (cursorMode() == DoubleCursor) {
             // Cursors never cross: dragging one past the other hands the drag to the other cursor.
             double x1, x2;
             { QMutexLocker lock(&m_dataMutex); x1 = m_cursorX1; x2 = m_cursorX2; }
