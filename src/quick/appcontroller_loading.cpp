@@ -151,10 +151,11 @@ bool AppController::collectExportTables(int scope, QVector<DataExportTable> *tab
         if (!data) continue;
         QString group = m_signals->groupAt(row);
         if (group.isEmpty()) group = QStringLiteral("Data");
-        int tableIndex = tableByGroup.value(group, -1);
+        const QString exportKey = group + QChar(0x1f) + QString::number(data->timeOffset, 'g', 17);
+        int tableIndex = tableByGroup.value(exportKey, -1);
         if (tableIndex < 0) {
             tableIndex = tables->size();
-            tableByGroup.insert(group, tableIndex);
+            tableByGroup.insert(exportKey, tableIndex);
             tables->append({group, {}});
         }
         (*tables)[tableIndex].series.append({m_signals->nameAt(row), data});

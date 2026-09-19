@@ -47,6 +47,7 @@ public:
                       Qt::PenStyle style);
     // Renames one source row; rejects invalid rows and blank names.
     bool renameSignal(int row, const QString &name);
+    QString originalNameAt(int row) const { return m_originalNames.value(row); }
     QString nameAt(int row) const { return m_names.value(row); }
     QString groupAt(int row) const { return m_groups.value(row); }
     void setChecked(int row, bool checked);
@@ -68,6 +69,7 @@ private:
     int visibleModelRow(int sourceRow) const;
     bool groupExists(const QString &group) const;
     QStringList m_names;
+    QStringList m_originalNames;
     QStringList m_groups;
     QVector<QColor> m_colors;
     QVector<double> m_widths;

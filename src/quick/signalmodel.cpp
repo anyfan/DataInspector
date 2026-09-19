@@ -65,6 +65,7 @@ void SignalModel::setNames(const QStringList &names, const QStringList &groups,
 {
     beginResetModel();
     m_names = names;
+    m_originalNames = names;
     m_groups = groups;
     m_groups.resize(names.size());
     m_colors = colors;
@@ -92,6 +93,7 @@ void SignalModel::appendNames(const QStringList &names, const QStringList &group
     beginResetModel();
     const int oldSize = m_names.size();
     m_names.append(names);
+    m_originalNames.append(names);
 
     QStringList appendedGroups = groups;
     appendedGroups.resize(names.size());
@@ -145,6 +147,7 @@ QVector<int> SignalModel::removeFile(const QString &fileName)
     QVector<int> removedRows;
     QVector<int> oldToNew(m_names.size(), -1);
     QStringList names;
+    QStringList originalNames;
     QStringList groups;
     QVector<QColor> colors;
     QVector<double> widths;
@@ -164,6 +167,7 @@ QVector<int> SignalModel::removeFile(const QString &fileName)
         }
         oldToNew[row] = names.size();
         names.append(m_names.at(row));
+        originalNames.append(m_originalNames.at(row));
         groups.append(m_groups.value(row));
         colors.append(m_colors.value(row, QColor("#4ea1ff")));
         widths.append(m_widths.value(row, 2.0));
@@ -173,6 +177,7 @@ QVector<int> SignalModel::removeFile(const QString &fileName)
 
     beginResetModel();
     m_names = std::move(names);
+    m_originalNames = std::move(originalNames);
     m_groups = std::move(groups);
     m_colors = std::move(colors);
     m_widths = std::move(widths);

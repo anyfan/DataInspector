@@ -36,6 +36,7 @@ struct PlotSeriesData
     QVector<QPointF> points;
     bool monotonicTime = true;
     quint64 version = 0;
+    double timeOffset = 0.0;
 
     qsizetype sampleCount() const;
     QPointF pointAt(qsizetype index) const;
@@ -74,6 +75,7 @@ public:
     void updateSeriesPen(PlotSeriesId id, const QColor &color,
                          double lineWidth, Qt::PenStyle lineStyle);
     void removeSeries(const QSet<PlotSeriesId> &ids);
+    bool addTimeOffset(const QSet<PlotSeriesId> &ids, double seconds, bool absolute = false);
     void clear();
     quint64 generation() const;
     PlotSeriesSnapshot snapshot(const QVector<PlotSeriesId> &orderedIds) const;

@@ -26,6 +26,8 @@ Flow {
             id: entry
             required property int modelData
             property int signalRow: modelData
+            readonly property string signalName: styleRevision >= 0
+                ? legend.controller.signalName(signalRow) : ""
             property int styleRevision: legend.controller.plotStateRevision
             property color previewColor: styleRevision >= 0
                                          ? legend.controller.signalColor(signalRow)
@@ -55,7 +57,8 @@ Flow {
                 anchors.leftMargin: 22
                 anchors.verticalCenter: parent.verticalCenter
                 width: Math.max(0, parent.width - 22)
-                text: legend.controller.signalName(entry.signalRow)
+                objectName: "legendSignalName"
+                text: entry.signalName
                 font.bold: entry.highlighted
                 elide: Text.ElideRight
                 color: legend.textColor
@@ -122,7 +125,7 @@ Flow {
                 Menu {
                     id: legendMenu
                     MenuItem {
-                        text: "移除“" + legend.controller.signalName(entry.signalRow) + "”"
+                        text: "移除“" + entry.signalName + "”"
                         onTriggered: legend.controller.removeLegendSignal(legend.plot.plotIndex, entry.signalRow)
                     }
                     MenuSeparator { }

@@ -3,6 +3,7 @@
 #include "plotitem.h"
 
 #include <utility>
+#include <QtMath>
 
 void AppController::selectSignal(int row)
 {
@@ -54,6 +55,68 @@ bool AppController::renameSignal(int row, const QString &name)
     notifyPlotBindingsChanged();
     setStatus(QStringLiteral("已重命名信号：%1 → %2")
                   .arg(previous, m_signals->nameAt(row)));
+    return true;
+}
+
+double AppController::signalTimeOffset(int row) const
+{
+    const auto snapshot = m_seriesStore->snapshot({row});
+    return snapshot.series.isEmpty() ? 0.0 : snapshot.series.first()->timeOffset;
+}
+
+bool AppController::resetSignalName(int row)
+{
+    return renameSignal(row, m_signals->originalNameAt(row));
+}
+
+QSet<PlotSeriesId> AppController::timeOffsetRows(int scope, int row, const QString &group) const
+{
+    QSet<PlotSeriesId> ids;
+    for (int id = 0; id < m_signals->sourceCount(); ++id) {
+        const QString candidate = m_signals->groupAt(id);
+        if ((scope == 0 && id == row)
+            || (scope == 1 && !group.isEmpty() && candidate == group)
+            || (scope == 2 && !group.isEmpty()
+                && (candidate == group || candidate.startsWith(group + QLatin1Char('/')))))
+            ids.insert(id);
+    }
+    return ids;
+}
+
+QVariant AppController::timeOffsetForScope(int scope, int row, const QString &group) const
+{
+    const auto ids = timeOffsetRows(scope, row, group);
+    const auto snapshot = m_seriesStore->snapshot(QVector<int>(ids.cbegin(), ids.cend()));
+    if (snapshot.series.isEmpty()) return {};
+    const double value = snapshot.series.first()->timeOffset;
+    for (const auto &series : snapshot.series)
+        if (series->timeOffset != value) return {}; // Mixed values: do not display a false zero.
+    return value;
+}
+
+bool AppController::setTimeOffset(int scope, int row, const QString &group, double seconds)
+{
+    return applyTimeOffset(scope, row, group, seconds, true);
+}
+
+bool AppController::addTimeOffset(int scope, int row, const QString &group, double seconds)
+{
+    return applyTimeOffset(scope, row, group, seconds, false);
+}
+
+bool AppController::applyTimeOffset(int scope, int row, const QString &group, double seconds, bool absolute)
+{
+    if (m_loading || m_exporting || !qIsFinite(seconds)) return false;
+    const auto ids = timeOffsetRows(scope, row, group);
+    if (!m_seriesStore->addTimeOffset(ids, seconds, absolute)) {
+        setStatus(QStringLiteral("无法应用时间偏移：目标无效或数值超出范围"));
+        return false;
+    }
+    for (int index = 0; index < m_plots.size(); ++index) refreshPlot(index, false);
+    notifyPlotBindingsChanged();
+    setStatus((absolute ? QStringLiteral("已将 %1 个信号的时间偏移设置为 %2 秒")
+                        : QStringLiteral("已对 %1 个信号累加时间偏移 %2 秒"))
+                  .arg(ids.size()).arg(seconds, 0, 'g', 15));
     return true;
 }
 

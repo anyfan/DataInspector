@@ -52,11 +52,14 @@ private slots:
     void asynchronousLodKeepsLatestRequest();
     void quickPlotLoadsWithLegendAndCursors();
     void toolbarModesToggleAndRememberSelection();
+    void editDialogsRememberAndResetValues();
     void realMatImportPerformanceWhenRequested();
     void realCsvImportPerformanceWhenRequested();
     void addingSignalPreservesCurrentXRange();
     void attachingNewPlotPreservesSharedXRange();
     void removingFileKeepsRemainingSignalsAndBindings();
+    void timeOffsetsApplyToSignalsGroupsAndFiles();
+    void timeOffsetSnapshotsRemainImmutable();
     void exportsAllLoadedSignals();
     void exportsUnionOfSignalsDrawnAcrossPlots();
     void exportCompressionOptionReachesWriter();
@@ -743,6 +746,24 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     collect(qobject_cast<QQuickItem *>(object.get()));
     QCOMPARE(visualMarkers.size(), 4);
     QCOMPARE(visualTimes.size(), 2);
+    auto legendNames = [&]() {
+        QStringList names;
+        std::function<void(QQuickItem *)> visit = [&](QQuickItem *parent) {
+            for (auto *child : parent->childItems()) {
+                if (child->objectName() == "legendSignalName") names.append(child->property("text").toString());
+                visit(child);
+            }
+        };
+        visit(qobject_cast<QQuickItem *>(object.get()));
+        return names;
+    };
+    QVERIFY(legendNames().contains("A"));
+    QVERIFY(controller.renameSignal(0, QStringLiteral("Renamed")));
+    QTRY_VERIFY(legendNames().contains("Renamed"));
+    QVERIFY(!legendNames().contains("A"));
+    QVERIFY(controller.resetSignalName(0));
+    QTRY_VERIFY(legendNames().contains("A"));
+
     const double plotBottom = plot->parentItem()->y() + plot->height();
     // Cursor time badges sit flush on the X axis, with no gap below the plot.
     for (const auto *label : visualTimes) QCOMPARE(label->y(), plotBottom);
@@ -1515,6 +1536,148 @@ void AppControllerTest::matExportKeepsSourceTableNumbers()
 #else
     QSKIP("MAT support disabled");
 #endif
+}
+
+void AppControllerTest::timeOffsetSnapshotsRemainImmutable()
+{
+    PlotSeriesStore store;
+    PlotSeriesInput input;
+    input.id = 0;
+    input.time = {0, 1, 2};
+    input.values = {4, 5, 6};
+    store.replaceSeries({input});
+    const auto original = store.snapshot({0});
+    QVERIFY(store.addTimeOffset({0}, 2.5));
+    const auto shifted = store.snapshot({0});
+    QCOMPARE(original.series.first()->pointAt(0).x(), 0.0);
+    QCOMPARE(shifted.series.first()->pointAt(0).x(), 2.5);
+    QCOMPARE(PlotSeriesStore::nearestSamples(shifted, 3.4).first().x, 3.5);
+    QCOMPARE(PlotSeriesStore::nearestSamples(shifted, 3.4).first().y, 5.0);
+    QCOMPARE(PlotSeriesStore::timeBounds(shifted)->second, 4.5);
+    QVERIFY(!store.addTimeOffset({0}, std::numeric_limits<double>::infinity()));
+    QVERIFY(store.addTimeOffset({0}, -2.5));
+    QCOMPARE(store.snapshot({0}).series.first()->pointAt(0).x(), 0.0);
+    QCOMPARE(shifted.series.first()->pointAt(0).x(), 2.5);
+}
+
+void AppControllerTest::timeOffsetsApplyToSignalsGroupsAndFiles()
+{
+    QTemporaryDir directory;
+    const QString input = directory.filePath(QStringLiteral("flight.csv"));
+    const QString other = directory.filePath(QStringLiteral("other.csv"));
+    writeCsvFile(input, "time,A,B\n0,1,2\n1,3,4\n");
+    writeCsvFile(other, "time,C\n0,5\n1,6\n");
+    AppController controller;
+    QCOMPARE(controller.loadFiles(QVariantList{input, other}), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QVERIFY(!controller.addTimeOffset(0, -1, {}, 1));
+    QVERIFY(!controller.addTimeOffset(3, 0, {}, 1));
+    QVERIFY(!controller.addTimeOffset(1, -1, QStringLiteral("missing"), 1));
+    QVERIFY(controller.addTimeOffset(0, 0, {}, 2.5));
+    controller.filterSignals(QStringLiteral("A"));
+    QVERIFY(controller.addTimeOffset(1, -1, controller.signalModel()->groupAt(0), -1));
+    QCOMPARE(controller.signalTimeOffset(0), 1.5);
+    QCOMPARE(controller.signalTimeOffset(1), -1.0);
+    QVERIFY(controller.addTimeOffset(2, -1, QStringLiteral("flight.csv"), 3));
+    QCOMPARE(controller.signalTimeOffset(0), 4.5);
+    QCOMPARE(controller.signalTimeOffset(1), 2.0);
+    QCOMPARE(controller.signalTimeOffset(2), 0.0);
+
+    const QString output = directory.filePath(QStringLiteral("shifted.xlsx"));
+    QVERIFY(controller.exportXlsx(output, AppController::AllLoadedData));
+    QVERIFY(!controller.addTimeOffset(0, 0, {}, 1));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+    const auto read = readXlsxWorkbook(output, {}, {});
+    QVERIFY2(read.error.isEmpty(), qPrintable(read.error));
+    QCOMPARE(read.tables.size(), 3);
+    QHash<QString, double> expected{{"A", 4.5}, {"B", 2.0}, {"C", 0.0}};
+    for (const auto &table : read.tables) {
+        QCOMPARE(table.signalNames.size(), 1);
+        QCOMPARE(table.time.first(), expected.value(table.signalNames.first()));
+    }
+#ifdef ENABLE_MAT
+    const QString matPath = directory.filePath(QStringLiteral("shifted.mat"));
+    QVERIFY(controller.exportMat(matPath, AppController::AllLoadedData));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+    AppController reloaded;
+    QVERIFY(reloaded.loadCsv(matPath));
+    QTRY_VERIFY_WITH_TIMEOUT(!reloaded.loading(), 5000);
+    QCOMPARE(reloaded.signalCount(), 3);
+    const QString roundTrip = directory.filePath(QStringLiteral("roundtrip.xlsx"));
+    QVERIFY(reloaded.exportXlsx(roundTrip, AppController::AllLoadedData));
+    QTRY_VERIFY_WITH_TIMEOUT(!reloaded.exporting(), 5000);
+    const auto matRead = readXlsxWorkbook(roundTrip, {}, {});
+    QVERIFY2(matRead.error.isEmpty(), qPrintable(matRead.error));
+    QCOMPARE(matRead.tables.size(), 3);
+    for (const auto &table : matRead.tables)
+        QCOMPARE(table.time.first(), expected.value(table.signalNames.first()));
+#endif
+}
+
+void AppControllerTest::editDialogsRememberAndResetValues()
+{
+    qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
+    QTemporaryDir directory;
+    const QString input = directory.filePath("original.csv");
+    writeCsvFile(input, "time,A,B\n0,1,2\n1,3,4\n");
+    AppController controller;
+    QVERIFY(controller.loadCsv(input));
+    QTRY_VERIFY(!controller.loading());
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("appController", &controller);
+    const QDir qmlDirectory = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml");
+    qmlRegisterType(QUrl::fromLocalFile(qmlDirectory.filePath("QuickPlot.qml")), "DataInspector", 1, 0, "QuickPlot");
+    QQmlComponent component(&engine, QUrl::fromLocalFile(qmlDirectory.filePath("Main.qml")));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{"visible", false}}));
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto *offsetDialog = object->findChild<QObject *>("timeOffsetDialog");
+    auto *offsetField = object->findChild<QObject *>("timeOffsetField");
+    auto *offsetReset = object->findChild<QObject *>("resetTimeOffsetButton");
+    auto *nameDialog = object->findChild<QObject *>("renameSignalDialog");
+    auto *nameField = object->findChild<QObject *>("renameSignalField");
+    auto *nameReset = object->findChild<QObject *>("resetSignalNameButton");
+    QVERIFY(offsetDialog && offsetField && offsetReset && nameDialog && nameField && nameReset);
+    auto openOffset = [&](int scope, int row, const QString &group) {
+        return QMetaObject::invokeMethod(object.get(), "requestTimeOffset",
+            Q_ARG(QVariant, scope), Q_ARG(QVariant, row), Q_ARG(QVariant, group));
+    };
+    QVERIFY(controller.setTimeOffset(0, 0, {}, 2.5));
+    QVERIFY(openOffset(0, 0, {}));
+    QCOMPARE(offsetField->property("text").toString(), "2.5");
+    QVERIFY(QMetaObject::invokeMethod(offsetDialog, "accept"));
+    QCOMPARE(controller.signalTimeOffset(0), 2.5); // Reopening and confirming must not accumulate.
+    QVERIFY(openOffset(0, 0, {}));
+    QVERIFY(offsetField->setProperty("text", "-3.25"));
+    QVERIFY(QMetaObject::invokeMethod(offsetDialog, "accept"));
+    QCOMPARE(controller.signalTimeOffset(0), -3.25);
+    QVERIFY(openOffset(2, -1, "original.csv"));
+    QVERIFY(offsetDialog->property("mixedOffsets").toBool());
+    QCOMPARE(offsetField->property("text").toString(), "");
+    QVERIFY(QMetaObject::invokeMethod(offsetReset, "clicked"));
+    QVERIFY(QMetaObject::invokeMethod(offsetDialog, "accept"));
+    QCOMPARE(controller.signalTimeOffset(0), 0.0);
+    QCOMPARE(controller.signalTimeOffset(1), 0.0);
+    QVERIFY(controller.setTimeOffset(2, -1, "original.csv", 8));
+    QVERIFY(openOffset(1, -1, controller.signalModel()->groupAt(0)));
+    QCOMPARE(offsetField->property("text").toString(), "8");
+    QVERIFY(QMetaObject::invokeMethod(offsetDialog, "reject"));
+    QCOMPARE(controller.signalTimeOffset(0), 8.0);
+    QVERIFY(controller.renameSignal(0, "Changed"));
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "requestRenameSignal", Q_ARG(QVariant, 0)));
+    QCOMPARE(nameField->property("text").toString(), "Changed");
+    QVERIFY(QMetaObject::invokeMethod(nameReset, "clicked"));
+    QCOMPARE(nameField->property("text").toString(), "A");
+    QVERIFY(QMetaObject::invokeMethod(nameDialog, "accept"));
+    QCOMPARE(controller.signalName(0), "A");
+
+    SignalModel model;
+    model.setNames(QStringList{"First"}, QStringList{"one.csv"});
+    model.appendNames({"Second"}, {"two.csv"});
+    QVERIFY(model.renameSignal(1, "Edited"));
+    model.removeFile("one.csv");
+    QCOMPARE(model.originalNameAt(0), "Second");
+    model.setNames({"Fresh"});
+    QCOMPARE(model.originalNameAt(0), "Fresh");
 }
 
 QTEST_MAIN(AppControllerTest)

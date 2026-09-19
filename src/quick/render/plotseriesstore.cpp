@@ -92,8 +92,8 @@ qsizetype PlotSeriesData::sampleCount() const
 
 QPointF PlotSeriesData::pointAt(qsizetype index) const
 {
-    if (!points.isEmpty()) return points.at(index);
-    const double timestamp = time.at(index);
+    if (!points.isEmpty()) return {points.at(index).x() + timeOffset, points.at(index).y()};
+    const double timestamp = time.at(index) + timeOffset;
     const double value = values.at(index);
     return {timestamp, qIsFinite(value) ? value : qQNaN()};
 }
@@ -143,6 +143,32 @@ void PlotSeriesStore::updateSeriesPen(PlotSeriesId id, const QColor &color,
     if (!changed) return;
     m_series = std::move(replacement);
     m_generation = nextGeneration;
+}
+
+bool PlotSeriesStore::addTimeOffset(const QSet<PlotSeriesId> &ids, double seconds, bool absolute)
+{
+    if (ids.isEmpty() || !qIsFinite(seconds)) return false;
+    // Validate the entire batch before replacing any immutable snapshots.
+    for (const auto &series : m_series) {
+        if (!ids.contains(series->id)) continue;
+        const double offset = absolute ? seconds : series->timeOffset + seconds;
+        if (!qIsFinite(offset)) return false;
+        auto unshifted = std::make_shared<PlotSeriesData>(*series);
+        unshifted->timeOffset = 0;
+        const auto limits = timeBounds({0, {}, {unshifted}});
+        if (limits && (!qIsFinite(limits->first + offset)
+                       || !qIsFinite(limits->second + offset))) return false;
+    }
+    if (!absolute && seconds == 0.0) return true;
+    for (auto &series : m_series) {
+        if (!ids.contains(series->id)) continue;
+        auto updated = std::make_shared<PlotSeriesData>(*series);
+        updated->timeOffset = absolute ? seconds : updated->timeOffset + seconds;
+        updated->version = m_generation + 1;
+        series = std::move(updated);
+    }
+    ++m_generation;
+    return true;
 }
 
 void PlotSeriesStore::removeSeries(const QSet<PlotSeriesId> &ids)

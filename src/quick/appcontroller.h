@@ -97,6 +97,14 @@ public:
     // Changes the display name used by the tree, legends and exports.
     Q_INVOKABLE bool renameSignal(int row, const QString &name);
 
+    Q_INVOKABLE QString originalSignalName(int row) const { return m_signals->originalNameAt(row); }
+    Q_INVOKABLE bool resetSignalName(int row);
+    Q_INVOKABLE QVariant timeOffsetForScope(int scope, int row, const QString &group) const;
+    Q_INVOKABLE bool setTimeOffset(int scope, int row, const QString &group, double seconds);
+    Q_INVOKABLE double signalTimeOffset(int row) const;
+    // scope: 0 signal, 1 table group, 2 file.
+    Q_INVOKABLE bool addTimeOffset(int scope, int row, const QString &group, double seconds);
+
     // Subplots
     Q_INVOKABLE void attachPlot(QObject *plot, int index = 0);
     Q_INVOKABLE void detachPlot(QObject *plot, int index = 0);
@@ -147,6 +155,8 @@ private:
     void refreshPlot(int index, bool fitY = true);
     bool unbindPlotSignals(int plotIndex);
     PlotItem *plotAt(int index) const;
+    QSet<PlotSeriesId> timeOffsetRows(int scope, int row, const QString &group) const;
+    bool applyTimeOffset(int scope, int row, const QString &group, double seconds, bool absolute);
     // Fit scope helpers: which subplots a fit request applies to, and the
     // signal rows whose time bounds define the fitted X range.
     bool fitScopeIncludes(int plotIndex, bool allPlots) const;

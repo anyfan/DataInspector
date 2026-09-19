@@ -125,6 +125,11 @@ ApplicationWindow {
         id: fileContextMenu
         property string fileName: ""
         MenuItem {
+            text: "时间偏移…"
+            enabled: !appController.loading && !appController.exporting
+            onTriggered: window.requestTimeOffset(2, -1, fileContextMenu.fileName)
+        }
+        MenuItem {
             text: "移除文件 '" + fileContextMenu.fileName + "'"
             onTriggered: window.requestRemoveFile(fileContextMenu.fileName)
         }
@@ -134,17 +139,102 @@ ApplicationWindow {
         id: signalContextMenu
         property int signalIndex: -1
         MenuItem {
+            text: "时间偏移…"
+            enabled: !appController.loading && !appController.exporting
+            onTriggered: window.requestTimeOffset(0, signalContextMenu.signalIndex, "")
+        }
+        MenuItem {
             text: "重命名…"
             onTriggered: window.requestRenameSignal(signalContextMenu.signalIndex)
         }
+    }
+
+    Menu {
+        id: groupContextMenu
+        property string groupName: ""
         MenuItem {
-            text: "线条属性…"
-            onTriggered: window.editSignalPen(signalContextMenu.signalIndex)
+            text: "时间偏移…"
+            enabled: !appController.loading && !appController.exporting
+            onTriggered: window.requestTimeOffset(1, -1, groupContextMenu.groupName)
+        }
+    }
+
+    function requestTimeOffset(scope, row, group) {
+        timeOffsetDialog.scope = scope
+        timeOffsetDialog.signalIndex = row
+        timeOffsetDialog.groupName = group
+        timeOffsetDialog.open()
+    }
+
+    Dialog {
+        id: timeOffsetDialog
+        property int scope: 0
+        property bool mixedOffsets: false
+        property int signalIndex: -1
+        property string groupName: ""
+        readonly property bool valueValid: offsetField.acceptableInput
+            && offsetField.text.trim().length > 0 && isFinite(Number(offsetField.text))
+        objectName: "timeOffsetDialog"
+        title: "设置时间偏移"
+        modal: true
+        anchors.centerIn: parent
+        width: 420
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAboutToShow: {
+            const current = appController.timeOffsetForScope(scope, signalIndex, groupName)
+            mixedOffsets = current === undefined || current === null
+            offsetField.text = mixedOffsets ? "" : String(current)
+            const button = standardButton(Dialog.Ok)
+            if (button) button.enabled = Qt.binding(function() {
+                return timeOffsetDialog.valueValid && !appController.loading && !appController.exporting
+            })
+            offsetField.selectAll()
+            offsetField.forceActiveFocus()
+        }
+        onAccepted: appController.setTimeOffset(scope, signalIndex, groupName, Number(offsetField.text))
+        ColumnLayout {
+            width: parent.width
+            spacing: 10
+            Label {
+                text: "目标：" + (timeOffsetDialog.scope === 0
+                    ? appController.signalName(timeOffsetDialog.signalIndex) : timeOffsetDialog.groupName)
+                Layout.fillWidth: true
+                elide: Text.ElideMiddle
+            }
+            Label {
+                visible: timeOffsetDialog.mixedOffsets
+                text: "当前偏移不一致，输入后将统一设置。"
+            }
+            Label {
+                text: "设置相对原始时间的偏移：正值向右，负值向左。\n组和文件操作包含未勾选、被搜索隐藏的信号。"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            TextField {
+                id: offsetField
+                objectName: "timeOffsetField"
+                Layout.fillWidth: true
+                placeholderText: "时间偏移（秒）"
+                selectByMouse: true
+                validator: DoubleValidator { locale: "C"; notation: DoubleValidator.ScientificNotation }
+                onAccepted: if (timeOffsetDialog.valueValid && !appController.loading && !appController.exporting)
+                    timeOffsetDialog.accept()
+            }
+            Button {
+                objectName: "resetTimeOffsetButton"
+                text: "重置为 0"
+                onClicked: offsetField.text = "0"
+            }
+            Label {
+                text: "点击确定后应用修改或重置。"
+                opacity: 0.7
+            }
         }
     }
 
     Dialog {
         id: renameSignalDialog
+        objectName: "renameSignalDialog"
         property int signalIndex: -1
         readonly property bool nameValid: renameField.text.trim().length > 0
         title: "重命名信号"
@@ -166,7 +256,7 @@ ApplicationWindow {
             spacing: 8
             Label {
                 text: "原名称：" + (renameSignalDialog.signalIndex >= 0
-                                   ? appController.signalName(renameSignalDialog.signalIndex) : "")
+                                   ? appController.originalSignalName(renameSignalDialog.signalIndex) : "")
                 color: window.treeTextColor
                 opacity: 0.78
                 elide: Text.ElideRight
@@ -174,10 +264,20 @@ ApplicationWindow {
             }
             TextField {
                 id: renameField
+                objectName: "renameSignalField"
                 Layout.fillWidth: true
                 placeholderText: "新名称"
                 selectByMouse: true
                 onAccepted: if (renameSignalDialog.nameValid) renameSignalDialog.accept()
+            }
+            Button {
+                objectName: "resetSignalNameButton"
+                text: "重置为原名称"
+                onClicked: renameField.text = appController.originalSignalName(renameSignalDialog.signalIndex)
+            }
+            Label {
+                text: "点击确定后应用修改或重置。"
+                opacity: 0.7
             }
         }
     }
@@ -747,12 +847,14 @@ ApplicationWindow {
                         }
                         TapHandler {
                             acceptedButtons: Qt.RightButton
-                            enabled: signalDelegate.fileNode || !signalDelegate.groupNode
                             onTapped: {
                                 signalList.currentIndex = signalDelegate.index
                                 if (signalDelegate.fileNode) {
                                     fileContextMenu.fileName = signalDelegate.groupName
                                     fileContextMenu.popup()
+                                } else if (signalDelegate.groupNode) {
+                                    groupContextMenu.groupName = signalDelegate.groupName
+                                    groupContextMenu.popup()
                                 } else {
                                     signalContextMenu.signalIndex = signalDelegate.signalIndex
                                     signalContextMenu.popup()
