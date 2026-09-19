@@ -274,6 +274,29 @@ Rectangle {
     focus: root.controller.activePlotIndex === root.plotIndex && root.graphCursorMode !== 0
     Keys.onLeftPressed: plotItem.stepCursor(-1)
     Keys.onRightPressed: plotItem.stepCursor(1)
+    // Menus, legend buttons and the signal tree steal active focus from the
+    // subplot. The binding above keeps `focus` true, but Qt does not hand
+    // active focus back on its own, so Left/Right stopped moving the cursor
+    // after actions such as clearing the signals of a plot from a menu.
+    // Reclaim focus whenever plot state changes and no text editor is active.
+    readonly property bool cursorKeysEnabled:
+        root.graphCursorMode !== 0 && root.controller.activePlotIndex === root.plotIndex
+    function ensureCursorFocus() {
+        if (!root.cursorKeysEnabled || root.activeFocus)
+            return
+        const hostWindow = root.Window.window
+        const focusItem = hostWindow ? hostWindow.activeFocusItem : null
+        // Never interrupt text entry (signal search field, dialogs).
+        if (focusItem && focusItem.selectedText !== undefined)
+            return
+        root.forceActiveFocus(Qt.OtherFocusReason)
+    }
+    onCursorKeysEnabledChanged: Qt.callLater(root.ensureCursorFocus)
+    Connections {
+        target: root.controller
+        function onPlotBindingsChanged() { Qt.callLater(root.ensureCursorFocus) }
+        function onActivePlotChanged() { Qt.callLater(root.ensureCursorFocus) }
+    }
     color: plotColor
     border.color: root.dropHighlighted || root.controller.activePlotIndex === root.plotIndex
                   ? "#0078d4" : frameColor
@@ -439,7 +462,9 @@ Rectangle {
             visible: root.cursorInView(value)
             x: Math.max(root.axisLeft, Math.min(root.width - root.axisRight - width,
                         root.axisLeft + root.xPixel(value) - width / 2))
-            y: axisRect.y + axisRect.height + 3
+            // Flush against the X axis: no gap between the axis line and the
+            // cursor time badge.
+            y: axisRect.y + axisRect.height
             text: root.rawReadouts[formatKey] ? root.formatRaw(value) : root.formatCompact(value, 10)
             padding: 3
             color: "#ffffff"
@@ -589,7 +614,7 @@ Rectangle {
                              root.axisLeft
                              + root.xPixel((plotItem.cursorX1 + plotItem.cursorX2) * 0.5)
                              - width / 2))
-        y: axisRect.y + axisRect.height + 3
+        y: axisRect.y + axisRect.height
         z: 9
         visible: plotItem.cursorMode === 2
                  && root.cursorInView(plotItem.cursorX1) && root.cursorInView(plotItem.cursorX2)

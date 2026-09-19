@@ -251,9 +251,15 @@ void PlotItem::stepCursor(int direction, int cursorIndex)
                 continue;
             const double current = target == 2 ? m_cursorX2 : m_cursorX1;
             const auto next = adjacentRawX(m_seriesSnapshot, current, direction);
-            if (!next)
-                continue;
-            const double clamped = qBound(m_xMinimum, *next, m_xMaximum);
+            // Without raw samples (no signal bound, or the cursor already sits
+            // on the outermost sample of an empty plot) fall back to a
+            // view-relative step so the keyboard still drives the cursor.
+            const double fallback = current
+                    + (direction > 0 ? 1 : -1) * (m_xMaximum - m_xMinimum) / 100.0;
+            const double candidate = next ? *next
+                                          : (m_seriesSnapshot.series.isEmpty() ? fallback
+                                                                               : current);
+            const double clamped = qBound(m_xMinimum, candidate, m_xMaximum);
             if (clamped == current)
                 continue;
             if (target == 2)
