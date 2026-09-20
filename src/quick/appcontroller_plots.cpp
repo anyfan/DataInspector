@@ -7,6 +7,7 @@
 
 void AppController::selectSignal(int row)
 {
+    if (sessionInteractionBlocked()) return;
     if (row >= 0) m_signals->setChecked(row, true);
     const int plotIndex = m_signals->activePlot();
     if (plotIndex >= 0) refreshPlot(plotIndex);
@@ -15,6 +16,7 @@ void AppController::selectSignal(int row)
 
 void AppController::toggleSignal(int row)
 {
+    if (sessionInteractionBlocked()) return;
     const int plotIndex = m_signals->activePlot();
     if (plotIndex < 0 || row < 0) return;
     m_signals->setPlotChecked(plotIndex, row, !m_signals->plotRows(plotIndex).contains(row));
@@ -24,11 +26,13 @@ void AppController::toggleSignal(int row)
 
 void AppController::filterSignals(const QString &text)
 {
+    if (sessionInteractionBlocked()) return;
     m_signals->setFilter(text);
 }
 
 void AppController::setAllSignalsChecked(bool checked)
 {
+    if (sessionInteractionBlocked()) return;
     m_signals->setAllChecked(checked);
     const int plotIndex = m_signals->activePlot();
     if (plotIndex >= 0) refreshPlot(plotIndex);
@@ -47,6 +51,7 @@ QString AppController::signalName(int row) const
 
 bool AppController::renameSignal(int row, const QString &name)
 {
+    if (sessionInteractionBlocked()) return false;
     const QString previous = m_signals->nameAt(row);
     if (!m_signals->renameSignal(row, name)) return false;
     if (m_signals->nameAt(row) == previous) return true;
@@ -129,6 +134,7 @@ QVariantList AppController::plotSignalRows(int plotIndex) const
 
 void AppController::setSignalPen(int row, const QColor &color, double width, int style)
 {
+    if (sessionInteractionBlocked()) return;
     if (row < 0 || row >= m_signalColors.size()) return;
     m_signals->setSignalPen(row, color, width, static_cast<Qt::PenStyle>(style));
     m_signalColors[row] = m_signals->signalColor(row);
@@ -143,6 +149,7 @@ void AppController::setSignalPen(int row, const QColor &color, double width, int
 
 void AppController::revealLegendSignal(int plotIndex, int row)
 {
+    if (sessionInteractionBlocked()) return;
     if (!plotSignalEnabled(plotIndex, row)) return;
     setActivePlot(plotIndex);
     if (PlotItem *plot = plotAt(plotIndex)) plot->setHighlightedSeries(row);
@@ -151,6 +158,7 @@ void AppController::revealLegendSignal(int plotIndex, int row)
 
 void AppController::moveLegendSignal(int fromPlot, int toPlot, int row)
 {
+    if (sessionInteractionBlocked()) return;
     if (fromPlot == toPlot || toPlot < 0 || toPlot >= m_plotRows * m_plotColumns
         || !plotSignalEnabled(fromPlot, row)) return;
     m_signals->setPlotChecked(toPlot, row, true);
@@ -163,6 +171,7 @@ void AppController::moveLegendSignal(int fromPlot, int toPlot, int row)
 
 void AppController::removeLegendSignal(int plotIndex, int row)
 {
+    if (sessionInteractionBlocked()) return;
     m_signals->setPlotChecked(plotIndex, row, false);
     refreshPlot(plotIndex, false);
     notifyPlotBindingsChanged();
@@ -170,12 +179,14 @@ void AppController::removeLegendSignal(int plotIndex, int row)
 
 void AppController::clearPlotSignals(int plotIndex)
 {
+    if (sessionInteractionBlocked()) return;
     if (!unbindPlotSignals(plotIndex)) return;
     notifyPlotBindingsChanged();
 }
 
 void AppController::clearAllPlotSignals()
 {
+    if (sessionInteractionBlocked()) return;
     // Unbind every drawn signal but keep loaded files and series data.
     bool changed = false;
     for (int plotIndex = 0; plotIndex < m_plotRows * m_plotColumns; ++plotIndex)
@@ -196,6 +207,7 @@ bool AppController::unbindPlotSignals(int plotIndex)
 
 void AppController::fitPlotY(int plotIndex)
 {
+    if (sessionInteractionBlocked()) return;
     if (PlotItem *plot = plotAt(plotIndex)) plot->fitY();
 }
 
@@ -216,20 +228,21 @@ void AppController::applySharedXRange(double xMinimum, double xMaximum, PlotItem
 
 void AppController::syncCursorsFrom(PlotItem *source, PlotItem *target)
 {
-    target->setCursorMode(source->cursorMode());
-    if (source->cursorMode() == PlotItem::NoCursor) return;
-    target->setCursorPosition(source->cursorX1(), 1);
-    if (source->cursorMode() == PlotItem::DoubleCursor)
-        target->setCursorPosition(source->cursorX2(), 2);
+    target->restoreCursorState(source->cursorMode(), source->cursorX1(), source->cursorX2());
 }
 
 void AppController::attachPlot(QObject *plot, int index)
 {
     auto *item = qobject_cast<PlotItem *>(plot);
-    if (!item || index < 0) return;
+    if (!item || index < 0 || index >= m_plotRows * m_plotColumns) return;
+    if (!m_applyingSession && index < m_plots.size() && m_plots.at(index))
+        cachePlotView(m_plots.at(index));
+    const std::optional<SessionPlot> view = m_plotViews.contains(index)
+        ? std::optional<SessionPlot>(m_plotViews.value(index)) : std::nullopt;
     if (index < m_plots.size() && m_plots[index] == item) {
         item->setSeriesStore(m_seriesStore);
-        refreshPlot(index);
+        refreshPlot(index, !view.has_value());
+        if (view) applyPlotView(item, *view);
         return;
     }
     // Retired QML delegates can remain alive until deferred destruction.
@@ -247,22 +260,30 @@ void AppController::attachPlot(QObject *plot, int index)
     item->setXRange(m_sharedXMinimum, m_sharedXMaximum);
     connect(item, &PlotItem::rangeChanged, this,
             [this, item](double xmin, double xmax, double, double) {
-                if (m_syncingRanges) return;
+                cachePlotView(item);
+                if (m_syncingRanges || sessionInteractionBlocked()) return;
                 applySharedXRange(xmin, xmax, item);
             });
     connect(item, &PlotItem::cursorChanged, this, [this, item]() {
-        if (m_syncingCursors) return;
+        if (m_syncingCursors || sessionInteractionBlocked()) return;
+        m_sessionCursor = {item->cursorMode(), item->cursorX1(), item->cursorX2()};
+        m_haveCursorState = true;
         m_syncingCursors = true;
         for (const QPointer<PlotItem> &other : std::as_const(m_plots))
             if (other && other != item) syncCursorsFrom(item, other);
         m_syncingCursors = false;
     });
-    refreshPlot(index);
-    for (const QPointer<PlotItem> &source : std::as_const(m_plots)) {
-        if (!source || source == item) continue;
-        syncCursorsFrom(source, item);
-        break;
+    connect(item, &PlotItem::normalizeYChanged, this, [this, item]() { cachePlotView(item); });
+    connect(item, &PlotItem::lineWidthChanged, this, [this, item]() { cachePlotView(item); });
+    refreshPlot(index, !view.has_value());
+    if (m_haveCursorState) {
+        item->restoreCursorState(m_sessionCursor.mode, m_sessionCursor.x1, m_sessionCursor.x2);
+    } else {
+        m_sessionCursor = {item->cursorMode(), item->cursorX1(), item->cursorX2()};
+        m_haveCursorState = true;
     }
+    if (view) applyPlotView(item, *view);
+    cachePlotView(item);
 }
 
 void AppController::detachPlot(QObject *plot, int index)
@@ -270,12 +291,14 @@ void AppController::detachPlot(QObject *plot, int index)
     auto *item = qobject_cast<PlotItem *>(plot);
     if (!item || index < 0 || index >= m_plots.size()) return;
     if (m_plots.at(index) != item) return;
+    cachePlotView(item);
     disconnect(item, nullptr, this, nullptr);
     m_plots[index].clear();
 }
 
 void AppController::setLayout(int rows, int columns)
 {
+    if (sessionInteractionBlocked()) return;
     const int normalizedRows = qBound(1, rows, 8);
     const int normalizedColumns = qBound(1, columns, 8);
     if (m_plotRows == normalizedRows && m_plotColumns == normalizedColumns)
@@ -283,6 +306,9 @@ void AppController::setLayout(int rows, int columns)
     // A numeric QML Repeater retains delegates whose indices still exist.
     // Preserve those attachments and leave new slots empty for attachPlot().
     const int plotCount = normalizedRows * normalizedColumns;
+    for (auto it = m_plotViews.begin(); it != m_plotViews.end();) {
+        if (it.key() >= plotCount) it = m_plotViews.erase(it); else ++it;
+    }
     for (int index = plotCount; index < m_plots.size(); ++index)
         if (m_plots.at(index))
             disconnect(m_plots.at(index), nullptr, this, nullptr);
@@ -306,6 +332,7 @@ void AppController::setLayout(int rows, int columns)
 }
 void AppController::setActivePlot(int index)
 {
+    if (sessionInteractionBlocked()) return;
     if (index == m_signals->activePlot()) return;
     m_signals->setActivePlot(index);
     emit activePlotChanged();
@@ -313,6 +340,7 @@ void AppController::setActivePlot(int index)
 
 void AppController::setSoloPlot(int index)
 {
+    if (sessionInteractionBlocked()) return;
     const int plotCount = m_plotRows * m_plotColumns;
     const int normalized = index >= 0 && index < plotCount ? index : -1;
     if (m_soloPlotIndex == normalized) return;
@@ -327,6 +355,7 @@ void AppController::fitAllPlots()
 
 void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
 {
+    if (sessionInteractionBlocked()) return;
     if (fitX) {
         const auto bounds = PlotSeriesStore::timeBounds(
                     m_seriesStore->snapshot(fitSourceRows(allPlots)));

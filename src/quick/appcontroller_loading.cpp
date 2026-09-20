@@ -40,7 +40,7 @@ bool AppController::loadCsv(const QString &filePath)
 
 int AppController::loadFiles(const QVariant &filePaths)
 {
-    if (!m_loader || m_exporting) return 0;
+    if (!m_loader || m_exporting || sessionInteractionBlocked()) return 0;
     QVariantList paths;
     if (filePaths.typeId() == qMetaTypeId<QJSValue>()) {
         const QVariant converted = filePaths.value<QJSValue>().toVariant();
@@ -234,6 +234,7 @@ void AppController::cancelExport()
 void AppController::startNextLoad()
 {
     if (m_loadQueue.isEmpty()) {
+        if (m_pendingSession) { finishSessionRestore(); return; }
         m_activeLoadPath.clear();
         m_loading = false;
         emit loadingChanged();
@@ -274,7 +275,8 @@ void AppController::onLoadFinished(const QString &path, const QVector<LoadedTabl
         ++m_batchErrors;
         if (m_batchFirstError.isEmpty()) m_batchFirstError = error;
     } else {
-        appendLoadedTables(path, tables);
+        if (m_pendingSession) m_stagedSessionTables.append(tables);
+        else appendLoadedTables(path, tables);
         qint64 rows = 0;
         for (const auto &table : tables) rows += table.rowCount;
         m_batchRows += rows;
@@ -324,6 +326,8 @@ void AppController::appendLoadedTables(const QString &path, const QVector<Loaded
             input.id = signalId;
             input.sourceFile = path;
             input.sourceTable = sourceTable;
+            input.sourceColumn = signalIndex;
+            input.sourceTableName = table.name;
             input.color = colors.at(signalId - firstSignalId);
             input.time = table.time;
             input.values = table.values.value(signalIndex);

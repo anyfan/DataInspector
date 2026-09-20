@@ -17,6 +17,9 @@ PlotSeriesDataPtr makeSeriesData(const PlotSeriesInput &input, quint64 version)
     data->version = version;
     data->sourceFile = input.sourceFile;
     data->sourceTable = input.sourceTable;
+    data->sourceColumn = input.sourceColumn;
+    data->sourceTableName = input.sourceTableName;
+    data->timeOffset = input.timeOffset;
 
     if (!input.points.isEmpty()) {
         data->points = input.points;

@@ -64,6 +64,9 @@ set(DI_MAT_SOURCES
 )
 
 set(DI_CONTROLLER_SOURCES
+    ${DI_QUICK_DIR}/sessiondocument.cpp
+    ${DI_QUICK_DIR}/sessiondocument.h
+    ${DI_QUICK_DIR}/appcontroller_session.cpp
     ${DI_QUICK_DIR}/appcontroller.cpp
     ${DI_QUICK_DIR}/appcontroller_loading.cpp
     ${DI_QUICK_DIR}/appcontroller_plots.cpp
@@ -253,6 +256,18 @@ if(BUILD_TESTING)
         target_link_libraries(appcontroller_test PRIVATE di_mat)
     endif()
     di_add_test(appcontroller_test -platform offscreen)
+
+    add_executable(session_test tests/session_test.cpp ${DI_CONTROLLER_SOURCES})
+    target_include_directories(session_test PRIVATE src/quick)
+    target_link_libraries(session_test PRIVATE
+        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core)
+    di_add_icon_resources(session_test)
+    qt_add_resources(session_test session_test_qml
+        PREFIX "/qt/qml/DataInspector" BASE qml FILES ${DI_QML_FILES})
+    if(ENABLE_MAT)
+        target_link_libraries(session_test PRIVATE di_mat)
+    endif()
+    di_add_test(session_test -platform offscreen)
 
     add_executable(matwriter_test tests/matwriter_test.cpp
         ${DI_MAT_SOURCES} ${DI_QUICK_DIR}/exportvalidation.cpp)

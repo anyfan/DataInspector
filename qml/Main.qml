@@ -322,6 +322,60 @@ ApplicationWindow {
         renameSignalDialog.open()
     }
 
+    property url pendingSessionUrl: ""
+    FileDialog {
+        id: saveSessionDialog
+        objectName: "saveSessionDialog"
+        title: "保存会话（不包含原始数据）"
+        nameFilters: ["DataInspector 会话 (*.disession)", "JSON 文件 (*.json)"]
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "disession"
+        onAccepted: appController.saveSession(selectedFile)
+    }
+    FileDialog {
+        id: openSessionDialog
+        objectName: "openSessionDialog"
+        title: "恢复会话"
+        nameFilters: ["DataInspector 会话 (*.disession *.json)"]
+        fileMode: FileDialog.OpenFile
+        onAccepted: {
+            window.pendingSessionUrl = selectedFile
+            if (appController.loadedFileCount > 0) replaceSessionDialog.open()
+            else appController.restoreSession(selectedFile)
+        }
+    }
+    Dialog {
+        id: replaceSessionDialog
+        objectName: "replaceSessionDialog"
+        title: "恢复会话"
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        Label { text: "恢复成功后将替换当前会话。\n如需保留当前视图，请先保存会话。\n文件缺失或恢复失败时，当前会话不变。" }
+        onAccepted: appController.restoreSession(window.pendingSessionUrl)
+    }
+    Dialog {
+        id: sessionErrorDialog
+        objectName: "sessionErrorDialog"
+        property string message: ""
+        title: "会话操作未完成"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.min(580, window.width - 40)
+        standardButtons: Dialog.Ok
+        Label { width: parent.width; text: sessionErrorDialog.message; wrapMode: Text.WrapAnywhere }
+    }
+    Shortcut {
+        sequence: "Ctrl+S"
+        enabled: !appController.loading && !appController.exporting
+        onActivated: saveSessionDialog.open()
+    }
+    Shortcut {
+        sequence: "Ctrl+Shift+O"
+        enabled: !appController.loading && !appController.exporting
+        onActivated: openSessionDialog.open()
+    }
+
     FileDialog {
         id: fileDialog
         title: "打开数据文件"
@@ -406,6 +460,16 @@ ApplicationWindow {
     Connections {
         target: appController
         function onLayoutChanged() { window.subplotMaximized = false }
+        function onSessionRestored(cursorMode) {
+            signalSearch.clear()
+            window.selectedCursorMode = cursorMode
+            if (cursorMode !== 0) window.preferredCursorMode = cursorMode
+            window.subplotMaximized = appController.soloPlotIndex >= 0
+        }
+        function onSessionError(message) {
+            sessionErrorDialog.message = message
+            sessionErrorDialog.open()
+        }
         function onRevealSignalRequested(row) {
             signalSearch.clear()
             const modelRow = appController.signalModel.revealSignal(row)
@@ -426,6 +490,7 @@ ApplicationWindow {
     }
     property int visibilityBeforeFullscreen: Window.Windowed
     function toggleFullscreen() {
+        if (appController.restoringSession) return
         if (visibility === Window.FullScreen)
             visibility = visibilityBeforeFullscreen
         else {
@@ -436,7 +501,8 @@ ApplicationWindow {
     Shortcut { sequence: "F11"; onActivated: window.toggleFullscreen() }
     Shortcut {
         sequence: "Escape"
-        enabled: window.visibility === Window.FullScreen || window.subplotMaximized
+        enabled: !appController.restoringSession
+                 && (window.visibility === Window.FullScreen || window.subplotMaximized)
         onActivated: {
             if (window.visibility === Window.FullScreen) window.toggleFullscreen()
             else window.subplotMaximized = false
@@ -448,6 +514,7 @@ ApplicationWindow {
     property int selectedZoomMode: 1
     readonly property int activeZoomMode: zoomToolEnabled ? selectedZoomMode : 0
     function toggleCursorTool() {
+        if (appController.restoringSession) return
         selectedCursorMode = selectedCursorMode === 0 ? preferredCursorMode : 0
     }
     function selectCursorMode(mode) {
@@ -462,6 +529,7 @@ ApplicationWindow {
         selectedZoomMode = mode
     }
     function zoomCurrent(axis, steps) {
+        if (appController.restoringSession) return
         const plot = plotRepeater.itemAt(appController.activePlotIndex)
         if (!plot) return
         if (axis !== 1) plot.renderer.zoomAxis(0, 0.5, steps)
@@ -528,6 +596,7 @@ ApplicationWindow {
         }
     }
     header: ToolBar {
+        enabled: !appController.restoringSession
         height: 48
         background: Rectangle { color: window.panelColor; border.color: window.borderColor }
         RowLayout {
@@ -537,6 +606,17 @@ ApplicationWindow {
                 text: "打开…"
                 enabled: !appController.loading && !appController.exporting
                 onClicked: fileDialog.open()
+            }
+            ToolButton {
+                objectName: "sessionMenuButton"
+                text: "会话 ▾"
+                enabled: !appController.loading && !appController.exporting
+                onClicked: sessionMenu.popup()
+                Menu {
+                    id: sessionMenu
+                    MenuItem { text: "保存会话…  Ctrl+S"; onTriggered: saveSessionDialog.open() }
+                    MenuItem { text: "恢复会话…  Ctrl+Shift+O"; onTriggered: openSessionDialog.open() }
+                }
             }
             IconTool {
                 icon.source: "qrc:/icons/download.svg"
@@ -701,6 +781,7 @@ ApplicationWindow {
     }
 
     SplitView {
+        enabled: !appController.restoringSession
         anchors.fill: parent
         orientation: Qt.Horizontal
         handle: Rectangle {

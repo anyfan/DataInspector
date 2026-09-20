@@ -234,6 +234,26 @@ void PlotItem::setCursorPosition(double x, int cursorIndex)
     emit cursorChanged(); emit cursorDeltaTChanged(); emit cursorValuesChanged(); update();
 }
 
+void PlotItem::restoreCursorState(int mode, double x1, double x2)
+{
+    if (mode < NoCursor || mode > DoubleCursor || !qIsFinite(x1) || !qIsFinite(x2)) return;
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (m_cursorMode == mode && m_cursorX1 == x1 && m_cursorX2 == x2) return;
+        m_cursorMode = mode;
+        m_cursorEnabled = mode != NoCursor;
+        m_cursorX1 = x1;
+        m_cursorX2 = x2;
+        m_cursorX = x1;
+        updateCursorValuesLocked();
+        rebuildTicksLocked();
+    }
+    emit cursorChanged();
+    emit cursorDeltaTChanged();
+    emit cursorValuesChanged();
+    update();
+}
+
 void PlotItem::stepCursor(int direction, int cursorIndex)
 {
     if (direction == 0 || cursorIndex < 0 || cursorIndex > 2)

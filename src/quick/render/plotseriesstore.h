@@ -25,8 +25,11 @@ struct PlotSeriesInput
     QVector<QPointF> points;
     bool monotonicTime = true;
     bool monotonicTimeKnown = false;
+    double timeOffset = 0.0;
     QString sourceFile;
     int sourceTable = -1;
+    int sourceColumn = -1;
+    QString sourceTableName;
     PlotRangeIndexPtr rangeIndex;
 };
 
@@ -44,6 +47,8 @@ struct PlotSeriesData
     double timeOffset = 0.0;
     QString sourceFile;
     int sourceTable = -1;
+    int sourceColumn = -1;
+    QString sourceTableName;
     PlotRangeIndexPtr rangeIndex;
 
     qsizetype sampleCount() const;

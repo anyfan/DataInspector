@@ -64,6 +64,8 @@ public:
     QVector<PlotSeriesId> visibleSeriesIds() const;
     Q_INVOKABLE void setCursorX(double x, int cursorIndex = 1);
     void setCursorPosition(double x, int cursorIndex = 1);
+    // Session/peer state is exact, including disabled or off-screen cursors.
+    void restoreCursorState(int mode, double x1, double x2);
     // direction < 0 moves to the previous raw sample, direction > 0 to the next;
     // cursorIndex 0 steps every cursor enabled by the current mode.
     Q_INVOKABLE void stepCursor(int direction, int cursorIndex = 0);

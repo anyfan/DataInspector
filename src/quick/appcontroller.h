@@ -12,6 +12,8 @@
 #include "exporttable.h"
 #include "render/plotseriesstore.h"
 #include "signalmodel.h"
+#include "sessiondocument.h"
+#include <optional>
 
 class DataExportWorker;
 class DataLoadWorker;
@@ -33,6 +35,8 @@ class AppController final : public QObject
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
     Q_PROPERTY(QString currentFile READ currentFile NOTIFY currentFileChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
+    Q_PROPERTY(bool restoringSession READ restoringSession NOTIFY restoringSessionChanged)
+    Q_PROPERTY(QString sessionPath READ sessionPath NOTIFY sessionPathChanged)
     Q_PROPERTY(int loadingProgress READ loadingProgress NOTIFY loadingProgressChanged)
     Q_PROPERTY(bool exporting READ exporting NOTIFY exportingChanged)
     Q_PROPERTY(int exportProgress READ exportProgress NOTIFY exportProgressChanged)
@@ -58,6 +62,8 @@ public:
     QString status() const { return m_status; }
     QString currentFile() const { return m_currentFile; }
     bool loading() const { return m_loading; }
+    bool restoringSession() const { return m_restoringSession; }
+    QString sessionPath() const { return m_sessionPath; }
     int loadingProgress() const { return m_loadingProgress; }
     bool exporting() const { return m_exporting; }
     int exportProgress() const { return m_exportProgress; }
@@ -69,6 +75,9 @@ public:
     int activePlotIndex() const { return m_signals->activePlot(); }
     int plotStateRevision() const { return m_plotStateRevision; }
     int soloPlotIndex() const { return m_soloPlotIndex; }
+
+    Q_INVOKABLE bool saveSession(const QVariant &filePath);
+    Q_INVOKABLE bool restoreSession(const QVariant &filePath);
 
     // Import / export
     Q_INVOKABLE bool loadCsv(const QString &filePath);
@@ -125,6 +134,11 @@ public:
     Q_INVOKABLE void clear();
 signals:
     void revealSignalRequested(int row);
+    void restoringSessionChanged();
+    void sessionPathChanged();
+    void sessionError(const QString &message);
+    void sessionRestored(int cursorMode);
+    void sessionRestoreFinished(bool success, const QString &message);
     void statusChanged();
     void currentFileChanged();
     void loadingChanged();
@@ -138,6 +152,12 @@ signals:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 private:
+    bool sessionInteractionBlocked() const { return m_restoringSession && !m_applyingSession; }
+    void finishSessionRestore();
+    void completeSessionRestore(bool success, const QString &message);
+    SessionPlot capturePlotView(PlotItem *plot) const;
+    void applyPlotView(PlotItem *plot, const SessionPlot &view);
+    void cachePlotView(PlotItem *plot);
     void onLoadFinished(const QString &path,
                         const QVector<LoadedTable> &tables,
                         int skipped, const QString &error);
@@ -164,6 +184,14 @@ private:
     void applySharedXRange(double xMinimum, double xMaximum, PlotItem *except = nullptr);
     static void syncCursorsFrom(PlotItem *source, PlotItem *target);
 
+    QString m_sessionPath, m_pendingSessionPath;
+    std::optional<SessionDocument> m_pendingSession;
+    QStringList m_sessionSourcePaths;
+    QVector<QVector<LoadedTable>> m_stagedSessionTables;
+    bool m_restoringSession = false, m_applyingSession = false;
+    QHash<int, SessionPlot> m_plotViews;
+    SessionCursor m_sessionCursor;
+    bool m_haveCursorState = false;
     SignalModel *m_signals;
     QVector<QPointer<PlotItem>> m_plots;
     int m_plotRows = 1;
