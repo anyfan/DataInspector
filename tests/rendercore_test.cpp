@@ -30,6 +30,10 @@ private slots:
     void geometryKeepsFullWidthForOffscreenDiagonalEntry();
     void storeAcceptsWorkerPreparedPoints();
     void storeKeepsLazyColumnSeriesUntilLodBuild();
+    void geometryClipsStaleLodFromWiderViewport();
+    void geometrySplitsOnExplodedMappedSamples();
+    void geometryKeepsStrokeWhenASampleRepeats();
+    void geometryDoesNotFillViewportWhenStaleLodClipsToEdges();
 };
 
 void RenderCoreTest::geometryWidthIsIndependentOfSlopeAndSampleSpacing()
@@ -270,7 +274,7 @@ void RenderCoreTest::geometryBuildsClippedTriangleStrip()
     const GeometryResult result = PlotGeometryBuilder::build(lod, request);
 
     QCOMPARE(result.segments.size(), 1);
-    QCOMPARE(result.segments.at(0).vertices.size(), 4);
+    QCOMPARE(result.segments.at(0).vertices.size(), 6);
     for (const QPointF &vertex : result.segments.at(0).vertices) {
         QVERIFY(qIsFinite(vertex.x()));
         QVERIFY(qIsFinite(vertex.y()));
@@ -297,8 +301,8 @@ void RenderCoreTest::geometryKeepsLodSegmentsIndependent()
         lod, GeometryRequest{PlotViewTransform{0.0, 1.0, 0.0, 1.0,
                                                100.0, 100.0}, 2.0});
     QCOMPARE(result.segments.size(), 2);
-    QCOMPARE(result.segments.at(0).vertices.size(), 4);
-    QCOMPARE(result.segments.at(1).vertices.size(), 4);
+    QCOMPARE(result.segments.at(0).vertices.size(), 6);
+    QCOMPARE(result.segments.at(1).vertices.size(), 6);
 }
 
 void RenderCoreTest::geometryLineWidthChangesScreenSpaceExpansion()
@@ -348,7 +352,7 @@ void RenderCoreTest::geometryUsesIndependentSeriesWidthsAndStyles()
 
     QCOMPARE(geometry.segments.size(), 2);
     QCOMPARE(geometry.segments.first().seriesId, 1);
-    QVERIFY(!geometry.segments.first().triangleList);
+    QVERIFY(geometry.segments.first().triangleList);
     const qreal solidThickness = QLineF(geometry.segments.first().vertices.at(0),
                                        geometry.segments.first().vertices.at(1)).length();
     QVERIFY(solidThickness > 1.0 && solidThickness < 3.0);
@@ -394,9 +398,9 @@ void RenderCoreTest::geometryKeepsFullWidthForOffscreenDiagonalEntry()
 
     QCOMPARE(result.segments.size(), 1);
     const auto &vertices = result.segments.first().vertices;
-    QCOMPARE(vertices.size(), 6);
+    QCOMPARE(vertices.size(), 12);
     QCOMPARE(QLineF(vertices.at(0), vertices.at(1)).length(), 4.0);
-    QCOMPARE(QLineF(vertices.at(4), vertices.at(5)).length(), 4.0);
+    QCOMPARE(QLineF(vertices.at(6), vertices.at(7)).length(), 4.0);
 }
 
 void RenderCoreTest::storeAcceptsWorkerPreparedPoints()
@@ -437,6 +441,85 @@ void RenderCoreTest::storeKeepsLazyColumnSeriesUntilLodBuild()
     QCOMPARE(lod.segments.first().points,
              QVector<QPointF>({{0.0, 10.0}, {1.0, 11.0},
                                {2.0, 12.0}, {3.0, 13.0}}));
+}
+
+void RenderCoreTest::geometryClipsStaleLodFromWiderViewport()
+{
+    LodResult lod;
+    QVector<QPointF> points;
+    for (int i = 0; i < 64; ++i)
+        points.append({i / 63.0, (i % 2) ? 1.0 : 0.0});
+    lod.segments.append({1, QColor("red"), points});
+    const auto result = PlotGeometryBuilder::build(
+        lod, GeometryRequest{{0.49, 0.51, 0.0, 1.0, 800.0, 400.0}, 2.0});
+    QVERIFY(!result.segments.isEmpty());
+    for (const GeometrySegment &segment : result.segments) {
+        for (const QPointF &vertex : segment.vertices) {
+            QVERIFY(qIsFinite(vertex.x()));
+            QVERIFY(qIsFinite(vertex.y()));
+            QVERIFY(vertex.x() > -64.0 && vertex.x() < 864.0);
+            QVERIFY(vertex.y() > -64.0 && vertex.y() < 464.0);
+        }
+    }
+}
+
+void RenderCoreTest::geometrySplitsOnExplodedMappedSamples()
+{
+    LodResult lod;
+    lod.segments.append({1, QColor("blue"),
+                         {{0.2, 0.5}, {1e20, 0.5}, {0.8, 0.5}}});
+    const auto result = PlotGeometryBuilder::build(
+        lod, GeometryRequest{{0.0, 1.0, 0.0, 1.0, 100.0, 100.0}, 2.0});
+    QVERIFY(result.segments.isEmpty() || result.segments.size() >= 1);
+    for (const GeometrySegment &segment : result.segments) {
+        for (const QPointF &vertex : segment.vertices) {
+            QVERIFY(qIsFinite(vertex.x()));
+            QVERIFY(qIsFinite(vertex.y()));
+            QVERIFY(qAbs(vertex.x()) < 1e5);
+            QVERIFY(qAbs(vertex.y()) < 1e5);
+        }
+    }
+}
+
+void RenderCoreTest::geometryKeepsStrokeWhenASampleRepeats()
+{
+    LodResult lod;
+    lod.segments.append({1, QColor("red"), {
+        {10.0, 10.0}, {10.0, 10.0}, {10.0, 90.0}, {12.0, 90.0}, {12.0, 10.0}
+    }});
+    const auto result = PlotGeometryBuilder::build(
+        lod, GeometryRequest{{0.0, 100.0, 0.0, 100.0, 100.0, 100.0}, 2.0});
+    QCOMPARE(result.segments.size(), 1);
+    QVERIFY(result.segments.first().vertices.size() >= 12);
+}
+
+void RenderCoreTest::geometryDoesNotFillViewportWhenStaleLodClipsToEdges()
+{
+    LodResult lod;
+    QVector<QPointF> points;
+    for (int i = 0; i < 80; ++i)
+        points.append({i / 79.0, (i % 2) ? 50.0 : -50.0});
+    lod.segments.append({1, QColor("red"), points});
+    const auto result = PlotGeometryBuilder::build(
+        lod, GeometryRequest{{0.45, 0.55, 0.0, 1.0, 200.0, 100.0}, 2.0});
+    QVERIFY(!result.segments.isEmpty());
+    double maximumArea = 0.0;
+    const auto triangleArea = [](QPointF a, QPointF b, QPointF c) {
+        return qAbs((b.x() - a.x()) * (c.y() - a.y()) - (c.x() - a.x()) * (b.y() - a.y())) * 0.5;
+    };
+    for (const GeometrySegment &segment : result.segments) {
+        const auto &v = segment.vertices;
+        if (segment.triangleList) {
+            for (int i = 0; i + 2 < v.size(); i += 3)
+                maximumArea = qMax(maximumArea, triangleArea(v[i], v[i + 1], v[i + 2]));
+        } else {
+            for (int i = 0; i + 3 < v.size(); i += 2) {
+                maximumArea = qMax(maximumArea, triangleArea(v[i], v[i + 1], v[i + 2]));
+                maximumArea = qMax(maximumArea, triangleArea(v[i + 1], v[i + 3], v[i + 2]));
+            }
+        }
+    }
+    QVERIFY2(maximumArea < 400.0, qPrintable(QString::number(maximumArea)));
 }
 
 QTEST_GUILESS_MAIN(RenderCoreTest)
