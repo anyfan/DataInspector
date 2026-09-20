@@ -1,6 +1,7 @@
 // AppController: subplot bindings, legend actions, layout and view fitting.
 #include "appcontroller.h"
 #include "plotitem.h"
+#include "render/plotaxisutils.h"
 
 #include <utility>
 #include <QtMath>
@@ -138,9 +139,11 @@ void AppController::setSignalPen(int row, const QColor &color, double width, int
     if (row < 0 || row >= m_signalColors.size()) return;
     m_signals->setSignalPen(row, color, width, static_cast<Qt::PenStyle>(style));
     m_signalColors[row] = m_signals->signalColor(row);
+    const auto generation = m_seriesStore->generation();
     m_seriesStore->updateSeriesPen(row, m_signals->signalColor(row),
                                    m_signals->signalWidth(row),
                                    m_signals->signalStyle(row));
+    if (generation == m_seriesStore->generation()) return;
     for (int plotIndex = 0; plotIndex < m_plots.size(); ++plotIndex)
         if (m_signals->plotRows(plotIndex).contains(row))
             refreshPlot(plotIndex, false);
@@ -218,6 +221,8 @@ PlotItem *AppController::plotAt(int index) const
 
 void AppController::applySharedXRange(double xMinimum, double xMaximum, PlotItem *except)
 {
+    if (!qIsFinite(xMinimum) || !qIsFinite(xMaximum) || xMaximum <= xMinimum
+        || !qIsFinite(xMaximum - xMinimum)) return;
     m_sharedXMinimum = xMinimum;
     m_sharedXMaximum = xMaximum;
     m_syncingRanges = true;
@@ -361,10 +366,9 @@ void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
                     m_seriesStore->snapshot(fitSourceRows(allPlots)));
         double xmin = 0, xmax = 10;
         if (bounds) {
-            const double span = bounds->second - bounds->first;
-            const double padding = span > 0 ? span * .02 : .5;
-            xmin = bounds->first - padding;
-            xmax = bounds->second + padding;
+            const auto range = paddedPlotRange(bounds->first, bounds->second, .02, .5);
+            if (range) { xmin = range->first; xmax = range->second; }
+            else { xmin = m_sharedXMinimum; xmax = m_sharedXMaximum; }
         }
         // The time axis is shared, so the fitted range always lands on every
         // subplot; only the set of signals that defines it varies.

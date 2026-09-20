@@ -28,6 +28,8 @@ configure_file(qml/qmllint.ini.in "${CMAKE_SOURCE_DIR}/qml/.qmllint.ini" @ONLY)
 set(DI_QUICK_DIR ${CMAKE_SOURCE_DIR}/src/quick)
 
 set(DI_RENDER_SOURCES
+    ${DI_QUICK_DIR}/render/plotaxisutils.cpp
+    ${DI_QUICK_DIR}/render/plotaxisutils.h
     ${DI_QUICK_DIR}/render/plotrangeindex.cpp
     ${DI_QUICK_DIR}/render/plotrangeindex.h
     ${DI_QUICK_DIR}/render/plotseriesstore.cpp

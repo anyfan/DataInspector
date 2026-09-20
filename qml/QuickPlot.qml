@@ -26,7 +26,7 @@ Rectangle {
         let widest = "0.0"
         const ticks = plotItem.yTicks
         for (let i = 0; i < ticks.length; ++i) {
-            const label = root.formatYTick(ticks[i].value)
+            const label = root.yTickLabel(ticks[i])
             if (label.length > widest.length) widest = label
         }
         return widest
@@ -44,6 +44,20 @@ Rectangle {
     }
     readonly property real axisRight: 1
     readonly property real axisTop: Math.max(20, legend.implicitHeight + 2)
+    // Keep compact labels for ordinary ranges, but do not show identical text
+    // on different ticks when a large Y offset is viewed through a narrow window.
+    readonly property bool compactYTicksDistinct: {
+        const labels = []
+        for (const tick of plotItem.yTicks) {
+            const label = root.formatYTick(tick.value)
+            if (labels.indexOf(label) >= 0) return false
+            labels.push(label)
+        }
+        return true
+    }
+    function yTickLabel(tick) {
+        return root.compactYTicksDistinct ? root.formatYTick(tick.value) : tick.label
+    }
     function formatYTick(value) {
         if (value === 0) return "0"
         const compact = root.formatCompact(value, 4)
@@ -527,7 +541,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 width: root.axisLeft - root.yTickLabelMargin
                 horizontalAlignment: Text.AlignRight
-                text: root.formatYTick(yTick.modelData.value)
+                text: root.yTickLabel(yTick.modelData)
                 color: root.textColor
                 font.pixelSize: 10
             }

@@ -20,6 +20,8 @@ class SessionTest final : public QObject
     Q_OBJECT
 private slots:
     void roundTripWithDuplicateNamesAndLateDelegates();
+    void restoredSessionsContinuePaletteSafely();
+    void extremeImportedRangesRemainSaveable();
     void failuresPreserveCurrentSession();
     void relativePathsSurviveMovingTheBundle();
     void schemaValidationAndAtomicSave();
@@ -278,6 +280,66 @@ void SessionTest::qmlRestoresToolbarAndPlotStates()
     }
     QCoreApplication::processEvents();
     QVERIFY2(qmlWarnings.isEmpty(), qPrintable(qmlWarnings.join('\n')));
+}
+
+void SessionTest::restoredSessionsContinuePaletteSafely()
+{
+    const auto &palette = AppController::signalPalette();
+    const int paletteSize = palette.size();
+    for (int count : {paletteSize, paletteSize + 1, 2 * paletteSize + 3}) {
+        QTemporaryDir dir;
+        QByteArray header("time"), values("0");
+        for (int i = 0; i < count; ++i) {
+            header += ",S" + QByteArray::number(i); values += ",1";
+        }
+        writeFile(dir.filePath("many.csv"), header + "\n" + values + "\n");
+        writeFile(dir.filePath("extra.csv"), "time,NewA,NewB\n0,2,3\n");
+        const QString path = dir.filePath("many.disession");
+        AppController source;
+        QVERIFY(source.loadCsv(dir.filePath("many.csv")));
+        QTRY_VERIFY_WITH_TIMEOUT(!source.loading(), 5000);
+        source.setSignalPen(0, QColor("magenta"), 4.5, Qt::DashLine);
+        QVERIFY(source.saveSession(path));
+        AppController restored;
+        QSignalSpy finished(&restored, &AppController::sessionRestoreFinished);
+        QVERIFY(restored.restoreSession(path));
+        QTRY_VERIFY_WITH_TIMEOUT(!restored.loading(), 5000);
+        QCOMPARE(finished.size(), 1); QVERIFY(finished[0][0].toBool());
+        QVERIFY(restored.loadCsv(dir.filePath("extra.csv")));
+        QTRY_VERIFY_WITH_TIMEOUT(!restored.loading(), 5000);
+        QCOMPARE(restored.signalCount(), count + 2);
+        QCOMPARE(restored.signalColor(count), palette.at(count % paletteSize));
+        QCOMPARE(restored.signalColor(count + 1), palette.at((count + 1) % paletteSize));
+        QCOMPARE(restored.signalColor(0), QColor("magenta"));
+        QCOMPARE(restored.signalWidth(0), 4.5);
+    }
+}
+
+void SessionTest::extremeImportedRangesRemainSaveable()
+{
+    QTemporaryDir dir;
+    const QString csv = dir.filePath("extreme.csv"), session = dir.filePath("view.disession");
+    // The finite endpoints have an unrepresentable span: keep the previous view.
+    writeFile(csv, "time,A\n-1e308,1\n1e308,2\n");
+    AppController controller;
+    QVERIFY(controller.loadCsv(csv));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    controller.selectSignal(0); controller.fitAllPlots();
+    QVERIFY(controller.saveSession(session));
+    SessionDocument document;
+    QString error;
+    QVERIFY(readSessionDocument(session, &document, &error));
+    QCOMPARE(document.xMinimum, 0.0); QCOMPARE(document.xMaximum, 1.0);
+    controller.clear();
+    const double lo = 1e20, hi = lo + 1e6;
+    writeFile(csv, "time,A\n" + QByteArray::number(lo, 'g', 17) + ",1\n"
+              + QByteArray::number(hi, 'g', 17) + ",2\n");
+    QVERIFY(controller.loadCsv(csv));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QVERIFY(controller.saveSession(session));
+    QVERIFY(readSessionDocument(session, &document, &error));
+    QVERIFY(document.xMinimum <= lo); QVERIFY(document.xMaximum >= hi);
+    QVERIFY(qIsFinite(document.xMaximum - document.xMinimum));
 }
 
 QTEST_MAIN(SessionTest)

@@ -20,7 +20,7 @@ namespace {
 struct IndexedPoint
 {
     QPointF point;
-    int index = -1;
+    qsizetype index = -1;
 };
 
 static void appendReducedBucket(QVector<QPointF> &output,
@@ -82,8 +82,7 @@ static void appendSeriesLod(const PlotSeriesData &series,
     std::optional<IndexedPoint> minimum;
     std::optional<IndexedPoint> maximum;
 
-    const double bucketWidth = (key.xMaximum - key.xMinimum)
-            / static_cast<double>(key.bucketCount);
+    const double span = key.xMaximum - key.xMinimum;
     auto flushBucket = [&]() {
         if (minimum.has_value())
             appendReducedBucket(current.points, *minimum, *maximum);
@@ -101,7 +100,7 @@ static void appendSeriesLod(const PlotSeriesData &series,
 
     for (qsizetype position = firstIndex; position < lastIndex; ++position) {
         if ((position & 1023) == 0 && cancelled && cancelled->load()) return;
-        const int index = static_cast<int>(position);
+        const qsizetype index = position;
         const QPointF point = series.pointAt(position);
         if (!qIsFinite(point.x()) || !qIsFinite(point.y())) {
             flushSegment();
@@ -111,9 +110,12 @@ static void appendSeriesLod(const PlotSeriesData &series,
             && (point.x() < key.xMinimum || point.x() > key.xMaximum))
             continue;
 
-        const int bucket = qBound(0, static_cast<int>(
-                                      (point.x() - key.xMinimum) / bucketWidth),
-                                  key.bucketCount - 1);
+        // Clamp the floating-point domain before converting to int. A distant
+        // neighbor may overflow the subtraction; a tiny bucket width may be zero.
+        const double fraction = point.x() <= key.xMinimum ? 0.0
+            : point.x() >= key.xMaximum ? 1.0 : (point.x() - key.xMinimum) / span;
+        const int bucket = static_cast<int>(qBound(0.0, fraction * key.bucketCount,
+                                                    double(key.bucketCount - 1)));
         if (bucket != currentBucket) {
             flushBucket();
             currentBucket = bucket;
@@ -143,7 +145,8 @@ LodResult PlotLodBuilder::build(const PlotSeriesSnapshot &snapshot,
     result.key = key;
     if (key.storeGeneration != snapshot.generation
         || !qIsFinite(key.xMinimum) || !qIsFinite(key.xMaximum)
-        || key.xMaximum <= key.xMinimum || key.bucketCount <= 0)
+        || key.xMaximum <= key.xMinimum || !qIsFinite(key.xMaximum - key.xMinimum)
+        || key.bucketCount <= 0)
         return result;
 
     for (const PlotSeriesDataPtr &series : snapshot.series)

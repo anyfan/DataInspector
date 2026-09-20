@@ -1,4 +1,5 @@
 #include "render/plotseriesstore.h"
+#include "render/plotaxisutils.h"
 #include "render/plotlodbuilder.h"
 #include "render/plotgeometrybuilder.h"
 
@@ -12,6 +13,10 @@ private slots:
     void geometryWidthIsIndependentOfSlopeAndSampleSpacing();
     void binaryCursorMatchesOriginalOrderScan();
     void storeGenerationAndSnapshotsAreImmutable();
+    void unchangedPensPreserveSnapshots();
+    void indexedTimeBoundsIncludeMissingValues();
+    void lodHandlesExtremeBucketArithmetic();
+    void paddedRangesRemainFinite();
     void storeQueriesRawSamplesWithoutInterpolation();
     void storeSkipsUnknownIdsAndIgnoresInvalidBounds();
     void lodKeepsBothNeighborsAcrossNarrowViewport();
@@ -661,6 +666,98 @@ void RenderCoreTest::geometryDoesNotFillViewportWhenStaleLodClipsToEdges()
         }
     }
     QVERIFY2(maximumArea < 400.0, qPrintable(QString::number(maximumArea)));
+}
+
+void RenderCoreTest::unchangedPensPreserveSnapshots()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{1, {0}, {1}, QColor("red")}, {2, {0}, {2}, QColor("blue")}});
+    const auto original = store.snapshot({1, 2});
+    for (int i = 0; i < 100; ++i) store.updateSeriesPen(1, QColor("red"), 2, Qt::SolidLine);
+    store.updateSeriesPen(999, QColor("green"), 3, Qt::DashLine);
+    QCOMPARE(store.generation(), original.generation);
+    QCOMPARE(store.snapshot({1, 2}).series, original.series);
+    store.updateSeriesPen(1, QColor("green"), 3, Qt::DashLine);
+    const auto changed = store.snapshot({1, 2});
+    QCOMPARE(changed.generation, original.generation + 1);
+    QCOMPARE(changed.series[1], original.series[1]);
+    QCOMPARE(original.series[0]->color, QColor("red"));
+    QCOMPARE(changed.series[0]->rangeIndex, original.series[0]->rangeIndex);
+    // Copying a store must still detach its pointer array on a real edit.
+    auto copy = store;
+    copy.updateSeriesPen(1, QColor("yellow"), 5, Qt::DotLine);
+    QCOMPARE(store.snapshot({1}).series[0]->color, QColor("green"));
+}
+
+void RenderCoreTest::indexedTimeBoundsIncludeMissingValues()
+{
+    PlotSeriesInput input;
+    input.id = 4;
+    constexpr int count = 1000000;
+    input.time.resize(count); input.values.resize(count);
+    for (int i = 0; i < count; ++i) {
+        input.time[i] = (i * qint64(7919)) % count;
+        input.values[i] = qQNaN();
+    }
+    PlotSeriesStore store;
+    store.replaceSeries({input});
+    const auto before = store.snapshot({4});
+    QVERIFY(!before.series[0]->monotonicTime);
+    PlotBoundsQueryStats stats;
+    QCOMPARE(PlotSeriesStore::timeBounds(before, &stats),
+             (std::optional<QPair<double, double>>(qMakePair(0.0, double(count - 1)))));
+    QCOMPARE(stats.rawSamples, qsizetype(0)); QCOMPARE(stats.indexNodes, qsizetype(1));
+    QVERIFY(!PlotSeriesStore::bounds(before)); // All Y values are missing.
+    QVERIFY(store.addTimeOffset({4}, 12.5));
+    const auto shifted = store.snapshot({4});
+    QCOMPARE(shifted.series[0]->rangeIndex, before.series[0]->rangeIndex);
+    QCOMPARE(PlotSeriesStore::timeBounds(shifted),
+             (std::optional<QPair<double, double>>(qMakePair(12.5, count - 1 + 12.5))));
+    auto legacy = std::make_shared<PlotSeriesData>(*shifted.series[0]);
+    legacy->rangeIndex.reset();
+    PlotBoundsQueryStats legacyStats;
+    QCOMPARE(PlotSeriesStore::timeBounds({0, {4}, {legacy}}, &legacyStats),
+             PlotSeriesStore::timeBounds(shifted));
+    QCOMPARE(legacyStats.rawSamples, qsizetype(count));
+    qInfo() << "unordered million-point time bounds:" << stats.rawSamples << "raw samples,"
+            << stats.indexNodes << "summary; legacy scans:" << legacyStats.rawSamples;
+    store.replaceSeries({{5, {qQNaN(), 3, -2, qInf()}, {1, qQNaN(), qQNaN(), 1}, QColor("red")}});
+    QCOMPARE(PlotSeriesStore::timeBounds(store.snapshot({5})),
+             (std::optional<QPair<double, double>>(qMakePair(-2.0, 3.0))));
+}
+
+void RenderCoreTest::lodHandlesExtremeBucketArithmetic()
+{
+    const double huge = std::numeric_limits<double>::max();
+    const double tiny = std::numeric_limits<double>::denorm_min();
+    for (const auto &times : {QVector<double>{-huge, huge}, QVector<double>{0, 8 * tiny}}) {
+        PlotSeriesStore store;
+        store.replaceSeries({{1, times, {2, 2}, QColor("red")}});
+        const auto snapshot = store.snapshot({1});
+        const double lo = times[0] < 0 ? -1.0 : 0.0;
+        const double hi = times[0] < 0 ? 1.0 : 8 * tiny;
+        const auto lod = PlotLodBuilder::build(snapshot, {snapshot.generation, {1}, lo, hi, 128, 1});
+        QCOMPARE(lod.segments.size(), 1);
+        QCOMPARE(lod.segments[0].points, QVector<QPointF>({{times[0], 2}, {times[1], 2}}));
+        QVERIFY(PlotLodBuilder::build(snapshot,
+            {snapshot.generation, {1}, -huge, huge, 128, 1}).segments.isEmpty());
+    }
+}
+
+void RenderCoreTest::paddedRangesRemainFinite()
+{
+    const double huge = std::numeric_limits<double>::max();
+    for (const auto &bounds : {qMakePair(1e20, 1e20 + 1e6), qMakePair(1e20, 1e20),
+                              qMakePair(huge, huge), qMakePair(-huge, -huge)}) {
+        const auto range = paddedPlotRange(bounds.first, bounds.second, .02, .5);
+        QVERIFY(range); QVERIFY(qIsFinite(range->second - range->first));
+        QVERIFY(range->first < range->second);
+        QVERIFY(range->first <= bounds.first); QVERIFY(range->second >= bounds.second);
+        const auto ticks = makePlotAxisTicks(range->first, range->second);
+        QVERIFY(ticks.size() >= 2 && ticks.size() <= 12);
+    }
+    QVERIFY(!paddedPlotRange(-huge, huge, .02, .5));
+    QVERIFY(!paddedPlotRange(qQNaN(), 1, .02, .5));
 }
 
 QTEST_GUILESS_MAIN(RenderCoreTest)

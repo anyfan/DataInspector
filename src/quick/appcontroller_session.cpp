@@ -215,7 +215,7 @@ void AppController::finishSessionRestore()
     QScopedValueRollback<bool> cursors(m_syncingCursors, true);
     QScopedValueRollback<bool> ranges(m_syncingRanges, true);
     m_seriesStore = std::move(store);
-    m_signalColors = colors; m_nextColorIndex = colors.size();
+    m_signalColors = colors; m_nextColorIndex = colors.size() % signalPalette().size();
     m_loadedPaths = QSet<QString>(m_sessionSourcePaths.cbegin(), m_sessionSourcePaths.cend());
     m_loadedFileNames = labels; m_sourcePathsByGroup = pathsByGroup;
     m_signals->setFilter({}); m_signals->setNames(originalNames, groups, colors);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QVector>
+#include <QPair>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -31,8 +32,9 @@ public:
         const PlotSeriesData &series, const std::function<bool()> &isCancelled = {});
     std::optional<PlotBounds> bounds(const PlotSeriesData &series, double xMinimum,
                                     double xMaximum, PlotBoundsQueryStats *stats) const;
+    std::optional<QPair<double, double>> rawTimeBounds() const { return m_timeBounds; }
     qsizetype sampleCount() const { return m_count; }
-    qsizetype storageBytes() const { return m_tree.size() * sizeof(Node); }
+    qsizetype storageBytes() const { return m_tree.size() * sizeof(Node) + sizeof(m_timeBounds); }
 
 private:
     struct Node { PlotBounds bounds; bool valid = false; };
@@ -41,5 +43,6 @@ private:
     qsizetype m_count = 0;
     qsizetype m_leaves = 1;
     QVector<Node> m_tree;
+    std::optional<QPair<double, double>> m_timeBounds;
 };
 using PlotRangeIndexPtr = std::shared_ptr<const PlotRangeIndex>;

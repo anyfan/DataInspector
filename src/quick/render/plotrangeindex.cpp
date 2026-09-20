@@ -25,6 +25,14 @@ PlotRangeIndexPtr PlotRangeIndex::build(const PlotSeriesData &series,
         // Store unshifted X, so offsets never rebuild the index.
         const double x = series.points.isEmpty() ? series.time.at(row) : series.points.at(row).x();
         const double y = series.points.isEmpty() ? series.values.at(row) : series.points.at(row).y();
+        // Time fitting must include finite timestamps even if Y is missing.
+        if (qIsFinite(x)) {
+            if (!index->m_timeBounds) index->m_timeBounds = qMakePair(x, x);
+            else {
+                index->m_timeBounds->first = qMin(index->m_timeBounds->first, x);
+                index->m_timeBounds->second = qMax(index->m_timeBounds->second, x);
+            }
+        }
         if (!qIsFinite(x) || !qIsFinite(y)) continue;
         merge(index->m_tree[index->m_leaves + row / blockSize], {{x, x, y, y}, true});
     }

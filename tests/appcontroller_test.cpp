@@ -16,6 +16,7 @@
 #include <QtTest>
 
 #include <algorithm>
+#include <limits>
 #ifdef ENABLE_MAT
 #include "matio.h"
 #endif
@@ -25,6 +26,8 @@ class AppControllerTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void axisTicksHandleLargeAndTinyRanges();
+    void unchangedPensDoNotInvalidatePlots();
     void cursorReadoutsFollowVisibleXRange();
     void normalizeYKeepsRawCursorValues();
     void cursorKeyboardStepsAcrossRawSamples();
@@ -1027,6 +1030,18 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
     targetItem->setParentItem(nullptr);
     item->setParentItem(nullptr);
+    plot->setYRange(1e20, 1e20 + 1e6);
+    QVERIFY(!item->property("compactYTicksDistinct").toBool());
+    QSet<QString> tickLabels;
+    for (const auto &tick : plot->yTicks()) {
+        QVariant label;
+        QVERIFY(QMetaObject::invokeMethod(item, "yTickLabel", Q_RETURN_ARG(QVariant, label),
+                                          Q_ARG(QVariant, tick)));
+        QCOMPARE(label.toString(), tick.toMap().value("label").toString());
+        QVERIFY(!tickLabels.contains(label.toString()));
+        tickLabels.insert(label.toString());
+    }
+
 }
 
 void AppControllerTest::asynchronousLodKeepsLatestRequest()
@@ -1759,6 +1774,57 @@ void AppControllerTest::editDialogsRememberAndResetValues()
     QCOMPARE(model.originalNameAt(0), "Second");
     model.setNames({"Fresh"});
     QCOMPARE(model.originalNameAt(0), "Fresh");
+}
+
+void AppControllerTest::axisTicksHandleLargeAndTinyRanges()
+{
+    PlotItem plot;
+    const double tiny = std::numeric_limits<double>::denorm_min();
+    const QVector<QPair<double, double>> ranges{
+        {1700000000.0, 1700000001.0},
+        {1700000000.0, 1700000000.00002},
+        {-1700000001.0, -1700000000.0},
+        {1e20, 1e20 + 1e6}, {0.0, 8 * tiny}, {0.0, 1.0}
+    };
+    for (const auto &range : ranges) {
+        plot.setXRange(range.first, range.second);
+        plot.setYRange(range.first, range.second);
+        for (const auto &ticks : {plot.xTicks(), plot.yTicks()}) {
+            QVERIFY(ticks.size() >= 2 && ticks.size() <= 12);
+            QSet<QString> labels;
+            double previous = -std::numeric_limits<double>::infinity();
+            for (const auto &entry : ticks) {
+                const auto tick = entry.toMap();
+                const double value = tick.value("value").toDouble();
+                QVERIFY(qIsFinite(value));
+                QVERIFY2(value >= range.first && value <= range.second,
+                         qPrintable(QString::number(value, 'g', 17)));
+                QVERIFY(value > previous);
+                previous = value;
+                const auto label = tick.value("label").toString();
+                QVERIFY(!labels.contains(label)); labels.insert(label);
+            }
+        }
+    }
+}
+
+void AppControllerTest::unchangedPensDoNotInvalidatePlots()
+{
+    QTemporaryDir dir;
+    const QString path = dir.filePath("pen.csv");
+    writeCsvFile(path, "time,A\n0,1\n1,2\n");
+    AppController controller;
+    PlotItem plot; controller.attachPlot(&plot);
+    QVERIFY(controller.loadCsv(path));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    controller.selectSignal(0);
+    QSignalSpy changed(&controller, &AppController::plotBindingsChanged);
+    const auto color = controller.signalColor(0);
+    for (int i = 0; i < 10; ++i) controller.setSignalPen(0, color, 2, Qt::SolidLine);
+    QCOMPARE(changed.size(), 0);
+    controller.setSignalPen(0, color, 3, Qt::SolidLine);
+    QCOMPARE(changed.size(), 1);
+    QCOMPARE(controller.signalWidth(0), 3.0);
 }
 
 QTEST_MAIN(AppControllerTest)

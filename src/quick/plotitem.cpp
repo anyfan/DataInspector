@@ -1,4 +1,5 @@
 #include "plotitem.h"
+#include "render/plotaxisutils.h"
 #include "render/plotgeometrybuilder.h"
 #include <QMouseEvent>
 #include <QSGFlatColorMaterial>
@@ -132,7 +133,7 @@ void PlotItem::requestLod()
         QMutexLocker lock(&m_dataMutex);
         snapshot = m_seriesSnapshot;
         key = {snapshot.generation, snapshot.orderedIds, m_xMinimum, m_xMaximum,
-               qBound(64, int(qCeil(width())), 4096), 1};
+               qCeil(qBound(64.0, qIsFinite(width()) ? width() : 64.0, 4096.0)), 1};
     }
     m_lodScheduler->request(snapshot, key);
     { QMutexLocker lock(&m_dataMutex); m_lodResult = m_lodScheduler->result(); }
@@ -399,9 +400,8 @@ void PlotItem::fitView()
     std::optional<QPair<double, double>> bounds;
     { QMutexLocker lock(&m_dataMutex); bounds = PlotSeriesStore::timeBounds(m_seriesSnapshot); }
     if (!bounds) { setRange(0, 10, 0, 1); return; }
-    const double span = bounds->second - bounds->first;
-    const double padding = span > 0 ? span * .02 : .5;
-    setXRange(bounds->first - padding, bounds->second + padding);
+    const auto range = paddedPlotRange(bounds->first, bounds->second, .02, .5);
+    if (range) setXRange(range->first, range->second);
     fitY();
 }
 void PlotItem::fitY()
@@ -417,9 +417,9 @@ void PlotItem::fitY()
     }
     if (normalized) { setRange(xmin, xmax, -.05, 1.05); return; }
     if (!bounds) { setRange(xmin, xmax, 0, 1); return; }
-    const double span = bounds->yMaximum - bounds->yMinimum;
-    const double padding = span == 0 ? (bounds->yMinimum == 0 ? .5 : .05) : span * .05;
-    setRange(xmin, xmax, bounds->yMinimum - padding, bounds->yMaximum + padding);
+    const auto range = paddedPlotRange(bounds->yMinimum, bounds->yMaximum, .05,
+                                       bounds->yMinimum == 0 ? .5 : .05);
+    if (range) setRange(xmin, xmax, range->first, range->second);
 }
 void PlotItem::zoomAxis(int axis, double fraction, double steps)
 {
@@ -464,30 +464,8 @@ double PlotItem::nearestRawX(double x) const
 
 void PlotItem::rebuildTicksLocked()
 {
-    auto makeTicks = [](double lo, double hi) {
-        QVariantList ticks;
-        if (!(hi > lo) || !qIsFinite(lo) || !qIsFinite(hi)) return ticks;
-        const double raw = (hi - lo) / 7.0;
-        const double magnitude = qPow(10.0, qFloor(qLn(raw) / qLn(10.0)));
-        const double normalized = raw / magnitude;
-        const double step = (normalized <= 1.0 ? 1.0 : normalized <= 2.0 ? 2.0 : normalized <= 5.0 ? 5.0 : 10.0) * magnitude;
-        const qint64 first = static_cast<qint64>(qCeil(lo / step - 1e-12));
-        const qint64 last = static_cast<qint64>(qFloor(hi / step + 1e-12));
-        for (qint64 i = first; i <= last && ticks.size() < 12; ++i) {
-            const double value = i * step;
-            ticks.append(QVariantMap{{QStringLiteral("value"), value},
-                                     {QStringLiteral("label"), QString::number(value, 'g', 12)}});
-        }
-        if (ticks.isEmpty()) {
-            ticks.append(QVariantMap{{QStringLiteral("value"), lo},
-                                     {QStringLiteral("label"), QString::number(lo, 'g', 12)}});
-            ticks.append(QVariantMap{{QStringLiteral("value"), hi},
-                                     {QStringLiteral("label"), QString::number(hi, 'g', 12)}});
-        }
-        return ticks;
-    };
-    m_xTicks = makeTicks(m_xMinimum, m_xMaximum);
-    m_yTicks = makeTicks(m_yMinimum, m_yMaximum);
+    m_xTicks = makePlotAxisTicks(m_xMinimum, m_xMaximum);
+    m_yTicks = makePlotAxisTicks(m_yMinimum, m_yMaximum);
 }
 
 void PlotItem::updateCursorValuesLocked()
@@ -745,7 +723,8 @@ void PlotItem::wheelEvent(QWheelEvent *e)
 void PlotItem::setRange(double xmin,double xmax,double ymin,double ymax)
 {
     if (!qIsFinite(xmin) || !qIsFinite(xmax) || !qIsFinite(ymin) || !qIsFinite(ymax)
-        || xmax <= xmin || ymax <= ymin)
+        || xmax <= xmin || ymax <= ymin
+        || !qIsFinite(xmax - xmin) || !qIsFinite(ymax - ymin))
         return;
     {
         QMutexLocker lock(&m_dataMutex);

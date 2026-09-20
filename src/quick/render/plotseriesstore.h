@@ -89,7 +89,8 @@ public:
                                           double targetX);
     static QVector<PlotSample> nearestSamples(const PlotSeriesSnapshot &snapshot,
                                               double targetX);
-    static std::optional<QPair<double, double>> timeBounds(const PlotSeriesSnapshot &snapshot);
+    static std::optional<QPair<double, double>> timeBounds(
+        const PlotSeriesSnapshot &snapshot, PlotBoundsQueryStats *stats = nullptr);
     static std::optional<PlotBounds> bounds(const PlotSeriesSnapshot &snapshot,
         double xMinimum = -std::numeric_limits<double>::infinity(),
         double xMaximum = std::numeric_limits<double>::infinity(),

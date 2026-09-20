@@ -1,6 +1,7 @@
 // AppController: file import queue, session bookkeeping and Excel/MAT export.
 #include "appcontroller.h"
 #include "plotitem.h"
+#include "render/plotaxisutils.h"
 #include "dataloadworker.h"
 #include "dataexportworker.h"
 #include "matwriter.h"
@@ -360,15 +361,8 @@ void AppController::appendLoadedTables(const QString &path, const QVector<Loaded
             found = true;
         }
         if (found) {
-            if (qFuzzyCompare(timeMinimum, timeMaximum)) {
-                m_sharedXMinimum = timeMinimum - 0.5;
-                m_sharedXMaximum = timeMaximum + 0.5;
-            } else {
-                const double padding = qMax((timeMaximum - timeMinimum) * 0.02, 1e-9);
-                m_sharedXMinimum = timeMinimum - padding;
-                m_sharedXMaximum = timeMaximum + padding;
-            }
-            applySharedXRange(m_sharedXMinimum, m_sharedXMaximum);
+            const auto range = paddedPlotRange(timeMinimum, timeMaximum, .02, .5);
+            if (range) applySharedXRange(range->first, range->second);
         }
     }
     for (int index = 0; index < m_plots.size(); ++index)

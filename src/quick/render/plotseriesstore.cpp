@@ -131,25 +131,21 @@ void PlotSeriesStore::appendSeries(const QVector<PlotSeriesInput> &inputs)
 void PlotSeriesStore::updateSeriesPen(PlotSeriesId id, const QColor &color,
                                       double lineWidth, Qt::PenStyle lineStyle)
 {
-    const quint64 nextGeneration = m_generation + 1;
-    bool changed = false;
-    QVector<PlotSeriesDataPtr> replacement = m_series;
-    for (int index = 0; index < replacement.size(); ++index) {
-        const PlotSeriesDataPtr &current = replacement.at(index);
-        if (!current || current->id != id) continue;
-        auto updated = std::make_shared<PlotSeriesData>(*current);
-        updated->color = color.isValid() ? color : QColor("#4ea1ff");
-        updated->lineWidth = qBound(1.0, lineWidth, 20.0);
-        updated->lineStyle = lineStyle;
-        updated->version = nextGeneration;
-        replacement[index] = std::move(updated);
-        changed = true;
-        break;
-    }
-    if (!changed) return;
-    m_series = std::move(replacement);
-    rebuildPositions();
-    m_generation = nextGeneration;
+    const auto position = m_positions.constFind(id);
+    if (position == m_positions.cend()) return;
+    const auto &current = m_series.at(*position);
+    const QColor normalizedColor = color.isValid() ? color : QColor("#4ea1ff");
+    const double normalizedWidth = qBound(1.0, lineWidth, 20.0);
+    if (current->color == normalizedColor && current->lineWidth == normalizedWidth
+        && current->lineStyle == lineStyle) return;
+    auto updated = std::make_shared<PlotSeriesData>(*current);
+    updated->color = normalizedColor;
+    updated->lineWidth = normalizedWidth;
+    updated->lineStyle = lineStyle;
+    updated->version = m_generation + 1;
+    m_series[*position] = std::move(updated);
+    // IDs and their positions did not change; neither copy nor rebuild the map.
+    ++m_generation;
 }
 
 bool PlotSeriesStore::addTimeOffset(const QSet<PlotSeriesId> &ids, double seconds, bool absolute)
@@ -298,7 +294,8 @@ std::optional<PlotBounds> PlotSeriesStore::bounds(const PlotSeriesSnapshot &snap
     return result;
 }
 
-std::optional<QPair<double, double>> PlotSeriesStore::timeBounds(const PlotSeriesSnapshot &snapshot)
+std::optional<QPair<double, double>> PlotSeriesStore::timeBounds(
+    const PlotSeriesSnapshot &snapshot, PlotBoundsQueryStats *stats)
 {
     std::optional<QPair<double, double>> result;
     auto add = [&](double x) {
@@ -307,12 +304,28 @@ std::optional<QPair<double, double>> PlotSeriesStore::timeBounds(const PlotSerie
         else { result->first = qMin(result->first, x); result->second = qMax(result->second, x); }
     };
     for (const auto &series : snapshot.series) {
-        if (series->sampleCount() == 0) continue;
-        if (series->monotonicTime) {
+        if (!series || series->sampleCount() == 0) continue;
+        bool mustScan = false;
+        if (series->rangeIndex && series->rangeIndex->sampleCount() == series->sampleCount()) {
+            if (stats) ++stats->indexNodes;
+            const auto raw = series->rangeIndex->rawTimeBounds();
+            if (!raw) continue;
+            const double lo = raw->first + series->timeOffset;
+            const double hi = raw->second + series->timeOffset;
+            if (qIsFinite(lo) && qIsFinite(hi)) { add(lo); add(hi); continue; }
+            mustScan = true;
+            // Hand-built snapshots can contain overflowing offsets. Fall back to
+            // the legacy finite-sample scan rather than hiding an interior value.
+        }
+        if (series->monotonicTime && !mustScan) {
+            if (stats) stats->rawSamples += 2;
             add(series->pointAt(0).x());
             add(series->pointAt(series->sampleCount() - 1).x());
         } else {
-            for (qsizetype i = 0; i < series->sampleCount(); ++i) add(series->pointAt(i).x());
+            for (qsizetype i = 0; i < series->sampleCount(); ++i) {
+                if (stats) ++stats->rawSamples;
+                add(series->pointAt(i).x());
+            }
         }
     }
     return result;
