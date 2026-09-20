@@ -117,6 +117,20 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
   -OutputDir "dist/DataInspector"
 ```
 
+## QML 静态检查与编辑器配置
+
+完成 CMake 配置后运行：
+
+```powershell
+cmake --build build_qt6 --target DataInspector_qmllint
+```
+
+- 检查全部四个 QML 文件，`MaxWarnings=0`：任何 warning 都使检查失败，不关闭警告规则。
+- `src/quick/qmltypes.h` 声明 C++ 的 QML 类型，构建时自动生成 `.qmltypes`；`Main` 通过必填的类型化属性接收控制器，不依赖隐式上下文变量。
+- 生成的模块位于 `<构建目录>/qml/DataInspector`。CMake 自动生成本地 `qml/.qmllint.ini` 和 `.qmlls.ini`，包含当前构建目录和导入路径；这些机器相关文件已忽略，不应手工编辑或提交。更换构建目录后重新配置并构建上述目标。
+- 使用 Qt QML VS Code/ShunCode 扩展时，如果仍使用旧的启动参数，在工作区设置 `qt-qml.qmlls.additionalImportPaths` 中加入 `${workspaceFolder}/<构建目录>/qml`，再执行 **Qt: Restart QML Language Server**。现有 `.vscode/settings.json` 属于本地配置，不纳入 Git。
+- 首次克隆必须先配置/构建类型元数据，不能仅打开源码就要求分析器识别 C++ 类型。运行时仍需真实 GUI/GPU 验证，静态检查不能替代交互测试。
+
 ## 使用方法
 
 1. 启动 `DataInspector.exe`，点击“打开”多选数据文件，或把 CSV/TXT/XLSX/MAT 文件拖入窗口。

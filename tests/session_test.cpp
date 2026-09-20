@@ -235,14 +235,20 @@ static QList<PlotItem *> visualPlots(QObject *root)
 void SessionTest::qmlRestoresToolbarAndPlotStates()
 {
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
+    qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
+    qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
     const QDir qmlDirectory(QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml"));
     qmlRegisterType(QUrl::fromLocalFile(qmlDirectory.filePath("QuickPlot.qml")), "DataInspector", 1, 0, "QuickPlot");
     AppController controller;
     QQmlEngine engine;
-    engine.rootContext()->setContextProperty("appController", &controller);
+    QStringList qmlWarnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) {
+        for (const auto &error : errors) qmlWarnings.append(error.toString());
+    });
     QQmlComponent component(&engine, QUrl::fromLocalFile(qmlDirectory.filePath("Main.qml")));
-    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"visible", false}}));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"visible", false}, {"appController", QVariant::fromValue(&controller)}}));
     QVERIFY2(root, qPrintable(component.errorString()));
+    QCOMPARE(root->property("appController").value<AppController *>(), &controller);
     QVERIFY(root->findChild<QObject *>("sessionMenuButton"));
     QVERIFY(root->findChild<QObject *>("saveSessionDialog"));
     QVERIFY(root->findChild<QObject *>("openSessionDialog"));
@@ -270,6 +276,8 @@ void SessionTest::qmlRestoresToolbarAndPlotStates()
         QCOMPARE(plotItem->yMinimum(), double(-10-index));
         QCOMPARE(plotItem->cursorX1(), -2.0); QCOMPARE(plotItem->cursorX2(), 3.0);
     }
+    QCoreApplication::processEvents();
+    QVERIFY2(qmlWarnings.isEmpty(), qPrintable(qmlWarnings.join('\n')));
 }
 
 QTEST_MAIN(SessionTest)

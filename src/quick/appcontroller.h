@@ -27,7 +27,9 @@ class QThread;
 //   appcontroller_loading.cpp  import queue, file removal, Excel/MAT export
 //   appcontroller_plots.cpp    subplot bindings, legend actions, fitting
 
-class AppController final : public QObject
+// Qt 6.8 QML registration instantiates a QQmlElement<T> wrapper, even for
+// uncreatable types, so this QObject type must not be final.
+class AppController : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QVariantList presetColors READ presetColors CONSTANT)

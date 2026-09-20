@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 
 // Hover/drag/wheel handling for one axis gutter of a QuickPlot.

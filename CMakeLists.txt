@@ -15,6 +15,12 @@ set(DATAINSPECTOR_BIN_DIR "bin" CACHE STRING "Application output subdirectory")
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 QuickDialogs2)
 qt_standard_project_setup(REQUIRES 6.8)
+# Make generated module metadata discoverable by qmllint and QML language servers.
+set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
+set(QT_QML_GENERATE_QMLLS_INI ON)
+# Qt 6.8 tooling settings collapse QStringList values to strings. Generate one
+# import root for the active build, including custom build-directory names.
+configure_file(qml/qmllint.ini.in "${CMAKE_SOURCE_DIR}/qml/.qmllint.ini" @ONLY)
 
 # ---------------------------------------------------------------------------
 # Shared source lists
@@ -160,6 +166,7 @@ target_link_libraries(plot_render_core PUBLIC Qt6::Core Qt6::Gui)
 # ---------------------------------------------------------------------------
 qt_add_executable(DataInspector
     src/quick/main.cpp
+    src/quick/qmltypes.h
     ${DI_CONTROLLER_SOURCES}
 )
 
@@ -170,6 +177,8 @@ endforeach()
 qt_add_qml_module(DataInspector
     URI DataInspector
     VERSION 1.0
+    DEPENDENCIES QtQuick QtQml.Models
+    IMPORT_PATH "${QT_QML_OUTPUT_DIRECTORY}"
     QML_FILES ${DI_QML_FILES}
 )
 di_add_icon_resources(DataInspector)

@@ -1,13 +1,14 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
-import QtQuick.Layouts
 import DataInspector
 
 Rectangle {
     id: root
 
     required property int plotIndex
-    required property var controller
+    required property AppController controller
     property real graphLineWidth: 2
     property int graphCursorMode: 0
     // 0: disabled, 1: X/Y region, 2: X only, 3: Y only.
@@ -192,7 +193,7 @@ Rectangle {
         z: 6
     }
     Rectangle {
-        id: dragPreview
+        id: legendDragPreview
         objectName: "legendDragPreview"
         parent: root.Window.window ? root.Window.window.contentItem : root
         visible: root.legendDragging
@@ -206,13 +207,13 @@ Rectangle {
         property color signalColor: "transparent"
         Rectangle {
             x: 8; anchors.verticalCenter: parent.verticalCenter
-            width: 8; height: 8; color: dragPreview.signalColor
+            width: 8; height: 8; color: legendDragPreview.signalColor
         }
         Label {
             id: previewText
             x: 23; width: parent.width - 29
             anchors.verticalCenter: parent.verticalCenter
-            text: dragPreview.signalName
+            text: legendDragPreview.signalName
             color: root.textColor
             elide: Text.ElideRight
             font.pixelSize: 11
@@ -287,7 +288,7 @@ Rectangle {
         const hostWindow = root.Window.window
         const focusItem = hostWindow ? hostWindow.activeFocusItem : null
         // Never interrupt text entry (signal search field, dialogs).
-        if (focusItem && focusItem.selectedText !== undefined)
+        if (focusItem instanceof TextInput || focusItem instanceof TextEdit)
             return
         root.forceActiveFocus(Qt.OtherFocusReason)
     }
@@ -423,6 +424,7 @@ Rectangle {
         Repeater {
             model: root.positionedReadouts
             delegate: Label {
+                id: cursorValueLabel
                 required property var modelData
                 objectName: "cursorValueLabel"
                 readonly property string formatKey: modelData.seriesId + ":" + modelData.cursorIndex
@@ -437,7 +439,7 @@ Rectangle {
                 leftPadding: 5; rightPadding: 5; topPadding: 2; bottomPadding: 2
                 background: Rectangle {
                     color: root.plotColor
-                    border.color: modelData.color
+                    border.color: cursorValueLabel.modelData.color
                     border.width: 1
                 }
                 color: modelData.color
@@ -477,6 +479,7 @@ Rectangle {
     Repeater {
         model: plotItem.xTicks
         delegate: Item {
+            id: xTick
             required property var modelData
             x: root.axisLeft + root.xPixel(modelData.value)
             y: axisRect.y + axisRect.height
@@ -494,8 +497,8 @@ Rectangle {
                 x: Math.max(-parent.x, Math.min(root.width - parent.x - width, -width / 2))
                 width: implicitWidth
                 horizontalAlignment: Text.AlignHCenter
-                text: modelData.label
-                visible: !root.tickCovered(modelData.value)
+                text: xTick.modelData.label
+                visible: !root.tickCovered(xTick.modelData.value)
                 color: root.textColor
                 font.pixelSize: 10
             }
@@ -505,6 +508,7 @@ Rectangle {
     Repeater {
         model: plotItem.yTicks
         delegate: Item {
+            id: yTick
             required property var modelData
             x: 0
             y: axisRect.y + root.yPixel(modelData.value)
@@ -523,7 +527,7 @@ Rectangle {
                 anchors.verticalCenter: parent.verticalCenter
                 width: root.axisLeft - root.yTickLabelMargin
                 horizontalAlignment: Text.AlignRight
-                text: root.formatYTick(modelData.value)
+                text: root.formatYTick(yTick.modelData.value)
                 color: root.textColor
                 font.pixelSize: 10
             }
@@ -593,7 +597,7 @@ Rectangle {
         plot: root
         controller: root.controller
         renderer: plotItem
-        dragPreview: dragPreview
+        dragPreview: legendDragPreview
         darkTheme: root.darkTheme
         textColor: root.textColor
     }

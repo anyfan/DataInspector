@@ -2,13 +2,10 @@
 #include <QSurfaceFormat>
 #include <QFile>
 #include <QQmlApplicationEngine>
-#include <QQmlContext>
 #include <QQuickStyle>
 #include <QDebug>
 #include <QTextStream>
-#include <QtQml/qqml.h>
 #include "appcontroller.h"
-#include "plotitem.h"
 int main(int argc, char *argv[])
 {
     QQuickStyle::setStyle(QStringLiteral("Fusion"));
@@ -19,7 +16,6 @@ int main(int argc, char *argv[])
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("DataInspector"));
     app.setOrganizationName(QStringLiteral("DataInspector"));
-    qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     AppController controller;
     QQmlApplicationEngine engine;
     engine.addImportPath(QCoreApplication::applicationDirPath() + QStringLiteral("/qml"));
@@ -29,7 +25,7 @@ int main(int argc, char *argv[])
         for (const QQmlError &warning : warnings)
             qmlErrors.append(warning.toString());
     });
-    engine.rootContext()->setContextProperty(QStringLiteral("appController"), &controller);
+    engine.setInitialProperties({{QStringLiteral("appController"), QVariant::fromValue(&controller)}});
     engine.loadFromModule(QStringLiteral("DataInspector"), QStringLiteral("Main"));
     if (engine.rootObjects().isEmpty()) {
         const QString message = qmlErrors.isEmpty()

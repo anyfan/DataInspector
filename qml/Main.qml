@@ -1,3 +1,5 @@
+pragma ComponentBehavior: Bound
+
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
@@ -6,11 +8,13 @@ import DataInspector
 
 ApplicationWindow {
     id: window
+    // Explicit injection keeps the controller visible to QML tooling and tests.
+    required property AppController appController
     width: 1440
     height: 900
     visible: true
-    title: appController.currentFile.length > 0 ? "DataInspector · " + appController.currentFile : "DataInspector"
-    color: panelColor
+    title: window.appController.currentFile.length > 0 ? "DataInspector · " + window.appController.currentFile : "DataInspector"
+    color: window.panelColor
     // Keep every Fusion control in the app theme, independent of the OS theme.
     palette.window: panelColor
     palette.windowText: treeTextColor
@@ -55,14 +59,14 @@ ApplicationWindow {
         anchors.centerIn: parent
         standardButtons: Dialog.Ok | Dialog.Cancel
         width: 300
-        onAccepted: appController.setSignalPen(
+        onAccepted: window.appController.setSignalPen(
             window.editingSignalIndex, colorButton.selectedColor,
             widthSpin.value, lineStyleModel.get(styleCombo.currentIndex).value)
 
         ColumnLayout {
             width: parent.width
             spacing: 10
-            Label { text: window.editingSignalIndex >= 0 ? appController.signalName(window.editingSignalIndex) : ""; color: window.treeTextColor; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
+            Label { text: window.editingSignalIndex >= 0 ? window.appController.signalName(window.editingSignalIndex) : ""; color: window.treeTextColor; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
             RowLayout {
                 Label { text: "颜色"; color: window.treeTextColor; Layout.preferredWidth: 54 }
                 Rectangle {
@@ -87,7 +91,7 @@ ApplicationWindow {
                 spacing: 6
                 Layout.alignment: Qt.AlignHCenter
                 Repeater {
-                    model: appController.presetColors
+                    model: window.appController.presetColors
                     delegate: Rectangle {
                         required property color modelData
                         width: 28; height: 24; radius: 2
@@ -126,7 +130,7 @@ ApplicationWindow {
         property string fileName: ""
         MenuItem {
             text: "时间偏移…"
-            enabled: !appController.loading && !appController.exporting
+            enabled: !window.appController.loading && !window.appController.exporting
             onTriggered: window.requestTimeOffset(2, -1, fileContextMenu.fileName)
         }
         MenuItem {
@@ -140,7 +144,7 @@ ApplicationWindow {
         property int signalIndex: -1
         MenuItem {
             text: "时间偏移…"
-            enabled: !appController.loading && !appController.exporting
+            enabled: !window.appController.loading && !window.appController.exporting
             onTriggered: window.requestTimeOffset(0, signalContextMenu.signalIndex, "")
         }
         MenuItem {
@@ -154,7 +158,7 @@ ApplicationWindow {
         property string groupName: ""
         MenuItem {
             text: "时间偏移…"
-            enabled: !appController.loading && !appController.exporting
+            enabled: !window.appController.loading && !window.appController.exporting
             onTriggered: window.requestTimeOffset(1, -1, groupContextMenu.groupName)
         }
     }
@@ -181,23 +185,23 @@ ApplicationWindow {
         width: 420
         standardButtons: Dialog.Ok | Dialog.Cancel
         onAboutToShow: {
-            const current = appController.timeOffsetForScope(scope, signalIndex, groupName)
+            const current = window.appController.timeOffsetForScope(scope, signalIndex, groupName)
             mixedOffsets = current === undefined || current === null
             offsetField.text = mixedOffsets ? "" : String(current)
             const button = standardButton(Dialog.Ok)
             if (button) button.enabled = Qt.binding(function() {
-                return timeOffsetDialog.valueValid && !appController.loading && !appController.exporting
+                return timeOffsetDialog.valueValid && !window.appController.loading && !window.appController.exporting
             })
             offsetField.selectAll()
             offsetField.forceActiveFocus()
         }
-        onAccepted: appController.setTimeOffset(scope, signalIndex, groupName, Number(offsetField.text))
+        onAccepted: window.appController.setTimeOffset(scope, signalIndex, groupName, Number(offsetField.text))
         ColumnLayout {
             width: parent.width
             spacing: 10
             Label {
                 text: "目标：" + (timeOffsetDialog.scope === 0
-                    ? appController.signalName(timeOffsetDialog.signalIndex) : timeOffsetDialog.groupName)
+                    ? window.appController.signalName(timeOffsetDialog.signalIndex) : timeOffsetDialog.groupName)
                 Layout.fillWidth: true
                 elide: Text.ElideMiddle
             }
@@ -217,7 +221,7 @@ ApplicationWindow {
                 placeholderText: "时间偏移（秒）"
                 selectByMouse: true
                 validator: DoubleValidator { locale: "C"; notation: DoubleValidator.ScientificNotation }
-                onAccepted: if (timeOffsetDialog.valueValid && !appController.loading && !appController.exporting)
+                onAccepted: if (timeOffsetDialog.valueValid && !window.appController.loading && !window.appController.exporting)
                     timeOffsetDialog.accept()
             }
             Button {
@@ -246,17 +250,17 @@ ApplicationWindow {
             // The footer buttons exist by now; keep OK disabled for blank names.
             const okButton = standardButton(Dialog.Ok)
             if (okButton) okButton.enabled = Qt.binding(function() { return renameSignalDialog.nameValid })
-            renameField.text = appController.signalName(signalIndex)
+            renameField.text = window.appController.signalName(signalIndex)
             renameField.selectAll()
             renameField.forceActiveFocus()
         }
-        onAccepted: appController.renameSignal(signalIndex, renameField.text)
+        onAccepted: window.appController.renameSignal(signalIndex, renameField.text)
         ColumnLayout {
             width: parent.width
             spacing: 8
             Label {
                 text: "原名称：" + (renameSignalDialog.signalIndex >= 0
-                                   ? appController.originalSignalName(renameSignalDialog.signalIndex) : "")
+                                   ? window.appController.originalSignalName(renameSignalDialog.signalIndex) : "")
                 color: window.treeTextColor
                 opacity: 0.78
                 elide: Text.ElideRight
@@ -273,7 +277,7 @@ ApplicationWindow {
             Button {
                 objectName: "resetSignalNameButton"
                 text: "重置为原名称"
-                onClicked: renameField.text = appController.originalSignalName(renameSignalDialog.signalIndex)
+                onClicked: renameField.text = window.appController.originalSignalName(renameSignalDialog.signalIndex)
             }
             Label {
                 text: "点击确定后应用修改或重置。"
@@ -289,7 +293,7 @@ ApplicationWindow {
         anchors.centerIn: parent
         standardButtons: Dialog.Ok | Dialog.Cancel
         width: 380
-        onAccepted: appController.removeFile(window.pendingFileRemoval)
+        onAccepted: window.appController.removeFile(window.pendingFileRemoval)
         Label {
             width: parent.width - 24
             wrapMode: Text.Wrap
@@ -301,9 +305,9 @@ ApplicationWindow {
 
     function editSignalPen(signalIndex) {
         editingSignalIndex = signalIndex
-        colorButton.selectedColor = appController.signalColor(signalIndex)
-        widthSpin.value = Math.round(appController.signalWidth(signalIndex))
-        const style = appController.signalStyle(signalIndex)
+        colorButton.selectedColor = window.appController.signalColor(signalIndex)
+        widthSpin.value = Math.round(window.appController.signalWidth(signalIndex))
+        const style = window.appController.signalStyle(signalIndex)
         let found = 0
         for (let index = 0; index < lineStyleModel.count; ++index)
             if (lineStyleModel.get(index).value === style) found = index
@@ -330,7 +334,7 @@ ApplicationWindow {
         nameFilters: ["DataInspector 会话 (*.disession)", "JSON 文件 (*.json)"]
         fileMode: FileDialog.SaveFile
         defaultSuffix: "disession"
-        onAccepted: appController.saveSession(selectedFile)
+        onAccepted: window.appController.saveSession(selectedFile)
     }
     FileDialog {
         id: openSessionDialog
@@ -340,8 +344,8 @@ ApplicationWindow {
         fileMode: FileDialog.OpenFile
         onAccepted: {
             window.pendingSessionUrl = selectedFile
-            if (appController.loadedFileCount > 0) replaceSessionDialog.open()
-            else appController.restoreSession(selectedFile)
+            if (window.appController.loadedFileCount > 0) replaceSessionDialog.open()
+            else window.appController.restoreSession(selectedFile)
         }
     }
     Dialog {
@@ -352,7 +356,7 @@ ApplicationWindow {
         anchors.centerIn: parent
         standardButtons: Dialog.Ok | Dialog.Cancel
         Label { text: "恢复成功后将替换当前会话。\n如需保留当前视图，请先保存会话。\n文件缺失或恢复失败时，当前会话不变。" }
-        onAccepted: appController.restoreSession(window.pendingSessionUrl)
+        onAccepted: window.appController.restoreSession(window.pendingSessionUrl)
     }
     Dialog {
         id: sessionErrorDialog
@@ -367,12 +371,12 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+S"
-        enabled: !appController.loading && !appController.exporting
+        enabled: !window.appController.loading && !window.appController.exporting
         onActivated: saveSessionDialog.open()
     }
     Shortcut {
         sequence: "Ctrl+Shift+O"
-        enabled: !appController.loading && !appController.exporting
+        enabled: !window.appController.loading && !window.appController.exporting
         onActivated: openSessionDialog.open()
     }
 
@@ -381,7 +385,7 @@ ApplicationWindow {
         title: "打开数据文件"
         nameFilters: ["数据文件 (*.csv *.txt *.xlsx *.mat)", "CSV/TXT 文件 (*.csv *.txt)", "Excel 文件 (*.xlsx)", "MAT 文件 (*.mat)", "所有文件 (*)"]
         fileMode: FileDialog.OpenFiles
-        onAccepted: appController.loadFiles(selectedFiles)
+        onAccepted: window.appController.loadFiles(selectedFiles)
     }
 
     FileDialog {
@@ -390,7 +394,7 @@ ApplicationWindow {
         nameFilters: ["Excel 工作簿 (*.xlsx)"]
         fileMode: FileDialog.SaveFile
         defaultSuffix: "xlsx"
-        onAccepted: appController.exportXlsx(
+        onAccepted: window.appController.exportXlsx(
                         selectedFile, window.pendingExportScope,
                         window.exportZipCompression)
     }
@@ -401,7 +405,7 @@ ApplicationWindow {
         nameFilters: ["MAT 文件 (*.mat)"]
         fileMode: FileDialog.SaveFile
         defaultSuffix: "mat"
-        onAccepted: appController.exportMat(selectedFile, window.pendingExportScope)
+        onAccepted: window.appController.exportMat(selectedFile, window.pendingExportScope)
     }
 
     Dialog {
@@ -411,10 +415,10 @@ ApplicationWindow {
         anchors.centerIn: parent
         standardButtons: Dialog.Ok | Dialog.Cancel
         onOpened: {
-            layoutRows.value = appController.plotRows
-            layoutColumns.value = appController.plotColumns
+            layoutRows.value = window.appController.plotRows
+            layoutColumns.value = window.appController.plotColumns
         }
-        onAccepted: appController.setLayout(layoutRows.value, layoutColumns.value)
+        onAccepted: window.appController.setLayout(layoutRows.value, layoutColumns.value)
         GridLayout {
             columns: 2
             Label { text: "行数" }
@@ -445,26 +449,26 @@ ApplicationWindow {
         }
         onDropped: function(drop) {
             const urls = droppedFileUrls(drop)
-            if (urls.length > 0 && appController.loadFiles(urls) > 0)
+            if (urls.length > 0 && window.appController.loadFiles(urls) > 0)
                 drop.acceptProposedAction()
         }
     }
 
     // Fit scope: plain shortcut = current subplot, +Shift = every subplot.
-    Shortcut { sequence: "Ctrl+Alt+F"; onActivated: appController.fitPlots(true, true, false) }
-    Shortcut { sequence: "Ctrl+Alt+Shift+F"; onActivated: appController.fitPlots(true, true, true) }
-    Shortcut { sequence: "Ctrl+Alt+T"; onActivated: appController.fitPlots(true, false, false) }
-    Shortcut { sequence: "Ctrl+Alt+Shift+T"; onActivated: appController.fitPlots(true, false, true) }
-    Shortcut { sequence: "Ctrl+Alt+Y"; onActivated: appController.fitPlots(false, true, false) }
-    Shortcut { sequence: "Ctrl+Alt+Shift+Y"; onActivated: appController.fitPlots(false, true, true) }
+    Shortcut { sequence: "Ctrl+Alt+F"; onActivated: window.appController.fitPlots(true, true, false) }
+    Shortcut { sequence: "Ctrl+Alt+Shift+F"; onActivated: window.appController.fitPlots(true, true, true) }
+    Shortcut { sequence: "Ctrl+Alt+T"; onActivated: window.appController.fitPlots(true, false, false) }
+    Shortcut { sequence: "Ctrl+Alt+Shift+T"; onActivated: window.appController.fitPlots(true, false, true) }
+    Shortcut { sequence: "Ctrl+Alt+Y"; onActivated: window.appController.fitPlots(false, true, false) }
+    Shortcut { sequence: "Ctrl+Alt+Shift+Y"; onActivated: window.appController.fitPlots(false, true, true) }
     Connections {
-        target: appController
+        target: window.appController
         function onLayoutChanged() { window.subplotMaximized = false }
         function onSessionRestored(cursorMode) {
             signalSearch.clear()
             window.selectedCursorMode = cursorMode
             if (cursorMode !== 0) window.preferredCursorMode = cursorMode
-            window.subplotMaximized = appController.soloPlotIndex >= 0
+            window.subplotMaximized = window.appController.soloPlotIndex >= 0
         }
         function onSessionError(message) {
             sessionErrorDialog.message = message
@@ -472,7 +476,7 @@ ApplicationWindow {
         }
         function onRevealSignalRequested(row) {
             signalSearch.clear()
-            const modelRow = appController.signalModel.revealSignal(row)
+            const modelRow = window.appController.signalModel.revealSignal(row)
             signalList.currentIndex = modelRow
             signalList.positionViewAtIndex(modelRow, ListView.Center)
         }
@@ -481,16 +485,16 @@ ApplicationWindow {
     property bool subplotMaximized: false
     // Mirror the maximize state into the controller so X/Y fitting only
     // considers the subplot the user can actually see.
-    onSubplotMaximizedChanged: appController.setSoloPlot(
-                                   window.subplotMaximized ? appController.activePlotIndex : -1)
+    onSubplotMaximizedChanged: window.appController.setSoloPlot(
+                                   window.subplotMaximized ? window.appController.activePlotIndex : -1)
     Connections {
-        target: appController
+        target: window.appController
         enabled: window.subplotMaximized
-        function onActivePlotChanged() { appController.setSoloPlot(appController.activePlotIndex) }
+        function onActivePlotChanged() { window.appController.setSoloPlot(window.appController.activePlotIndex) }
     }
     property int visibilityBeforeFullscreen: Window.Windowed
     function toggleFullscreen() {
-        if (appController.restoringSession) return
+        if (window.appController.restoringSession) return
         if (visibility === Window.FullScreen)
             visibility = visibilityBeforeFullscreen
         else {
@@ -501,7 +505,7 @@ ApplicationWindow {
     Shortcut { sequence: "F11"; onActivated: window.toggleFullscreen() }
     Shortcut {
         sequence: "Escape"
-        enabled: !appController.restoringSession
+        enabled: !window.appController.restoringSession
                  && (window.visibility === Window.FullScreen || window.subplotMaximized)
         onActivated: {
             if (window.visibility === Window.FullScreen) window.toggleFullscreen()
@@ -514,7 +518,7 @@ ApplicationWindow {
     property int selectedZoomMode: 1
     readonly property int activeZoomMode: zoomToolEnabled ? selectedZoomMode : 0
     function toggleCursorTool() {
-        if (appController.restoringSession) return
+        if (window.appController.restoringSession) return
         selectedCursorMode = selectedCursorMode === 0 ? preferredCursorMode : 0
     }
     function selectCursorMode(mode) {
@@ -529,8 +533,8 @@ ApplicationWindow {
         selectedZoomMode = mode
     }
     function zoomCurrent(axis, steps) {
-        if (appController.restoringSession) return
-        const plot = plotRepeater.itemAt(appController.activePlotIndex)
+        if (window.appController.restoringSession) return
+        const plot = (plotRepeater.itemAt(window.appController.activePlotIndex) as QuickPlot)
         if (!plot) return
         if (axis !== 1) plot.renderer.zoomAxis(0, 0.5, steps)
         if (axis !== 0) plot.renderer.zoomAxis(1, 0.5, steps)
@@ -596,7 +600,7 @@ ApplicationWindow {
         }
     }
     header: ToolBar {
-        enabled: !appController.restoringSession
+        enabled: !window.appController.restoringSession
         height: 48
         background: Rectangle { color: window.panelColor; border.color: window.borderColor }
         RowLayout {
@@ -604,13 +608,13 @@ ApplicationWindow {
             Label { text: "DataInspector"; font.pixelSize: 17; font.weight: Font.DemiBold; color: window.accentColor }
             ToolButton {
                 text: "打开…"
-                enabled: !appController.loading && !appController.exporting
+                enabled: !window.appController.loading && !window.appController.exporting
                 onClicked: fileDialog.open()
             }
             ToolButton {
                 objectName: "sessionMenuButton"
                 text: "会话 ▾"
-                enabled: !appController.loading && !appController.exporting
+                enabled: !window.appController.loading && !window.appController.exporting
                 onClicked: sessionMenu.popup()
                 Menu {
                     id: sessionMenu
@@ -621,8 +625,8 @@ ApplicationWindow {
             IconTool {
                 icon.source: "qrc:/icons/download.svg"
                 hint: "导出数据"
-                enabled: appController.signalCount > 0
-                         && !appController.loading && !appController.exporting
+                enabled: window.appController.signalCount > 0
+                         && !window.appController.loading && !window.appController.exporting
                 onClicked: exportMenu.popup()
                 Menu {
                     id: exportMenu
@@ -640,10 +644,10 @@ ApplicationWindow {
                             exportDialog.open()
                         }
                     }
-                    MenuSeparator { visible: appController.matExportSupported }
+                    MenuSeparator { visible: window.appController.matExportSupported }
                     MenuItem {
                         text: "MAT · 全部已加载数据"
-                        visible: appController.matExportSupported
+                        visible: window.appController.matExportSupported
                         onTriggered: {
                             window.pendingExportScope = 0
                             exportMatDialog.open()
@@ -651,7 +655,7 @@ ApplicationWindow {
                     }
                     MenuItem {
                         text: "MAT · 当前所有子图已绘制的信号"
-                        visible: appController.matExportSupported
+                        visible: window.appController.matExportSupported
                         onTriggered: {
                             window.pendingExportScope = 1
                             exportMatDialog.open()
@@ -694,8 +698,8 @@ ApplicationWindow {
                                     icon.width: 38; icon.height: 38
                                     icon.source: "qrc:/icons/" + modelData.svg + ".svg"
                                     hint: modelData.r + " 行 × " + modelData.c + " 列"
-                                    checked: appController.plotRows === modelData.r && appController.plotColumns === modelData.c
-                                    onClicked: { appController.setLayout(modelData.r, modelData.c); layoutPopup.close() }
+                                    checked: window.appController.plotRows === modelData.r && window.appController.plotColumns === modelData.c
+                                    onClicked: { window.appController.setLayout(modelData.r, modelData.c); layoutPopup.close() }
                                 }
                             }
                         }
@@ -741,14 +745,14 @@ ApplicationWindow {
                 onClicked: fitMenu.popup()
                 Menu {
                     id: fitMenu
-                    MenuItem { text: "自适应当前视图    Ctrl+Alt+F"; icon.source: "qrc:/icons/fit-view.svg"; onTriggered: appController.fitPlots(true, true, false) }
-                    MenuItem { text: "自适应全部视图    Ctrl+Alt+Shift+F"; icon.source: "qrc:/icons/fit-view.svg"; onTriggered: appController.fitPlots(true, true, true) }
+                    MenuItem { text: "自适应当前视图    Ctrl+Alt+F"; icon.source: "qrc:/icons/fit-view.svg"; onTriggered: window.appController.fitPlots(true, true, false) }
+                    MenuItem { text: "自适应全部视图    Ctrl+Alt+Shift+F"; icon.source: "qrc:/icons/fit-view.svg"; onTriggered: window.appController.fitPlots(true, true, true) }
                     MenuSeparator { }
-                    MenuItem { text: "自适应当前时间轴    Ctrl+Alt+T"; icon.source: "qrc:/icons/arrows_left_right.svg"; onTriggered: appController.fitPlots(true, false, false) }
-                    MenuItem { text: "自适应全部时间轴    Ctrl+Alt+Shift+T"; icon.source: "qrc:/icons/arrows_left_right.svg"; onTriggered: appController.fitPlots(true, false, true) }
+                    MenuItem { text: "自适应当前时间轴    Ctrl+Alt+T"; icon.source: "qrc:/icons/arrows_left_right.svg"; onTriggered: window.appController.fitPlots(true, false, false) }
+                    MenuItem { text: "自适应全部时间轴    Ctrl+Alt+Shift+T"; icon.source: "qrc:/icons/arrows_left_right.svg"; onTriggered: window.appController.fitPlots(true, false, true) }
                     MenuSeparator { }
-                    MenuItem { text: "自适应当前 Y 轴    Ctrl+Alt+Y"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: appController.fitPlots(false, true, false) }
-                    MenuItem { text: "自适应全部 Y 轴    Ctrl+Alt+Shift+Y"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: appController.fitPlots(false, true, true) }
+                    MenuItem { text: "自适应当前 Y 轴    Ctrl+Alt+Y"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: window.appController.fitPlots(false, true, false) }
+                    MenuItem { text: "自适应全部 Y 轴    Ctrl+Alt+Shift+Y"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: window.appController.fitPlots(false, true, true) }
                 }
             }
             ToolSeparator { }
@@ -757,7 +761,7 @@ ApplicationWindow {
                 icon.source: window.subplotMaximized ? "qrc:/icons/arrows-angle-contract.svg" : "qrc:/icons/arrows-angle-expand.svg"
                 hint: window.subplotMaximized ? "恢复子图平铺（Esc）" : "最大化当前选中子图"
                 checked: window.subplotMaximized
-                enabled: appController.plotRows * appController.plotColumns > 1
+                enabled: window.appController.plotRows * window.appController.plotColumns > 1
                 onClicked: window.subplotMaximized = !window.subplotMaximized
             }
             IconTool {
@@ -774,14 +778,14 @@ ApplicationWindow {
                 Menu {
                     id: settingsMenu
                     MenuItem { text: "深色主题"; checkable: true; checked: window.darkTheme; onTriggered: window.darkTheme = !window.darkTheme }
-                    MenuItem { text: "清除所有信号"; icon.source: "qrc:/icons/clear.svg"; onTriggered: appController.clearAllPlotSignals() }
+                    MenuItem { text: "清除所有信号"; icon.source: "qrc:/icons/clear.svg"; onTriggered: window.appController.clearAllPlotSignals() }
                 }
             }
         }
     }
 
     SplitView {
-        enabled: !appController.restoringSession
+        enabled: !window.appController.restoringSession
         anchors.fill: parent
         orientation: Qt.Horizontal
         handle: Rectangle {
@@ -793,15 +797,15 @@ ApplicationWindow {
             SplitView.preferredWidth: 280
             SplitView.minimumWidth: 180
             SplitView.maximumWidth: Math.max(180, window.width - 320)
-            color: panelColor
+            color: window.panelColor
             ColumnLayout { anchors.fill: parent; anchors.margins: 10; spacing: 8
-                Label { text: "信号 · 子图 " + (appController.activePlotIndex + 1); color: treeTextColor; font.pixelSize: 15; font.weight: Font.DemiBold }
-                Label { text: appController.currentFile.length > 0 ? appController.currentFile : "未加载文件"; color: treeTextColor; elide: Text.ElideMiddle; Layout.fillWidth: true; opacity: 0.78 }
+                Label { text: "信号 · 子图 " + (window.appController.activePlotIndex + 1); color: window.treeTextColor; font.pixelSize: 15; font.weight: Font.DemiBold }
+                Label { text: window.appController.currentFile.length > 0 ? window.appController.currentFile : "未加载文件"; color: window.treeTextColor; elide: Text.ElideMiddle; Layout.fillWidth: true; opacity: 0.78 }
                 RowLayout { Layout.fillWidth: true; spacing: 4
-                    TextField { id: signalSearch; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: appController.filterSignals(text) }
+                    TextField { id: signalSearch; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: window.appController.filterSignals(text) }
                     ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered; ToolTip.text: "清除搜索" }
                 }
-                ListView { id: signalList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: appController.signalModel
+                ListView { id: signalList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: window.appController.signalModel
                     delegate: Item {
                         id: signalDelegate
                         required property int index
@@ -847,7 +851,7 @@ ApplicationWindow {
                                 palette.buttonText: signalDelegate.groupNode
                                                     ? window.accentColor
                                                     : window.treeTextColor
-                                onClicked: appController.signalModel.toggleGroup(signalDelegate.groupName)
+                                onClicked: window.appController.signalModel.toggleGroup(signalDelegate.groupName)
                             }
                             CheckBox {
                                 id: signalCheck
@@ -863,7 +867,7 @@ ApplicationWindow {
                                 palette.highlightedText: "#ffffff"
                                 onClicked: {
                                     signalList.currentIndex = signalDelegate.index
-                                    appController.toggleSignal(signalDelegate.signalIndex)
+                                    window.appController.toggleSignal(signalDelegate.signalIndex)
                                 }
                             }
                             Label {
@@ -878,7 +882,7 @@ ApplicationWindow {
                                     onClicked: {
                                         signalList.currentIndex = signalDelegate.index
                                         if (signalDelegate.groupNode)
-                                            appController.signalModel.toggleGroup(signalDelegate.groupName)
+                                            window.appController.signalModel.toggleGroup(signalDelegate.groupName)
                                     }
                                 }
                             }
@@ -947,7 +951,7 @@ ApplicationWindow {
                 }
                 Label {
                     Layout.fillWidth: true
-                    text: appController.status
+                    text: window.appController.status
                     color: window.treeTextColor
                     font.pixelSize: 11
                     elide: Text.ElideRight
@@ -957,25 +961,25 @@ ApplicationWindow {
                 }
             }
         }
-        Rectangle { id: plotPanel; SplitView.fillWidth: true; SplitView.minimumWidth: 280; color: darkTheme ? "#14181d" : "#ffffff"; clip: true
+        Rectangle { id: plotPanel; SplitView.fillWidth: true; SplitView.minimumWidth: 280; color: window.darkTheme ? "#14181d" : "#ffffff"; clip: true
             // Shared Y gutter: every visible subplot uses the widest measured
             // tick-label width so their X axes line up column by column.
             property real sharedAxisLeft: 0
             function updateSharedAxisLeft() {
                 let widest = 0
                 for (let i = 0; i < plotRepeater.count; ++i) {
-                    const item = plotRepeater.itemAt(i)
+                    const item = (plotRepeater.itemAt(i) as QuickPlot)
                     if (item && item.visible) widest = Math.max(widest, item.measuredAxisLeft)
                 }
                 if (widest !== sharedAxisLeft) sharedAxisLeft = widest
             }
-            GridLayout { anchors.fill: parent; rows: window.subplotMaximized ? 1 : appController.plotRows; columns: window.subplotMaximized ? 1 : appController.plotColumns; columnSpacing: 0; rowSpacing: 0; uniformCellWidths: true; uniformCellHeights: true
-                Repeater { id: plotRepeater; model: appController.plotRows * appController.plotColumns
+            GridLayout { anchors.fill: parent; rows: window.subplotMaximized ? 1 : window.appController.plotRows; columns: window.subplotMaximized ? 1 : window.appController.plotColumns; columnSpacing: 0; rowSpacing: 0; uniformCellWidths: true; uniformCellHeights: true
+                Repeater { id: plotRepeater; model: window.appController.plotRows * window.appController.plotColumns
                     delegate: QuickPlot {
                         required property int index
                         plotIndex: index
-                        visible: !window.subplotMaximized || index === appController.activePlotIndex
-                        controller: appController
+                        visible: !window.subplotMaximized || index === window.appController.activePlotIndex
+                        controller: window.appController
                         sharedAxisLeft: plotPanel.sharedAxisLeft
                         onMeasuredAxisLeftChanged: plotPanel.updateSharedAxisLeft()
                         onVisibleChanged: plotPanel.updateSharedAxisLeft()
@@ -1002,22 +1006,22 @@ ApplicationWindow {
                 anchors.rightMargin: 10
                 anchors.topMargin: 0
                 spacing: 4
-                visible: appController.loading || appController.exporting
+                visible: window.appController.loading || window.appController.exporting
                 z: 20
                 ProgressBar {
                     Layout.fillWidth: true
                     from: 0
                     to: 100
-                    value: appController.exporting
-                           ? appController.exportProgress
-                           : appController.loadingProgress
+                    value: window.appController.exporting
+                           ? window.appController.exportProgress
+                           : window.appController.loadingProgress
                 }
                 ToolButton {
-                    visible: appController.exporting
+                    visible: window.appController.exporting
                     Layout.preferredWidth: 30
                     Layout.preferredHeight: 30
                     text: "×"
-                    onClicked: appController.cancelExport()
+                    onClicked: window.appController.cancelExport()
                     ToolTip.visible: hovered
                     ToolTip.text: "取消导出"
                 }

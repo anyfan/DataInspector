@@ -5,7 +5,9 @@
 #include <QSet>
 #include <QVector>
 
-class SignalModel final : public QAbstractListModel
+// Qt 6.8 QML registration instantiates a QQmlElement<T> wrapper, even for
+// uncreatable types, so this QObject type must not be final.
+class SignalModel : public QAbstractListModel
 {
     Q_OBJECT
     Q_PROPERTY(int checkedCount READ checkedCount NOTIFY checkedCountChanged)

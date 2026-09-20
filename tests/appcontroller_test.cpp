@@ -761,6 +761,8 @@ void AppControllerTest::axisSelectionAppliesRange()
 void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
 {
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
+    qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
+    qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
     QTemporaryDir directory;
     QFile file(directory.filePath("ui.csv"));
     QVERIFY(file.open(QIODevice::WriteOnly));
@@ -830,6 +832,20 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     item->setParentItem(window.contentItem());
     window.show();
     QTest::qWait(50);
+    // Cursor focus recovery must not steal focus from either text input type.
+    for (const QByteArray &type : {QByteArray("TextInput"), QByteArray("TextEdit")}) {
+        QQmlComponent editorComponent(&engine);
+        editorComponent.setData("import QtQuick\n" + type + " { width: 100; height: 30 }", QUrl());
+        std::unique_ptr<QObject> editor(editorComponent.create());
+        QVERIFY2(editor, qPrintable(editorComponent.errorString()));
+        auto *textItem = qobject_cast<QQuickItem *>(editor.get());
+        QVERIFY(textItem);
+        textItem->setParentItem(window.contentItem());
+        textItem->forceActiveFocus();
+        QCOMPARE(window.activeFocusItem(), textItem);
+        QVERIFY(QMetaObject::invokeMethod(item, "ensureCursorFocus"));
+        QCOMPARE(window.activeFocusItem(), textItem);
+    }
     item->forceActiveFocus();
     QTest::keyClick(&window, Qt::Key_Right);
     QCOMPARE(plot->cursorX1(), 1.0);
@@ -1097,16 +1113,22 @@ void AppControllerTest::quotedCsvFieldsAreImported()
 void AppControllerTest::toolbarModesToggleAndRememberSelection()
 {
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
+    qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
+    qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
     AppController controller;
     QQmlEngine engine;
-    engine.rootContext()->setContextProperty("appController", &controller);
+    QStringList qmlWarnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) {
+        for (const auto &error : errors) qmlWarnings.append(error.toString());
+    });
     const QDir qmlDirectory = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml");
     qmlRegisterType(QUrl::fromLocalFile(qmlDirectory.filePath("QuickPlot.qml")),
                     "DataInspector", 1, 0, "QuickPlot");
     const QString path = qmlDirectory.filePath("Main.qml");
     QQmlComponent component(&engine, QUrl::fromLocalFile(path));
-    std::unique_ptr<QObject> object(component.createWithInitialProperties({{"visible", false}}));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{"visible", false}, {"appController", QVariant::fromValue(&controller)}}));
     QVERIFY2(object, qPrintable(component.errorString()));
+    QCOMPARE(object->property("appController").value<AppController *>(), &controller);
 
     auto *layoutTool = object->findChild<QObject *>("layoutTool");
     auto *cursorTool = object->findChild<QObject *>("cursorSplitTool");
@@ -1139,6 +1161,8 @@ void AppControllerTest::toolbarModesToggleAndRememberSelection()
     QCOMPARE(object->property("activeZoomMode").toInt(), 0);
     QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleZoomTool"));
     QCOMPARE(object->property("activeZoomMode").toInt(), 2);
+    QCoreApplication::processEvents();
+    QVERIFY2(qmlWarnings.isEmpty(), qPrintable(qmlWarnings.join('\n')));
 }
 
 void AppControllerTest::xlsxWorkbookImportsAllWorksheets()
@@ -1673,6 +1697,8 @@ void AppControllerTest::timeOffsetsApplyToSignalsGroupsAndFiles()
 void AppControllerTest::editDialogsRememberAndResetValues()
 {
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
+    qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
+    qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
     QTemporaryDir directory;
     const QString input = directory.filePath("original.csv");
     writeCsvFile(input, "time,A,B\n0,1,2\n1,3,4\n");
@@ -1680,11 +1706,10 @@ void AppControllerTest::editDialogsRememberAndResetValues()
     QVERIFY(controller.loadCsv(input));
     QTRY_VERIFY(!controller.loading());
     QQmlEngine engine;
-    engine.rootContext()->setContextProperty("appController", &controller);
     const QDir qmlDirectory = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml");
     qmlRegisterType(QUrl::fromLocalFile(qmlDirectory.filePath("QuickPlot.qml")), "DataInspector", 1, 0, "QuickPlot");
     QQmlComponent component(&engine, QUrl::fromLocalFile(qmlDirectory.filePath("Main.qml")));
-    std::unique_ptr<QObject> object(component.createWithInitialProperties({{"visible", false}}));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{"visible", false}, {"appController", QVariant::fromValue(&controller)}}));
     QVERIFY2(object, qPrintable(component.errorString()));
     auto *offsetDialog = object->findChild<QObject *>("timeOffsetDialog");
     auto *offsetField = object->findChild<QObject *>("timeOffsetField");
