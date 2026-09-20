@@ -1,6 +1,7 @@
 #include "dataloadworker.h"
 #include "signalmetadata.h"
 #include "xlsxreader.h"
+#include "render/plotseriesstore.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -62,8 +63,16 @@ static QStringList readMatStrings(matvar_t *variable)
 static bool buildMatTable(int index, matvar_t *dataVar, LoadedTable &table)
 {
     const QString name = QStringLiteral("p%1").arg(index);
-    if (!dataVar || dataVar->data_type != MAT_T_DOUBLE || dataVar->rank != 2 || dataVar->dims[1] < 2) return false;
+    // Complex and sparse MAT variables use descriptor structs, not double[].
+    // Validate storage and dimensions before any cast, allocation or indexing.
+    if (!dataVar || dataVar->class_type != MAT_C_DOUBLE
+        || dataVar->data_type != MAT_T_DOUBLE || dataVar->isComplex
+        || dataVar->rank != 2 || !dataVar->dims || !dataVar->data) return false;
     const size_t rows = dataVar->dims[0], cols = dataVar->dims[1];
+    const size_t maxIndex = static_cast<size_t>(std::numeric_limits<int>::max());
+    if (rows == 0 || rows > maxIndex || cols < 2 || cols - 1 > maxIndex
+        || cols > std::numeric_limits<size_t>::max() / sizeof(double) / rows
+        || dataVar->nbytes < rows * cols * sizeof(double)) return false;
     const int signalCount = static_cast<int>(cols - 1);
     table.name = name;
     const auto *raw = static_cast<const double *>(dataVar->data);
@@ -132,30 +141,38 @@ static QStringList parseQuotedCsvFields(QStringView line, QChar delimiter)
     QStringList fields;
     QString field;
     bool quoted = false;
+    bool closedQuote = false;
     for (qsizetype index = 0; index < line.size(); ++index) {
         const QChar character = line.at(index);
-        if (character == QLatin1Char('"')) {
-            if (quoted && index + 1 < line.size()
-                && line.at(index + 1) == QLatin1Char('"')) {
+        if (quoted) {
+            if (character != QLatin1Char('"')) {
+                field.append(character);
+            } else if (index + 1 < line.size()
+                       && line.at(index + 1) == QLatin1Char('"')) {
                 field.append(QLatin1Char('"'));
                 ++index;
             } else {
-                quoted = !quoted;
+                quoted = false;
+                closedQuote = true;
             }
-        } else if (character == delimiter && !quoted) {
+        } else if (character == delimiter) {
             fields.append(field.trimmed());
             field.clear();
+            closedQuote = false;
+        } else if (closedQuote) {
+            // Only whitespace may follow a closing quote before the delimiter.
+            if (!character.isSpace()) return {};
+        } else if (character == QLatin1Char('"')) {
+            if (!field.trimmed().isEmpty()) return {};
+            field.clear();
+            quoted = true;
         } else {
             field.append(character);
         }
     }
+    if (quoted) return {}; // Multiline quoted fields are not supported.
     fields.append(field.trimmed());
     return fields;
-}
-
-static QString csvFieldText(const QString &field)
-{
-    return field.trimmed();
 }
 
 static bool parseCsvNumber(QStringView field, double &value)
@@ -163,7 +180,13 @@ static bool parseCsvNumber(QStringView field, double &value)
     field = field.trimmed();
     if (field.isEmpty()) return false;
     bool ok = false;
-    value = QLocale::c().toDouble(field, &ok);
+    // Match QString::toDouble: no locale-specific grouping, quoted or not.
+    static const QLocale locale = [] {
+        QLocale result = QLocale::c();
+        result.setNumberOptions(result.numberOptions() | QLocale::RejectGroupSeparator);
+        return result;
+    }();
+    value = locale.toDouble(field, &ok);
     return ok;
 }
 
@@ -187,6 +210,24 @@ static bool parseSimpleCsvRow(QStringView line, QChar delimiter,
 }
 
 } // namespace
+
+void DataLoadWorker::finishTables(const QString &path, QVector<LoadedTable> tables, int skipped)
+{
+    const auto cancelled = [] { return QThread::currentThread()->isInterruptionRequested(); };
+    for (auto &table : tables) {
+        table.rangeIndexes.reserve(table.values.size());
+        for (const auto &values : std::as_const(table.values)) {
+            if (cancelled()) return;
+            PlotSeriesData series;
+            series.time = table.time;
+            series.values = values;
+            const auto index = PlotRangeIndex::build(series, cancelled);
+            if (!index) return;
+            table.rangeIndexes.append(index);
+        }
+    }
+    emit finished(path, tables, skipped, {});
+}
 
 void DataLoadWorker::loadFile(const QString &path)
 {
@@ -216,7 +257,8 @@ void DataLoadWorker::loadXlsx(const QString &path)
         });
     if (result.cancelled) return;
     if (result.error.isEmpty()) emit progress(path, 99);
-    emit finished(path, result.tables, result.skippedRows, result.error);
+    if (!result.error.isEmpty()) emit finished(path, {}, result.skippedRows, result.error);
+    else finishTables(path, std::move(result.tables), result.skippedRows);
 }
 
 void DataLoadWorker::loadCsv(const QString &path)
@@ -234,12 +276,15 @@ void DataLoadWorker::loadCsv(const QString &path)
     const char *trimmedHeaderEnd = headerEnd;
     if (trimmedHeaderEnd > fileBegin && trimmedHeaderEnd[-1] == '\r')
         --trimmedHeaderEnd;
-    const QString headerLine = QString::fromUtf8(fileBegin,
-                                                  trimmedHeaderEnd - fileBegin);
+    QString headerLine = QString::fromUtf8(fileBegin,
+                                           trimmedHeaderEnd - fileBegin);
+    if (headerLine.startsWith(QChar::ByteOrderMark)) headerLine.remove(0, 1);
     const QChar delimiter = detectCsvDelimiter(QStringView{headerLine});
     QStringList headers = parseQuotedCsvFields(QStringView{headerLine}, delimiter);
-    if (!headers.isEmpty() && headers.first().startsWith(QChar::ByteOrderMark))
-        headers[0].remove(0, 1);
+    if (headers.isEmpty()) {
+        emit finished(path, {}, 0, QStringLiteral("CSV 表头引号格式错误"));
+        return;
+    }
     if (headers.size() < 2) { emit finished(path, {}, 0, QStringLiteral("CSV 至少需要时间列和一个信号列")); return; }
     LoadedTable table;
     table.name = QFileInfo(path).completeBaseName();
@@ -274,81 +319,44 @@ void DataLoadWorker::loadCsv(const QString &path)
                 emit progress(path, percentage);
             }
         }
-        auto appendFields = [&](const auto &fields) {
-            if (fields.size() != headers.size()) return false;
-            bool timeOk = false;
-            const double timestamp = csvFieldText(fields.at(0)).toDouble(&timeOk);
-            if (!timeOk) return false;
-            ++table.rowCount;
-            table.time.append(timestamp);
-            const bool finiteTime = qIsFinite(timestamp);
-            if (!finiteTime) {
-                for (int signal = 0; signal < table.values.size(); ++signal) {
-                    table.values[signal].append(qQNaN());
-                    table.monotonicTimes[signal] = false;
-                }
-                return true;
-            }
-            if (!table.hasTimeBounds) {
-                table.timeMinimum = table.timeMaximum = timestamp;
-                table.hasTimeBounds = true;
-            } else {
-                table.timeMinimum = qMin(table.timeMinimum, timestamp);
-                table.timeMaximum = qMax(table.timeMaximum, timestamp);
-            }
-            if (timestamp < previousTime) {
-                for (int signal = 0; signal < table.monotonicTimes.size(); ++signal)
-                    table.monotonicTimes[signal] = false;
-            }
-            previousTime = timestamp;
-            for (int signal = 0; signal < table.values.size(); ++signal) {
-                bool valueOk = false;
-                const double value = csvFieldText(fields.at(signal + 1)).toDouble(&valueOk);
-                table.values[signal].append(
-                    valueOk && qIsFinite(value) ? value : qQNaN());
-            }
-            return true;
-        };
         bool accepted = false;
         if (lineBegin != contentEnd) {
             const QString line = QString::fromUtf8(lineBegin,
                                                    contentEnd - lineBegin);
             if (line.contains(QLatin1Char('"'))) {
-                accepted = appendFields(
-                    parseQuotedCsvFields(QStringView{line}, delimiter));
-            } else if (parseSimpleCsvRow(QStringView{line}, delimiter,
-                                         numericFields)) {
-                ++table.rowCount;
-                const double timestamp = numericFields.first();
-                table.time.append(timestamp);
-                const bool finiteTime = qIsFinite(timestamp);
-                if (!finiteTime) {
-                    for (int signal = 0; signal < table.values.size(); ++signal) {
-                        table.values[signal].append(qQNaN());
-                        table.monotonicTimes[signal] = false;
-                    }
-                } else {
-                    if (!table.hasTimeBounds) {
-                        table.timeMinimum = table.timeMaximum = timestamp;
-                        table.hasTimeBounds = true;
-                    } else {
-                        table.timeMinimum = qMin(table.timeMinimum, timestamp);
-                        table.timeMaximum = qMax(table.timeMaximum, timestamp);
-                    }
-                    if (timestamp < previousTime) {
-                        for (int signal = 0;
-                             signal < table.monotonicTimes.size(); ++signal) {
-                            table.monotonicTimes[signal] = false;
-                        }
-                    }
-                    previousTime = timestamp;
-                    for (int signal = 0; signal < table.values.size(); ++signal) {
-                        const double value = numericFields.at(signal + 1);
-                        table.values[signal].append(qIsFinite(value) ? value
-                                                                    : qQNaN());
-                    }
+                const QStringList fields = parseQuotedCsvFields(QStringView{line}, delimiter);
+                accepted = fields.size() == numericFields.size();
+                for (qsizetype index = 0; accepted && index < fields.size(); ++index) {
+                    double value = qQNaN();
+                    const bool valid = parseCsvNumber(QStringView{fields.at(index)}, value);
+                    if (index == 0 && !valid) accepted = false;
+                    numericFields[index] = valid ? value : qQNaN();
                 }
-                accepted = true;
+            } else {
+                accepted = parseSimpleCsvRow(QStringView{line}, delimiter, numericFields);
+            }
+        }
+        if (accepted) {
+            ++table.rowCount;
+            const double timestamp = numericFields.first();
+            table.time.append(timestamp);
+            const bool finiteTime = qIsFinite(timestamp);
+            if (!finiteTime) {
+                table.monotonicTimes.fill(false);
+            } else {
+                if (!table.hasTimeBounds) {
+                    table.timeMinimum = table.timeMaximum = timestamp;
+                    table.hasTimeBounds = true;
+                } else {
+                    table.timeMinimum = qMin(table.timeMinimum, timestamp);
+                    table.timeMaximum = qMax(table.timeMaximum, timestamp);
+                }
+                if (timestamp < previousTime) table.monotonicTimes.fill(false);
+                previousTime = timestamp;
+            }
+            for (qsizetype signal = 0; signal < table.values.size(); ++signal) {
+                const double value = numericFields.at(signal + 1);
+                table.values[signal].append(finiteTime && qIsFinite(value) ? value : qQNaN());
             }
         }
         if (!accepted) ++skipped;
@@ -356,7 +364,7 @@ void DataLoadWorker::loadCsv(const QString &path)
     }
     if (table.rowCount == 0) { emit finished(path, {}, skipped, QStringLiteral("没有读取到有效数据：%1").arg(path)); return; }
     emit progress(path, 99);
-    emit finished(path, {table}, skipped, {});
+    finishTables(path, {table}, skipped);
 }
 
 #ifdef ENABLE_MAT
@@ -419,6 +427,6 @@ void DataLoadWorker::loadMat(const QString &path)
     }
     if (tables.isEmpty()) { emit finished(path, {}, 0, QStringLiteral("MAT 文件中没有有效的 pN 数据变量")); return; }
     emit progress(path, 99);
-    emit finished(path, tables, 0, {});
+    finishTables(path, std::move(tables), 0);
 }
 #endif

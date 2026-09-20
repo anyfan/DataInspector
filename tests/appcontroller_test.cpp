@@ -30,6 +30,7 @@ private slots:
     void cursorKeyboardStepsAcrossRawSamples();
     void draggingCursorPastTheOtherSwapsDrag();
     void unicodeMatFileNameLoads();
+    void sameNamedSourcesRemainIndependent();
     void detachedPlotsDoNotSynchronize();
     void loadedSignalsBindOnlyToTheActivePlot();
     void expandingLayoutKeepsExistingPlotAttached();
@@ -73,6 +74,61 @@ static void writeCsvFile(const QString &path, const QByteArray &contents)
     QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly));
     QCOMPARE(file.write(contents), qint64(contents.size()));
+}
+
+void AppControllerTest::sameNamedSourcesRemainIndependent()
+{
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    QDir root(directory.path());
+    QVERIFY(root.mkpath("left")); QVERIFY(root.mkpath("right"));
+    const QString first = root.filePath("left/same.csv");
+    const QString second = root.filePath("right/same.csv");
+    writeCsvFile(first, "time,A\n0,1\n1,2\n");
+    writeCsvFile(second, "time,B\n100,3\n200,4\n");
+    AppController controller;
+    QCOMPARE(controller.loadFiles(QVariantList{first, second}), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QCOMPARE(controller.loadedFileCount(), 2);
+    QCOMPARE(controller.signalCount(), 2);
+    const QString firstGroup = controller.signalModel()->groupAt(0);
+    const QString secondGroup = controller.signalModel()->groupAt(1);
+    QVERIFY(firstGroup != secondGroup);
+    QVERIFY(controller.setTimeOffset(2, -1, secondGroup, 7));
+    QCOMPARE(controller.signalTimeOffset(0), 0.0);
+    QCOMPARE(controller.signalTimeOffset(1), 7.0);
+    const QString xlsx = root.filePath("separate.xlsx");
+    QVERIFY(controller.exportXlsx(xlsx, AppController::AllLoadedData));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+    const auto read = readXlsxWorkbook(xlsx, {}, {});
+    QVERIFY2(read.error.isEmpty(), qPrintable(read.error));
+    QCOMPARE(read.tables.size(), 2);
+    QCOMPARE(read.tables[0].time, QVector<double>({0, 1}));
+    QCOMPARE(read.tables[1].time, QVector<double>({107, 207}));
+    QCOMPARE(read.tables[0].signalNames, QStringList({"A"}));
+    QCOMPARE(read.tables[1].signalNames, QStringList({"B"}));
+#ifdef ENABLE_MAT
+    const QString mat = root.filePath("separate.mat");
+    QVERIFY(controller.exportMat(mat, AppController::AllLoadedData));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.exporting(), 5000);
+    mat_t *file = Mat_Open(mat.toUtf8().constData(), MAT_ACC_RDONLY);
+    QVERIFY(file);
+    matvar_t *p1 = Mat_VarRead(file, "p1"), *p2 = Mat_VarRead(file, "p2");
+    QVERIFY(p1); QVERIFY(p2);
+    QCOMPARE(p1->dims[1], size_t(2)); QCOMPARE(p2->dims[1], size_t(2));
+    QCOMPARE(static_cast<double *>(p1->data)[0], 0.0);
+    QCOMPARE(static_cast<double *>(p2->data)[0], 107.0);
+    Mat_VarFree(p1); Mat_VarFree(p2); Mat_Close(file);
+#endif
+    QVERIFY(controller.removeFile(firstGroup));
+    QCOMPARE(controller.loadedFileCount(), 1);
+    QCOMPARE(controller.signalCount(), 1);
+    QCOMPARE(controller.signalName(0), QStringLiteral("B"));
+    QCOMPARE(controller.loadFiles(QVariantList{second}), 0);
+    QVERIFY(controller.loadCsv(first));
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QCOMPARE(controller.loadedFileCount(), 2);
+    QCOMPARE(controller.signalCount(), 2);
 }
 
 void AppControllerTest::exportsAllLoadedSignals()

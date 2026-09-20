@@ -348,6 +348,12 @@ XlsxWriteResult writeXlsxWorkbook(
         result.error = QStringLiteral("导出路径为空");
         return result;
     }
+    const auto validation = validateExportTimeBases(tables, isCancelled);
+    if (validation.cancelled || !validation.error.isEmpty()) {
+        result.cancelled = validation.cancelled;
+        result.error = validation.error;
+        return result;
+    }
     const qsizetype rowsPerSheet = qBound<qsizetype>(
         1, options.maxDataRowsPerSheet, excelMaximumDataRows);
     QVector<SheetPlan> sheets;

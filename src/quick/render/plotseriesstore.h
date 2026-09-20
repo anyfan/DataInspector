@@ -1,9 +1,11 @@
 #pragma once
+#include "plotrangeindex.h"
 
 #include <QColor>
 #include <QPointF>
 #include <QPen>
 #include <QSet>
+#include <QHash>
 #include <QVector>
 
 #include <memory>
@@ -23,6 +25,9 @@ struct PlotSeriesInput
     QVector<QPointF> points;
     bool monotonicTime = true;
     bool monotonicTimeKnown = false;
+    QString sourceFile;
+    int sourceTable = -1;
+    PlotRangeIndexPtr rangeIndex;
 };
 
 struct PlotSeriesData
@@ -37,6 +42,9 @@ struct PlotSeriesData
     bool monotonicTime = true;
     quint64 version = 0;
     double timeOffset = 0.0;
+    QString sourceFile;
+    int sourceTable = -1;
+    PlotRangeIndexPtr rangeIndex;
 
     qsizetype sampleCount() const;
     QPointF pointAt(qsizetype index) const;
@@ -59,14 +67,6 @@ struct PlotSample
     QColor color;
 };
 
-struct PlotBounds
-{
-    double xMinimum = 0.0;
-    double xMaximum = 0.0;
-    double yMinimum = 0.0;
-    double yMaximum = 0.0;
-};
-
 class PlotSeriesStore final
 {
 public:
@@ -87,9 +87,12 @@ public:
     static std::optional<QPair<double, double>> timeBounds(const PlotSeriesSnapshot &snapshot);
     static std::optional<PlotBounds> bounds(const PlotSeriesSnapshot &snapshot,
         double xMinimum = -std::numeric_limits<double>::infinity(),
-        double xMaximum = std::numeric_limits<double>::infinity());
+        double xMaximum = std::numeric_limits<double>::infinity(),
+        PlotBoundsQueryStats *stats = nullptr);
 
 private:
     quint64 m_generation = 0;
     QVector<PlotSeriesDataPtr> m_series;
+    QHash<PlotSeriesId, qsizetype> m_positions;
+    void rebuildPositions();
 };

@@ -14,6 +14,7 @@ signals:
     void finished(const QString &path, const QVector<LoadedTable> &tables,
                   int skipped, const QString &error);
 private:
+    void finishTables(const QString &path, QVector<LoadedTable> tables, int skipped);
     void loadCsv(const QString &path);
     void loadXlsx(const QString &path);
 #ifdef ENABLE_MAT

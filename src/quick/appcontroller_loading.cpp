@@ -12,6 +12,8 @@
 #include <QtMath>
 #include <algorithm>
 #include <utility>
+#include <map>
+#include <tuple>
 
 namespace {
 // Accepts a QUrl, a file: string or a plain path and returns a local path.
@@ -98,10 +100,7 @@ bool AppController::removeFile(const QString &fileName)
     for (auto it = removedRows.crbegin(); it != removedRows.crend(); ++it)
         if (*it >= 0 && *it < m_signalColors.size())
             m_signalColors.removeAt(*it);
-    for (auto it = m_loadedPaths.begin(); it != m_loadedPaths.end();) {
-        if (QFileInfo(*it).fileName() == fileName) it = m_loadedPaths.erase(it);
-        else ++it;
-    }
+    m_loadedPaths.remove(m_sourcePathsByGroup.take(fileName));
     m_loadedFileNames.removeAll(fileName);
     updateCurrentFileLabel();
     for (int index = 0; index < m_plots.size(); ++index)
@@ -145,17 +144,20 @@ bool AppController::collectExportTables(int scope, QVector<DataExportTable> *tab
     for (const PlotSeriesDataPtr &data : snapshot.series)
         if (data) dataById.insert(data->id, data);
 
-    QHash<QString, int> tableByGroup;
+    std::map<std::tuple<QString, int, double>, int> tableBySource;
     for (int row : std::as_const(rows)) {
         const PlotSeriesDataPtr data = dataById.value(row);
         if (!data) continue;
         QString group = m_signals->groupAt(row);
         if (group.isEmpty()) group = QStringLiteral("Data");
-        const QString exportKey = group + QChar(0x1f) + QString::number(data->timeOffset, 'g', 17);
-        int tableIndex = tableByGroup.value(exportKey, -1);
+        // Display labels are not identities. Keep canonical source and table ordinal.
+        const auto exportKey = std::make_tuple(data->sourceFile, data->sourceTable,
+                                               data->timeOffset);
+        const auto existing = tableBySource.find(exportKey);
+        int tableIndex = existing == tableBySource.end() ? -1 : existing->second;
         if (tableIndex < 0) {
             tableIndex = tables->size();
-            tableByGroup.insert(exportKey, tableIndex);
+            tableBySource.emplace(exportKey, tableIndex);
             tables->append({group, {}});
         }
         (*tables)[tableIndex].series.append({m_signals->nameAt(row), data});
@@ -289,7 +291,11 @@ void AppController::appendLoadedTables(const QString &path, const QVector<Loaded
 {
     QStringList names;
     QStringList groups;
-    const QString fileName = QFileInfo(path).fileName();
+    const QString baseFileName = QFileInfo(path).fileName();
+    QString fileName = baseFileName;
+    for (int suffix = 2; m_sourcePathsByGroup.contains(fileName); ++suffix)
+        fileName = baseFileName + QStringLiteral(" [%1]").arg(suffix);
+    m_sourcePathsByGroup.insert(fileName, path);
     const QString fileBaseName = QFileInfo(path).completeBaseName();
     for (const LoadedTable &table : tables) {
         // A single sheet named after the file collapses into the file node.
@@ -311,18 +317,23 @@ void AppController::appendLoadedTables(const QString &path, const QVector<Loaded
     QVector<PlotSeriesInput> inputs;
     inputs.reserve(names.size());
     int signalId = firstSignalId;
+    int sourceTable = 0;
     for (const LoadedTable &table : tables) {
         for (int signalIndex = 0; signalIndex < table.signalNames.size(); ++signalIndex) {
             PlotSeriesInput input;
             input.id = signalId;
+            input.sourceFile = path;
+            input.sourceTable = sourceTable;
             input.color = colors.at(signalId - firstSignalId);
             input.time = table.time;
             input.values = table.values.value(signalIndex);
             input.monotonicTime = table.monotonicTimes.value(signalIndex, true);
             input.monotonicTimeKnown = true;
+            input.rangeIndex = table.rangeIndexes.value(signalIndex);
             inputs.append(std::move(input));
             ++signalId;
         }
+        ++sourceTable;
     }
 
     const bool initializeSharedXRange = m_loadedPaths.isEmpty();

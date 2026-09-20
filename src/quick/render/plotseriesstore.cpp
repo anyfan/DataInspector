@@ -15,28 +15,29 @@ PlotSeriesDataPtr makeSeriesData(const PlotSeriesInput &input, quint64 version)
     data->lineWidth = qBound(1.0, input.lineWidth, 20.0);
     data->lineStyle = input.lineStyle;
     data->version = version;
+    data->sourceFile = input.sourceFile;
+    data->sourceTable = input.sourceTable;
 
     if (!input.points.isEmpty()) {
         data->points = input.points;
-        data->monotonicTime = input.monotonicTime;
-        return data;
+    } else {
+        data->time = input.time;
+        data->values = input.values;
     }
-
-    data->time = input.time;
-    data->values = input.values;
-    const int count = qMin(data->time.size(), data->values.size());
     data->monotonicTime = input.monotonicTime;
+    data->rangeIndex = input.rangeIndex;
+    if (!data->rangeIndex || data->rangeIndex->sampleCount() != data->sampleCount())
+        data->rangeIndex = PlotRangeIndex::build(*data);
     if (input.monotonicTimeKnown) return data;
     data->monotonicTime = true;
     double previousTime = -std::numeric_limits<double>::infinity();
-    for (int index = 0; index < count; ++index) {
-        const double timestamp = data->time.at(index);
-        if (!qIsFinite(timestamp)) {
+    const qsizetype count = data->sampleCount();
+    for (qsizetype index = 0; index < count; ++index) {
+        const double timestamp = data->pointAt(index).x();
+        if (!qIsFinite(timestamp) || timestamp < previousTime) {
             data->monotonicTime = false;
-            continue;
+            break;
         }
-        if (timestamp < previousTime)
-            data->monotonicTime = false;
         previousTime = timestamp;
     }
     return data;
@@ -107,6 +108,7 @@ void PlotSeriesStore::replaceSeries(const QVector<PlotSeriesInput> &inputs)
         replacement.append(makeSeriesData(input, nextGeneration));
 
     m_series = std::move(replacement);
+    rebuildPositions();
     m_generation = nextGeneration;
 }
 
@@ -119,6 +121,7 @@ void PlotSeriesStore::appendSeries(const QVector<PlotSeriesInput> &inputs)
     for (const PlotSeriesInput &input : inputs)
         appended.append(makeSeriesData(input, nextGeneration));
     m_series = std::move(appended);
+    rebuildPositions();
     m_generation = nextGeneration;
 }
 
@@ -142,28 +145,34 @@ void PlotSeriesStore::updateSeriesPen(PlotSeriesId id, const QColor &color,
     }
     if (!changed) return;
     m_series = std::move(replacement);
+    rebuildPositions();
     m_generation = nextGeneration;
 }
 
 bool PlotSeriesStore::addTimeOffset(const QSet<PlotSeriesId> &ids, double seconds, bool absolute)
 {
     if (ids.isEmpty() || !qIsFinite(seconds)) return false;
+    bool changed = false;
     // Validate the entire batch before replacing any immutable snapshots.
     for (const auto &series : m_series) {
         if (!ids.contains(series->id)) continue;
         const double offset = absolute ? seconds : series->timeOffset + seconds;
         if (!qIsFinite(offset)) return false;
+        if (offset == series->timeOffset) continue;
+        changed = true;
         auto unshifted = std::make_shared<PlotSeriesData>(*series);
         unshifted->timeOffset = 0;
         const auto limits = timeBounds({0, {}, {unshifted}});
         if (limits && (!qIsFinite(limits->first + offset)
                        || !qIsFinite(limits->second + offset))) return false;
     }
-    if (!absolute && seconds == 0.0) return true;
+    if (!changed) return true;
     for (auto &series : m_series) {
         if (!ids.contains(series->id)) continue;
+        const double offset = absolute ? seconds : series->timeOffset + seconds;
+        if (offset == series->timeOffset) continue;
         auto updated = std::make_shared<PlotSeriesData>(*series);
-        updated->timeOffset = absolute ? seconds : updated->timeOffset + seconds;
+        updated->timeOffset = offset;
         updated->version = m_generation + 1;
         series = std::move(updated);
     }
@@ -186,12 +195,26 @@ void PlotSeriesStore::removeSeries(const QSet<PlotSeriesId> &ids)
     }
     if (replacement.size() == m_series.size()) return;
     m_series = std::move(replacement);
+    rebuildPositions();
     m_generation = nextGeneration;
+}
+
+void PlotSeriesStore::rebuildPositions()
+{
+    m_positions.clear();
+    m_positions.reserve(m_series.size());
+    for (qsizetype position = 0; position < m_series.size(); ++position) {
+        const auto &series = m_series.at(position);
+        // Preserve legacy first-match semantics for duplicate IDs.
+        if (series && !m_positions.contains(series->id))
+            m_positions.insert(series->id, position);
+    }
 }
 
 void PlotSeriesStore::clear()
 {
     m_series.clear();
+    m_positions.clear();
     ++m_generation;
 }
 
@@ -207,13 +230,10 @@ PlotSeriesSnapshot PlotSeriesStore::snapshot(const QVector<PlotSeriesId> &ordere
     result.orderedIds.reserve(orderedIds.size());
     result.series.reserve(orderedIds.size());
     for (PlotSeriesId id : orderedIds) {
-        for (const PlotSeriesDataPtr &series : m_series) {
-            if (series->id != id)
-                continue;
-            result.orderedIds.append(id);
-            result.series.append(series);
-            break;
-        }
+        const auto position = m_positions.constFind(id);
+        if (position == m_positions.cend()) continue;
+        result.orderedIds.append(id);
+        result.series.append(m_series.at(*position));
     }
     return result;
 }
@@ -257,44 +277,22 @@ QVector<PlotSample> PlotSeriesStore::nearestSamples(const PlotSeriesSnapshot &sn
 }
 
 std::optional<PlotBounds> PlotSeriesStore::bounds(const PlotSeriesSnapshot &snapshot,
-                                                  double xMinimum, double xMaximum)
+                                                  double xMinimum, double xMaximum,
+                                                  PlotBoundsQueryStats *stats)
 {
-    PlotBounds result;
-    bool found = false;
-    for (const PlotSeriesDataPtr &series : snapshot.series) {
-        qsizetype first = 0, last = series->sampleCount();
-        if (series->monotonicTime) {
-            auto boundary = [&](double value, bool upper) {
-                qsizetype lo = 0, hi = series->sampleCount();
-                while (lo < hi) {
-                    const qsizetype mid = lo + (hi - lo) / 2;
-                    const double x = series->pointAt(mid).x();
-                    if (x < value || (upper && x == value)) lo = mid + 1;
-                    else hi = mid;
-                }
-                return lo;
-            };
-            first = boundary(xMinimum, false);
-            last = boundary(xMaximum, true);
-        }
-        for (qsizetype index = first; index < last; ++index) {
-            const QPointF point = series->pointAt(index);
-            if (!qIsFinite(point.x()) || !qIsFinite(point.y())
-                || point.x() < xMinimum || point.x() > xMaximum)
-                continue;
-            if (!found) {
-                result.xMinimum = result.xMaximum = point.x();
-                result.yMinimum = result.yMaximum = point.y();
-                found = true;
-                continue;
-            }
-            result.xMinimum = qMin(result.xMinimum, point.x());
-            result.xMaximum = qMax(result.xMaximum, point.x());
-            result.yMinimum = qMin(result.yMinimum, point.y());
-            result.yMaximum = qMax(result.yMaximum, point.y());
-        }
+    std::optional<PlotBounds> result;
+    for (const auto &series : snapshot.series) {
+        // Legacy hand-built snapshots may not have an index yet. Store snapshots do.
+        const auto index = series->rangeIndex ? series->rangeIndex : PlotRangeIndex::build(*series);
+        const auto bounds = index->bounds(*series, xMinimum, xMaximum, stats);
+        if (!bounds) continue;
+        if (!result) { result = bounds; continue; }
+        result->xMinimum = qMin(result->xMinimum, bounds->xMinimum);
+        result->xMaximum = qMax(result->xMaximum, bounds->xMaximum);
+        result->yMinimum = qMin(result->yMinimum, bounds->yMinimum);
+        result->yMaximum = qMax(result->yMaximum, bounds->yMaximum);
     }
-    return found ? std::optional<PlotBounds>(result) : std::nullopt;
+    return result;
 }
 
 std::optional<QPair<double, double>> PlotSeriesStore::timeBounds(const PlotSeriesSnapshot &snapshot)

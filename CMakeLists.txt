@@ -22,6 +22,8 @@ qt_standard_project_setup(REQUIRES 6.8)
 set(DI_QUICK_DIR ${CMAKE_SOURCE_DIR}/src/quick)
 
 set(DI_RENDER_SOURCES
+    ${DI_QUICK_DIR}/render/plotrangeindex.cpp
+    ${DI_QUICK_DIR}/render/plotrangeindex.h
     ${DI_QUICK_DIR}/render/plotseriesstore.cpp
     ${DI_QUICK_DIR}/render/plotseriesstore.h
     ${DI_QUICK_DIR}/render/plotlodbuilder.cpp
@@ -50,10 +52,13 @@ set(DI_XLSX_SOURCES
     ${DI_QUICK_DIR}/xlsxwriter.cpp
     ${DI_QUICK_DIR}/xlsxwriter.h
     ${DI_QUICK_DIR}/exporttable.h
+    ${DI_QUICK_DIR}/exportvalidation.cpp
     ${DI_QUICK_DIR}/loadedtable.h
 )
 
 set(DI_MAT_SOURCES
+    ${DI_QUICK_DIR}/mat5streamwriter.cpp
+    ${DI_QUICK_DIR}/mat5streamwriter.h
     ${DI_QUICK_DIR}/matwriter.cpp
     ${DI_QUICK_DIR}/matwriter.h
 )
@@ -201,6 +206,22 @@ if(BUILD_TESTING)
         )
     endfunction()
 
+    add_executable(dataloadworker_test
+        tests/dataloadworker_test.cpp
+        ${DI_QUICK_DIR}/dataloadworker.cpp
+        ${DI_QUICK_DIR}/dataloadworker.h
+        ${DI_QUICK_DIR}/signalmetadata.cpp
+        ${DI_QUICK_DIR}/xlsxreader.cpp
+    )
+    target_include_directories(dataloadworker_test PRIVATE src/quick)
+    target_link_libraries(dataloadworker_test PRIVATE
+        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Test plot_render_core
+    )
+    if(ENABLE_MAT)
+        target_link_libraries(dataloadworker_test PRIVATE di_mat)
+    endif()
+    di_add_test(dataloadworker_test)
+
     add_executable(rendercore_test tests/rendercore_test.cpp)
     target_link_libraries(rendercore_test PRIVATE plot_render_core Qt6::Test)
     di_add_test(rendercore_test)
@@ -232,6 +253,15 @@ if(BUILD_TESTING)
         target_link_libraries(appcontroller_test PRIVATE di_mat)
     endif()
     di_add_test(appcontroller_test -platform offscreen)
+
+    add_executable(matwriter_test tests/matwriter_test.cpp
+        ${DI_MAT_SOURCES} ${DI_QUICK_DIR}/exportvalidation.cpp)
+    target_include_directories(matwriter_test PRIVATE src/quick)
+    target_link_libraries(matwriter_test PRIVATE Qt6::Core Qt6::Gui Qt6::Test plot_render_core)
+    if(ENABLE_MAT)
+        target_link_libraries(matwriter_test PRIVATE di_mat)
+    endif()
+    di_add_test(matwriter_test)
 
     add_executable(xlsxwriter_test tests/xlsxwriter_test.cpp ${DI_XLSX_SOURCES})
     target_include_directories(xlsxwriter_test PRIVATE src/quick)

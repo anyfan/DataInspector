@@ -172,6 +172,7 @@ private:
     QString m_currentFile;
     QStringList m_loadedFileNames;
     QSet<QString> m_loadedPaths;
+    QHash<QString, QString> m_sourcePathsByGroup; // unique UI file key -> canonical path
     QSet<QString> m_pendingPaths;
     QQueue<QString> m_loadQueue;
     QString m_activeLoadPath;

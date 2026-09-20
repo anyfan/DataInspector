@@ -108,6 +108,7 @@ void AppController::clear()
     m_nextColorIndex = 0;
     m_signals->setNames({});
     m_loadedPaths.clear();
+    m_sourcePathsByGroup.clear();
     m_loadedFileNames.clear();
     updateCurrentFileLabel();
     for (const QPointer<PlotItem> &plot : std::as_const(m_plots))

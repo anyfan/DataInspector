@@ -18,6 +18,7 @@ class XlsxWriterTest final : public QObject
 
 private slots:
     void roundTripPreservesTablesAndBlankValues();
+    void rejectsMismatchedTimesBeforeReplacingFile();
     void splitsRowsAndMakesSheetNamesUnique();
     void cancellationPreservesExistingFile();
     void progressIsMonotonicAcrossUnevenSheets();
@@ -33,6 +34,27 @@ static PlotSeriesDataPtr series(int id, QVector<double> time,
     data->time = std::move(time);
     data->values = std::move(values);
     return data;
+}
+
+void XlsxWriterTest::rejectsMismatchedTimesBeforeReplacingFile()
+{
+    QTemporaryDir directory;
+    const QString path = directory.filePath("existing.xlsx");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("original"); file.close();
+    for (const QVector<double> &time : {QVector<double>{0, 2}, QVector<double>{0}}) {
+        const QVector<XlsxExportTable> tables{{"Data", {
+            {"A", series(0, {0, 1}, {2, 3})}, {"B", series(1, time, {4, 5})}}}};
+        const auto result = writeXlsxWorkbook(path, tables);
+        QVERIFY(!result.error.isEmpty());
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), QByteArray("original")); file.close();
+    }
+    // Distinct time allocations with exactly equal timestamps are valid.
+    const QVector<XlsxExportTable> valid{{"Data", {
+        {"A", series(0, {0, 1}, {2, 3})}, {"B", series(1, {0, 1}, {4, 5})}}}};
+    QVERIFY(writeXlsxWorkbook(path, valid).error.isEmpty());
 }
 
 void XlsxWriterTest::roundTripPreservesTablesAndBlankValues()

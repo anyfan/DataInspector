@@ -1,4 +1,7 @@
 #include "matwriter.h"
+#include "mat5streamwriter.h"
+#include <QtEndian>
+#include <cstring>
 
 #include <QDir>
 #include <QFile>
@@ -6,7 +9,7 @@
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QSet>
-#include <QTemporaryDir>
+
 #include <QtMath>
 
 #include <limits>
@@ -63,14 +66,6 @@ public:
         report(qBound(0, int(fraction * writeProgressLimit), writeProgressLimit));
     }
 
-    void reportCopy(qint64 completed, qint64 total)
-    {
-        const qint64 normalizedTotal = qMax<qint64>(1, total);
-        report(writeProgressLimit
-               + int(qBound<qint64>(0, completed, normalizedTotal) * 4
-                     / normalizedTotal));
-    }
-
     void report(int percentage)
     {
         const int normalized = qBound(0, percentage, 100);
@@ -82,17 +77,6 @@ public:
 private:
     const std::function<void(int)> &m_callback;
     int m_lastPercentage = -1;
-};
-
-struct MatFileHandle
-{
-    mat_t *file = nullptr;
-    ~MatFileHandle() { close(); }
-    void close()
-    {
-        if (file) Mat_Close(file);
-        file = nullptr;
-    }
 };
 
 // Encodes strings as a MATLAB char matrix with one row per string, padded
@@ -120,42 +104,6 @@ QByteArray encodeCharMatrix(const QStringList &rows, size_t *columnCount)
     return bytes;
 }
 
-bool writeVariable(mat_t *file, matvar_t *variable, const QByteArray &name,
-                   QString *error)
-{
-    if (!variable) {
-        *error = QStringLiteral("无法创建 MAT 变量 %1").arg(QString::fromLatin1(name));
-        return false;
-    }
-    const int status = Mat_VarWrite(file, variable, MAT_COMPRESSION_NONE);
-    Mat_VarFree(variable);
-    if (status != 0) {
-        *error = QStringLiteral("写入 MAT 变量 %1 失败").arg(QString::fromLatin1(name));
-        return false;
-    }
-    return true;
-}
-
-bool writeDoubleMatrix(mat_t *file, const QByteArray &name, size_t rows,
-                       size_t columns, double *values, QString *error)
-{
-    size_t dims[2] = {rows, columns};
-    matvar_t *variable = Mat_VarCreate(name.constData(), MAT_C_DOUBLE, MAT_T_DOUBLE,
-                                       2, dims, values, MAT_F_DONT_COPY_DATA);
-    return writeVariable(file, variable, name, error);
-}
-
-bool writeCharMatrix(mat_t *file, const QByteArray &name, const QStringList &rows,
-                     QString *error)
-{
-    size_t columns = 0;
-    QByteArray bytes = encodeCharMatrix(rows, &columns);
-    size_t dims[2] = {static_cast<size_t>(rows.size()), columns};
-    // matio counts the UTF-8 bytes of rows * columns characters itself.
-    matvar_t *variable = Mat_VarCreate(name.constData(), MAT_C_CHAR, MAT_T_UTF8,
-                                       2, dims, bytes.data(), 0);
-    return writeVariable(file, variable, name, error);
-}
 #endif
 
 } // namespace
@@ -187,6 +135,12 @@ MatWriteResult writeMatFile(
         result.error = QStringLiteral("导出路径为空");
         return result;
     }
+    const auto validation = validateExportTimeBases(tables, isCancelled);
+    if (validation.cancelled || !validation.error.isEmpty()) {
+        result.cancelled = validation.cancelled;
+        result.error = validation.error;
+        return result;
+    }
     struct TablePlan
     {
         const DataExportTable *table = nullptr;
@@ -201,9 +155,9 @@ MatWriteResult writeMatFile(
         if (table.series.isEmpty() || !table.series.first().data) continue;
         const qsizetype rowCount = table.series.first().data->sampleCount();
         if (rowCount <= 0) continue;
-        const quint64 bytes = quint64(rowCount) * quint64(table.series.size() + 1)
-            * sizeof(double);
-        if (bytes > matVariableByteLimit) {
+        const quint64 columns = quint64(table.series.size()) + 1;
+        if (columns > quint64(std::numeric_limits<qint32>::max())
+            || quint64(rowCount) > (matVariableByteLimit - 128) / sizeof(double) / columns) {
             result.error = QStringLiteral("数据表 %1 超过 MAT 5 格式的单变量 2 GB 上限")
                                .arg(table.name);
             return result;
@@ -228,111 +182,78 @@ MatWriteResult writeMatFile(
         result.error = QStringLiteral("无法创建导出目录：%1").arg(outputDirectory.path());
         return result;
     }
-    QTemporaryDir temporary(outputDirectory.filePath(
-        QStringLiteral(".datainspector-export-XXXXXX")));
-    if (!temporary.isValid()) {
-        result.error = QStringLiteral("无法创建导出临时目录");
-        return result;
-    }
-    const QString temporaryPath = temporary.filePath(QStringLiteral("export.mat"));
-
-    MatFileHandle mat;
-    // matio takes UTF-8 paths on Windows, matching the loader.
-    mat.file = Mat_CreateVer(temporaryPath.toUtf8().constData(), nullptr, MAT_FT_MAT5);
-    if (!mat.file) {
-        result.error = QStringLiteral("无法创建 MAT 文件：%1").arg(temporaryPath);
-        return result;
-    }
-
-    long double completedWork = 0.0L;
-    // Filling the column-major buffer is the part that can report progress;
-    // matio then writes the whole variable in one go.
-    constexpr long double bufferShare = 0.6L;
-    QVector<double> buffer;
-    for (const TablePlan &plan : std::as_const(plans)) {
-        const DataExportTable &table = *plan.table;
-        const qsizetype columns = table.series.size() + 1;
-        const long double tableWork = static_cast<long double>(plan.rowCount) * columns;
-        buffer.resize(plan.rowCount * columns);
-        const PlotSeriesDataPtr timeSeries = table.series.first().data;
-        for (qsizetype row = 0; row < plan.rowCount; ++row) {
-            if ((row & 0xff) == 0 && isCancelled && isCancelled()) {
-                result.cancelled = true;
-                return result;
-            }
-            const double timestamp = timeSeries->pointAt(row).x();
-            buffer[row] = qIsFinite(timestamp) ? timestamp : qQNaN();
-            for (qsizetype column = 0; column < table.series.size(); ++column) {
-                const PlotSeriesDataPtr data = table.series.at(column).data;
-                const double value = data && row < data->sampleCount()
-                    ? data->pointAt(row).y() : qQNaN();
-                buffer[(column + 1) * plan.rowCount + row] =
-                    qIsFinite(value) ? value : qQNaN();
-            }
-            if (((row + 1) & 0xfff) == 0) {
-                progress.reportWork(
-                    completedWork + tableWork * bufferShare * (row + 1) / plan.rowCount,
-                    totalWork);
-            }
-        }
-        progress.reportWork(completedWork + tableWork * bufferShare, totalWork);
-
-        const QByteArray dataName = QByteArrayLiteral("p") + QByteArray::number(plan.number);
-        if (!writeDoubleMatrix(mat.file, dataName, static_cast<size_t>(plan.rowCount),
-                               static_cast<size_t>(columns), buffer.data(),
-                               &result.error)) {
-            return result;
-        }
-        QStringList titles;
-        titles.reserve(columns);
-        titles.append(QStringLiteral("Time"));
-        for (const DataExportSeries &series : table.series) titles.append(series.name);
-        if (!writeCharMatrix(mat.file, dataName + QByteArrayLiteral("_title"), titles,
-                             &result.error)) {
-            return result;
-        }
-        completedWork += tableWork;
-        progress.reportWork(completedWork, totalWork);
-        if (isCancelled && isCancelled()) {
-            result.cancelled = true;
-            return result;
-        }
-    }
-    mat.close();
-
     QSaveFile output(path);
+    // Do not enable direct-write fallback: cancellation must preserve the old file.
     if (!output.open(QIODevice::WriteOnly)) {
         result.error = QStringLiteral("无法创建 MAT 文件：%1").arg(output.errorString());
         return result;
     }
-    QFile written(temporaryPath);
-    if (!written.open(QIODevice::ReadOnly)) {
-        result.error = QStringLiteral("无法读取临时 MAT 文件：%1").arg(written.errorString());
+    Mat5StreamWriter writer(output);
+    auto writeFailed = [&]() {
+        result.error = writer.error();
         output.cancelWriting();
         return result;
+    };
+    auto cancelled = [&]() {
+        if (!isCancelled || !isCancelled()) return false;
+        result.cancelled = true;
+        output.cancelWriting();
+        return true;
+    };
+    if (cancelled()) return result;
+    if (!writer.writeHeader()) return writeFailed();
+
+    constexpr qsizetype chunkSamples = 8192; // 64 KiB, independent of table size
+    QByteArray buffer;
+    buffer.reserve(chunkSamples * qsizetype(sizeof(double)));
+    long double completedWork = 0.0L;
+    for (const TablePlan &plan : std::as_const(plans)) {
+        const auto &table = *plan.table;
+        const qsizetype columns = table.series.size() + 1;
+        const quint64 bytes = quint64(plan.rowCount) * quint64(columns) * sizeof(double);
+        const QByteArray dataName = QByteArrayLiteral("p") + QByteArray::number(plan.number);
+        if (cancelled()) return result;
+        if (!writer.beginMatrix(dataName, plan.rowCount, columns, MAT_C_DOUBLE, MAT_T_DOUBLE, bytes))
+            return writeFailed();
+        // MATLAB stores columns consecutively: only one chunk of one column is buffered.
+        for (qsizetype column = 0; column < columns; ++column) {
+            const auto &data = table.series.at(column == 0 ? 0 : column - 1).data;
+            for (qsizetype first = 0; first < plan.rowCount; first += chunkSamples) {
+                if (cancelled()) return result;
+                const qsizetype count = qMin(chunkSamples, plan.rowCount - first);
+                buffer.resize(count * qsizetype(sizeof(double)));
+                for (qsizetype row = 0; row < count; ++row) {
+                    const auto point = data->pointAt(first + row);
+                    double value = column == 0 ? point.x() : point.y();
+                    if (!qIsFinite(value)) value = qQNaN();
+                    quint64 bits;
+                    static_assert(sizeof(value) == sizeof(bits));
+                    std::memcpy(&bits, &value, sizeof(bits));
+                    qToLittleEndian(bits, buffer.data() + row * sizeof(double));
+                }
+                if (!writer.writePayload(buffer)) return writeFailed();
+                completedWork += count;
+                progress.reportWork(completedWork, totalWork);
+            }
+        }
+        if (!writer.endMatrix()) return writeFailed();
+        if (cancelled()) return result;
+        QStringList titles{QStringLiteral("Time")};
+        for (const auto &series : table.series) titles.append(series.name);
+        size_t titleColumns = 0;
+        const QByteArray titleBytes = encodeCharMatrix(titles, &titleColumns);
+        if (!writer.beginMatrix(dataName + QByteArrayLiteral("_title"), titles.size(),
+                                qsizetype(titleColumns), MAT_C_CHAR, MAT_T_UTF8, titleBytes.size()))
+            return writeFailed();
+        for (qsizetype first = 0; first < titleBytes.size(); first += chunkSamples * 8) {
+            if (cancelled()) return result;
+            if (!writer.writePayload(titleBytes.sliced(first,
+                    qMin(chunkSamples * 8, titleBytes.size() - first)))) return writeFailed();
+        }
+        if (!writer.endMatrix()) return writeFailed();
     }
-    const qint64 totalBytes = written.size();
-    qint64 copiedBytes = 0;
-    while (!written.atEnd()) {
-        if (isCancelled && isCancelled()) {
-            result.cancelled = true;
-            output.cancelWriting();
-            return result;
-        }
-        const QByteArray block = written.read(1024 * 1024);
-        if (block.isEmpty() && written.error() != QFile::NoError) {
-            result.error = QStringLiteral("读取临时 MAT 文件失败：%1").arg(written.errorString());
-            output.cancelWriting();
-            return result;
-        }
-        if (output.write(block) != block.size()) {
-            result.error = QStringLiteral("写入 MAT 文件失败：%1").arg(output.errorString());
-            output.cancelWriting();
-            return result;
-        }
-        copiedBytes += block.size();
-        progress.reportCopy(copiedBytes, totalBytes);
-    }
+    progress.report(99);
+    if (cancelled()) return result;
     if (!output.commit()) {
         result.error = QStringLiteral("无法保存 MAT 文件：%1").arg(output.errorString());
         return result;

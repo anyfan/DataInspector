@@ -29,12 +29,108 @@ private slots:
     void appendSeriesKeepsExistingSnapshots();
     void geometryKeepsFullWidthForOffscreenDiagonalEntry();
     void storeAcceptsWorkerPreparedPoints();
+    void indexedBoundsMatchRawScan();
+    void indexedBoundsAvoidMillionPointScan();
+    void snapshotIndexSurvivesMutations();
+    void storeDetectsUnsortedPointInput();
+    void unchangedTimeOffsetsPreserveSnapshots();
     void storeKeepsLazyColumnSeriesUntilLodBuild();
     void geometryClipsStaleLodFromWiderViewport();
     void geometrySplitsOnExplodedMappedSamples();
     void geometryKeepsStrokeWhenASampleRepeats();
     void geometryDoesNotFillViewportWhenStaleLodClipsToEdges();
 };
+
+void RenderCoreTest::indexedBoundsMatchRawScan()
+{
+    for (bool monotonic : {true, false}) {
+        PlotSeriesInput input;
+        input.id = 7;
+        for (int i = 0; i < 4097; ++i) {
+            input.time.append(monotonic ? i / 3 : (i * 137) % 4097);
+            input.values.append(i % 17 == 0 ? qQNaN() : qSin(i * .1) * i);
+        }
+        PlotSeriesStore store;
+        store.replaceSeries({input});
+        const auto original = store.snapshot({7});
+        QVERIFY(store.addTimeOffset({7}, 12.5));
+        const auto shifted = store.snapshot({7});
+        QCOMPARE(original.series[0]->rangeIndex, shifted.series[0]->rangeIndex);
+        for (const auto &snapshot : {original, shifted}) {
+            for (int range = -1; range < 40; ++range) {
+                const double lo = range * 99.75;
+                const double hi = lo + (range % 3 == 0 ? 0 : 1280.25);
+                std::optional<PlotBounds> expected;
+                for (qsizetype i = 0; i < snapshot.series[0]->sampleCount(); ++i) {
+                    const auto p = snapshot.series[0]->pointAt(i);
+                    if (!qIsFinite(p.x()) || !qIsFinite(p.y()) || p.x() < lo || p.x() > hi) continue;
+                    if (!expected) expected = PlotBounds{p.x(), p.x(), p.y(), p.y()};
+                    else {
+                        expected->xMinimum = qMin(expected->xMinimum, p.x());
+                        expected->xMaximum = qMax(expected->xMaximum, p.x());
+                        expected->yMinimum = qMin(expected->yMinimum, p.y());
+                        expected->yMaximum = qMax(expected->yMaximum, p.y());
+                    }
+                }
+                const auto actual = PlotSeriesStore::bounds(snapshot, lo, hi);
+                QCOMPARE(bool(actual), bool(expected));
+                if (expected) {
+                    QCOMPARE(actual->xMinimum, expected->xMinimum);
+                    QCOMPARE(actual->xMaximum, expected->xMaximum);
+                    QCOMPARE(actual->yMinimum, expected->yMinimum);
+                    QCOMPARE(actual->yMaximum, expected->yMaximum);
+                }
+            }
+        }
+    }
+}
+
+void RenderCoreTest::indexedBoundsAvoidMillionPointScan()
+{
+    PlotSeriesInput input;
+    input.id = 0;
+    const int count = 1000000;
+    input.time.resize(count); input.values.resize(count);
+    for (int i = 0; i < count; ++i) { input.time[i] = i; input.values[i] = i % 123; }
+    PlotSeriesStore store;
+    store.replaceSeries({input});
+    const auto snapshot = store.snapshot({0});
+    PlotBoundsQueryStats stats;
+    const auto bounds = PlotSeriesStore::bounds(snapshot, 1, count - 2, &stats);
+    QVERIFY(bounds);
+    QCOMPARE(bounds->yMinimum, 0.0); QCOMPARE(bounds->yMaximum, 122.0);
+    QVERIFY(stats.rawSamples < 2 * PlotRangeIndex::blockSize);
+    QVERIFY(stats.indexNodes < 64);
+    QVERIFY(snapshot.series[0]->rangeIndex->storageBytes() < count);
+    qInfo() << "million-point fit:" << stats.rawSamples << "raw samples,"
+            << stats.indexNodes << "index nodes; index bytes:"
+            << snapshot.series[0]->rangeIndex->storageBytes();
+}
+
+void RenderCoreTest::snapshotIndexSurvivesMutations()
+{
+    PlotSeriesStore store;
+    QVector<PlotSeriesInput> inputs;
+    for (int i = 0; i < 10000; ++i) inputs.append({i * 2, {0}, {double(i)}, QColor("red")});
+    store.replaceSeries(inputs);
+    const auto original = store.snapshot({19998, -1, 0, 19998});
+    QCOMPARE(original.orderedIds, QVector<int>({19998, 0, 19998}));
+    QCOMPARE(original.series[0]->pointAt(0).y(), 9999.0);
+    store.updateSeriesPen(19998, QColor("blue"), 4, Qt::DashLine);
+    QVERIFY(store.addTimeOffset({19998}, 2.0));
+    QCOMPARE(store.snapshot({19998}).series[0]->pointAt(0).x(), 2.0);
+    QCOMPARE(original.series[0]->pointAt(0).x(), 0.0);
+    store.appendSeries({{30000, {0}, {42}, QColor("green")}});
+    QCOMPARE(store.snapshot({30000}).series[0]->pointAt(0).y(), 42.0);
+    store.removeSeries({0});
+    const auto remapped = store.snapshot({9999, 0});
+    QCOMPARE(remapped.series[0]->pointAt(0).y(), 42.0);
+    QCOMPARE(remapped.series[1]->pointAt(0).y(), 1.0);
+    store.clear();
+    QVERIFY(store.snapshot({0, 9999}).series.isEmpty());
+    store.replaceSeries({{8, {0}, {1}, QColor("red")}, {8, {0}, {2}, QColor("blue")}});
+    QCOMPARE(store.snapshot({8}).series[0]->pointAt(0).y(), 1.0);
+}
 
 void RenderCoreTest::geometryWidthIsIndependentOfSlopeAndSampleSpacing()
 {
@@ -419,6 +515,51 @@ void RenderCoreTest::storeAcceptsWorkerPreparedPoints()
     QCOMPARE(snapshot.series.first()->points,
              QVector<QPointF>({{0.0, 2.0}, {1.0, 4.0}}));
     QVERIFY(snapshot.series.first()->monotonicTime);
+}
+
+void RenderCoreTest::storeDetectsUnsortedPointInput()
+{
+    for (const QVector<QPointF> &points : {
+             QVector<QPointF>{{0, 1}, {10, 2}, {2, 3}},
+             QVector<QPointF>{{0, 1}, {10, 2}, {qQNaN(), 8}, {2, 3}}}) {
+        PlotSeriesInput input;
+        input.id = 1;
+        input.points = points;
+        PlotSeriesStore store;
+        store.replaceSeries({input});
+        const auto snapshot = store.snapshot({1});
+        QVERIFY(!snapshot.series.first()->monotonicTime);
+        const auto times = PlotSeriesStore::timeBounds(snapshot);
+        QVERIFY(times.has_value());
+        QCOMPARE(times->first, 0.0);
+        QCOMPARE(times->second, 10.0);
+        QCOMPARE(PlotSeriesStore::nearestX(snapshot, 2.0), std::optional<double>(2.0));
+        const auto bounds = PlotSeriesStore::bounds(snapshot, 1.0, 3.0);
+        QVERIFY(bounds.has_value());
+        QCOMPARE(bounds->yMinimum, 3.0);
+        QCOMPARE(bounds->yMaximum, 3.0);
+    }
+}
+
+void RenderCoreTest::unchangedTimeOffsetsPreserveSnapshots()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{1, {0, 1}, {2, 3}, QColor("red")},
+                         {2, {0, 1}, {4, 5}, QColor("blue")}});
+    QVERIFY(store.addTimeOffset({1}, 2.0, true));
+    const auto before = store.snapshot({1, 2});
+    QVERIFY(store.addTimeOffset({1}, 2.0, true));
+    QCOMPARE(store.generation(), before.generation);
+    QCOMPARE(store.snapshot({1, 2}).series, before.series);
+    QVERIFY(store.addTimeOffset({1, 2}, 2.0, true));
+    const auto after = store.snapshot({1, 2});
+    QCOMPARE(after.generation, before.generation + 1);
+    QCOMPARE(after.series.first(), before.series.first());
+    QCOMPARE(after.series.last()->timeOffset, 2.0);
+    QCOMPARE(before.series.last()->timeOffset, 0.0);
+    QVERIFY(store.addTimeOffset({1, 2}, 0.0));
+    QCOMPARE(store.snapshot({1, 2}).series, after.series);
+    QCOMPARE(store.generation(), after.generation);
 }
 
 void RenderCoreTest::storeKeepsLazyColumnSeriesUntilLodBuild()

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMetaType>
+#include "render/plotrangeindex.h"
 #include <QStringList>
 #include <QVector>
 
@@ -11,6 +12,7 @@ struct LoadedTable
     QVector<double> time;
     QVector<QVector<double>> values;
     QVector<bool> monotonicTimes;
+    QVector<PlotRangeIndexPtr> rangeIndexes;
     qsizetype rowCount = 0;
     bool hasTimeBounds = false;
     double timeMinimum = 0.0;
