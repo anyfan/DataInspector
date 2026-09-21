@@ -126,6 +126,25 @@ set(DI_QML_FILES
 set(DI_WINDOWS_RESOURCES)
 if(WIN32)
     set(DI_WINDOWS_RESOURCES ${CMAKE_SOURCE_DIR}/assets/DataInspector.rc)
+    # The .rc pulls in the manifest next to it; reconfigure/rebuild when either
+    # the manifest or the icon changes.
+    set_source_files_properties(${CMAKE_SOURCE_DIR}/assets/DataInspector.rc
+        PROPERTIES OBJECT_DEPENDS
+            "${CMAKE_SOURCE_DIR}/assets/DataInspector.manifest;${CMAKE_SOURCE_DIR}/assets/icon/DataInspector.ico")
+    # GNU windres shells out to gcc -E to preprocess the .rc file. When the
+    # toolchain is LLVM-MinGW clang, a GNU windres picked up from an unrelated
+    # MinGW install on PATH fails with a bare "preprocessing failed." as soon as
+    # its sibling gcc is not also on PATH. The presets pin llvm-windres; warn
+    # loudly when a build is configured without that pin.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang"
+       AND NOT CMAKE_RC_COMPILER MATCHES "llvm-(windres|rc)")
+        message(WARNING
+            "RC compiler '${CMAKE_RC_COMPILER}' does not belong to the LLVM-MinGW "
+            "toolchain used for C++. If the icon resource fails with "
+            "'preprocessing failed.', configure with "
+            "-DCMAKE_RC_COMPILER=<llvm-mingw>/bin/llvm-windres.exe "
+            "or use the qt6-clang-* presets.")
+    endif()
 endif()
 
 # Adds the qrc:/icons resource set to a target.
@@ -315,6 +334,19 @@ if(BUILD_TESTING)
         target_link_libraries(startupfiles_test PRIVATE di_mat)
     endif()
     di_add_test(startupfiles_test -platform offscreen)
+
+    add_executable(startupdrop_test tests/startupdrop_test.cpp ${DI_CONTROLLER_SOURCES})
+    target_include_directories(startupdrop_test PRIVATE src/quick)
+    target_link_libraries(startupdrop_test PRIVATE
+        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core
+    )
+    di_add_icon_resources(startupdrop_test)
+    qt_add_resources(startupdrop_test startupdrop_test_qml
+        PREFIX "/qt/qml/DataInspector" BASE qml FILES ${DI_QML_FILES})
+    if(ENABLE_MAT)
+        target_link_libraries(startupdrop_test PRIVATE di_mat)
+    endif()
+    di_add_test(startupdrop_test -platform offscreen)
 
     add_executable(plotitem_raster_test tests/plotitem_raster_test.cpp ${DI_PLOTITEM_SOURCES})
     target_link_libraries(plotitem_raster_test PRIVATE Qt6::Quick plot_render_core)

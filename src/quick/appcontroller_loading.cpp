@@ -43,6 +43,11 @@ bool AppController::loadCsv(const QString &filePath)
 int AppController::openStartupFiles(const QStringList &arguments)
 {
     const StartupFiles startup = parseStartupFiles(arguments);
+    // Elevated processes cannot receive drags from the normal-integrity
+    // Explorer, so say so once instead of leaving the window silently inert.
+    if (runningElevated())
+        setStatus(QStringLiteral("以管理员身份运行，无法从资源管理器拖放文件到窗口；"
+                                 "请以普通用户身份启动"));
     if (startup.isEmpty()) {
         if (!startup.rejected.isEmpty())
             setStatus(QStringLiteral("已忽略 %1 个不支持的启动文件")

@@ -6,6 +6,10 @@
 #include <QFileInfo>
 #include <QSet>
 
+#ifdef Q_OS_WIN
+#include <windows.h>
+#endif
+
 namespace {
 // Switches that consume the next argument as their value. A dropped path never
 // starts with '-', so every other leading-dash token is simply skipped.
@@ -41,6 +45,22 @@ const QStringList &startupSessionSuffixes()
     static const QStringList suffixes{QStringLiteral("disession"),
                                       QStringLiteral("json")};
     return suffixes;
+}
+
+bool runningElevated()
+{
+#ifdef Q_OS_WIN
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION elevation{};
+    DWORD size = 0;
+    const bool queried = GetTokenInformation(token, TokenElevation, &elevation,
+                                             sizeof(elevation), &size);
+    CloseHandle(token);
+    return queried && elevation.TokenIsElevated != 0;
+#else
+    return false;
+#endif
 }
 
 StartupFiles parseStartupFiles(const QStringList &arguments)

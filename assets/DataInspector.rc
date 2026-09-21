@@ -1,4 +1,13 @@
-IDI_ICON1 ICON "icon/DataInspector.ico"
+#include <windows.h>
 
 // Qt's Windows platform plugin loads the first icon resource as the window icon,
 // and Explorer shows it for the executable itself.
+IDI_ICON1 ICON "icon/DataInspector.ico"
+
+// Embedding the manifest as RT_MANIFEST pins the process to asInvoker. An
+// executable without this resource is subject to Windows installer detection,
+// which can elevate it; an elevated window is then refused drags from the
+// normal-integrity Explorer. Keep this resource when repacking the binary with
+// tools such as Enigma Virtual Box, which otherwise produce an unmanifested
+// loader around the payload.
+1 RT_MANIFEST "DataInspector.manifest"

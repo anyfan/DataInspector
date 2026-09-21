@@ -17,6 +17,7 @@
                 "Qt6_DIR": "D:/Software/Qt/6.8.3/llvm-mingw_64/lib/cmake/Qt6",
                 "CMAKE_C_COMPILER": "D:/Software/Qt/Tools/llvm-mingw1706_64/bin/clang.exe",
                 "CMAKE_CXX_COMPILER": "D:/Software/Qt/Tools/llvm-mingw1706_64/bin/clang++.exe",
+                "CMAKE_RC_COMPILER": "D:/Software/Qt/Tools/llvm-mingw1706_64/bin/llvm-windres.exe",
                 "CMAKE_EXPORT_COMPILE_COMMANDS": true
             }
         },

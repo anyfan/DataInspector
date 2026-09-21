@@ -21,3 +21,8 @@ const QStringList &startupSessionSuffixes();
 // relative paths against the working directory, drops duplicates and keeps only
 // arguments naming an existing readable file.
 StartupFiles parseStartupFiles(const QStringList &arguments);
+
+// True when the process runs elevated (high/system integrity). Windows refuses
+// drags from the normal-integrity Explorer into an elevated window (UIPI), so
+// drag and drop onto the running window silently stops working.
+bool runningElevated();
