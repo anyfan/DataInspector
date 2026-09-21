@@ -112,6 +112,7 @@ set(DI_ICON_FILES
     assets/icon/download.svg
     assets/icon/arrows_left_right.svg
     assets/icon/arrows_up_down.svg
+    assets/icon/DataInspector.svg
 )
 
 set(DI_QML_FILES
@@ -119,6 +120,7 @@ set(DI_QML_FILES
     qml/QuickPlot.qml
     qml/PlotLegend.qml
     qml/PlotAxisArea.qml
+    qml/Splash.qml
 )
 
 # Windows resource script carrying the application icon shown by Explorer,
