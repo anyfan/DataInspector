@@ -4,6 +4,7 @@
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include <QDebug>
+#include <QTimer>
 #include <QTextStream>
 #include "appcontroller.h"
 int main(int argc, char *argv[])
@@ -42,5 +43,11 @@ int main(int argc, char *argv[])
         qCritical().noquote() << message;
         return 1;
     }
+    // Files dropped onto the executable arrive as arguments. Start the import
+    // once the event loop runs, so the window and its subplots already exist.
+    const QStringList startupArguments = app.arguments();
+    QTimer::singleShot(0, &controller, [&controller, startupArguments]() {
+        controller.openStartupFiles(startupArguments);
+    });
     return app.exec();
 }

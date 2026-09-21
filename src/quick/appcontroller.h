@@ -84,6 +84,9 @@ public:
     // Import / export
     Q_INVOKABLE bool loadCsv(const QString &filePath);
     Q_INVOKABLE int loadFiles(const QVariant &filePaths);
+    // Opens files passed on the command line (Explorer drop onto the executable,
+    // "Open with", file association). A session argument wins over data files.
+    Q_INVOKABLE int openStartupFiles(const QStringList &arguments);
     Q_INVOKABLE bool removeFile(const QString &fileName);
     Q_INVOKABLE bool exportXlsx(const QVariant &filePath, int scope,
                                 bool zipCompressionEnabled = false);

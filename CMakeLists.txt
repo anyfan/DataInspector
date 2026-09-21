@@ -79,6 +79,8 @@ set(DI_CONTROLLER_SOURCES
     ${DI_QUICK_DIR}/appcontroller_loading.cpp
     ${DI_QUICK_DIR}/appcontroller_plots.cpp
     ${DI_QUICK_DIR}/appcontroller.h
+    ${DI_QUICK_DIR}/startupfiles.cpp
+    ${DI_QUICK_DIR}/startupfiles.h
     ${DI_QUICK_DIR}/dataloadworker.cpp
     ${DI_QUICK_DIR}/dataloadworker.h
     ${DI_QUICK_DIR}/dataexportworker.cpp
@@ -295,6 +297,16 @@ if(BUILD_TESTING)
         Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Test plot_render_core
     )
     di_add_test(xlsxwriter_test)
+
+    add_executable(startupfiles_test tests/startupfiles_test.cpp ${DI_CONTROLLER_SOURCES})
+    target_include_directories(startupfiles_test PRIVATE src/quick)
+    target_link_libraries(startupfiles_test PRIVATE
+        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core
+    )
+    if(ENABLE_MAT)
+        target_link_libraries(startupfiles_test PRIVATE di_mat)
+    endif()
+    di_add_test(startupfiles_test -platform offscreen)
 
     add_executable(plotitem_raster_test tests/plotitem_raster_test.cpp ${DI_PLOTITEM_SOURCES})
     target_link_libraries(plotitem_raster_test PRIVATE Qt6::Quick plot_render_core)

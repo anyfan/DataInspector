@@ -5,6 +5,7 @@
 #include "dataloadworker.h"
 #include "dataexportworker.h"
 #include "matwriter.h"
+#include "startupfiles.h"
 
 #include <QFileInfo>
 #include <QHash>
@@ -37,6 +38,25 @@ bool isSupportedDataFile(const QString &path)
 bool AppController::loadCsv(const QString &filePath)
 {
     return loadFiles(QVariant(filePath)) == 1;
+}
+
+int AppController::openStartupFiles(const QStringList &arguments)
+{
+    const StartupFiles startup = parseStartupFiles(arguments);
+    if (startup.isEmpty()) {
+        if (!startup.rejected.isEmpty())
+            setStatus(QStringLiteral("已忽略 %1 个不支持的启动文件")
+                          .arg(startup.rejected.size()));
+        return 0;
+    }
+    // A session rebuilds the whole workspace, so it takes precedence and the
+    // loose data arguments are left out of the restore.
+    if (!startup.sessionFile.isEmpty())
+        return restoreSession(startup.sessionFile) ? 1 : 0;
+    QVariantList paths;
+    paths.reserve(startup.dataFiles.size());
+    for (const QString &path : startup.dataFiles) paths.append(path);
+    return loadFiles(paths);
 }
 
 int AppController::loadFiles(const QVariant &filePaths)
