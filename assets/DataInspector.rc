@@ -1,1 +1,4 @@
-IDI_ICON1 ICON "icon/plotjuggler.ico"
+IDI_ICON1 ICON "icon/DataInspector.ico"
+
+// Qt's Windows platform plugin loads the first icon resource as the window icon,
+// and Explorer shows it for the executable itself.

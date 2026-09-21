@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#21446a"/>
+      <stop offset="1" stop-color="#0d1c2e"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".18"/>
+      <stop offset=".55" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#bg)"/>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#sheen)"/>
+  <rect x="10" y="10" width="236" height="236" rx="52" fill="none"
+        stroke="#6fa8d6" stroke-opacity=".38" stroke-width="4"/>
+
+  <!-- sparse grid: two lines each way keeps 16 px renders clean -->
+  <g stroke="#8fbde4" stroke-opacity=".18" stroke-width="4" stroke-linecap="round">
+    <path d="M56 118h148M56 166h148"/>
+    <path d="M110 52v152M164 52v152"/>
+  </g>
+
+  <!-- baseline axes -->
+  <path d="M56 52v152h148" fill="none" stroke="#a9cfec" stroke-opacity=".8"
+        stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- secondary trace: calm reference curve -->
+  <path d="M56 178c26 0 30-30 52-30s30 26 52 26 28-34 44-52"
+        fill="none" stroke="#e2622a" stroke-width="12"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- primary trace: one tall preserved peak, the min/max LOD signature -->
+  <path d="M56 150l26 8 28-104 26 120 28-64 40-38"
+        fill="none" stroke="#4fc3f7" stroke-width="16"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- inspection cursor -->
+  <path d="M164 40v176" stroke="#0d1c2e" stroke-opacity=".55" stroke-width="20" stroke-linecap="round"/>
+  <path d="M164 40v176" stroke="#ffd166" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="164" cy="114" r="20" fill="#0d1c2e" stroke="#ffd166" stroke-width="10"/>
+</svg>

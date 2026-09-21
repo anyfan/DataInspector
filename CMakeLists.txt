@@ -121,6 +121,13 @@ set(DI_QML_FILES
     qml/PlotAxisArea.qml
 )
 
+# Windows resource script carrying the application icon shown by Explorer,
+# the taskbar and the window frame.
+set(DI_WINDOWS_RESOURCES)
+if(WIN32)
+    set(DI_WINDOWS_RESOURCES ${CMAKE_SOURCE_DIR}/assets/DataInspector.rc)
+endif()
+
 # Adds the qrc:/icons resource set to a target.
 function(di_add_icon_resources target)
     qt_add_resources(${target} ${target}_icons
@@ -172,6 +179,7 @@ qt_add_executable(DataInspector
     src/quick/main.cpp
     src/quick/qmltypes.h
     ${DI_CONTROLLER_SOURCES}
+    ${DI_WINDOWS_RESOURCES}
 )
 
 foreach(qml_file IN LISTS DI_QML_FILES)
