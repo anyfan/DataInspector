@@ -42,6 +42,7 @@ class AppController : public QObject
     Q_PROPERTY(int loadingProgress READ loadingProgress NOTIFY loadingProgressChanged)
     Q_PROPERTY(bool exporting READ exporting NOTIFY exportingChanged)
     Q_PROPERTY(int exportProgress READ exportProgress NOTIFY exportProgressChanged)
+    Q_PROPERTY(bool canUndoView READ canUndoView NOTIFY viewHistoryChanged)
     Q_PROPERTY(bool matExportSupported READ matExportSupported CONSTANT)
     Q_PROPERTY(int loadedFileCount READ loadedFileCount NOTIFY currentFileChanged)
     Q_PROPERTY(int signalCount READ signalCount NOTIFY currentFileChanged)
@@ -127,6 +128,11 @@ public:
     // Restricts X fitting to one maximized subplot; pass -1 to fit the union again.
     Q_INVOKABLE void setSoloPlot(int index);
     Q_INVOKABLE void fitAllPlots();
+    Q_INVOKABLE void setCursorMode(int mode);
+    bool canUndoView() const { return !m_viewHistory.isEmpty(); }
+    Q_INVOKABLE void beginViewChange();
+    Q_INVOKABLE void endViewChange();
+    Q_INVOKABLE void undoView();
     Q_INVOKABLE void fitPlots(bool fitX, bool fitY, bool allPlots = false);
     Q_INVOKABLE void revealLegendSignal(int plotIndex, int row);
     Q_INVOKABLE void moveLegendSignal(int fromPlot, int toPlot, int row);
@@ -138,6 +144,7 @@ public:
     // Drops every loaded file and signal. Use clearAllPlotSignals() to keep data.
     Q_INVOKABLE void clear();
 signals:
+    void viewHistoryChanged();
     void revealSignalRequested(int row);
     void restoringSessionChanged();
     void sessionPathChanged();
@@ -157,6 +164,21 @@ signals:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 private:
+    void recordViewChange();
+    void clearViewHistory();
+    struct ViewRange {
+        QPointer<PlotItem> plot;
+        double minimum, maximum;
+        bool normalized;
+    };
+    struct ViewState {
+        double xMinimum, xMaximum;
+        QVector<ViewRange> ranges;
+    };
+    QVector<ViewState> m_viewHistory;
+    int m_viewChangeDepth = 0;
+    bool m_viewChangeRecorded = false;
+    bool m_restoringView = false;
     bool sessionInteractionBlocked() const { return m_restoringSession && !m_applyingSession; }
     void finishSessionRestore();
     void completeSessionRestore(bool success, const QString &message);

@@ -5,6 +5,55 @@
 
 #include <utility>
 #include <QtMath>
+#include <QScopedValueRollback>
+
+void AppController::beginViewChange()
+{
+    if (m_viewChangeDepth++ == 0) m_viewChangeRecorded = false;
+}
+
+void AppController::endViewChange()
+{
+    if (m_viewChangeDepth > 0) --m_viewChangeDepth;
+    if (m_viewChangeDepth == 0) m_viewChangeRecorded = false;
+}
+
+void AppController::recordViewChange()
+{
+    if (m_restoringView || m_syncingRanges || m_loading || m_restoringSession
+        || m_applyingSession || (m_viewChangeDepth > 0 && m_viewChangeRecorded)) return;
+    ViewState state{m_sharedXMinimum, m_sharedXMaximum, {}};
+    for (const auto &plot : m_plots)
+        if (plot) state.ranges.append({plot, plot->yMinimum(), plot->yMaximum(), plot->normalizeY()});
+    if (state.ranges.isEmpty()) return;
+    if (m_viewHistory.size() >= 100) m_viewHistory.removeFirst();
+    m_viewHistory.append(state);
+    if (m_viewChangeDepth > 0) m_viewChangeRecorded = true;
+    emit viewHistoryChanged();
+}
+
+void AppController::clearViewHistory()
+{
+    m_viewHistory.clear();
+    m_viewChangeDepth = 0;
+    m_viewChangeRecorded = false;
+    emit viewHistoryChanged();
+}
+
+void AppController::undoView()
+{
+    if (m_viewHistory.isEmpty() || m_loading || sessionInteractionBlocked()
+        || m_viewChangeDepth > 0) return;
+    QScopedValueRollback<bool> restoring(m_restoringView, true);
+    const auto state = m_viewHistory.takeLast();
+    applySharedXRange(state.xMinimum, state.xMaximum);
+    for (const auto &range : state.ranges)
+        if (range.plot && m_plots.contains(range.plot)) {
+            range.plot->setNormalizeY(range.normalized);
+            range.plot->setYRange(range.minimum, range.maximum);
+        }
+    emit viewHistoryChanged();
+}
 
 void AppController::selectSignal(int row)
 {
@@ -238,6 +287,7 @@ void AppController::syncCursorsFrom(PlotItem *source, PlotItem *target)
 
 void AppController::attachPlot(QObject *plot, int index)
 {
+    QScopedValueRollback<bool> restoring(m_restoringView, true);
     auto *item = qobject_cast<PlotItem *>(plot);
     if (!item || index < 0 || index >= m_plotRows * m_plotColumns) return;
     if (!m_applyingSession && index < m_plots.size() && m_plots.at(index))
@@ -263,6 +313,12 @@ void AppController::attachPlot(QObject *plot, int index)
     m_plots[index] = item;
     item->setSeriesStore(m_seriesStore);
     item->setXRange(m_sharedXMinimum, m_sharedXMaximum);
+    connect(item, &PlotItem::seriesClicked, this, [this, index](int id) {
+        revealLegendSignal(index, id);
+    });
+    connect(item, &PlotItem::rangeAboutToChange, this, &AppController::recordViewChange);
+    connect(item, &PlotItem::viewInteractionStarted, this, &AppController::beginViewChange);
+    connect(item, &PlotItem::viewInteractionFinished, this, &AppController::endViewChange);
     connect(item, &PlotItem::rangeChanged, this,
             [this, item](double xmin, double xmax, double, double) {
                 cachePlotView(item);
@@ -308,6 +364,7 @@ void AppController::setLayout(int rows, int columns)
     const int normalizedColumns = qBound(1, columns, 8);
     if (m_plotRows == normalizedRows && m_plotColumns == normalizedColumns)
         return;
+    clearViewHistory();
     // A numeric QML Repeater retains delegates whose indices still exist.
     // Preserve those attachments and leave new slots empty for attachPlot().
     const int plotCount = normalizedRows * normalizedColumns;
@@ -353,6 +410,15 @@ void AppController::setSoloPlot(int index)
     emit soloPlotChanged();
 }
 
+void AppController::setCursorMode(int mode)
+{
+    if (sessionInteractionBlocked()) return;
+    const int index = m_soloPlotIndex >= 0 ? m_soloPlotIndex : activePlotIndex();
+    if (index < 0 || index >= m_plots.size() || !m_plots.at(index)) return;
+    // Initialize in the selected view before synchronizing other subplots.
+    m_plots.at(index)->setCursorMode(mode);
+}
+
 void AppController::fitAllPlots()
 {
     fitPlots(true, true, true);
@@ -361,6 +427,7 @@ void AppController::fitAllPlots()
 void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
 {
     if (sessionInteractionBlocked()) return;
+    beginViewChange();
     if (fitX) {
         const auto bounds = PlotSeriesStore::timeBounds(
                     m_seriesStore->snapshot(fitSourceRows(allPlots)));
@@ -372,6 +439,7 @@ void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
         }
         // The time axis is shared, so the fitted range always lands on every
         // subplot; only the set of signals that defines it varies.
+        if (xmin != m_sharedXMinimum || xmax != m_sharedXMaximum) recordViewChange();
         applySharedXRange(xmin, xmax);
     }
     if (fitY) {
@@ -381,6 +449,7 @@ void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
             m_plots.at(index)->fitY();
         }
     }
+    endViewChange();
 }
 
 // A maximized subplot is the only one the user can see, so it always wins over

@@ -103,6 +103,7 @@ void AppController::clear()
                             : QStringLiteral("数据正在导出，完成后再清空"));
         return;
     }
+    clearViewHistory();
     m_seriesStore->clear();
     m_initialSignalFitDone = false;
     m_signalColors.clear();

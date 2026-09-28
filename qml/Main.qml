@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Controls.Basic as Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import QtQuick.Shapes
@@ -44,6 +45,26 @@ ApplicationWindow {
     property string pendingFileRemoval: ""
     property int pendingExportScope: 0
     property bool exportZipCompression: true
+
+    function highlightedSearchText(value) {
+        function escaped(text) {
+            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        }
+        const query = signalSearch.text.trim()
+        if (!query.length) return escaped(value)
+        const lower = value.toLowerCase()
+        const needle = query.toLowerCase()
+        const color = window.darkTheme ? "#ffca70" : "#a34700"
+        let result = "", offset = 0, match = lower.indexOf(needle)
+        while (match >= 0) {
+            result += escaped(value.slice(offset, match))
+                    + '<font color="' + color + '"><b>'
+                    + escaped(value.slice(match, match + query.length)) + '</b></font>'
+            offset = match + query.length
+            match = lower.indexOf(needle, offset)
+        }
+        return result + escaped(value.slice(offset))
+    }
 
     ListModel {
         id: lineStyleModel
@@ -521,12 +542,16 @@ ApplicationWindow {
     readonly property int activeZoomMode: zoomToolEnabled ? selectedZoomMode : 0
     function toggleCursorTool() {
         if (window.appController.restoringSession) return
-        selectedCursorMode = selectedCursorMode === 0 ? preferredCursorMode : 0
+        const mode = selectedCursorMode === 0 ? preferredCursorMode : 0
+        window.appController.setCursorMode(mode)
+        selectedCursorMode = mode
     }
     function selectCursorMode(mode) {
         preferredCursorMode = mode
-        if (selectedCursorMode !== 0)
+        if (selectedCursorMode !== 0) {
+            window.appController.setCursorMode(mode)
             selectedCursorMode = mode
+        }
     }
     function toggleZoomTool() {
         zoomToolEnabled = !zoomToolEnabled
@@ -538,10 +563,19 @@ ApplicationWindow {
         if (window.appController.restoringSession) return
         const plot = (plotRepeater.itemAt(window.appController.activePlotIndex) as QuickPlot)
         if (!plot) return
+        window.appController.beginViewChange()
         if (axis !== 1) plot.renderer.zoomAxis(0, 0.5, steps)
         if (axis !== 0) plot.renderer.zoomAxis(1, 0.5, steps)
+        window.appController.endViewChange()
     }
     Shortcut { sequence: "Ctrl+I"; onActivated: window.toggleCursorTool() }
+    Shortcut {
+        sequences: [StandardKey.Undo]
+        enabled: window.appController.canUndoView
+                 && !(window.activeFocusItem instanceof TextInput)
+                 && !(window.activeFocusItem instanceof TextEdit)
+        onActivated: window.appController.undoView()
+    }
     Shortcut { sequence: "Ctrl++"; onActivated: window.zoomCurrent(2, 1) }
     Shortcut { sequence: "Ctrl+-"; onActivated: window.zoomCurrent(2, -1) }
     Shortcut { sequence: "Ctrl+Shift+T"; onActivated: window.zoomCurrent(0, 1) }
@@ -792,7 +826,7 @@ ApplicationWindow {
         anchors.fill: parent
         orientation: Qt.Horizontal
         handle: Rectangle {
-            implicitWidth: 6
+            implicitWidth: 1
             color: SplitHandle.pressed ? window.accentColor : SplitHandle.hovered ? "#a9cbed" : window.borderColor
             HoverHandler { cursorShape: Qt.SplitHCursor }
         }
@@ -802,7 +836,7 @@ ApplicationWindow {
             SplitView.minimumWidth: 180
             SplitView.maximumWidth: Math.max(180, window.width - 320)
             color: window.panelColor
-            ColumnLayout { anchors.fill: parent; anchors.margins: 10; spacing: 8
+            ColumnLayout { anchors.fill: parent; anchors.margins: 10; anchors.rightMargin: 0; spacing: 8
                 RowLayout {
                     Layout.fillWidth: true
                     Label { text: "信号 · 子图 " + (window.appController.activePlotIndex + 1); color: window.treeTextColor; font.pixelSize: 15; font.weight: Font.DemiBold; Layout.fillWidth: true }
@@ -810,11 +844,13 @@ ApplicationWindow {
                 }
                 Label { text: window.appController.currentFile.length > 0 ? window.appController.currentFile : "未加载文件"; color: window.treeTextColor; elide: Text.ElideMiddle; Layout.fillWidth: true; opacity: 0.78 }
                 RowLayout { Layout.fillWidth: true; spacing: 4
-                    TextField { id: signalSearch; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: window.appController.filterSignals(text) }
+                    TextField { id: signalSearch; objectName: "signalSearch"; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: window.appController.filterSignals(text) }
                     ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered; ToolTip.text: "清除搜索" }
                 }
                 Item { Layout.fillWidth: true; Layout.fillHeight: true
                 ListView { id: signalList; anchors.fill: parent; clip: true; model: window.appController.signalModel
+                    objectName: "signalList"
+                    anchors.rightMargin: 5
                     // Sticky hierarchy: the file/table ancestors of the row at the
                     // top edge, but only those already scrolled out of view.
                     // Recomputed at most once per stickyTimer tick and only when
@@ -929,7 +965,9 @@ ApplicationWindow {
                                 }
                             }
                             Label {
-                                text: signalDelegate.signalName
+                                objectName: "signalTreeName"
+                                text: window.highlightedSearchText(signalDelegate.signalName)
+                                textFormat: Text.StyledText
                                 font.weight: signalDelegate.groupNode ? Font.DemiBold : Font.Normal
                                 color: signalDelegate.groupNode
                                        ? window.accentColor : window.treeTextColor
@@ -1016,13 +1054,33 @@ ApplicationWindow {
                             }
                         }
                     }
-                    ScrollBar.vertical: ScrollBar { }
+                    ScrollBar.vertical: Basic.ScrollBar {
+                        id: signalScrollBar
+                        objectName: "signalScrollBar"
+                        parent: signalList.parent
+                        anchors.top: parent.top
+                        anchors.bottom: parent.bottom
+                        anchors.right: parent.right
+                        width: 5
+                        padding: 0
+                        minimumSize: 0.05
+                        policy: ScrollBar.AsNeeded
+                        contentItem: Rectangle {
+                            implicitWidth: 5
+                            radius: 2
+                            color: signalScrollBar.pressed ? window.accentColor
+                                   : signalScrollBar.hovered ? (window.darkTheme ? "#a4a4a4" : "#929292")
+                                   : (window.darkTheme ? "#777777" : "#b8b8b8")
+                        }
+                        background: null
+                    }
                 }
                 Column {
                     id: stickyHeader
                     objectName: "signalStickyHeader"
                     anchors.left: parent.left
                     anchors.right: parent.right
+                    anchors.rightMargin: 5
                     anchors.top: parent.top
                     visible: signalList.stickyPath.length > 0
                     z: 2
@@ -1054,7 +1112,8 @@ ApplicationWindow {
                                 }
                                 Label {
                                     Layout.fillWidth: true
-                                    text: stickyRow.modelData.name
+                                    text: window.highlightedSearchText(stickyRow.modelData.name)
+                                    textFormat: Text.StyledText
                                     font.weight: Font.DemiBold
                                     color: window.accentColor
                                     elide: Text.ElideRight
@@ -1139,8 +1198,26 @@ ApplicationWindow {
                 spacing: 4
                 visible: window.appController.loading || window.appController.exporting
                 z: 20
-                ProgressBar {
+                Basic.ProgressBar {
+                    id: transferProgress
+                    objectName: "transferProgress"
                     Layout.fillWidth: true
+                    readonly property color progressColor: window.appController.exporting
+                                                           ? "#e58a24" : window.accentColor
+                    background: Rectangle {
+                        implicitHeight: 8
+                        radius: 4
+                        color: window.darkTheme ? "#35414d" : "#dce5ed"
+                    }
+                    contentItem: Item {
+                        implicitHeight: 8
+                        Rectangle {
+                            width: parent.width * transferProgress.visualPosition
+                            height: parent.height
+                            radius: 4
+                            color: transferProgress.progressColor
+                        }
+                    }
                     from: 0
                     to: 100
                     value: window.appController.exporting

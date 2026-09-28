@@ -407,6 +407,11 @@ void PlotItem::setNormalizeY(bool enabled)
     {
         QMutexLocker lock(&m_dataMutex);
         if (m_normalizeY == enabled) return;
+    }
+    emit viewInteractionStarted();
+    emit rangeAboutToChange();
+    {
+        QMutexLocker lock(&m_dataMutex);
         m_normalizeY = enabled;
         rebuildNormalizationLocked();
         updateCursorValuesLocked();
@@ -414,6 +419,7 @@ void PlotItem::setNormalizeY(bool enabled)
     emit normalizeYChanged();
     emit cursorValuesChanged();
     fitY();
+    emit viewInteractionFinished();
     update();
 }
 
@@ -696,6 +702,48 @@ void PlotItem::geometryChange(const QRectF &newGeometry, const QRectF &oldGeomet
     update();
 }
 
+void PlotItem::selectSeriesAt(double pixelX, double pixelY)
+{
+    int selected = -1;
+    double bestDistance = std::numeric_limits<double>::infinity();
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (!m_lodResult || width() <= 0 || height() <= 0
+            || pixelX < 0 || pixelX > width() || pixelY < 0 || pixelY > height()) return;
+        const QPointF click(pixelX, pixelY);
+        for (const auto &segment : m_lodResult->segments) {
+            if (!m_visibleSeries.contains(segment.seriesId) || segment.lineStyle == Qt::NoPen) continue;
+            const double tolerance = 5.0 + (segment.lineWidth > 0 ? segment.lineWidth : m_lineWidth) / 2.0;
+            QPointF previous;
+            bool havePrevious = false;
+            for (const auto &sample : segment.points) {
+                const QPointF point((sample.x() - m_xMinimum) / (m_xMaximum - m_xMinimum) * width(),
+                    (m_yMaximum - normalizedYLocked(segment.seriesId, sample.y()))
+                        / (m_yMaximum - m_yMinimum) * height());
+                if (!qIsFinite(point.x()) || !qIsFinite(point.y())) { havePrevious = false; continue; }
+                if (havePrevious) {
+                    const QPointF delta = point - previous;
+                    const double lengthSquared = QPointF::dotProduct(delta, delta);
+                    const double fraction = lengthSquared > 0
+                        ? qBound(0.0, QPointF::dotProduct(click - previous, delta) / lengthSquared, 1.0) : 0;
+                    const QPointF offset = click - (previous + fraction * delta);
+                    const double distance = QPointF::dotProduct(offset, offset);
+                    if (distance <= tolerance * tolerance && distance <= bestDistance) {
+                        bestDistance = distance;
+                        selected = segment.seriesId;
+                    }
+                }
+                previous = point;
+                havePrevious = true;
+            }
+        }
+    }
+    if (selected >= 0) {
+        setHighlightedSeries(selected);
+        emit seriesClicked(selected);
+    }
+}
+
 void PlotItem::mousePressEvent(QMouseEvent *e)
 {
     if (e->button() != Qt::LeftButton && e->button() != Qt::MiddleButton) return;
@@ -719,7 +767,9 @@ void PlotItem::mousePressEvent(QMouseEvent *e)
     }
     m_cursorDragIndex = 0;
     m_dragging = true;
+    m_panMoved = false;
     m_dragStartPixel = e->position();
+    emit viewInteractionStarted();
     e->accept();
 }
 
@@ -740,6 +790,8 @@ void PlotItem::mouseMoveEvent(QMouseEvent *e)
     }
     if (!m_dragging) return;
     QPointF d = e->position() - m_dragStartPixel;
+    if (!m_panMoved && QPointF::dotProduct(d, d) < 16) return;
+    m_panMoved = true;
     double xs = m_dragStartXMaximum - m_dragStartXMinimum, ys = m_dragStartYMaximum - m_dragStartYMinimum;
     setRange(m_dragStartXMinimum - d.x() / qMax(width(), 1.) * xs, m_dragStartXMaximum - d.x() / qMax(width(), 1.) * xs,
              m_dragStartYMinimum + d.y() / qMax(height(), 1.) * ys, m_dragStartYMaximum + d.y() / qMax(height(), 1.) * ys);
@@ -748,9 +800,19 @@ void PlotItem::mouseMoveEvent(QMouseEvent *e)
 
 void PlotItem::mouseReleaseEvent(QMouseEvent *e)
 {
+    if (m_dragging && !m_panMoved && e->button() == Qt::LeftButton)
+        selectSeriesAt(e->position().x(), e->position().y());
+    if (m_dragging) emit viewInteractionFinished();
     m_dragging = false;
     m_cursorDragIndex = 0;
     e->accept();
+}
+
+void PlotItem::mouseUngrabEvent()
+{
+    if (m_dragging) emit viewInteractionFinished();
+    m_dragging = false;
+    m_cursorDragIndex = 0;
 }
 
 void PlotItem::hoverMoveEvent(QHoverEvent *e)
@@ -779,6 +841,10 @@ void PlotItem::setRange(double xmin,double xmax,double ymin,double ymax)
     {
         QMutexLocker lock(&m_dataMutex);
         if (m_xMinimum == xmin && m_xMaximum == xmax && m_yMinimum == ymin && m_yMaximum == ymax) return;
+    }
+    emit rangeAboutToChange();
+    {
+        QMutexLocker lock(&m_dataMutex);
         m_xMinimum = xmin;
         m_xMaximum = xmax;
         m_yMinimum = ymin;

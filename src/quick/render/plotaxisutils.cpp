@@ -39,9 +39,11 @@ QVariantList makePlotAxisTicks(double minimum, double maximum, int targetInterva
             const double step = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 2.5 ? 2.5 : normalized <= 5 ? 5 : 10) * magnitude;
             // Never convert an absolute tick index to an integer: Unix time and
             // narrow windows routinely produce indices beyond 32-bit limits.
-            const double first = std::ceil(minimum / step) * step;
+            const double firstIndex = std::ceil(minimum / step);
             for (int i = 0; i < targetIntervals + 2; ++i) {
-                const double value = std::fma(double(i), step, first);
+                // Index-based multiplication makes the zero tick exact while
+                // preserving genuinely small values on tiny ranges.
+                const double value = (firstIndex + double(i)) * step;
                 if (!qIsFinite(value) || value > maximum) break;
                 if (value >= minimum && (values.isEmpty() || value > values.last()))
                     values.append(value);

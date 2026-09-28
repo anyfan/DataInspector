@@ -29,6 +29,9 @@ private slots:
     void axisTicksHandleLargeAndTinyRanges();
     void unchangedPensDoNotInvalidatePlots();
     void cursorReadoutsFollowVisibleXRange();
+    void cursorsInitializeFromSelectedPlot();
+    void viewUndoRestoresSharedAndLocalRanges();
+    void curveClicksSelectWithoutPanning();
     void normalizeYKeepsRawCursorValues();
     void cursorKeyboardStepsAcrossRawSamples();
     void draggingCursorPastTheOtherSwapsDrag();
@@ -214,6 +217,107 @@ void AppControllerTest::exportCompressionOptionReachesWriter()
     QCOMPARE(stored.tables.first().values, compressed.tables.first().values);
     QVERIFY(QFileInfo(storedOutput).size()
             > QFileInfo(compressedOutput).size() * 2);
+}
+
+void AppControllerTest::viewUndoRestoresSharedAndLocalRanges()
+{
+    AppController controller;
+    controller.setLayout(1, 2);
+    PlotItem first, second;
+    controller.attachPlot(&first, 0); controller.attachPlot(&second, 1);
+    QVERIFY(!controller.canUndoView());
+    const double initialY = first.yMinimum(), initialMaxY = first.yMaximum();
+    first.setXRange(2, 4);
+    QCOMPARE(second.xMinimum(), 2.0);
+    controller.undoView();
+    QCOMPARE(first.xMinimum(), 0.0); QCOMPARE(second.xMaximum(), 1.0);
+    QVERIFY(!controller.canUndoView());
+    controller.beginViewChange();
+    first.setXRange(10, 20);
+    first.setYRange(-10, 10);
+    first.setXRange(12, 22);
+    second.setYRange(100, 200);
+    controller.endViewChange();
+    controller.fitPlots(true, true, true);
+    controller.undoView();
+    QCOMPARE(first.xMinimum(), 12.0); QCOMPARE(second.xMaximum(), 22.0);
+    QCOMPARE(first.yMinimum(), -10.0); QCOMPARE(second.yMaximum(), 200.0);
+    controller.undoView();
+    QCOMPARE(first.xMinimum(), 0.0); QCOMPARE(second.xMaximum(), 1.0);
+    QCOMPARE(first.yMinimum(), initialY); QCOMPARE(second.yMaximum(), initialMaxY);
+    QVERIFY(!controller.canUndoView());
+    first.setNormalizeY(true);
+    controller.undoView();
+    QVERIFY(!first.normalizeY());
+    QCOMPARE(first.yMinimum(), initialY);
+    QVERIFY(!controller.canUndoView());
+    first.setXRange(0, 1);
+    QVERIFY(!controller.canUndoView());
+}
+
+void AppControllerTest::curveClicksSelectWithoutPanning()
+{
+    AppController controller;
+    QQuickWindow window;
+    window.resize(400, 240);
+    PlotItem plot;
+    plot.setParentItem(window.contentItem());
+    plot.setWidth(400); plot.setHeight(240);
+    controller.attachPlot(&plot);
+    auto store = std::make_shared<PlotSeriesStore>();
+    store->replaceSeries({{1, {0, 10}, {0, 10}, QColor("red")},
+                          {2, {0, 10}, {8, 8}, QColor("blue")},
+                          {3, {0, 4, 5, 6, 10}, {2, 2, qQNaN(), 2, 2}, QColor("green")}});
+    plot.setSeriesStore(store); plot.setVisibleSeries({1, 2, 3});
+    plot.setXRange(0, 10); plot.setYRange(0, 10);
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTRY_VERIFY(!plot.lodPending());
+    QSignalSpy selected(&plot, &PlotItem::seriesClicked);
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(200, 120));
+    QCOMPARE(plot.highlightedSeries(), 1); QCOMPARE(selected.count(), 1);
+    QCOMPARE(plot.xMinimum(), 0.0); QCOMPARE(plot.yMaximum(), 10.0);
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(200, 48));
+    QCOMPARE(plot.highlightedSeries(), 2); QCOMPARE(selected.count(), 2);
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(200, 192));
+    QCOMPARE(selected.count(), 2); // Do not bridge a NaN gap.
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, QPoint(200, 120));
+    QTest::mouseMove(&window, QPoint(220, 140));
+    QTest::mouseMove(&window, QPoint(240, 160));
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, QPoint(240, 160));
+    QCOMPARE(selected.count(), 2);
+    QVERIFY(plot.xMinimum() != 0.0);
+    controller.undoView();
+    QCOMPARE(plot.xMinimum(), 0.0); QCOMPARE(plot.yMinimum(), 0.0);
+    plot.setNormalizeY(true);
+    plot.setYRange(0, 1);
+    plot.selectSeriesAt(200, 120);
+    QVERIFY(plot.highlightedSeries() >= 0);
+}
+
+void AppControllerTest::cursorsInitializeFromSelectedPlot()
+{
+    AppController controller;
+    controller.setLayout(1, 2);
+    PlotItem first, second;
+    controller.attachPlot(&first, 0);
+    controller.attachPlot(&second, 1);
+    auto store = std::make_shared<PlotSeriesStore>();
+    store->replaceSeries({{1, {0, 2, 8, 10}, {1, 2, 3, 4}, QColor("red")},
+                          {2, {0, 3, 7, 10}, {1, 2, 3, 4}, QColor("blue")}});
+    first.setSeriesStore(store); first.setVisibleSeries({1});
+    second.setSeriesStore(store); second.setVisibleSeries({2});
+    first.setXRange(0, 10);
+    controller.setActivePlot(1);
+    controller.setCursorMode(PlotItem::DoubleCursor);
+    QCOMPARE(second.cursorX1(), 3.0); QCOMPARE(second.cursorX2(), 7.0);
+    QCOMPARE(first.cursorX1(), 3.0); QCOMPARE(first.cursorX2(), 7.0);
+    controller.setCursorMode(PlotItem::NoCursor);
+    controller.setActivePlot(0);
+    first.setXRange(0, 4);
+    controller.setCursorMode(PlotItem::DoubleCursor);
+    QCOMPARE(first.cursorX2(), 2.0);
+    QCOMPARE(second.cursorX2(), first.cursorX2());
 }
 
 void AppControllerTest::cursorReadoutsFollowVisibleXRange()
@@ -868,14 +972,15 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QTest::keyClick(&window, Qt::Key_Space);
     QCOMPARE(plot->xMinimum(), -.02);
     QCOMPARE(plot->xMaximum(), 1.02);
-    QCOMPARE(plot->yMinimum(), 100.0);
-    QCOMPARE(plot->yMaximum(), 200.0);
+    QCOMPARE(plot->yMinimum(), .95);
+    QCOMPARE(plot->yMaximum(), 2.05);
 
     plot->setXRange(0.0, 1.0);
+    plot->setYRange(100.0, 200.0);
     QVERIFY(item->setProperty("hoveredAxis", 1));
     QTest::keyClick(&window, Qt::Key_Space);
-    QCOMPARE(plot->xMinimum(), 0.0);
-    QCOMPARE(plot->xMaximum(), 1.0);
+    QCOMPARE(plot->xMinimum(), -.02);
+    QCOMPARE(plot->xMaximum(), 1.02);
     QCOMPARE(plot->yMinimum(), .95);
     QCOMPARE(plot->yMaximum(), 2.05);
     item->setProperty("hoveredAxis", -1);
@@ -1181,6 +1286,69 @@ void AppControllerTest::toolbarModesToggleAndRememberSelection()
     QCOMPARE(object->property("activeZoomMode").toInt(), 0);
     QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleZoomTool"));
     QCOMPARE(object->property("activeZoomMode").toInt(), 2);
+    auto *search = object->findChild<QQuickItem *>("signalSearch");
+    auto *list = object->findChild<QQuickItem *>("signalList");
+    auto *bar = object->findChild<QQuickItem *>("signalScrollBar");
+    auto *sticky = object->findChild<QQuickItem *>("signalStickyHeader");
+    auto *progress = object->findChild<QObject *>("transferProgress");
+    QVERIFY(search); QVERIFY(list); QVERIFY(bar); QVERIFY(sticky); QVERIFY(progress);
+    QVERIFY(search->setProperty("text", "pitch"));
+    QVariant highlighted;
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "highlightedSearchText",
+        Q_RETURN_ARG(QVariant, highlighted), Q_ARG(QVariant, "Pitch&PITCH<")));
+    QCOMPARE(highlighted.toString().count("<b>"), 2);
+    QVERIFY(highlighted.toString().contains("&amp;"));
+    QVERIFY(highlighted.toString().endsWith("&lt;"));
+    search->setProperty("text", "");
+    QTemporaryDir directory;
+    const QString csv = directory.filePath("tree.csv");
+    QByteArray data = "time";
+    for (int i = 0; i < 100; ++i) data += ",Pitch" + QByteArray::number(i);
+    data += "\n0";
+    for (int i = 0; i < 100; ++i) data += ",1";
+    data += "\n1";
+    for (int i = 0; i < 100; ++i) data += ",2";
+    data += '\n';
+    writeCsvFile(csv, data);
+    QVERIFY(controller.loadCsv(csv));
+    QTRY_VERIFY(!controller.loading());
+    auto *host = qobject_cast<QQuickWindow *>(object.get());
+    QVERIFY(host);
+    host->show();
+    QVERIFY(QTest::qWaitForWindowExposed(host));
+    QTRY_VERIFY(bar->isVisible());
+    list->setProperty("contentY", 150.0);
+    QTRY_VERIFY(sticky->isVisible());
+    QVERIFY(sticky->x() + sticky->width() <= bar->x());
+    QVERIFY(list->x() + list->width() <= bar->x());
+    QCOMPARE(bar->width(), 5.0);
+    QVERIFY(!bar->property("background").value<QObject *>());
+    QCOMPARE(bar->x() + bar->width(), bar->parentItem()->width());
+    PlotItem *view = nullptr;
+    QList<QQuickItem *> pending{host->contentItem()};
+    while (!pending.isEmpty() && !view) {
+        auto *item = pending.takeLast();
+        view = qobject_cast<PlotItem *>(item);
+        pending.append(item->childItems());
+    }
+    QVERIFY(view);
+    view->forceActiveFocus();
+    const double oldMinimum = view->xMinimum(), oldMaximum = view->xMaximum();
+    view->setXRange(2, 4);
+    QTest::keyClick(host, Qt::Key_Z, Qt::ControlModifier);
+    QCOMPARE(view->xMinimum(), oldMinimum); QCOMPARE(view->xMaximum(), oldMaximum);
+    view->setXRange(2, 4);
+    search->forceActiveFocus();
+    QTest::keyClick(host, Qt::Key_A);
+    QTest::keyClick(host, Qt::Key_B);
+    QTest::keyClick(host, Qt::Key_C);
+    QTest::keyClick(host, Qt::Key_Z, Qt::ControlModifier);
+    QCOMPARE(view->xMinimum(), 2.0); // Text undo does not undo plot navigation.
+    QCOMPARE(search->property("text").toString(), QString());
+    QCOMPARE(progress->property("progressColor").value<QColor>(), QColor("#0078d4"));
+    QVERIFY(controller.exportXlsx(directory.filePath("export.xlsx"), AppController::AllLoadedData));
+    QCOMPARE(progress->property("progressColor").value<QColor>(), QColor("#e58a24"));
+    QTRY_VERIFY(!controller.exporting());
     QCoreApplication::processEvents();
     QVERIFY2(qmlWarnings.isEmpty(), qPrintable(qmlWarnings.join('\n')));
 }
@@ -1803,6 +1971,21 @@ void AppControllerTest::editDialogsRememberAndResetValues()
 void AppControllerTest::axisTicksHandleLargeAndTinyRanges()
 {
     PlotItem plot;
+    plot.setHeight(240);
+    for (double scale : {1.0, 1e-18}) {
+        plot.setYRange(-.31 * scale, .31 * scale);
+        bool foundZero = false;
+        for (const auto &entry : plot.yTicks()) {
+            const auto tick = entry.toMap();
+            const double value = tick.value("value").toDouble();
+            if (qAbs(value) < .01 * scale) {
+                QCOMPARE(value, 0.0);
+                QCOMPARE(tick.value("label").toString(), QStringLiteral("0"));
+                foundZero = true;
+            }
+        }
+        QVERIFY(foundZero);
+    }
     const double tiny = std::numeric_limits<double>::denorm_min();
     const QVector<QPair<double, double>> ranges{
         {1700000000.0, 1700000001.0},

@@ -211,6 +211,7 @@ void AppController::finishSessionRestore()
     store->replaceSeries(inputs);
 
     // Commit only after every source and stable signal identity has been validated.
+    clearViewHistory();
     m_applyingSession = true;
     m_initialSignalFitDone = true; // Preserve the restored shared time range.
     QScopedValueRollback<bool> cursors(m_syncingCursors, true);

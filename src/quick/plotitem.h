@@ -81,6 +81,7 @@ public:
     Q_INVOKABLE void fitY();
     Q_INVOKABLE void setXRange(double xMinimum, double xMaximum);
     Q_INVOKABLE void setYRange(double yMinimum, double yMaximum);
+    Q_INVOKABLE void selectSeriesAt(double pixelX, double pixelY);
 signals:
     void normalizeYChanged();
     void blendModeChanged();
@@ -93,6 +94,10 @@ signals:
     void cursorValuesChanged();
     void axisTicksChanged();
     void activated();
+    void seriesClicked(int seriesId);
+    void rangeAboutToChange();
+    void viewInteractionStarted();
+    void viewInteractionFinished();
     void rangeChanged(double xMinimum, double xMaximum, double yMinimum, double yMaximum);
 protected:
     QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *) override;
@@ -100,6 +105,7 @@ protected:
     void mousePressEvent(QMouseEvent *event) override;
     void mouseMoveEvent(QMouseEvent *event) override;
     void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseUngrabEvent() override;
     void wheelEvent(QWheelEvent *event) override;
     void hoverMoveEvent(QHoverEvent *event) override;
 private:
@@ -138,5 +144,6 @@ private:
     QPointF m_dragStartPixel;
     double m_dragStartXMinimum = 0.0, m_dragStartXMaximum = 1.0, m_dragStartYMinimum = -1.0, m_dragStartYMaximum = 1.0;
     bool m_dragging = false;
+    bool m_panMoved = false;
     mutable QMutex m_dataMutex;
 };

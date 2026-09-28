@@ -156,23 +156,26 @@ Rectangle {
             return false
         if ((mode === 1 || mode === 3) && bottom - top < 2 / Math.max(1, axisRect.height))
             return false
+        controller.beginViewChange()
         if (mode === 1 || mode === 2)
             plotItem.setXRange(plotItem.xMinimum + left * xSpan,
                                plotItem.xMinimum + right * xSpan)
         if (mode === 1 || mode === 3)
             plotItem.setYRange(plotItem.yMaximum - bottom * ySpan,
                                plotItem.yMaximum - top * ySpan)
+        controller.endViewChange()
         return mode >= 1 && mode <= 3
     }
     Shortcut {
         sequence: "Space"
-        // Over an axis gutter Space fits that axis; over the graph itself it
+        // Over either axis gutter Space fits both axes; over the graph itself it
         // fits the Y axis of this subplot only.
         enabled: root.hoveredAxis >= 0 || graphHover.hovered
         onActivated: {
-            if (root.hoveredAxis >= 0)
-                root.controller.fitPlots(root.hoveredAxis === 0, root.hoveredAxis === 1)
-            else
+            if (root.hoveredAxis >= 0) {
+                root.controller.setActivePlot(root.plotIndex)
+                root.controller.fitPlots(true, true)
+            } else
                 root.controller.fitPlotY(root.plotIndex)
         }
     }
@@ -423,7 +426,12 @@ Rectangle {
             onPositionChanged: function(mouse) {
                 root.updateGraphSelection(mouse.x / width, mouse.y / height)
             }
-            onReleased: root.finishGraphSelection()
+            onReleased: function(mouse) {
+                if (!root.finishGraphSelection()
+                    && Math.hypot(mouse.x / width - root.graphSelectionStartX,
+                                  mouse.y / height - root.graphSelectionStartY) < 0.005)
+                    plotItem.selectSeriesAt(mouse.x, mouse.y)
+            }
             onCanceled: root.graphSelecting = false
         }
 
