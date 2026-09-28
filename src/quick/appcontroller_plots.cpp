@@ -166,7 +166,7 @@ void AppController::moveLegendSignal(int fromPlot, int toPlot, int row)
         || !plotSignalEnabled(fromPlot, row)) return;
     m_signals->setPlotChecked(toPlot, row, true);
     m_signals->setPlotChecked(fromPlot, row, false);
-    refreshPlot(fromPlot, false);
+    refreshPlot(fromPlot);
     refreshPlot(toPlot, true);
     setActivePlot(toPlot);
     notifyPlotBindingsChanged();
@@ -176,7 +176,7 @@ void AppController::removeLegendSignal(int plotIndex, int row)
 {
     if (sessionInteractionBlocked()) return;
     m_signals->setPlotChecked(plotIndex, row, false);
-    refreshPlot(plotIndex, false);
+    refreshPlot(plotIndex);
     notifyPlotBindingsChanged();
 }
 
@@ -204,7 +204,7 @@ bool AppController::unbindPlotSignals(int plotIndex)
     const QVector<int> rows = m_signals->plotRows(plotIndex);
     if (rows.isEmpty()) return false;
     for (int row : rows) m_signals->setPlotChecked(plotIndex, row, false);
-    refreshPlot(plotIndex, false);
+    refreshPlot(plotIndex);
     return true;
 }
 
@@ -412,5 +412,11 @@ void AppController::refreshPlot(int index, bool fitY)
     for (int row : sortedRows)
         if (row >= 0 && row < m_signalColors.size()) visibleIds.append(row);
     plot->setVisibleSeries(visibleIds);
+    if (fitY && !m_initialSignalFitDone && !visibleIds.isEmpty() && !m_applyingSession) {
+        m_initialSignalFitDone = true;
+        // fitView emits rangeChanged, synchronizing the first time fit to all plots.
+        plot->fitView();
+        return;
+    }
     if (fitY) plot->fitY();
 }

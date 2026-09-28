@@ -14,8 +14,8 @@ Rectangle {
     // 0: disabled, 1: X/Y region, 2: X only, 3: Y only.
     property int graphZoomMode: 0
     property bool darkTheme: false
-    // Overlapping curves: blend (darken on light theme, lighten on dark theme)
-    // so every curve stays visible; false restores plain "last drawn wins".
+    // Place smaller-amplitude curves in front, keeping original colours.
+    // Disabling this restores plain "last drawn wins".
     property bool blendOverlaps: true
     property color axisColor: darkTheme ? "#8f9aa7" : "#59636e"
     property color gridColor: darkTheme ? "#53606d" : "#c9d1d9"
@@ -377,8 +377,7 @@ Rectangle {
             anchors.fill: parent
             lineWidth: root.graphLineWidth
             cursorMode: root.graphCursorMode
-            blendMode: root.blendOverlaps ? (root.darkTheme ? PlotItem.LightenBlend
-                                                            : PlotItem.DarkenBlend)
+            blendMode: root.blendOverlaps ? PlotItem.AmplitudeLayers
                                           : PlotItem.OpaqueBlend
             z: 1
             Component.onCompleted: root.controller.attachPlot(plotItem, root.plotIndex)
@@ -588,7 +587,7 @@ Rectangle {
                 onTriggered: plotItem.normalizeY = !plotItem.normalizeY
             }
             MenuItem {
-                text: "重叠曲线混色 (Blend overlaps)"
+                text: "小幅值曲线优先置顶（保留原色）"
                 checkable: true
                 checked: root.blendOverlaps
                 onTriggered: root.blendOverlaps = !root.blendOverlaps

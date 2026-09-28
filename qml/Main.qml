@@ -39,6 +39,7 @@ ApplicationWindow {
     property color accentColor: "#0078d4"
     property color treeTextColor: darkTheme ? "#e6edf3" : "#202830"
     property bool darkTheme: false
+    property bool signalTreeVisible: true
     property int editingSignalIndex: -1
     property string pendingFileRemoval: ""
     property int pendingExportScope: 0
@@ -778,6 +779,7 @@ ApplicationWindow {
                 onClicked: settingsMenu.popup()
                 Menu {
                     id: settingsMenu
+                    MenuItem { text: "显示信号树"; checkable: true; checked: window.signalTreeVisible; onTriggered: window.signalTreeVisible = !window.signalTreeVisible }
                     MenuItem { text: "深色主题"; checkable: true; checked: window.darkTheme; onTriggered: window.darkTheme = !window.darkTheme }
                     MenuItem { text: "清除所有信号"; icon.source: "qrc:/icons/clear.svg"; onTriggered: window.appController.clearAllPlotSignals() }
                 }
@@ -795,12 +797,17 @@ ApplicationWindow {
             HoverHandler { cursorShape: Qt.SplitHCursor }
         }
         Rectangle {
+            visible: window.signalTreeVisible
             SplitView.preferredWidth: 280
             SplitView.minimumWidth: 180
             SplitView.maximumWidth: Math.max(180, window.width - 320)
             color: window.panelColor
             ColumnLayout { anchors.fill: parent; anchors.margins: 10; spacing: 8
-                Label { text: "信号 · 子图 " + (window.appController.activePlotIndex + 1); color: window.treeTextColor; font.pixelSize: 15; font.weight: Font.DemiBold }
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: "信号 · 子图 " + (window.appController.activePlotIndex + 1); color: window.treeTextColor; font.pixelSize: 15; font.weight: Font.DemiBold; Layout.fillWidth: true }
+                    ToolButton { text: "‹"; onClicked: window.signalTreeVisible = false; ToolTip.visible: hovered; ToolTip.text: "隐藏信号树（可从设置恢复）" }
+                }
                 Label { text: window.appController.currentFile.length > 0 ? window.appController.currentFile : "未加载文件"; color: window.treeTextColor; elide: Text.ElideMiddle; Layout.fillWidth: true; opacity: 0.78 }
                 RowLayout { Layout.fillWidth: true; spacing: 4
                     TextField { id: signalSearch; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: window.appController.filterSignals(text) }

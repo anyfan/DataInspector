@@ -10,6 +10,7 @@ class RenderCoreTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void indexedMeanAbsoluteMatchesRawSamples();
     void geometryWidthIsIndependentOfSlopeAndSampleSpacing();
     void binaryCursorMatchesOriginalOrderScan();
     void storeGenerationAndSnapshotsAreImmutable();
@@ -45,6 +46,37 @@ private slots:
     void geometryKeepsStrokeWhenASampleRepeats();
     void geometryDoesNotFillViewportWhenStaleLodClipsToEdges();
 };
+
+void RenderCoreTest::indexedMeanAbsoluteMatchesRawSamples()
+{
+    for (bool monotonic : {true, false}) {
+        PlotSeriesInput input;
+        input.id = 1;
+        input.timeOffset = 10;
+        for (int i = 0; i < 4096; ++i) {
+            input.time.append(monotonic ? i : (i * 137) % 4096);
+            input.values.append(i % 19 == 0 ? std::numeric_limits<double>::quiet_NaN()
+                                           : (i % 2 ? -2.0 : 4.0));
+        }
+        PlotSeriesStore store;
+        store.replaceSeries({input});
+        const auto series = store.snapshot({1}).series.first();
+        for (const auto range : {qMakePair(10.0, 4105.0), qMakePair(611.0, 3311.0)}) {
+            double expected = 0;
+            int count = 0;
+            for (int i = 0; i < series->sampleCount(); ++i) {
+                const auto p = series->pointAt(i);
+                if (p.x() >= range.first && p.x() <= range.second && qIsFinite(p.y())) {
+                    expected += qAbs(p.y());
+                    ++count;
+                }
+            }
+            double actual = 0;
+            QVERIFY(series->rangeIndex->bounds(*series, range.first, range.second, nullptr, &actual));
+            QVERIFY(qAbs(actual - expected / count) < 1e-12);
+        }
+    }
+}
 
 void RenderCoreTest::indexedBoundsMatchRawScan()
 {

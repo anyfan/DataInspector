@@ -31,13 +31,19 @@ public:
     static std::shared_ptr<const PlotRangeIndex> build(
         const PlotSeriesData &series, const std::function<bool()> &isCancelled = {});
     std::optional<PlotBounds> bounds(const PlotSeriesData &series, double xMinimum,
-                                    double xMaximum, PlotBoundsQueryStats *stats) const;
+                                    double xMaximum, PlotBoundsQueryStats *stats,
+                                    double *meanAbsolute = nullptr) const;
     std::optional<QPair<double, double>> rawTimeBounds() const { return m_timeBounds; }
     qsizetype sampleCount() const { return m_count; }
     qsizetype storageBytes() const { return m_tree.size() * sizeof(Node) + sizeof(m_timeBounds); }
 
 private:
-    struct Node { PlotBounds bounds; bool valid = false; };
+    struct Node {
+        PlotBounds bounds;
+        bool valid = false;
+        double meanAbsolute = 0.0;
+        qsizetype finiteCount = 0;
+    };
     static void merge(Node &into, const Node &other);
     Node queryBlocks(qsizetype first, qsizetype last, PlotBoundsQueryStats *stats) const;
     qsizetype m_count = 0;

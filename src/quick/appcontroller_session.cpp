@@ -212,6 +212,7 @@ void AppController::finishSessionRestore()
 
     // Commit only after every source and stable signal identity has been validated.
     m_applyingSession = true;
+    m_initialSignalFitDone = true; // Preserve the restored shared time range.
     QScopedValueRollback<bool> cursors(m_syncingCursors, true);
     QScopedValueRollback<bool> ranges(m_syncingRanges, true);
     m_seriesStore = std::move(store);

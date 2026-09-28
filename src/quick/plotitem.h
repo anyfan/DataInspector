@@ -34,12 +34,12 @@ class PlotItem : public QQuickItem
     // keep reporting raw values; only the drawn position is normalized.
     Q_PROPERTY(bool normalizeY READ normalizeY WRITE setNormalizeY NOTIFY normalizeYChanged)
     // How overlapping curves combine: 0 opaque (last drawn wins), 1 darken
-    // (min, for light backgrounds), 2 lighten (max, for dark backgrounds).
+    // (min), 2 lighten (max), 3 small amplitudes in front with original colours.
     Q_PROPERTY(int blendMode READ blendMode WRITE setBlendMode NOTIFY blendModeChanged)
 public:
     enum CursorMode { NoCursor = 0, SingleCursor = 1, DoubleCursor = 2 };
     Q_ENUM(CursorMode)
-    enum BlendMode { OpaqueBlend = 0, DarkenBlend = 1, LightenBlend = 2 };
+    enum BlendMode { OpaqueBlend = 0, DarkenBlend = 1, LightenBlend = 2, AmplitudeLayers = 3 };
     Q_ENUM(BlendMode)
     explicit PlotItem(QQuickItem *parent = nullptr);
     int highlightedSeries() const;

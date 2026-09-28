@@ -392,7 +392,7 @@ int PlotItem::blendMode() const
 
 void PlotItem::setBlendMode(int mode)
 {
-    const int normalized = int(PlotBlendMaterial::clampMode(mode));
+    const int normalized = mode == AmplitudeLayers ? mode : int(PlotBlendMaterial::clampMode(mode));
     {
         QMutexLocker lock(&m_dataMutex);
         if (m_blendMode == normalized) return;
@@ -486,8 +486,8 @@ double PlotItem::nearestRawX(double x) const
 
 void PlotItem::rebuildTicksLocked()
 {
-    m_xTicks = makePlotAxisTicks(m_xMinimum, m_xMaximum);
-    m_yTicks = makePlotAxisTicks(m_yMinimum, m_yMaximum);
+    m_xTicks = makePlotAxisTicks(m_xMinimum, m_xMaximum, qBound(2, int(width() / 85), 20));
+    m_yTicks = makePlotAxisTicks(m_yMinimum, m_yMaximum, qBound(2, int(height() / 40), 20));
 }
 
 void PlotItem::updateCursorValuesLocked()
@@ -564,6 +564,21 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
                         point.setY(it->second > 0.0 ? (point.y() - it->first) / it->second : 0.5);
             }
         }
+        if (m_blendMode == AmplitudeLayers) {
+            QHash<PlotSeriesId, double> amplitudes;
+            for (const auto &series : m_seriesSnapshot.series) {
+                const auto index = series->rangeIndex ? series->rangeIndex : PlotRangeIndex::build(*series);
+                double meanAbsolute = 0.0;
+                index->bounds(*series, m_xMinimum, m_xMaximum, nullptr, &meanAbsolute);
+                amplitudes.insert(series->id, meanAbsolute);
+            }
+            // Large mean absolute amplitudes form the background. Equal amplitudes
+            // retain their existing order, so panning does not arbitrarily swap them.
+            std::stable_sort(lod.segments.begin(), lod.segments.end(),
+                             [&amplitudes](const LodSegment &a, const LodSegment &b) {
+                return amplitudes.value(a.seriesId) > amplitudes.value(b.seriesId);
+            });
+        }
         if (m_highlightedSeries >= 0) {
             // Emphasize in geometry only: no data copy or new LOD job.
             QVector<LodSegment> selected;
@@ -580,7 +595,7 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         const GeometryRequest geometryRequest{
             {m_xMinimum, m_xMaximum, m_yMinimum, m_yMaximum, width(), height()},
             m_lineWidth};
-        const GeometryResult geometry = PlotGeometryBuilder::build(
+        GeometryResult geometry = PlotGeometryBuilder::build(
             lod, geometryRequest);
 
         const PlotBlendMaterial::Mode blendMode = PlotBlendMaterial::clampMode(m_blendMode);
@@ -665,6 +680,18 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 void PlotItem::geometryChange(const QRectF &newGeometry, const QRectF &oldGeometry)
 {
     QQuickItem::geometryChange(newGeometry, oldGeometry);
+    // Axis label widths also affect this item's geometry. Defer notification
+    // until QML has finished its layout bindings, and emit only on real changes.
+    QMetaObject::invokeMethod(this, [this]() {
+        bool changed;
+        {
+            QMutexLocker lock(&m_dataMutex);
+            const auto oldX = m_xTicks, oldY = m_yTicks;
+            rebuildTicksLocked();
+            changed = oldX != m_xTicks || oldY != m_yTicks;
+        }
+        if (changed) emit axisTicksChanged();
+    }, Qt::QueuedConnection);
     requestLod();
     update();
 }

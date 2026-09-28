@@ -130,7 +130,7 @@ bool AppController::removeFile(const QString &fileName)
     m_loadedFileNames.removeAll(fileName);
     updateCurrentFileLabel();
     for (int index = 0; index < m_plots.size(); ++index)
-        refreshPlot(index, false);
+        refreshPlot(index);
     notifyPlotBindingsChanged();
     setStatus(QStringLiteral("已移除文件：%1").arg(fileName));
     return true;

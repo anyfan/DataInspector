@@ -229,6 +229,7 @@ private:
     int m_batchSkipped = 0;
     QString m_batchFirstError;
     bool m_syncingRanges = false;
+    bool m_initialSignalFitDone = false;
     bool m_syncingCursors = false;
     double m_sharedXMinimum = 0.0;
     double m_sharedXMaximum = 1.0;

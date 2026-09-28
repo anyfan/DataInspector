@@ -6,6 +6,10 @@ void PlotRangeIndex::merge(Node &into, const Node &other)
 {
     if (!other.valid) return;
     if (!into.valid) { into = other; return; }
+    const qsizetype count = into.finiteCount + other.finiteCount;
+    into.meanAbsolute += (other.meanAbsolute - into.meanAbsolute)
+        * (double(other.finiteCount) / double(count));
+    into.finiteCount = count;
     into.bounds.xMinimum = qMin(into.bounds.xMinimum, other.bounds.xMinimum);
     into.bounds.xMaximum = qMax(into.bounds.xMaximum, other.bounds.xMaximum);
     into.bounds.yMinimum = qMin(into.bounds.yMinimum, other.bounds.yMinimum);
@@ -34,7 +38,7 @@ PlotRangeIndexPtr PlotRangeIndex::build(const PlotSeriesData &series,
             }
         }
         if (!qIsFinite(x) || !qIsFinite(y)) continue;
-        merge(index->m_tree[index->m_leaves + row / blockSize], {{x, x, y, y}, true});
+        merge(index->m_tree[index->m_leaves + row / blockSize], {{x, x, y, y}, true, qAbs(y), 1});
     }
     for (qsizetype node = index->m_leaves - 1; node > 0; --node) {
         if ((node & 0xfff) == 0 && isCancelled && isCancelled()) return {};
@@ -57,8 +61,9 @@ PlotRangeIndex::Node PlotRangeIndex::queryBlocks(qsizetype first, qsizetype last
 }
 
 std::optional<PlotBounds> PlotRangeIndex::bounds(const PlotSeriesData &series,
-    double xMinimum, double xMaximum, PlotBoundsQueryStats *stats) const
+    double xMinimum, double xMaximum, PlotBoundsQueryStats *stats, double *meanAbsolute) const
 {
+    if (meanAbsolute) *meanAbsolute = 0.0;
     if (qIsNaN(xMinimum) || qIsNaN(xMaximum) || xMinimum > xMaximum) return {};
     Node result;
     auto scan = [&](qsizetype first, qsizetype last) {
@@ -67,7 +72,7 @@ std::optional<PlotBounds> PlotRangeIndex::bounds(const PlotSeriesData &series,
             const QPointF point = series.pointAt(row);
             if (!qIsFinite(point.x()) || !qIsFinite(point.y())
                 || point.x() < xMinimum || point.x() > xMaximum) continue;
-            merge(result, {{point.x(), point.x(), point.y(), point.y()}, true});
+            merge(result, {{point.x(), point.x(), point.y(), point.y()}, true, qAbs(point.y()), 1});
         }
     };
     auto shifted = [&](Node node) {
@@ -112,5 +117,6 @@ std::optional<PlotBounds> PlotRangeIndex::bounds(const PlotSeriesData &series,
                 scan(block * blockSize, qMin(m_count, (block + 1) * blockSize));
         }
     }
+    if (meanAbsolute) *meanAbsolute = result.meanAbsolute;
     return result.valid ? std::optional<PlotBounds>(result.bounds) : std::nullopt;
 }

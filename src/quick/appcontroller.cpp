@@ -104,6 +104,7 @@ void AppController::clear()
         return;
     }
     m_seriesStore->clear();
+    m_initialSignalFitDone = false;
     m_signalColors.clear();
     m_nextColorIndex = 0;
     m_signals->setNames({});

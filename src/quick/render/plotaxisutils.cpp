@@ -22,7 +22,7 @@ std::optional<QPair<double, double>> paddedPlotRange(
     return qMakePair(lo, hi);
 }
 
-QVariantList makePlotAxisTicks(double minimum, double maximum)
+QVariantList makePlotAxisTicks(double minimum, double maximum, int targetIntervals)
 {
     QVariantList ticks;
     const double span = maximum - minimum;
@@ -30,16 +30,17 @@ QVariantList makePlotAxisTicks(double minimum, double maximum)
         return ticks;
 
     QVector<double> values;
-    const double raw = span / 7.0;
+    targetIntervals = qBound(2, targetIntervals, 24);
+    const double raw = span / targetIntervals;
     if (raw > 0) {
         const double magnitude = std::pow(10.0, std::floor(std::log10(raw)));
         if (magnitude > 0 && qIsFinite(magnitude)) {
             const double normalized = raw / magnitude;
-            const double step = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10) * magnitude;
+            const double step = (normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 2.5 ? 2.5 : normalized <= 5 ? 5 : 10) * magnitude;
             // Never convert an absolute tick index to an integer: Unix time and
             // narrow windows routinely produce indices beyond 32-bit limits.
             const double first = std::ceil(minimum / step) * step;
-            for (int i = 0; i < 12; ++i) {
+            for (int i = 0; i < targetIntervals + 2; ++i) {
                 const double value = std::fma(double(i), step, first);
                 if (!qIsFinite(value) || value > maximum) break;
                 if (value >= minimum && (values.isEmpty() || value > values.last()))

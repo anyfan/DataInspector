@@ -992,6 +992,11 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     targetItem->setParentItem(window.contentItem());
     window.resize(1600, 400);
     QTest::qWait(30);
+    // Match Main.qml's column alignment when tick labels need different widths.
+    const double sharedLeft = qMax(item->property("measuredAxisLeft").toDouble(),
+                                   targetItem->property("measuredAxisLeft").toDouble());
+    item->setProperty("sharedAxisLeft", sharedLeft);
+    targetItem->setProperty("sharedAxisLeft", sharedLeft);
     QCOMPARE(item->property("axisLeft"), targetItem->property("axisLeft"));
     QCOMPARE(item->property("axisTop"), targetItem->property("axisTop"));
     QVERIFY(QMetaObject::invokeMethod(object.get(), "formatYTick", Q_RETURN_ARG(QVariant, formatted),
@@ -1384,7 +1389,8 @@ void AppControllerTest::addingSignalPreservesCurrentXRange()
     const QString path = directory.filePath(QStringLiteral("wide.csv"));
     QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-    QCOMPARE(file.write("time,Pitch\n0,1\n10,2\n"), qint64(20));
+    const QByteArray csv("time,Pitch,Roll\n0,1,100\n10,2,200\n");
+    QCOMPARE(file.write(csv), qint64(csv.size()));
     file.close();
 
     AppController controller;
@@ -1394,9 +1400,27 @@ void AppControllerTest::addingSignalPreservesCurrentXRange()
     QVERIFY(controller.loadCsv(path));
     QTRY_COMPARE_WITH_TIMEOUT(loaded.count(), 1, 5000);
 
+    controller.toggleSignal(0);
+    QVERIFY(plot.xMinimum() < 0.0);
+    QVERIFY(plot.xMaximum() > 10.0);
+    QVERIFY(plot.yMinimum() < 1.0);
+    QVERIFY(plot.yMaximum() > 2.0);
+    controller.removeLegendSignal(0, 0);
+    QCOMPARE(plot.yMinimum(), 0.0);
+    QCOMPARE(plot.yMaximum(), 1.0);
+
     plot.setXRange(0.0, 1.0);
     controller.toggleSignal(0);
 
+    QCOMPARE(plot.xMinimum(), 0.0);
+    QCOMPARE(plot.xMaximum(), 1.0);
+    const double smallYMaximum = plot.yMaximum();
+    controller.toggleSignal(1);
+    QVERIFY(plot.yMaximum() > 100.0);
+    QCOMPARE(plot.xMinimum(), 0.0);
+    QCOMPARE(plot.xMaximum(), 1.0);
+    controller.removeLegendSignal(0, 1);
+    QCOMPARE(plot.yMaximum(), smallYMaximum);
     QCOMPARE(plot.xMinimum(), 0.0);
     QCOMPARE(plot.xMaximum(), 1.0);
 }
