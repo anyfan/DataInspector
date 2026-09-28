@@ -1,4 +1,5 @@
 #include "plotitem.h"
+#include "plotblendmaterial.h"
 #include "render/plotaxisutils.h"
 #include "render/plotgeometrybuilder.h"
 #include <QMouseEvent>
@@ -32,7 +33,7 @@ static QSGGeometryNode *createLineNode(PlotRoot *root)
     geometry->setDrawingMode(QSGGeometry::DrawTriangleStrip);
     node->setGeometry(geometry);
     node->setFlag(QSGNode::OwnsGeometry);
-    auto *material = new QSGFlatColorMaterial;
+    auto *material = new PlotBlendMaterial;
     node->setMaterial(material);
     node->setFlag(QSGNode::OwnsMaterial);
     if (root->cursorNode) root->insertChildNodeBefore(node, root->cursorNode);
@@ -42,7 +43,8 @@ static QSGGeometryNode *createLineNode(PlotRoot *root)
 }
 
 static void uploadLineNode(QSGGeometryNode *node,
-                           const GeometrySegment &segment)
+                           const GeometrySegment &segment,
+                           PlotBlendMaterial::Mode blendMode)
 {
     auto *geometry = node->geometry();
     geometry->setDrawingMode(segment.triangleList
@@ -56,8 +58,10 @@ static void uploadLineNode(QSGGeometryNode *node,
                         static_cast<float>(point.y()));
     }
     geometry->markVertexDataDirty();
-    if (auto *material = static_cast<QSGFlatColorMaterial *>(node->material()))
+    if (auto *material = static_cast<PlotBlendMaterial *>(node->material())) {
+        material->setMode(blendMode);
         material->setColor(segment.color);
+    }
     node->markDirty(QSGNode::DirtyGeometry | QSGNode::DirtyMaterial);
 }
 
@@ -380,6 +384,24 @@ bool PlotItem::normalizeY() const
     return m_normalizeY;
 }
 
+int PlotItem::blendMode() const
+{
+    QMutexLocker lock(&m_dataMutex);
+    return m_blendMode;
+}
+
+void PlotItem::setBlendMode(int mode)
+{
+    const int normalized = int(PlotBlendMaterial::clampMode(mode));
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (m_blendMode == normalized) return;
+        m_blendMode = normalized;
+    }
+    emit blendModeChanged();
+    update();
+}
+
 void PlotItem::setNormalizeY(bool enabled)
 {
     {
@@ -528,7 +550,7 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
     const double xs = qMax(m_xMaximum - m_xMinimum, 1e-12);
     const QVector<double> curveView{m_xMinimum, m_xMaximum, m_yMinimum, m_yMaximum,
                                     width(), height(), m_lineWidth, double(m_highlightedSeries),
-                                    m_normalizeY ? 1.0 : 0.0};
+                                    m_normalizeY ? 1.0 : 0.0, double(m_blendMode)};
     if (root->curveResult != m_lodResult || root->curveView != curveView) {
         const LodResult empty;
         LodResult lod = m_lodResult ? *m_lodResult : empty;
@@ -561,12 +583,13 @@ QSGNode *PlotItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
         const GeometryResult geometry = PlotGeometryBuilder::build(
             lod, geometryRequest);
 
+        const PlotBlendMaterial::Mode blendMode = PlotBlendMaterial::clampMode(m_blendMode);
         while (root->lineNodes.size() < geometry.segments.size())
             createLineNode(root);
         for (int i = 0; i < root->lineNodes.size(); ++i) {
             auto *node = root->lineNodes.at(i);
             if (i < geometry.segments.size()) {
-                uploadLineNode(node, geometry.segments.at(i));
+                uploadLineNode(node, geometry.segments.at(i), blendMode);
             } else if (node->geometry()) {
                 node->geometry()->allocate(0);
                 node->geometry()->markVertexDataDirty();

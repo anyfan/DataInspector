@@ -335,6 +335,7 @@ bool SignalModel::renameSignal(int row, const QString &name)
 void SignalModel::rebuildVisibleNodes()
 {
     m_visibleNodes.clear();
+    m_groupRows.clear();
     QStringList orderedGroups;
     for (const QString &group : std::as_const(m_groups)) {
         QString prefix;
@@ -371,6 +372,7 @@ void SignalModel::rebuildVisibleNodes()
         const bool groupMatches = group.contains(m_filter, Qt::CaseInsensitive);
         if (!m_filter.isEmpty() && !groupMatches && !hasSignalMatch) continue;
         const int depth = group.count(QLatin1Char('/'));
+        m_groupRows.insert(group, m_visibleNodes.size());
         m_visibleNodes.append({true, -1, group, depth});
         const bool showChildren = !m_filter.isEmpty()
             || m_expandedGroups.contains(group);
@@ -409,4 +411,29 @@ int SignalModel::revealSignal(int sourceRow)
     rebuildVisibleNodes();
     endResetModel();
     return visibleModelRow(sourceRow);
+}
+
+QVariantList SignalModel::ancestorPath(int modelRow) const
+{
+    QVariantList path;
+    if (modelRow < 0 || modelRow >= m_visibleNodes.size()) return path;
+    const VisibleNode &node = m_visibleNodes.at(modelRow);
+    // A group node's own row is not an ancestor; use its parent chain.
+    const QString chain = node.groupNode
+        ? node.group.section(QLatin1Char('/'), 0, -2)
+        : node.group;
+    if (chain.isEmpty()) return path;
+    QString prefix;
+    int depth = 0;
+    for (const QString &part : chain.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
+        prefix = prefix.isEmpty() ? part : prefix + QLatin1Char('/') + part;
+        int row = m_groupRows.value(prefix, -1);
+        if (row >= modelRow) row = -1;
+        path.append(QVariantMap{{QStringLiteral("name"), part},
+                                {QStringLiteral("group"), prefix},
+                                {QStringLiteral("depth"), depth},
+                                {QStringLiteral("row"), row}});
+        ++depth;
+    }
+    return path;
 }

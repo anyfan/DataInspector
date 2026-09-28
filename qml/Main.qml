@@ -4,6 +4,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import QtQuick.Shapes
 import DataInspector
 
 ApplicationWindow {
@@ -805,7 +806,60 @@ ApplicationWindow {
                     TextField { id: signalSearch; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: window.appController.filterSignals(text) }
                     ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered; ToolTip.text: "清除搜索" }
                 }
-                ListView { id: signalList; Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: window.appController.signalModel
+                Item { Layout.fillWidth: true; Layout.fillHeight: true
+                ListView { id: signalList; anchors.fill: parent; clip: true; model: window.appController.signalModel
+                    // Sticky hierarchy: the file/table ancestors of the row at the
+                    // top edge, but only those already scrolled out of view.
+                    // Recomputed at most once per stickyTimer tick and only when
+                    // the top row actually changes, so flicking stays cheap.
+                    property var stickyPath: []
+                    property int stickyTopRow: -1
+                    property string stickyKey: ""
+                    cacheBuffer: 600
+                    Timer {
+                        id: stickyTimer
+                        interval: 40
+                        onTriggered: signalList.updateStickyPath()
+                    }
+                    function scheduleStickyPath() {
+                        if (!stickyTimer.running) stickyTimer.start()
+                    }
+                    function resetStickyPath() {
+                        stickyTopRow = -1
+                        stickyKey = ""
+                        stickyPath = []
+                        scheduleStickyPath()
+                    }
+                    function updateStickyPath() {
+                        if (count === 0 || !model) {
+                            stickyTopRow = -1
+                            if (stickyKey !== "") { stickyKey = ""; stickyPath = [] }
+                            return
+                        }
+                        const topRow = indexAt(1, contentY + 1)
+                        // No delegate under the top edge yet (still flicking);
+                        // keep the previous header and try again shortly.
+                        if (topRow < 0) { scheduleStickyPath(); return }
+                        if (topRow === stickyTopRow) return
+                        stickyTopRow = topRow
+                        const path = model.ancestorPath(topRow)
+                        const hidden = []
+                        let key = ""
+                        for (let i = 0; i < path.length; ++i)
+                            if (path[i].row >= 0 && path[i].row < topRow) {
+                                hidden.push(path[i])
+                                key += path[i].row + ":" + path[i].group + "|"
+                            }
+                        if (key !== stickyKey) { stickyKey = key; stickyPath = hidden }
+                    }
+                    onContentYChanged: scheduleStickyPath()
+                    onMovementEnded: updateStickyPath()
+                    onCountChanged: resetStickyPath()
+                    onHeightChanged: scheduleStickyPath()
+                    Connections {
+                        target: signalList.model
+                        function onModelReset() { signalList.resetStickyPath() }
+                    }
                     delegate: Item {
                         id: signalDelegate
                         required property int index
@@ -821,9 +875,6 @@ ApplicationWindow {
                         required property real signalWidth
                         required property int signalLineStyle
                         property bool rowHovered: false
-                        onSignalColorChanged: penPreview.requestPaint()
-                        onSignalWidthChanged: penPreview.requestPaint()
-                        onSignalLineStyleChanged: penPreview.requestPaint()
                         width: signalList.width
                         height: groupNode ? 28 : 30
 
@@ -898,27 +949,38 @@ ApplicationWindow {
                                 ToolTip.visible: hovered
                                 ToolTip.text: "移除文件"
                             }
-                            Canvas {
+                            // Scene-graph stroke instead of a Canvas: no per-row
+                            // FBO/threaded repaint, so flicking stays smooth and
+                            // rows never flash blank while a paint is pending.
+                            Item {
                                 id: penPreview
                                 visible: !signalDelegate.groupNode
                                 Layout.preferredWidth: 42
                                 Layout.preferredHeight: 24
-                                onPaint: {
-                                    const context = getContext("2d")
-                                    context.reset()
-                                    context.strokeStyle = signalDelegate.signalColor
-                                    context.lineWidth = signalDelegate.signalWidth
-                                    if (signalDelegate.signalLineStyle === 2) context.setLineDash([8, 4])
-                                    else if (signalDelegate.signalLineStyle === 3) context.setLineDash([2, 4])
-                                    else if (signalDelegate.signalLineStyle === 4) context.setLineDash([8, 4, 2, 4])
-                                    else if (signalDelegate.signalLineStyle === 5) context.setLineDash([8, 4, 2, 4, 2, 4])
-                                    else context.setLineDash([])
-                                    context.beginPath()
-                                    context.moveTo(3, height / 2)
-                                    context.lineTo(width - 3, height / 2)
-                                    context.stroke()
+                                Shape {
+                                    anchors.fill: parent
+                                    ShapePath {
+                                        strokeColor: signalDelegate.signalColor
+                                        strokeWidth: signalDelegate.signalWidth
+                                        fillColor: "transparent"
+                                        capStyle: ShapePath.FlatCap
+                                        strokeStyle: signalDelegate.signalLineStyle >= 2 && signalDelegate.signalLineStyle <= 5
+                                                     ? ShapePath.DashLine : ShapePath.SolidLine
+                                        // Dash lengths are in units of strokeWidth.
+                                        dashPattern: {
+                                            const w = Math.max(1, signalDelegate.signalWidth)
+                                            switch (signalDelegate.signalLineStyle) {
+                                            case 2: return [8 / w, 4 / w]
+                                            case 3: return [2 / w, 4 / w]
+                                            case 4: return [8 / w, 4 / w, 2 / w, 4 / w]
+                                            case 5: return [8 / w, 4 / w, 2 / w, 4 / w, 2 / w, 4 / w]
+                                            default: return [4, 2]
+                                            }
+                                        }
+                                        startX: 3; startY: penPreview.height / 2
+                                        PathLine { x: penPreview.width - 3; y: penPreview.height / 2 }
+                                    }
                                 }
-                                onVisibleChanged: requestPaint()
                                 MouseArea {
                                     anchors.fill: parent
                                     acceptedButtons: Qt.LeftButton
@@ -948,6 +1010,68 @@ ApplicationWindow {
                         }
                     }
                     ScrollBar.vertical: ScrollBar { }
+                }
+                Column {
+                    id: stickyHeader
+                    objectName: "signalStickyHeader"
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    visible: signalList.stickyPath.length > 0
+                    z: 2
+                    Repeater {
+                        model: signalList.stickyPath
+                        delegate: Rectangle {
+                            id: stickyRow
+                            required property var modelData
+                            required property int index
+                            width: stickyHeader.width
+                            height: 26
+                            color: window.darkTheme ? "#1f272f" : "#eef3f8"
+                            Rectangle {
+                                anchors.left: parent.left; anchors.right: parent.right
+                                anchors.bottom: parent.bottom
+                                height: 1
+                                color: window.darkTheme ? "#3b4652" : "#d7dfe8"
+                            }
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: stickyRow.modelData.depth * 14 + 4
+                                anchors.rightMargin: 4
+                                spacing: 6
+                                Label {
+                                    Layout.preferredWidth: 24
+                                    horizontalAlignment: Text.AlignHCenter
+                                    text: "▾"
+                                    color: window.accentColor
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: stickyRow.modelData.name
+                                    font.weight: Font.DemiBold
+                                    color: window.accentColor
+                                    elide: Text.ElideRight
+                                }
+                            }
+                            HoverHandler { id: stickyHover }
+                            ToolTip.visible: stickyHover.hovered
+                            ToolTip.delay: 600
+                            ToolTip.text: stickyRow.modelData.group + "\n单击回到该层级，双击折叠"
+                            TapHandler {
+                                acceptedButtons: Qt.LeftButton
+                                onSingleTapped: {
+                                    signalList.positionViewAtIndex(stickyRow.modelData.row, ListView.Beginning)
+                                    signalList.currentIndex = stickyRow.modelData.row
+                                }
+                                onDoubleTapped: {
+                                    const row = stickyRow.modelData.row
+                                    window.appController.signalModel.toggleGroup(stickyRow.modelData.group)
+                                    signalList.positionViewAtIndex(Math.min(row, signalList.count - 1), ListView.Beginning)
+                                }
+                            }
+                        }
+                    }
+                }
                 }
                 Label {
                     Layout.fillWidth: true

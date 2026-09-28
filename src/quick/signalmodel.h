@@ -3,6 +3,7 @@
 #include <QColor>
 #include <QPen>
 #include <QSet>
+#include <QVariantList>
 #include <QVector>
 
 // Qt 6.8 QML registration instantiates a QQmlElement<T> wrapper, even for
@@ -38,6 +39,10 @@ public:
     void setFilter(const QString &text);
     Q_INVOKABLE int revealSignal(int sourceRow);
     Q_INVOKABLE void toggleGroup(const QString &group);
+    // Ancestor group chain of a visible model row, outermost first. Each entry
+    // is {name, group, depth, row}; row is the visible model row of that group
+    // node (-1 when not visible). Drives the sticky hierarchy header.
+    Q_INVOKABLE QVariantList ancestorPath(int modelRow) const;
     QVector<int> removeFile(const QString &fileName);
     void setAllChecked(bool checked);
     int checkedCount() const;
@@ -77,6 +82,8 @@ private:
     QVector<double> m_widths;
     QVector<Qt::PenStyle> m_lineStyles;
     QVector<VisibleNode> m_visibleNodes;
+    // group -> visible model row of its group node; rebuilt with m_visibleNodes.
+    QHash<QString, int> m_groupRows;
     QSet<QString> m_expandedGroups;
     QVector<QSet<int>> m_plotRows;
     int m_plotCount = 0;

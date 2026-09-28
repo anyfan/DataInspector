@@ -45,6 +45,8 @@ set(DI_RENDER_SOURCES
 set(DI_PLOTITEM_SOURCES
     ${DI_QUICK_DIR}/plotitem.cpp
     ${DI_QUICK_DIR}/plotitem.h
+    ${DI_QUICK_DIR}/plotblendmaterial.cpp
+    ${DI_QUICK_DIR}/plotblendmaterial.h
 )
 
 set(DI_SIGNAL_SOURCES
@@ -210,7 +212,7 @@ endforeach()
 qt_add_qml_module(DataInspector
     URI DataInspector
     VERSION 1.0
-    DEPENDENCIES QtQuick QtQml.Models
+    DEPENDENCIES QtQuick QtQml.Models QtQuick.Shapes
     IMPORT_PATH "${QT_QML_OUTPUT_DIRECTORY}"
     QML_FILES ${DI_QML_FILES}
 )
@@ -352,10 +354,16 @@ if(BUILD_TESTING)
 
     add_executable(plotitem_raster_test tests/plotitem_raster_test.cpp ${DI_PLOTITEM_SOURCES})
     target_link_libraries(plotitem_raster_test PRIVATE Qt6::Quick plot_render_core)
+    add_executable(plotitem_blend_test tests/plotitem_blend_test.cpp ${DI_PLOTITEM_SOURCES})
+    target_link_libraries(plotitem_blend_test PRIVATE Qt6::Quick plot_render_core)
     if(ENABLE_GPU_TESTS)
         add_test(NAME plotitem_raster_test COMMAND ${CMAKE_COMMAND} -E env
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_raster_test>)
         set_tests_properties(plotitem_raster_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+        add_test(NAME plotitem_blend_test COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_blend_test>)
+        set_tests_properties(plotitem_blend_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
     endif()
 endif()

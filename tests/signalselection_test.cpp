@@ -18,6 +18,7 @@ private slots:
     void eachSignalKeepsIndependentPenProperties();
     void appendingSignalsPreservesBindingsAndPenProperties();
     void nestedFileAndTableGroupsExpandIndependently();
+    void ancestorPathReportsVisibleGroupChain();
     void removingFileGroupReindexesPlotBindings();
 };
 
@@ -208,6 +209,37 @@ void SignalSelectionTest::nestedFileAndTableGroupsExpandIndependently()
 
     model.toggleGroup(QStringLiteral("flight.mat"));
     QCOMPARE(model.rowCount(), 1);
+}
+
+void SignalSelectionTest::ancestorPathReportsVisibleGroupChain()
+{
+    SignalModel model;
+    model.setNames(QStringList{QStringLiteral("Pitch"), QStringLiteral("Roll"),
+                               QStringLiteral("Loose")},
+                   QStringList{QStringLiteral("flight.mat/p1"),
+                               QStringLiteral("flight.mat/p2"),
+                               QString()});
+    // Rows: 0 Loose, 1 flight.mat, 2 p1, 3 Pitch, 4 p2, 5 Roll.
+    QCOMPARE(model.rowCount(), 6);
+    QVERIFY(model.ancestorPath(0).isEmpty());
+    QVERIFY(model.ancestorPath(1).isEmpty());
+    QVERIFY(model.ancestorPath(-1).isEmpty());
+    QVERIFY(model.ancestorPath(99).isEmpty());
+
+    const QVariantList tablePath = model.ancestorPath(2);
+    QCOMPARE(tablePath.size(), 1);
+    QCOMPARE(tablePath.at(0).toMap().value("group").toString(), QStringLiteral("flight.mat"));
+    QCOMPARE(tablePath.at(0).toMap().value("row").toInt(), 1);
+
+    const QVariantList signalPath = model.ancestorPath(5);
+    QCOMPARE(signalPath.size(), 2);
+    QCOMPARE(signalPath.at(0).toMap().value("name").toString(), QStringLiteral("flight.mat"));
+    QCOMPARE(signalPath.at(0).toMap().value("depth").toInt(), 0);
+    QCOMPARE(signalPath.at(0).toMap().value("row").toInt(), 1);
+    QCOMPARE(signalPath.at(1).toMap().value("name").toString(), QStringLiteral("p2"));
+    QCOMPARE(signalPath.at(1).toMap().value("group").toString(), QStringLiteral("flight.mat/p2"));
+    QCOMPARE(signalPath.at(1).toMap().value("depth").toInt(), 1);
+    QCOMPARE(signalPath.at(1).toMap().value("row").toInt(), 4);
 }
 
 void SignalSelectionTest::removingFileGroupReindexesPlotBindings()

@@ -33,9 +33,14 @@ class PlotItem : public QQuickItem
     // Draw every series scaled to [0, 1] by its own min/max. Cursor readouts
     // keep reporting raw values; only the drawn position is normalized.
     Q_PROPERTY(bool normalizeY READ normalizeY WRITE setNormalizeY NOTIFY normalizeYChanged)
+    // How overlapping curves combine: 0 opaque (last drawn wins), 1 darken
+    // (min, for light backgrounds), 2 lighten (max, for dark backgrounds).
+    Q_PROPERTY(int blendMode READ blendMode WRITE setBlendMode NOTIFY blendModeChanged)
 public:
     enum CursorMode { NoCursor = 0, SingleCursor = 1, DoubleCursor = 2 };
     Q_ENUM(CursorMode)
+    enum BlendMode { OpaqueBlend = 0, DarkenBlend = 1, LightenBlend = 2 };
+    Q_ENUM(BlendMode)
     explicit PlotItem(QQuickItem *parent = nullptr);
     int highlightedSeries() const;
     void setHighlightedSeries(int id);
@@ -56,6 +61,8 @@ public:
     QVariantList cursorReadouts() const;
     bool normalizeY() const;
     void setNormalizeY(bool enabled);
+    int blendMode() const;
+    void setBlendMode(int mode);
     void setLineWidth(double width);
     void setCursorEnabled(bool enabled);
     void setCursorMode(int mode);
@@ -76,6 +83,7 @@ public:
     Q_INVOKABLE void setYRange(double yMinimum, double yMaximum);
 signals:
     void normalizeYChanged();
+    void blendModeChanged();
     void highlightedSeriesChanged();
     void lodChanged();
     void viewChanged();
@@ -108,6 +116,7 @@ private:
     QVector<PlotSeriesId> m_visibleSeries;
     PlotSeriesSnapshot m_seriesSnapshot;
     bool m_normalizeY = false;
+    int m_blendMode = OpaqueBlend;
     // Per-series (minimum, span) used when m_normalizeY is set.
     QHash<PlotSeriesId, QPair<double, double>> m_normalization;
     PlotLodScheduler *m_lodScheduler;

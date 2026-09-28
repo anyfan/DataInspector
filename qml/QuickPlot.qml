@@ -14,6 +14,9 @@ Rectangle {
     // 0: disabled, 1: X/Y region, 2: X only, 3: Y only.
     property int graphZoomMode: 0
     property bool darkTheme: false
+    // Overlapping curves: blend (darken on light theme, lighten on dark theme)
+    // so every curve stays visible; false restores plain "last drawn wins".
+    property bool blendOverlaps: true
     property color axisColor: darkTheme ? "#8f9aa7" : "#59636e"
     property color gridColor: darkTheme ? "#53606d" : "#c9d1d9"
     property color textColor: darkTheme ? "#d7dee7" : "#303942"
@@ -163,9 +166,15 @@ Rectangle {
     }
     Shortcut {
         sequence: "Space"
-        enabled: root.hoveredAxis >= 0
-        onActivated: root.controller.fitPlots(root.hoveredAxis === 0,
-                                              root.hoveredAxis === 1)
+        // Over an axis gutter Space fits that axis; over the graph itself it
+        // fits the Y axis of this subplot only.
+        enabled: root.hoveredAxis >= 0 || graphHover.hovered
+        onActivated: {
+            if (root.hoveredAxis >= 0)
+                root.controller.fitPlots(root.hoveredAxis === 0, root.hoveredAxis === 1)
+            else
+                root.controller.fitPlotY(root.plotIndex)
+        }
     }
     Image {
         id: axisCursorImage
@@ -368,10 +377,17 @@ Rectangle {
             anchors.fill: parent
             lineWidth: root.graphLineWidth
             cursorMode: root.graphCursorMode
+            blendMode: root.blendOverlaps ? (root.darkTheme ? PlotItem.LightenBlend
+                                                            : PlotItem.DarkenBlend)
+                                          : PlotItem.OpaqueBlend
             z: 1
             Component.onCompleted: root.controller.attachPlot(plotItem, root.plotIndex)
             Component.onDestruction: root.controller.detachPlot(plotItem, root.plotIndex)
             onActivated: root.controller.setActivePlot(root.plotIndex)
+            HoverHandler {
+                id: graphHover
+                objectName: "graphHoverHandler"
+            }
         }
 
         Rectangle {
@@ -570,6 +586,12 @@ Rectangle {
                 checkable: true
                 checked: plotItem.normalizeY
                 onTriggered: plotItem.normalizeY = !plotItem.normalizeY
+            }
+            MenuItem {
+                text: "重叠曲线混色 (Blend overlaps)"
+                checkable: true
+                checked: root.blendOverlaps
+                onTriggered: root.blendOverlaps = !root.blendOverlaps
             }
         }
     }
