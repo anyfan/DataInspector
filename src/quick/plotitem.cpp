@@ -446,7 +446,8 @@ void PlotItem::fitY()
     if (normalized) { setRange(xmin, xmax, -.05, 1.05); return; }
     if (!bounds) { setRange(xmin, xmax, 0, 1); return; }
     const auto range = paddedPlotRange(bounds->yMinimum, bounds->yMaximum, .05,
-                                       bounds->yMinimum == 0 ? .5 : .05);
+                                       bounds->yMinimum == 0 ? .5 : qMax(std::abs(bounds->yMinimum) * .05,
+                                           std::numeric_limits<double>::denorm_min()));
     if (range) setRange(xmin, xmax, range->first, range->second);
 }
 void PlotItem::zoomAxis(int axis, double fraction, double steps)

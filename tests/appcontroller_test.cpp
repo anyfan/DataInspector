@@ -777,7 +777,7 @@ void AppControllerTest::fittingUsesUnionOfSubplotTimeRanges()
     QCOMPARE(first.xMinimum(), -4.0); QCOMPARE(first.xMaximum(), 204.0);
     QCOMPARE(second.xMinimum(), -4.0); QCOMPARE(second.xMaximum(), 204.0);
     QCOMPARE(first.yMinimum(), .95); QCOMPARE(first.yMaximum(), 1.05);
-    QCOMPARE(second.yMinimum(), 1.95); QCOMPARE(second.yMaximum(), 2.05);
+    QCOMPARE(second.yMinimum(), 1.9); QCOMPARE(second.yMaximum(), 2.1);
 
     // "当前时间轴" fits only the active subplot's signals; the shared X axis
     // still applies the result to every subplot.
@@ -826,6 +826,17 @@ void AppControllerTest::fitAndAxisZoomFollowLegacyRanges()
     plot.zoomAxis(1, .5, 1);
     QCOMPARE(plot.xMinimum(), xmin);
     QVERIFY(plot.yMinimum() > 9.5);
+    plot.setXRange(0, 3);
+    for (double value : {4294967295.0, -4294967295.0, 375.0, 1.0, 1e-8, 0.0}) {
+        store->replaceSeries({{1, {0, 1, 2, 3}, {value, value, value, value}, QColor("red")}});
+        plot.setSeriesStore(store);
+        plot.setVisibleSeries({1});
+        plot.fitY();
+        const double padding = value == 0 ? .5 : std::abs(value) * .05;
+        QCOMPARE(plot.yMinimum(), value - padding);
+        QCOMPARE(plot.yMaximum(), value + padding);
+    }
+
 }
 
 void AppControllerTest::axisZoomAnchorsOnPointerPosition()
@@ -1139,18 +1150,38 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QCOMPARE(controller.plotSignalRows(0).count(0), 1);
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
     targetItem->setParentItem(nullptr);
-    item->setParentItem(nullptr);
-    plot->setYRange(1e20, 1e20 + 1e6);
-    QVERIFY(!item->property("compactYTicksDistinct").toBool());
-    QSet<QString> tickLabels;
+    for (const auto &range : {qMakePair(4294967294.95, 4294967295.05),
+                              qMakePair(4.28e9, 4.31e9),
+                              qMakePair(-4294967295.05, -4294967294.95),
+                              qMakePair(1e20, 1e20 + 1e6),
+                              qMakePair(1e-8, 1e-8 + 1e-12)}) {
+        plot->setYRange(range.first, range.second);
+        QVERIFY(!item->findChild<QQuickItem *>("yAxisOffsetLabel"));
+        QSet<QString> tickLabels;
+        for (const auto &tick : plot->yTicks()) {
+            QVariant label;
+            QVERIFY(QMetaObject::invokeMethod(item, "yTickLabel", Q_RETURN_ARG(QVariant, label),
+                                              Q_ARG(QVariant, tick)));
+            QVERIFY(label.toString().contains('e'));
+            const double value = tick.toMap().value("value").toDouble();
+            QVERIFY(std::abs(label.toString().toDouble() - value)
+                    <= (range.second - range.first) * 1e-3);
+            QCOMPARE(label.toString().toDouble() > 0, value > 0);
+            QVERIFY(!tickLabels.contains(label.toString()));
+            tickLabels.insert(label.toString());
+        }
+    }
+    plot->setYRange(4.0e9, 4.5e9);
+    QVERIFY(!item->findChild<QQuickItem *>("yAxisOffsetLabel"));
     for (const auto &tick : plot->yTicks()) {
         QVariant label;
         QVERIFY(QMetaObject::invokeMethod(item, "yTickLabel", Q_RETURN_ARG(QVariant, label),
                                           Q_ARG(QVariant, tick)));
-        QCOMPARE(label.toString(), tick.toMap().value("label").toString());
-        QVERIFY(!tickLabels.contains(label.toString()));
-        tickLabels.insert(label.toString());
+        QVERIFY(label.toString().contains('e'));
+        QVERIFY(label.toString().size() <= 8);
     }
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+    item->setParentItem(nullptr);
 
 }
 

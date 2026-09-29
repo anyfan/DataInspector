@@ -58,8 +58,22 @@ Rectangle {
         }
         return true
     }
+    readonly property int yScientificPrecision: {
+        for (let precision = 2; precision <= 16; ++precision) {
+            const labels = []
+            let distinct = true
+            for (const tick of plotItem.yTicks) {
+                const label = Number(tick.value).toExponential(precision)
+                if (labels.indexOf(label) >= 0) distinct = false
+                labels.push(label)
+            }
+            if (distinct) return precision
+        }
+        return 16
+    }
     function yTickLabel(tick) {
-        return root.compactYTicksDistinct ? root.formatYTick(tick.value) : tick.label
+        if (root.compactYTicksDistinct) return root.formatYTick(tick.value)
+        return Number(tick.value).toExponential(root.yScientificPrecision).replace(/e([+-])0+/, "e$1")
     }
     function formatYTick(value) {
         if (value === 0) return "0"
