@@ -1,266 +1,87 @@
-# DataInspector（Qt Quick 重构版）
+# DataInspector（Qt Quick 版）
 
-DataInspector 是面向工程时间序列数据的高性能查看器。当前分支已从 QCustomPlot/QWidget 绘图区切换到 Qt 6.8.3 Qt Quick Scene Graph：曲线使用 GPU 三角带绘制，视图缩放时按屏幕宽度执行 min/max 保峰值降采样，缺失值自动断线。渲染内核已拆分为共享原始数据 Store、LOD 构建器和屏幕空间 Geometry 构建器，PlotItem 只负责视图交互和 Scene Graph 提交。
+面向工程时间序列数据的高性能查看器。绘图区基于 Qt 6.8 Qt Quick Scene Graph：曲线用 GPU 三角带绘制，视图缩放时按屏幕宽度做 min/max 保峰值降采样，缺失值自动断线。
 
-当前版本已支持多子图、游标、会话保存恢复及 XLSX/MAT 导出。图片导出、重放和 Python API 仍待迁移。
+当前支持多子图、游标、会话保存恢复、时间偏移、信号重命名、XLSX/MAT 导入与导出。图片导出待迁移；**重放、Python API、`.mldatx` 视图文件已遗弃，不再计划实现**。
 
-## 当前可用功能
+## 文档
 
-- Qt Quick 主窗口和 Qt Quick Controls 界面，支持浅色/深色主题切换。
-- CSV/TXT/XLSX/MAT 时间序列后台批量加载，支持文件选择器多选和从资源管理器拖放；第一列为时间，其余列为信号。
-- 支持把数据文件拖到 `DataInspector.exe` 上、用"打开方式"选择本程序或双击已关联的数据文件启动：程序启动后自动导入这些文件；拖入会话文件则直接恢复会话。
-- 支持将全部已加载数据，或当前所有子图已绘制信号的并集导出为 XLSX 或 MAT；XLSX 中不同来源表保持独立工作表，MAT 中每个来源表写为一个 `pN` 矩阵。
-- 左侧信号树按“文件 → `pN` 数据表 → 信号”展开/折叠；信号行依次显示勾选状态、名称和线型预览。右键信号可重命名或设置时间偏移，单击线型预览直接打开线条属性对话框。
-- 1×1、1×2、2×1、2×2 快捷布局和 1–8 行、1–8 列自定义布局；改变布局会保留仍存在子图的信号绑定。
-- 文件读取和分块极值索引构建在后台串行执行并显示批量总进度；新增文件以增量方式加入序列仓库，不重建已加载曲线。
-- 不同目录的同名文件独立管理，信号树使用 `[2]` 等后缀区分；内部来源使用规范化完整路径和表序号，不以显示名称合并导出数据。
-- 鼠标拖动平移、滚轮缩放；首次添加信号自动适应 X/Y，后续增删信号适应 Y 并保留 X 范围。
-- 信号树可隐藏并恢复；搜索结果中的关键词忽略大小写匹配并着色、加粗；滚动时固定显示文件/数据表标题。右侧采用无底槽的贴边细滑块，固定标题不覆盖滑块。
-- `Ctrl+Z` 支持回退视图缩放、框选、平移、自适应和 Y 轴归一化。X/Y 刻度密度随绘图区尺寸调整。
-- 曲线默认按可见区间内的绝对值平均值排序，小幅值在前、大幅值在后，保持原色。
-- 单/双垂直游标、原始样本读数和 ΔT 显示，子图间同步游标。开启时以选中视图（最大化时以最大化视图）为准，在当前时间范围的四分之一、四分之三处按该图原始样本吸附初始化，再同步到其他子图。
-- 默认颜色使用老版固定 14 色调色板，跨文件按顺序循环分配，清空后重置。信号属性提供同一组预设色块。
-- 每个信号可独立设置颜色、1–20 px 线宽和实线/虚线/点线/点划线；图例同步显示画笔样式。
-- NaN/无效样本分段绘制，避免跨缺失数据产生幽灵连接。
-- 按可视范围和屏幕宽度生成 min/max LOD，缩小视图时保留尖峰和谷值。
+完整文档已迁移到 **[`docs/`](docs/README.md)**：
 
-## 会话保存与恢复
+- 用户指南：[**使用手册（最终用户）**](docs/user-guide/manual.md) · [快速上手](docs/user-guide/quick-start.md) · [数据格式](docs/user-guide/data-formats.md) · [视图操作](docs/user-guide/view-operations.md) · [信号树与样式](docs/user-guide/signals-and-styling.md) · [会话](docs/user-guide/session.md)
+- 架构：[总览](docs/architecture/overview.md) · [渲染管线](docs/architecture/render-pipeline.md) · [数据加载与导出](docs/architecture/data-and-export.md) · [并发](docs/architecture/concurrency.md)
+- 开发：[构建](docs/dev/build.md) · [工具链排错](docs/dev/toolchain-troubleshooting.md) · [QML 工具](docs/dev/qml-tooling.md) · [测试](docs/dev/testing.md)
+- 历史记录：[开发日志](docs/dev-log/README.md)
 
-- 工具栏“会话 → 保存会话…”（`Ctrl+S`）保存 `.disession` 文件，也可选择 `.json`；内容为版本化 JSON，不嵌入原始数据。
-- 保存数据文件路径、1–8 行/列布局、活动/最大化子图、各子图信号绑定、信号名称及颜色/线宽/线型、时间偏移、共享 X 范围、各图 Y 范围与归一化状态，以及游标模式和两个位置。
-- “会话 → 恢复会话…”（`Ctrl+Shift+O`）重新加载引用数据。已有数据时先确认；全部文件和信号结构校验成功后才替换当前会话。缺失文件、损坏数据、未知版本或表/信号结构不匹配会报错，当前会话保留。
-- 路径优先相对会话文件保存；会话与数据目录保持相对结构一起搬移后仍可恢复，跨盘等情况允许绝对路径。同名文件按独立来源定位，信号按文件、表、列和原始名称验证，不依赖临时行号或重命名后的显示名称。
-- 恢复支持尚未创建的子图，游标精确还原，不因当前视窗范围而裁剪或重新吸附。会话文件采用原子保存；恢复期间禁止并行加载、导出、保存或修改视图。
-- 会话不是数据备份。数值更新但表/信号结构不变时可加载新数据；恢复失败后可修复路径或重新保存会话。暂不提供缺失文件重新定位向导或部分恢复。为保留当前会话，恢复期间会同时保留旧数据和新加载数据，需预留内存。
-
-## 时间偏移
-
-右键信号、数据组或文件，选择“时间偏移…”，输入相对原始时间的偏移秒数，再次打开显示已设置的值；直接修改为目标值，不重复累加。正值向右，负值向左；组和文件会处理其下全部信号，包括未勾选和被搜索隐藏的信号。组或文件内偏移不一致时显示混合状态；输入数值后统一设置。偏移对话框支持重置为 0，重命名对话框支持重置为导入时的名称，点击确定后生效。偏移作用于所有子图、原始样本游标读数、坐标轴适应和导出；不修改源文件，直接重新加载后不保留；通过会话保存与恢复可保留。视窗不自动跳转，可使用“适应 X”查看平移后的完整范围。
-
-同组内累计偏移不同的信号导出到不同工作表或 MAT 矩阵，避免共用错误时间列。加载或导出期间不能修改偏移。
-
-## 数据格式
-
-### CSV/TXT
-
-```text
-Time,Signal A,Signal B
-0.0,1.2,4.5
-0.1,1.4,4.1
-```
-
-- 第一行必须是表头，至少包含时间列和一个信号列。
-- 每行列数应与表头一致；格式错误的行会被跳过。
-- 时间无法转换的行会被跳过；信号无法转换时保存为 `NaN`，该位置在图上断线。
-- 自动识别逗号、分号和制表符；支持单行内带引号的字段和双引号转义，暂不支持跨行引号字段。引号格式错误的数据行跳过，表头引号错误时停止导入。
-- 数值统一按 C locale 解析，小数点使用 `.`，不接受千位分组符；例如应写 `1234` 而非 `1,234`，是否加引号不改变数值解析规则。
-
-### Excel XLSX
-
-- 读取全部有效工作表，每张工作表作为一个数据表，信号树按“文件 → 工作表 → 信号”分组。
-- 每张工作表第一行作为表头，第一列作为时间，其余列作为信号；稀疏或非法信号单元格保存为 `NaN`。
-- 支持共享字符串、内联字符串及公式的已保存缓存值；程序不会重新计算 Excel 公式。
-- 当前仅支持 `.xlsx`，不支持旧版二进制 `.xls`。
-
-### 导出 Excel
-
-- 工具栏“导出 Excel”可选择“全部已加载数据”或“当前所有子图已绘制的信号”。后者会合并全部子图中的信号，同一信号只导出一次。
-- 保留来源文件和数据表边界，每个来源表写入独立工作表；第一列为 `Time`，其余列为信号。Excel/MAT 导出前均校验同表信号的样本数和有效时间基；不一致时拒绝导出，避免套用错误时间列。
-- `NaN` 写为空单元格。导出的是数值和信号名称，不复制导入文件的样式、公式或批注。
-- ZIP 压缩默认开启；需要减少计算量时，可在导出菜单中取消勾选“ZIP 压缩”。压缩后的文件通常更小，但实际耗时取决于数据和存储设备。
-- 单表超过 Excel 的 1,048,575 行数据上限时自动拆分工作表。导出在后台执行，可通过进度条旁的取消按钮停止；目标文件仅在完整写入后替换。
-
-### 导出 MAT
-
-- 导出菜单中的“MAT · 全部已加载数据”与“MAT · 当前所有子图已绘制的信号”写出 MATLAB Level 5 文件，布局与导入格式一致：每个来源表一个 `pN` 二维 `double` 矩阵（第一列时间，其余列信号，`NaN` 表示缺失），以及 `pN_title` UTF-8 字符矩阵（第一行 `Time`，其余行为信号名称，含重命名后的名称）。
-- 来源于 MAT 数据表的表保留原 `pN` 编号，其余表依次使用空闲编号；不写 `pN_title2`。导出的文件可直接再次导入。
-- 仅在 `ENABLE_MAT=ON` 构建中可用；单个变量不能超过 MAT 5 的 2 GB 上限。
-- 数值按列以最多 64 KiB 的缓冲分块写入，不额外分配整表数值矩阵；块间检查取消。使用 `QSaveFile` 原子保存，取消时保留原目标文件。单次操作系统写入或最终提交不能被强行中断。
-
-### MATLAB MAT（可选）
-
-源码包含 MAT 读取路径，可识别名称为 `p1`、`p2` 等非空、稠密的二维实数 `double` 变量（复数、稀疏及空矩阵跳过）：第一列是时间，其余列是信号，`pN_title`/`pN_title2` 用作标题。当前仓库已提供 LLVM-MinGW 17 兼容静态库，默认配置开启 MAT：
-
-```powershell
-cmake -S . -B build_qt6 -G Ninja `
-  -DENABLE_MAT=ON
-```
-
-如果替换或删除了仓库内的兼容库，可暂时使用 `-DENABLE_MAT=OFF` 构建 CSV/TXT/XLSX 版本；启用 MAT 时必须确保 matio、HDF5 和 zlib 均使用同一 LLVM-MinGW 工具链构建。
-
-## 构建环境
-
-- Windows 10/11
-- Qt 6.8.3 `llvm-mingw_64`
-- LLVM-MinGW 17.0.6（Clang）
-- CMake 3.21 或更高版本
-- Ninja
-
-仓库提供 `qt6-clang-debug` 和 `qt6-clang-release` 预设，路径配置位于 `CMakePresets.json`；预设文件版本 6 需 CMake 3.25 或更高版本。确认本机路径后可执行：
+## 快速构建
 
 ```powershell
 cmake --preset qt6-clang-debug
 cmake --build --preset qt6-clang-debug
+# 产物：build_qt6-debug/bin/DataInspector.exe
 ```
 
-输出为 `build_qt6-debug/bin/DataInspector.exe`；Release 预设输出到 `build_qt6-release/bin/`。也可以手动指定工具链：
+要求：Windows 10/11、Qt 6.8.3 `llvm-mingw_64`、LLVM-MinGW 17、CMake 3.25+、Ninja。详见 [快速上手](docs/user-guide/quick-start.md)。
 
-```powershell
-$env:Path="D:\Software\Qt\Tools\CMake_64\bin;D:\Software\Qt\Tools\Ninja;D:\Software\Qt\Tools\llvm-mingw1706_64\bin;$env:Path"
+## 主要功能
 
-cmake -S . -B build_qt6 -G Ninja `
-  -DCMAKE_PREFIX_PATH="D:/Software/Qt/6.8.3/llvm-mingw_64" `
-  -DCMAKE_CXX_COMPILER="D:/Software/Qt/Tools/llvm-mingw1706_64/bin/clang++.exe" `
-  -DCMAKE_BUILD_TYPE=Release `
-  -DENABLE_MAT=ON
-
-cmake --build build_qt6 --parallel 4
-```
-
-生成的程序：`build_qt6/bin/DataInspector.exe`。
-
-也可以使用预置脚本部署 Qt DLL、平台插件和 Qt Quick QML 模块：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
-  -QtDir "D:/Software/Qt/6.8.3/llvm-mingw_64" `
-  -BuildDir "build_qt6" `
-  -OutputDir "dist/DataInspector"
-```
-
-## QML 静态检查与编辑器配置
-
-完成 CMake 配置后运行：
-
-```powershell
-cmake --build build_qt6 --target DataInspector_qmllint
-```
-
-- 检查项目 QML 文件，`MaxWarnings=0`：任何 warning 都使检查失败，不关闭警告规则。
-- `src/quick/qmltypes.h` 声明 C++ 的 QML 类型，构建时自动生成 `.qmltypes`；`Main` 通过必填的类型化属性接收控制器，不依赖隐式上下文变量。
-- 生成的模块位于 `<构建目录>/qml/DataInspector`。CMake 自动生成本地 `qml/.qmllint.ini` 和 `.qmlls.ini`，包含当前构建目录和导入路径；这些机器相关文件已忽略，不应手工编辑或提交。更换构建目录后重新配置并构建上述目标。
-- 使用 Qt QML VS Code/ShunCode 扩展时，如果仍使用旧的启动参数，在工作区设置 `qt-qml.qmlls.additionalImportPaths` 中加入 `${workspaceFolder}/<构建目录>/qml`，再执行 **Qt: Restart QML Language Server**。现有 `.vscode/settings.json` 属于本地配置，不纳入 Git。
-- 首次克隆必须先配置/构建类型元数据，不能仅打开源码就要求分析器识别 C++ 类型。运行时仍需真实 GUI/GPU 验证，静态检查不能替代交互测试。
-
-## 使用方法
-
-1. 点击“打开”多选数据文件，或将 CSV/TXT/XLSX/MAT 拖入窗口。
-2. 点击目标子图，在左侧信号树勾选信号；单击线型预览可修改颜色、线宽和线型。
-3. 使用布局工具切换网格；绘图区拖动平移、滚轮缩放双轴，轴刻度区域的滚轮仅缩放对应轴。
-4. 单击曲线或图例均可高亮对应图例、定位信号树并将选中曲线置顶；拖动图例可跨子图移动信号，右键可从当前子图移除。曲线点击按屏幕距离命中，支持归一化显示；拖动平移和缺失数据断点不会误触选择。
-5. 信号树标题右侧的“‹”可隐藏面板，通过“设置 → 显示信号树”恢复。隐藏不会清除信号绑定或搜索状态。
-6. 通过导出菜单选择 XLSX/MAT 和导出范围，导入进度为蓝色、导出进度为橙色；“设置 → 清除所有信号”仅解除绘图绑定，保留已加载数据。
-7. 通过设置切换浅色/深色主题；游标支持单/双模式、原始样本读数和 ΔT，X/Y 读数可切换紧凑/原始格式。
-
-### 坐标轴自适应与刻度
-
-- 首次添加绘制信号时，自动适应共享 X 轴和对应子图 Y 轴；后续添加、删除或移动信号时重新适应受影响子图的 Y 轴，保留 X 范围。
-- Y 轴适应使用当前 X 窗口内的数据；空图恢复默认 Y 范围。清空全部加载数据后，下次添加重新执行首次双轴适应；仅取消勾选或清除绘图绑定不会重置首次标记。
-- 非归一化视图中，当前窗口内信号为非零常量时，Y 轴按常量绝对值的 5% 向两侧留白；零常量使用 `[-0.5, 0.5]`。存在真实变化时仍按数据跨度的 5% 留白，手动缩放范围保持不变。
-- Y 轴刻度显示实际坐标值，大数值和微小数值使用科学计数法；相邻标签因舍入重复时自动增加科学计数法精度，不减去公共基准值，也不显示 `Y =` 偏移提示。极窄范围可能需要较长标签，可使用“自适应当前 Y 轴”恢复合适范围。
-- 恢复会话时保留保存的坐标范围，不执行首次自动缩放。
-- X/Y 刻度随绘图区尺寸调整密度，较大视图显示更多刻度，小子图减少密度；同列子图统一 Y 轴留白。零刻度精确生成 `0`，避免浮点残差显示为 `-2.08e-17` 等数值，同时保留真实的微小量级刻度。
-
-| 操作 | 快捷键 |
-| --- | --- |
-| 自适应当前视图 X/Y | `Ctrl+Alt+F` |
-| 自适应全部视图 X/Y | `Ctrl+Alt+Shift+F` |
-| 自适应当前时间轴 | `Ctrl+Alt+T` |
-| 自适应全部时间轴 | `Ctrl+Alt+Shift+T` |
-| 自适应当前 Y 轴 | `Ctrl+Alt+Y` |
-| 自适应全部 Y 轴 | `Ctrl+Alt+Shift+Y` |
-| 回退视图修改 | `Ctrl+Z` |
-| 全屏/退出全屏 | `F11` |
-
-时间轴始终在各子图间同步，“当前/全部”决定用于计算时间范围的信号集合。子图最大化时，自适应范围以该子图为准。鼠标位于任一轴区域时，空格同时适应该子图的 X/Y 轴；位于绘图区时，空格仅适应该子图 Y 轴。
-
-### 视图回退
-
-`Ctrl+Z` 回退缩放、轴/绘图区框选、拖动平移、自适应及 Y 轴归一化，最多保留 100 步；一次完整拖动或双轴操作合并为一步。回退同时恢复共享 X 范围及各子图的 Y 范围和归一化状态。在搜索框或其他文本编辑框中，`Ctrl+Z` 保留文本撤销功能，不回退视图。
-
-当前回退范围仅为视图修改，不包括文件导入/移除、信号绑定、重命名、画笔或时间偏移。改变子图布局、清空全部加载数据或成功恢复会话时清空视图历史；历史不写入会话文件，暂不提供重做。
-
-### 重叠曲线的绘制层级
-
-默认启用“小幅值曲线优先置顶（保留原色）”，可在子图右键菜单中切换。
-
-- 排序指标为当前可见 X 区间内原始有效样本的绝对值平均值：`mean(abs(y))`。每个样本等权，跳过 NaN/Inf；不使用正负相抵的算术均值、峰峰值或 LOD 点的平均值。
-- 平均幅值大的曲线先绘制在底层，小的后绘制在顶层；相同指标保持原有顺序。缩放、平移后重新计算。
-- 点击曲线或图例选中的曲线优先置顶。关闭此选项后，使用原有绘制顺序。
-- 曲线保留自身颜色和连续线型，不混色，也不分段交替。完全重合时顶层曲线仍会遮挡底层，可通过图例选中查看。
-- 信号树可见性和此层级开关目前不写入会话文件。
-
-## 渲染内核与性能设计
-
-渲染路径位于 `src/quick/render/` 和 `src/quick/plotitem.cpp`：
-
-- `PlotSeriesStore` 由 `AppController` 共享，持有不可变原始序列和数据代际号；子图只保存有序系列 ID，不复制原始数组。系列 ID 通过哈希索引定位，快照获取平均复杂度为 O(请求系列数)。
-- 加载线程按 512 个样本预建不可变分块极值、绝对值平均值、有效样本数和分块线段树。单调时间的 Y 轴适应使用二分定位、树查询与边界扫描；曲线层级的平均幅值查询复用同一索引，合并时按有效样本数加权；时间偏移和画笔变更复用索引。乱序时间使用分块跳过/合并，部分相交块回退扫描。
-- 后台范围索引额外记录与 Y 有效性无关的原始时间极值；包括乱序时间在内，全局 X 范围查询对每条索引化信号只读取一份摘要，时间偏移也复用该摘要，不再反复扫描全部时间样本。
-- 画笔编辑按 ID 索引定位，只替换发生变化的序列快照，不重建 ID 映射；相同画笔设置不更新数据代际、不触发子图绑定刷新。
-- 游标查询始终访问原始样本，不使用 LOD、不插值；原始快照替换后，旧快照仍可安全读取。
-- `PlotLodBuilder` 按视窗和屏幕桶生成结构化连续线段；每桶保留 min/max，NaN 分段，单调序列保留视窗两侧连接点。
-- `PlotGeometryBuilder` 按每个信号的画笔属性将 LOD 线段转换成有限、裁剪后的屏幕空间三角带或三角形列表，不依赖 `GL_LINE` 宽度。
-- `PlotItem` 只维护视图、交互和持久 QSG 节点；通过 `PlotLodScheduler` 在最多两个后台线程生成 LOD；每子图合并最新请求，取消旧任务并丢弃过期结果。Y 范围和尺寸变化复用 LOD，游标移动复用曲线几何。
-- 曲线节点和材质在场景图中复用，平移、缩放和游标更新不再删除并重建整棵节点树。
-
-大时间戳和窄视窗的刻度使用浮点定位、局部有界步进，并按需要提高标签精度；Y 轴紧凑格式发生重名时自动提高科学计数法精度，保留实际坐标值。坐标范围必须有有限、正向且可表示的跨度；自动适应时避免边距溢出，无法表示的全局跨度保留原视窗，不把无效范围写入会话。
-
-## 当前限制与后续计划
-
-以下功能仍在迁移中，README 不再将其描述为已完成：
-
-- 当前每子图保留最后一份 LOD，等待后台结果期间使用旧 LOD 按新视窗投影。尚无多级缓存或按字节计量的内存预算。
-- LOD 与极值索引构建已移至后台；原始样本游标查询、索引化 Y 轴适应和几何提交仍在前台线程。乱序时间的极端窗口查询仍可能回退到 O(N)。
-- 各子图维护独立信号集合和 Y 轴范围，X 轴范围保持同步；活动子图以蓝色边框标识。
-- 游标支持单/双游标和原始样本读数、ΔT；尚无 ΔY 面板，查询按原始样本吸附，不插值。
-- 图片导出尚未迁移；坐标轴与图例已迁移，悬停高亮仍待完善。
-- `.mldatx`、重放和 Python API 暂未接入 Qt Quick 版本。
-- CSV 暂不支持跨行引号字段；数据目前整体读入内存，不是分块/流式架构。
-- MAT 依赖仓库内与 LLVM-MinGW 17 兼容的 matio/HDF5/zlib 静态库。
-
-建议下一阶段按以下顺序推进：多级 LOD 缓存和内存预算 → 图片导出与会话路径重定位 → 重放与 Python API → 真实百万/千万点性能基准。
-
-## 验证边界
-
-2026-09-29 坐标轴修复已通过 Debug 构建、QML 静态检查，以及 `appcontroller_test`、`rendercore_test`、`plotitem_lod_test`、`session_test`。回归覆盖正负大数、微小数和零常量的自动范围，以及窄范围标签的数值、正负号、唯一性和科学计数法显示。本次未进行人工窗口目视验收、GPU 回归或 Release/部署包构建。
-
-本次交互更新已完成 Qt 6.8.3 LLVM-MinGW Debug 构建，渲染核心、控制器及会话恢复测试通过。控制器测试覆盖双轴空格适应、零刻度、选中视图游标初始化、曲线命中与断点、视图回退、文本撤销隔离、搜索高亮和导入/导出进度配色；最终细滑块调整后，另行通过界面自动化检查，确认无底槽、贴边布局且不与固定标题重叠。
-
-```powershell
-cmake --build build_qt6-debug --target DataInspector appcontroller_test session_test --parallel 4
-$env:QT_QUICK_CONTROLS_STYLE = 'Fusion'
-ctest --test-dir build_qt6-debug -R '^(rendercore_test|appcontroller_test|session_test)$' --output-on-failure
-```
-
-界面自动化使用 offscreen 平台，不等同于人工 GUI 验收。此前 GPU 检查覆盖原色保留、平均幅值排序、选中置顶及视窗变化后的排序，本次交互更新未重跑 GPU 检查。GPU 测试需硬件 Scene Graph 后端，可通过 `-DENABLE_GPU_TESTS=ON` 注册到 CTest。本次未重新构建 Release/部署包，未完成百万/千万点帧率基准。
+- CSV/TXT/XLSX/MAT 后台批量加载，支持多选打开、窗口拖放、拖到 exe 启动。
+- 1×1 ~ 2×2 快捷布局与 1–8 行/列自定义布局，改变布局保留信号绑定。
+- 鼠标拖动平移、滚轮双轴缩放（轴区滚轮以指针为中心单轴缩放）、框选。
+- 单/双垂直游标、原始样本读数、ΔT、跨子图同步；←/→ 在原始样本间步进。
+- 信号树按 文件 → `pN` 表 → 信号 分层；支持重命名、时间偏移、颜色/线宽/线型。
+- 14 色固定调色板；重叠曲线按可见区间 `mean(abs(y))` 排序，小幅值置顶（保留原色）。
+- `Ctrl+Z` 回退视图操作；`Ctrl+S` 会话保存，`.disession` 版本化 JSON。
+- 导出 XLSX（多工作表、超行拆分）或 MAT（Level 5 流式写入），支持全部数据或当前子图绘制信号。
+- 浅色/深色主题；信号树可隐藏、可搜索、滚动吸顶显示层级。
 
 ## 项目结构
 
 ```text
-qml/Main.qml                       Qt Quick 主界面、工具栏、信号树和子图网格
-qml/QuickPlot.qml                  单个子图：坐标轴、网格、游标读数、右键菜单
-qml/PlotLegend.qml                 子图顶部换行图例（点击定位、拖拽跨图移动、右键菜单）
-qml/PlotAxisArea.qml               X/Y 轴留白区的悬停、框选与滚轮缩放
-src/quick/plotitem.*               Scene Graph GPU 曲线项、视图交互和节点提交
-src/quick/render/*                 原始序列 Store、LOD 构建器、异步调度器和几何构建器
-src/quick/appcontroller.h          会话控制器接口
-src/quick/appcontroller.cpp        生命周期、工作线程、状态/进度
-src/quick/appcontroller_loading.cpp 导入队列、文件移除、Excel 导出
-src/quick/appcontroller_session.cpp 会话收集、后台暂存加载与事务式恢复
-src/quick/sessiondocument.*        版本化会话 JSON 校验及原子读写
-src/quick/appcontroller_plots.cpp  子图绑定、图例动作、布局与自适应
-src/quick/dataloadworker.*         后台加载调度及 CSV/TXT/MAT 解析
-src/quick/dataexportworker.*       后台 Excel 导出调度、进度和取消
-src/quick/xlsxreader.*             XLSX 工作簿、多工作表和单元格解析
-src/quick/xlsxwriter.*             XLSX 工作簿写入、工作表拆分和原子保存
-src/quick/loadedtable.h            加载结果值类型及跨线程元类型声明
-src/quick/signalmodel.*            QML 信号树模型
-tests/                             CTest 套件（渲染核心、LOD、信号选择、控制器、XLSX）
-tools/deploy_qt6.ps1               Windows 部署脚本
-docs/mcp-*.md                      各次功能/修复的说明
-docs/archive/                      历史设计、计划与调研（renderer_research 等）
+qml/
+  Main.qml                 主窗口、工具栏、信号树、子图网格
+  QuickPlot.qml            单个子图：坐标轴、游标、右键菜单
+  PlotLegend.qml           图例换行、拖拽跨图、右键菜单
+  PlotAxisArea.qml         X/Y 轴留白区悬停/框选/滚轮
+  Splash.qml               启动画面
+src/quick/
+  main.cpp                 入口、Splash→Main 加载顺序
+  appcontroller.*          控制器（按职责拆分 loading/plots/session）
+  sessiondocument.*        会话 JSON 校验与原子读写
+  signalmodel.*            QML 信号树模型
+  signalmetadata.*         信号元数据
+  startupfiles.*           命令行参数解析
+  dataloadworker.*         后台 CSV/TXT/MAT 解析
+  xlsxreader.*             XLSX 解析
+  dataexportworker.*       后台导出调度
+  xlsxwriter.*             XLSX 写入
+  matwriter.* / mat5streamwriter.*  MAT5 流式写入
+  exporttable.h / exportvalidation.cpp  导出共用结构与时间基校验
+  plotitem.*               Scene Graph 曲线项、视图交互、节点提交
+  plotblendmaterial.*      flatcolor 材质与混合方程
+  qmltypes.h               QML_FOREIGN 类型声明
+  render/
+    plotseriesstore.*      不可变原始序列 Store、代际号
+    plotrangeindex.*       512 样本分块极值 + 线段树
+    plotlodbuilder.*       视窗/屏幕桶 min/max LOD
+    plotlodscheduler.*     后台 LOD 调度（最多 2 线程）
+    plotgeometrybuilder.*  LOD → 屏幕空间三角带
+    plotaxisutils.*        浮点刻度生成、适应边距
+tests/                     CTest 套件（详见 docs/dev/testing.md）
+tools/deploy_qt6.ps1       Windows 部署脚本
+assets/                    图标、.rc、.manifest
+docs/                      Wiki（本文件的详细内容都在这里）
 ```
 
-旧版 QWidget/QCustomPlot 实现（`src/core`、`src/plot`、`src/ui`、`src/script`、`src/data`）已于提交
-`8d2b6bb` 之后移除，如需参考请查看 git 历史。
+旧版 QWidget/QCustomPlot 实现（`src/core`、`src/plot`、`src/ui`、`src/script`、`src/data`）已在提交 `8d2b6bb` 后移除，历史见 git。
+
+## 当前限制
+
+- 每子图只保留最后一份 LOD，等待后台结果时用旧 LOD 投影；尚无多级缓存和按字节计量的内存预算。
+- 原始样本游标查询、索引化 Y 适应、几何提交仍在 GUI 线程；乱序时间极端窗口可能回退 O(N)。
+- 图片导出尚未迁移（坐标轴与图例已迁移，悬停高亮待完善）。
+- **重放、Python API、`.mldatx` 视图文件已遗弃**——老版 QCustomPlot 时代的功能，Qt Quick 版不打算重做。
+- CSV 不支持跨行引号字段；数据整体驻留内存，非分块/流式架构。
+- MAT 依赖仓库内与 LLVM-MinGW 17 兼容的 matio/HDF5/zlib 静态库。
+
+建议下一阶段：多级 LOD 缓存与内存预算 → 图片导出与会话路径重定位 → 百万/千万点性能基准。

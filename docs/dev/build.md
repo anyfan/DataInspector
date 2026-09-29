@@ -1,0 +1,60 @@
+# 构建
+
+## 工具链
+
+- Windows 10/11
+- Qt 6.8.3 `llvm-mingw_64`
+- LLVM-MinGW 17.0.6（Clang）
+- CMake 3.25+（`CMakePresets.json` 版本 6）
+- Ninja
+
+## CMake 预设
+
+仓库提供两个预设：
+
+- `qt6-clang-debug` → `build_qt6-debug/`
+- `qt6-clang-release` → `build_qt6-release/`
+
+```powershell
+cmake --preset qt6-clang-debug
+cmake --build --preset qt6-clang-debug
+```
+
+预设里已钉死 `CMAKE_RC_COMPILER` 到 `llvm-windres.exe`，避免 GNU windres 找不到配套 gcc（见 [工具链排错](toolchain-troubleshooting.md)）。
+
+## 选项
+
+| 选项 | 默认 | 说明 |
+| --- | --- | --- |
+| `ENABLE_MAT` | `ON` | MAT 读取/导出，依赖仓库内 matio/HDF5/zlib 静态库 |
+| `ENABLE_GPU_TESTS` | `OFF` | 注册 GPU 光栅测试到 CTest，需要硬件 Scene Graph 后端 |
+
+## 关键 CMake 组织
+
+`CMakeLists.txt` 把源文件拆成共用列表，避免应用和测试目标重复罗列：
+
+- `DI_RENDER_SOURCES`、`DI_PLOTITEM_SOURCES`、`DI_SIGNAL_SOURCES`、`DI_XLSX_SOURCES`、`DI_CONTROLLER_SOURCES`
+- `DI_QML_FILES`、`DI_ICON_FILES`
+- 函数：`di_add_icon_resources()`、`di_add_test()`
+- MAT 通过 `di_mat` INTERFACE 目标统一暴露头文件和系统库
+
+## 部署
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
+  -QtDir "D:/Software/Qt/6.8.3/llvm-mingw_64" `
+  -BuildDir "build_qt6-release" `
+  -OutputDir "dist/DataInspector"
+```
+
+脚本必须拷贝：
+
+- `plugins/platforms`
+- `plugins/imageformats`（含 `qsvg.dll`，否则工具栏 SVG 图标空白）
+- `plugins/iconengines`（含 `qsvgicon.dll`）
+
+## Windows 资源
+
+- `assets/DataInspector.rc`：嵌入 exe 图标和应用清单。
+- `assets/DataInspector.manifest`：`asInvoker`、Per-Monitor v2 DPI、UTF-8 代码页、supportedOS。
+- 未嵌入清单时 Windows installer detection 可能把 exe 误判为安装程序而弹 UAC，进而导致资源管理器无法拖放文件进窗口（UIPI）。详见 [工具链排错](toolchain-troubleshooting.md)。
