@@ -3,8 +3,6 @@
 #include <QtMath>
 
 #include <optional>
-#include <array>
-#include <QRectF>
 
 bool PlotViewTransform::isValid() const
 {
@@ -166,40 +164,6 @@ static std::optional<QVector<QPointF>> buildStraightBand(const QVector<QPointF> 
     return QVector<QPointF>{start + normal, start - normal, end + normal, end - normal};
 }
 
-static void appendRoundJoins(QVector<QPointF> &triangles,
-                             const QVector<QPointF> &points, double width,
-                             const PlotViewTransform &transform)
-{
-    // Inscribed round joins cannot overshoot the half-width stroke envelope.
-    // Axis-aligned vertices give dense extrema identical outward coverage,
-    // regardless of the direction of the adjacent LOD segments.
-    static const auto circle = [] {
-        std::array<QPointF, 16> vertices;
-        for (int i = 0; i < 16; ++i) {
-            const double angle = qDegreesToRadians(i * 22.5);
-            vertices[i] = QPointF(qCos(angle), qSin(angle));
-        }
-        return vertices;
-    }();
-    const double radius = qMax(1.0, width) * .5;
-    for (qsizetype i = 1; i + 1 < points.size(); ++i) {
-        const auto center = points[i];
-        if (center.x() < radius || center.x() > transform.width - radius
-            || center.y() < radius || center.y() > transform.height - radius)
-            continue;
-        const auto incoming = center - points[i - 1];
-        const auto outgoing = points[i + 1] - center;
-        const double cross = incoming.x() * outgoing.y() - incoming.y() * outgoing.x();
-        if (qFuzzyIsNull(cross) && QPointF::dotProduct(incoming, outgoing) >= 0)
-            continue;
-        for (int j = 0; j < 16; ++j) {
-            triangles.append(center);
-            triangles.append(center + circle[j] * radius);
-            triangles.append(center + circle[(j + 1) % 16] * radius);
-        }
-    }
-}
-
 } // namespace
 
 GeometryResult PlotGeometryBuilder::build(const LodResult &lod,
@@ -212,45 +176,11 @@ GeometryResult PlotGeometryBuilder::build(const LodResult &lod,
     for (const LodSegment &lodSegment : lod.segments) {
         if (lodSegment.points.size() < 2)
             continue;
-        const qsizetype firstGeometrySegment = result.segments.size();
+        const qsizetype firstSegment = result.segments.size();
 
         const double width = qIsFinite(lodSegment.lineWidth)
                 && lodSegment.lineWidth > 0.0
                 ? lodSegment.lineWidth : request.lineWidth;
-        // At subpixel density, isolated round extrema still have different
-        // MSAA coverage from horizontal connections. Cover the reduced bucket
-        // envelope uniformly, using only its retained original min/max samples.
-        // A stale LOD expanded by zoom must never become a wide filled band.
-        QVector<QPointF> envelope;
-        QVector<QRectF> denseCoverage(lodSegment.points.size());
-        if (lodSegment.lineStyle == Qt::SolidLine && lod.key.bucketCount > 0) {
-            const double bucketPixels = (lod.key.xMaximum - lod.key.xMinimum)
-                / (request.transform.xMaximum - request.transform.xMinimum)
-                * request.transform.width / lod.key.bucketCount;
-            const double radius = qMax(1.0, width) * .5;
-            if (bucketPixels > 0 && bucketPixels <= 1.01) {
-                for (const auto &bucket : lodSegment.denseBuckets) {
-                    if (bucket.firstPoint < 0 || bucket.firstPoint + 1 >= lodSegment.points.size())
-                        continue;
-                    const auto a = request.transform.map(lodSegment.points[bucket.firstPoint]);
-                    const auto b = request.transform.map(lodSegment.points[bucket.firstPoint + 1]);
-                    // Sparse/low-amplitude detail remains an ordinary stroke.
-                    if (qAbs(a.y() - b.y()) < 4 * qMax(1.0, width)) continue;
-                    const double left = qMax(0.0, request.transform.map({bucket.firstX, 0}).x() - radius);
-                    const double right = qMin(request.transform.width,
-                        request.transform.map({bucket.lastX, 0}).x() + radius);
-                    const double top = qMax(0.0, qMin(a.y(), b.y()) - radius);
-                    const double bottom = qMin(request.transform.height, qMax(a.y(), b.y()) + radius);
-                    if (!qIsFinite(left) || !qIsFinite(right) || !qIsFinite(top) || !qIsFinite(bottom)
-                        || left >= right || top >= bottom) continue;
-                    denseCoverage[bucket.firstPoint] = QRectF(left, top, right - left, bottom - top);
-                    denseCoverage[bucket.firstPoint + 1] = denseCoverage[bucket.firstPoint];
-                    envelope.append({left, top}); envelope.append({left, bottom});
-                    envelope.append({right, top}); envelope.append({left, bottom});
-                    envelope.append({right, bottom}); envelope.append({right, top});
-                }
-            }
-        }
         auto emitProjected = [&](const QVector<QPointF> &projected) {
         if (projected.size() < 2)
             return;
@@ -275,8 +205,6 @@ GeometryResult PlotGeometryBuilder::build(const LodResult &lod,
                 }
             }
         }
-        for (const auto &piece : pieces)
-            appendRoundJoins(triangles, piece, width, request.transform);
         if (!triangles.isEmpty())
             result.segments.append({lodSegment.seriesId, lodSegment.color,
                                     std::move(triangles), true});
@@ -284,27 +212,52 @@ GeometryResult PlotGeometryBuilder::build(const LodResult &lod,
 
         QVector<QPointF> projected;
         projected.reserve(lodSegment.points.size());
-        for (qsizetype pointIndex = 0; pointIndex < lodSegment.points.size(); ++pointIndex) {
-            const QPointF mapped = request.transform.map(lodSegment.points[pointIndex]);
-            // Replace covered dense strokes instead of layering round caps over
-            // the envelope. Keep bridges wherever the envelopes do not overlap.
-            if (pointIndex > 0 && !projected.isEmpty()
-                && denseCoverage[pointIndex].intersects(denseCoverage[pointIndex - 1])) {
-                emitProjected(projected);
-                projected.clear();
-            }
+        for (const QPointF &point : lodSegment.points) {
+            const QPointF mapped = request.transform.map(point);
             if (!qIsFinite(mapped.x()) || !qIsFinite(mapped.y())
                 || qAbs(mapped.x()) >= 1e8 || qAbs(mapped.y()) >= 1e8) {
                 emitProjected(projected);
                 projected.clear();
                 continue;
             }
-            if (projected.isEmpty() || hasUsableLength(mapped - projected.last()))
-                projected.append(mapped);
+            projected.append(mapped);
         }
         emitProjected(projected);
+        // Supplement subpixel dense buckets without ever removing a stroke or
+        // splitting the original polyline. Normal steps and sparse detail keep
+        // exactly the same geometry as the ordinary rendering path.
+        const double bucketPixels = lod.key.bucketCount > 0
+            ? (lod.key.xMaximum - lod.key.xMinimum)
+                / (request.transform.xMaximum - request.transform.xMinimum)
+                * request.transform.width / lod.key.bucketCount : 0.0;
+        if (lodSegment.lineStyle != Qt::SolidLine || bucketPixels <= 0.0
+            || bucketPixels > 1.01 || !qIsFinite(bucketPixels))
+            continue;
+        QVector<QPointF> envelope;
+        const double radius = qMax(1.0, width) * .5;
+        for (const auto &bucket : lodSegment.denseBuckets) {
+            if (bucket.firstPoint < 0 || bucket.firstPoint + 1 >= lodSegment.points.size())
+                continue;
+            const auto a = request.transform.map(lodSegment.points[bucket.firstPoint]);
+            const auto b = request.transform.map(lodSegment.points[bucket.firstPoint + 1]);
+            // Oscillation is classified from raw samples, not screen height.
+            // A shared axis can compress genuine oscillation below one pixel.
+            if (!qIsFinite(a.y()) || !qIsFinite(b.y()))
+                continue;
+            const double x1 = request.transform.map({bucket.firstX, 0}).x();
+            const double x2 = request.transform.map({bucket.lastX, 0}).x();
+            if (!qIsFinite(x1) || !qIsFinite(x2)) continue;
+            const double left = qMax(0.0, x1 - radius);
+            const double right = qMin(request.transform.width, x2 + radius);
+            const double top = qMax(0.0, qMin(a.y(), b.y()) - radius);
+            const double bottom = qMin(request.transform.height, qMax(a.y(), b.y()) + radius);
+            if (left >= right || top >= bottom) continue;
+            envelope.append({left, top}); envelope.append({left, bottom});
+            envelope.append({right, top}); envelope.append({left, bottom});
+            envelope.append({right, bottom}); envelope.append({right, top});
+        }
         if (!envelope.isEmpty()) {
-            if (result.segments.size() > firstGeometrySegment)
+            if (result.segments.size() > firstSegment)
                 result.segments.last().vertices += envelope;
             else
                 result.segments.append({lodSegment.seriesId, lodSegment.color, std::move(envelope), true});

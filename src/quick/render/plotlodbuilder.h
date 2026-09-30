@@ -19,8 +19,8 @@ struct LodRequestKey
 
 struct LodDenseBucket
 {
-    double firstX = 0;
-    double lastX = 0;
+    double firstX = 0.0;
+    double lastX = 0.0;
     qsizetype firstPoint = 0;
 };
 

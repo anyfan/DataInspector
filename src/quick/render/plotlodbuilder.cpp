@@ -82,20 +82,30 @@ static void appendSeriesLod(const PlotSeriesData &series,
     std::optional<IndexedPoint> minimum;
     std::optional<IndexedPoint> maximum;
     qsizetype bucketSamples = 0;
-    double firstX = 0, lastX = 0;
+    double firstX = 0.0, lastX = 0.0;
+    double lastY = 0.0;
+    double totalVariation = 0.0;
+    int direction = 0, reversals = 0;
 
     const double span = key.xMaximum - key.xMinimum;
     auto flushBucket = [&]() {
         if (minimum.has_value()) {
-            // Keep the actual sample extent (not the whole bin) so gaps and
-            // viewport neighbors are not filled by an envelope rectangle.
-            if (series.monotonicTime && bucketSamples >= 4
+            // Tiny jitter around a single large step is not dense oscillation.
+            // Require travel across the bucket's amplitude range at least three
+            // times, as well as direction changes, before adding an envelope.
+            const double amplitude = maximum->point.y() - minimum->point.y();
+            if (series.monotonicTime && bucketSamples >= 4 && reversals >= 2
+                && qIsFinite(totalVariation) && qIsFinite(amplitude) && amplitude > 0
+                && totalVariation / amplitude >= 3.0
                 && minimum->index != maximum->index
                 && firstX >= key.xMinimum && lastX <= key.xMaximum)
                 current.denseBuckets.append({firstX, lastX, current.points.size()});
             appendReducedBucket(current.points, *minimum, *maximum);
         }
         bucketSamples = 0;
+        direction = 0;
+        reversals = 0;
+        totalVariation = 0.0;
         minimum.reset();
         maximum.reset();
     };
@@ -132,6 +142,13 @@ static void appendSeriesLod(const PlotSeriesData &series,
         }
 
         const IndexedPoint candidate{point, index};
+        if (bucketSamples > 0 && point.y() != lastY) {
+            totalVariation += qAbs(point.y() - lastY);
+            const int nextDirection = point.y() > lastY ? 1 : -1;
+            if (direction != 0 && direction != nextDirection) ++reversals;
+            direction = nextDirection;
+        }
+        lastY = point.y();
         if (bucketSamples++ == 0) firstX = point.x();
         lastX = point.x();
         if (!minimum.has_value()) {

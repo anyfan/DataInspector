@@ -1,5 +1,7 @@
 # 密集曲线预览边缘凸点
 
+> 历史方案，已被撤回。现行实现与验证见 [保留折线的补充包络](mcp-dense-preview-additive-envelope.md)，回退原因见 [紧急回退记录](mcp-dense-preview-emergency-rollback.md)。
+
 2026-09-30
 
 用户报告密集曲线在整体预览时出现细小凸点，放大后消失。

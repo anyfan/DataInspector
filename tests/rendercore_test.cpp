@@ -10,8 +10,8 @@ class RenderCoreTest final : public QObject
     Q_OBJECT
 
 private slots:
-    void denseLodHasUniformRoundExtrema();
-    void denseEnvelopeRetainsPeaksAndDisablesOnZoom();
+    void denseEnvelopeOnlyAddsCoverage();
+    void lodGeometryPreservesStepConnections();
     void indexedMeanAbsoluteMatchesRawSamples();
     void geometryWidthIsIndependentOfSlopeAndSampleSpacing();
     void binaryCursorMatchesOriginalOrderScan();
@@ -49,88 +49,103 @@ private slots:
     void geometryDoesNotFillViewportWhenStaleLodClipsToEdges();
 };
 
-void RenderCoreTest::denseEnvelopeRetainsPeaksAndDisablesOnZoom()
+void RenderCoreTest::denseEnvelopeOnlyAddsCoverage()
 {
-    PlotSeriesInput input;
-    input.id = 1;
-    input.lineWidth = 2;
-    for (int i = 0; i < 10000; ++i) {
-        input.time.append(i);
-        input.values.append(i % 40);
-    }
-    input.values[5000] = 100; // A real peak must survive envelope rendering.
-    input.values[6000] = qQNaN();
-    PlotSeriesStore store;
-    store.replaceSeries({input});
-    const auto snapshot = store.snapshot({1});
-    const auto lod = PlotLodBuilder::build(snapshot, {snapshot.generation, {1}, 0, 10000, 100, 1});
-    QCOMPARE(lod.segments.size(), 2);
-    bool peakFound = false;
-    for (const auto &segment : lod.segments) {
-        QVERIFY(!segment.denseBuckets.isEmpty());
-        for (const auto &bucket : segment.denseBuckets) {
-            QVERIFY(!(bucket.firstX < 6000 && bucket.lastX > 6000));
-            peakFound |= segment.points[bucket.firstPoint].y() == 100
-                || segment.points[bucket.firstPoint + 1].y() == 100;
+    for (int shape = 0; shape < 5; ++shape) {
+        PlotSeriesInput input;
+        input.id = 1;
+        for (int i = 0; i < 10000; ++i) {
+            input.time.append(i);
+            input.values.append(shape == 0 ? i % 40 : shape == 1 ? (i < 5010 ? 0 : 100)
+                : shape == 2 ? double(i) : shape == 3 ? (i == 5010 ? 100 : 0)
+                : (i < 5010 ? 0 : 100) + (i % 2 ? .001 : -.001));
+        }
+        if (shape == 0) input.values[6000] = qQNaN();
+        PlotSeriesStore store;
+        store.replaceSeries({input});
+        const auto snapshot = store.snapshot({1});
+        auto lod = PlotLodBuilder::build(snapshot, {snapshot.generation, {1}, 0, 10000, 100, 1});
+        qsizetype denseCount = 0;
+        for (const auto &segment : lod.segments) {
+            denseCount += segment.denseBuckets.size();
+            for (const auto &bucket : segment.denseBuckets)
+                QVERIFY(!(bucket.firstX < 6000 && bucket.lastX > 6000));
+            if (shape == 4)
+                for (const auto &bucket : segment.denseBuckets)
+                    QVERIFY2(!(bucket.firstX < 5010 && bucket.lastX >= 5010),
+                             "Jitter must not turn a step into a wide envelope");
+        }
+        if (shape == 0) QVERIFY(denseCount > 0);
+        if (shape > 0 && shape < 4) QCOMPARE(denseCount, 0);
+        auto plain = lod;
+        for (auto &segment : plain.segments) segment.denseBuckets.clear();
+        for (auto style : {Qt::SolidLine, Qt::DashLine}) {
+            for (auto &segment : lod.segments) segment.lineStyle = style;
+            for (auto &segment : plain.segments) segment.lineStyle = style;
+            for (double screenWidth : {100.0, 400.0}) {
+                const GeometryRequest request{{0, 10000, -10, shape == 2 ? 11000.0 : 110.0,
+                                               screenWidth, 240}, 2};
+                const auto baseline = PlotGeometryBuilder::build(plain, request);
+                const auto actual = PlotGeometryBuilder::build(lod, request);
+                QCOMPARE(actual.segments.size(), baseline.segments.size());
+                qsizetype extra = 0;
+                for (qsizetype i = 0; i < baseline.segments.size(); ++i) {
+                    const auto &before = baseline.segments[i].vertices;
+                    const auto &after = actual.segments[i].vertices;
+                    QVERIFY(after.size() >= before.size());
+                    QCOMPARE(after.first(before.size()), before);
+                    extra += after.size() - before.size();
+                }
+                if (style == Qt::DashLine || screenWidth > 100 || (shape > 0 && shape < 4))
+                    QCOMPARE(extra, 0);
+                if (style == Qt::SolidLine && screenWidth == 100 && shape == 0)
+                    QVERIFY(extra > 0);
+            }
         }
     }
-    QVERIFY(peakFound);
-    auto ordinary = lod;
-    for (auto &segment : ordinary.segments) segment.denseBuckets.clear();
-    const GeometryRequest zoom{{4900, 5100, -10, 110, 100, 240}, 2};
-    const auto actual = PlotGeometryBuilder::build(lod, zoom);
-    const auto expected = PlotGeometryBuilder::build(ordinary, zoom);
-    QCOMPARE(actual.segments.size(), expected.segments.size());
-    for (qsizetype i = 0; i < actual.segments.size(); ++i)
-        QCOMPARE(actual.segments[i].vertices, expected.segments[i].vertices);
-    const GeometryRequest overview{{0, 10000, -10, 110, 100, 240}, 2};
-    const auto full = PlotGeometryBuilder::build(lod, overview);
-    bool peakDrawn = false;
-    for (const auto &segment : full.segments)
-        for (const auto &point : segment.vertices) peakDrawn |= point.y() <= 20;
-    QVERIFY(peakDrawn);
 }
 
-void RenderCoreTest::denseLodHasUniformRoundExtrema()
+void RenderCoreTest::lodGeometryPreservesStepConnections()
 {
-    PlotSeriesInput input;
-    input.id = 1;
-    input.lineWidth = 2;
-    for (int i = 0; i < 20000; ++i) {
-        input.time.append(i);
-        input.values.append((i % 37) < 18 ? 0.0 : 1000.0);
-    }
-    PlotSeriesStore store;
-    store.replaceSeries({input});
-    for (double width : {1.0, 2.0, 4.0}) {
-        store.updateSeriesPen(1, Qt::magenta, width, Qt::SolidLine);
-        const auto current = store.snapshot({1});
-        const auto lod = PlotLodBuilder::build(current,
-            {current.generation, {1}, 0, 20000, 320, 1});
-        const PlotViewTransform transform{0, 20000, -100, 1100, 320, 240};
-        const auto geometry = PlotGeometryBuilder::build(lod, {transform, width});
-        QCOMPARE(geometry.segments.size(), 1);
-        const auto &vertices = geometry.segments.first().vertices;
-        const auto covered = [&](QPointF probe) {
-            for (qsizetype i = 0; i + 2 < vertices.size(); i += 3) {
-                QPolygonF triangle;
-                triangle << vertices[i] << vertices[i + 1] << vertices[i + 2];
-                if (triangle.containsPoint(probe, Qt::OddEvenFill)) return true;
+    // A densely sampled ordinary step must remain connected in an overview.
+    // Check both rising and falling steps, including a step on a bucket edge.
+    for (int step : {3990, 4000, 4010}) {
+        for (bool rising : {false, true}) {
+            PlotSeriesInput input;
+            input.id = 1;
+            for (int i = 0; i < 10000; ++i) {
+                input.time.append(i * .1);
+                input.values.append((i < step) == rising ? 50.0 : 330.0);
             }
-            return false;
-        };
-        const auto &points = lod.segments.first().points;
-        // Every interior extremum must have the same outward stroke coverage,
-        // including where bucket order changes produce horizontal connections.
-        for (qsizetype i = 2; i + 2 < points.size(); ++i) {
-            auto probe = transform.map(points[i]);
-            if (probe.x() < 5 || probe.x() > 315) continue;
-            probe.ry() += points[i].y() == 1000 ? -width * .45 : width * .45;
-            QVERIFY2(covered(probe), "Missing join makes occasional horizontal LOD edges look like spikes");
-        }
-        for (const auto &vertex : vertices) {
-            QVERIFY(vertex.y() >= 20 - width / 2 - 1e-9);
-            QVERIFY(vertex.y() <= 220 + width / 2 + 1e-9);
+            PlotSeriesStore store;
+            store.replaceSeries({input});
+            const auto snapshot = store.snapshot({1});
+            const auto lod = PlotLodBuilder::build(snapshot,
+                {snapshot.generation, {1}, 0, 1000, 200, 1});
+            const PlotViewTransform transform{0, 1000, 0, 400, 200, 240};
+            const auto geometry = PlotGeometryBuilder::build(lod, {transform, 2});
+            const auto &points = lod.segments.first().points;
+            bool checked = false;
+            for (qsizetype i = 1; i < points.size(); ++i) {
+                if (points[i].y() == points[i - 1].y()) continue;
+                const auto a = transform.map(points[i - 1]);
+                const auto b = transform.map(points[i]);
+                for (double fraction : {.1, .5, .9}) {
+                    const auto probe = a + (b - a) * fraction;
+                    bool covered = false;
+                    for (const auto &segment : geometry.segments) {
+                        const auto &v = segment.vertices;
+                        for (qsizetype j = 0; j + 2 < v.size(); j += 3) {
+                            QPolygonF triangle;
+                            triangle << v[j] << v[j + 1] << v[j + 2];
+                            covered |= triangle.containsPoint(probe, Qt::OddEvenFill);
+                        }
+                    }
+                    QVERIFY2(covered, "The step connection must not disappear in dense data");
+                }
+                checked = true;
+            }
+            QVERIFY(checked);
         }
     }
 }

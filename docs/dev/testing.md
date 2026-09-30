@@ -20,7 +20,8 @@ Release 把目录换成 `build_qt6-release`。
 | `plotitem_lod_test` | PlotItem LOD 调度、视窗投影 |
 | `plotitem_blend_test` | 曲线绘制层级（AmplitudeLayers 排序置顶） |
 | `plotitem_raster_test` | GPU 光栅路径（需 `-DENABLE_GPU_TESTS=ON`） |
-| `plotitem_dense_raster_test` | 密集锯齿波五档亚像素偏移下的上下沿一致性（GPU） |
+| `plotitem_dense_raster_test` | 密集锯齿波两种预览宽度、五档亚像素偏移的边缘一致性（GPU） |
+| `plotitem_compressed_raster_test` | 大范围共享 Y 轴下压缩密集波形的边缘一致性（GPU） |
 | `appcontroller_test` | 控制器集成：布局、自适应、游标、回退、会话入口、QML 加载 |
 | `session_test` | 会话往返、结构校验、失败保留、相对路径、子图生命周期 |
 | `signalselection_test` | 信号树模型、祖先路径、选择/拖拽 |
@@ -32,9 +33,13 @@ Release 把目录换成 `build_qt6-release`。
 
 ## GPU 测试
 
-`rendercore_test::denseLodHasUniformRoundExtrema` 使用 2 万点固定上下限波形，经 320 桶 LOD 后验证 1/2/4 像素线宽下每个内部极值的向外覆盖一致，且几何不超出半线宽包络。该断言在缺少圆角连接的实现上失败。
+密集测试可追加 `--compressed`，将 Y 轴设为约 -8000–198000，使 GPS 毫秒曲线只有约 4 像素高；仍检查两种宽度、五档亚像素偏移下的上下沿一致性。
 
-`denseEnvelopeRetainsPeaksAndDisablesOnZoom` 覆盖真实尖峰保留、NaN 分段和旧 LOD 放大后停止包络填充。`plotitem_raster_test.exe --dense` 使用 247511 点锯齿波逐列检查 GPU 图像边缘，覆盖仅验证极值坐标无法发现的亚像素覆盖差异；可附加 `--csv path` 读取带表头的 time,value 两列数据，检查当前视窗中 3300–3900 秒的恒定上下沿（此模式用于 GPS 毫秒数据复核）。
+`plotitem_raster_test --dense` 检查 247511 点合成锯齿波；`--dense-csv path` 读取带表头的 time,value 两列 CSV，检查 3300–3900 秒恒定极值区间，适用于 `11040237.DAT.mat` 的 GPS 毫秒信号。CPU `denseEnvelopeOnlyAddsCoverage` 对振荡、阶跃、单调和孤立尖峰逐顶点验证原几何保留，同时检查 NaN 分段、虚线与放大禁用条件。
+
+`plotitem_raster_test --step-csv path` 可读取带表头的 time,signal1,signal2 三列 CSV，在 290–1010 秒视窗内验证两条信号最大跳变的连线覆盖；用于发动机负载测试的航向/俯仰回归。默认不带参数仍运行原有光栅覆盖测试。CPU 套件的 `lodGeometryPreservesStepConnections` 检查上升/下降阶跃在 LOD 桶边界附近的几何连续性。
+
+阶跃 GPU 检查同时按像素灰度积分测量竖线宽度：2 逻辑像素画笔允许不超过 `2×DPR+0.75` 物理像素的覆盖宽度，防止“连线还在但已加粗”的回归。`denseEnvelopeOnlyAddsCoverage` 还覆盖带微小交替抖动的阶跃，要求跨越阶跃的桶不生成包络，最终几何与普通折线路径一致。
 
 默认 offscreen 平台运行，不等同人工 GUI 验收。需要 GPU 回归时：
 

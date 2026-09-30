@@ -31,7 +31,9 @@ cmake --build --preset qt6-clang-debug
 | `ENABLE_MAT` | `ON` | MAT 读取/导出，依赖仓库内 matio/HDF5/zlib 静态库 |
 | `ENABLE_GPU_TESTS` | `OFF` | 注册 GPU 光栅测试到 CTest，需要硬件 Scene Graph 后端 |
 
-启用后包含 `plotitem_dense_raster_test`，复用 `plotitem_raster_test --dense` 验证密集预览的边缘覆盖。
+GPU 套件包括复用 `plotitem_raster_test --dense` 的 `plotitem_dense_raster_test`，检查密集预览边缘一致性。
+
+`plotitem_compressed_raster_test` 追加 `--compressed`，覆盖多信号共用大范围 Y 轴的压缩显示。
 
 ## 关键 CMake 组织
 
