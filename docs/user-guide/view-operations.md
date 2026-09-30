@@ -1,5 +1,7 @@
 # 视图操作
 
+> **状态**：现行 · **读者**：最终用户 / AI 代理 · **关联代码**：`plotitem.*`、`qml/QuickPlot.qml`、`appcontroller_plots.cpp`、`render/plotaxisutils.*`
+
 ## 基本交互
 
 - **拖动**：绘图区按住左键拖动平移。

@@ -1,5 +1,7 @@
 # QML 工具与静态检查
 
+> **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联文件**：`src/quick/qmltypes.h`、`qml/*.qml`、`qml/qmllint.ini.in` · **改 QML 或注册类型前必读**
+
 ## 检查目标
 
 完成 CMake configure 后：

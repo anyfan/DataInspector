@@ -1,5 +1,8 @@
 # Qt Quick 游标、坐标轴、图例与多子图迁移 Implementation Plan
 
+> **状态**：已完成（归档） · **当前文档**：[视图操作](../../../user-guide/view-operations.md)
+> **给 AI 代理**：这是历史实施计划，checkbox 任务均已执行完毕；实现细节已随迭代演进，请以现行文档和源码为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Extend the Qt Quick viewer with synchronized double cursors, raw-point snapping, axes/grid, dynamic legends, and independent multi-subplot bindings while preserving CSV/MAT loading.
@@ -8,7 +11,7 @@
 
 **Tech Stack:** C++17, Qt 6.8 Quick/Scene Graph, Qt Quick Controls 2, QML, CMake/Ninja.
 
-**Spec:** `docs/superpowers/specs/2026-09-08-quick-cursor-axis-legend-subplots-design.md`
+**Spec:** `../specs/2026-09-08-quick-cursor-axis-legend-subplots-design.md`
 
 ## Global Constraints
 

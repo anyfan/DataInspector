@@ -1,5 +1,8 @@
 # DataInspector Render Core Separation Implementation Plan
 
+> **状态**：已完成（归档） · **当前文档**：[渲染管线](../../../architecture/render-pipeline.md)
+> **给 AI 代理**：历史实施计划，checkbox 任务均已执行完毕；后续已有异步 LOD 等演进，请以现行文档和源码为准。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Split raw series storage, LOD reduction, and triangle-strip geometry generation out of `PlotItem` while preserving the current Qt Quick viewer behavior and narrow-viewport fix.
@@ -8,7 +11,7 @@
 
 **Tech Stack:** C++17, Qt 6.8.3 Core/Gui/Quick/Test, Qt Quick Scene Graph, CMake, Ninja, CTest, LLVM-MinGW 17.0.6.
 
-**Spec:** `docs/superpowers/specs/2026-09-10-render-core-separation-design.md`
+**Spec:** `../specs/2026-09-10-render-core-separation-design.md`
 
 ## Global Constraints
 

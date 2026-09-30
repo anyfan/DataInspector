@@ -1,5 +1,7 @@
 # 构建
 
+> **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联文件**：`CMakeLists.txt`、`CMakePresets.json`、`tools/deploy_qt6.ps1`、`assets/DataInspector.rc/.manifest`
+
 ## 工具链
 
 - Windows 10/11

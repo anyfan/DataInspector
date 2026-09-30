@@ -1,5 +1,7 @@
 # 工具链排错
 
+> **状态**：现行 · **读者**：AI 代理 / 开发者 · **场景**：构建/部署报错时查这里，别先怀疑自己的代码
+
 ## `windres: preprocessing failed.`
 
 **现象**：Debug 构建正常，Release 在 IDE 里编译 `assets/DataInspector.rc` 失败，手动终端跑同一条命令却成功。

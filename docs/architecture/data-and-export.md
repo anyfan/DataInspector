@@ -1,5 +1,7 @@
 # 数据加载与导出
 
+> **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联代码**：`src/quick/dataloadworker.*`、`xlsxreader/writer.*`、`matwriter.*`、`mat5streamwriter.*`、`dataexportworker.*`、`exportvalidation.*`、`startupfiles.*` · **配套测试**：`dataloadworker_test`、`xlsxwriter_test`、`matwriter_test`、`startupfiles_test`
+
 ## 加载管线
 
 `DataLoadWorker` 在后台串行执行：

@@ -1,5 +1,8 @@
 # 重构进度（2026-09-13）
 
+> **状态**：历史快照，已过时 · **归档位置**：`docs/dev-log/` · **当前文档**：[架构总览](../architecture/overview.md)、[并发](../architecture/concurrency.md)
+> **给 AI 代理**：本文件记录当时重构进度；所有阶段均已完成，"后续阶段"中的重放/Python API 已遗弃，勿据此规划工作。
+
 ## 本阶段范围
 
 继续现有 Qt Quick 重构，保留工作区已有 CSV、信号模型、LOD 和界面改动。

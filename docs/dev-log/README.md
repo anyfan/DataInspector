@@ -1,6 +1,8 @@
 # 开发日志索引
 
-本目录保留历次功能开发、缺陷修复和工程整理的原始记录。每篇对应一次具体工作，记录了当时的需求、根因、改动文件与验证结果。长期有效的结论已吸收到 Wiki 其他章节；这里按主题分组便于回查。
+本目录保留历次功能开发、缺陷修复和工程整理的原始记录，也收纳更早的**历史归档**（已完成/已被取代的旧文档）。每篇对应一次具体工作，记录了当时的需求、根因、改动文件与验证结果。长期有效的结论已吸收到 Wiki 其他章节；这里按主题分组便于回查。
+
+> **给 AI 代理**：以下 `mcp-*.md` 与归档文档均为历史记录，不代表当前代码状态；实现现状以 `docs/` 下对应主题的现行文档和源码为准。**不要依据归档里的计划重新实现。**
 
 ## 用户功能与交互
 
@@ -48,3 +50,20 @@
 | --- | --- |
 | [工程代码整理](mcp-code-cleanup.md) | 删除旧 QWidget 代码、AppController/QML 拆分、CMake 函数化 |
 | [QML 静态分析警告修复](mcp-qml-static-analysis.md) | qmltypes.h、pragma Bound、MaxWarnings=0 |
+
+## 历史归档（更早的旧文档，勿据此实现）
+
+| 文件 | 内容 | 状态 | 现行对应文档 |
+| --- | --- | --- | --- |
+| `refactoring-status.md` | 2026-09-13 重构进度快照（加载职责分离、子图生命周期、游标性能、异步 LOD 迁移） | **历史快照，已过时** | [架构总览](../architecture/overview.md)、[并发](../architecture/concurrency.md) |
+| `renderer_research.md` | 2026-09-07 绘图后端选型调研（QCustomPlot → Qt Quick Scene Graph 的决策依据） | **决策留档，结论已落地** | [渲染管线](../architecture/render-pipeline.md) |
+| `superpowers/plans/2026-09-08-quick-cursor-axis-legend-subplots.md` | 游标/坐标轴/图例/多子图迁移实施计划 | **已完成** | [视图操作](../user-guide/view-operations.md) |
+| `superpowers/specs/2026-09-08-quick-cursor-axis-legend-subplots-design.md` | 上述迁移的设计说明 | **已完成** | [视图操作](../user-guide/view-operations.md) |
+| `superpowers/plans/2026-09-10-render-core-separation.md` | 渲染内核拆分（Store/LOD/Geometry 分层）实施计划 | **已完成** | [渲染管线](../architecture/render-pipeline.md) |
+| `superpowers/specs/2026-09-10-render-core-separation-design.md` | 上述拆分的设计说明 | **已完成** | [渲染管线](../architecture/render-pipeline.md) |
+
+历史归档注意事项：
+
+1. **不要把归档计划当成待办**：`superpowers/plans/` 里的 checkbox 任务是历史实施清单，均已执行完毕，不要据此重复实现。
+2. **旧路径引用已失效**：归档中的 `src/plot/*`、`src/core/*` 等旧 QWidget/QCustomPlot 路径已在提交 `8d2b6bb` 后移除；现行源码在 `src/quick/` 与 `qml/`。
+3. **描述以现行文档为准**：例如 `refactoring-status.md` 中的"后续阶段"（图片导出、重放、Python API）并非当前计划——重放/Python API/`.mldatx` 已正式遗弃，见根 `readme.md`。

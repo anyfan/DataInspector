@@ -1,5 +1,8 @@
 # DataInspector 渲染内核拆分设计
 
+> **状态**：已完成（归档） · **当前文档**：[渲染管线](../../../architecture/render-pipeline.md)
+> **给 AI 代理**：历史设计文档，供追溯；请以现行文档和源码为准。
+
 ## 背景
 
 当前 Qt Quick 绘图路径已经具备 GPU 三角带、按视窗生成 min/max LOD、NaN 断线、游标和多子图交互，但数据存储、LOD 算法、几何构建、视窗状态及 Scene Graph 提交仍集中在 `PlotItem`。这使算法只能通过 `QQuickItem` 间接测试，也让后续增加多级缓存或后台生成时容易把数据线程、GUI 线程和渲染线程耦合在一起。

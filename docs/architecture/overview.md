@@ -1,5 +1,7 @@
 # 整体架构
 
+> **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联代码**：全仓库 · **配套**：[渲染管线](render-pipeline.md)、[数据与导出](data-and-export.md)、[并发](concurrency.md)
+
 DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`src/ui`、`src/script`、`src/data`，已在提交 `8d2b6bb` 后移除）切换到 Qt 6.8 Qt Quick Scene Graph 渲染。
 
 ## 模块划分

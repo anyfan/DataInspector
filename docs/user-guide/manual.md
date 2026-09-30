@@ -1,5 +1,7 @@
 # 使用指南
 
+> **状态**：现行 · **读者**：最终用户（不需要懂代码）· **相关功能页面**：[数据格式](data-formats.md)、[视图操作](view-operations.md)、[信号树与样式](signals-and-styling.md)、[会话](session.md)
+
 本指南面向**只需要用 DataInspector 看图、对比信号、导出数据**的用户。不需要了解任何代码、构建过程或文件位置。
 
 ---

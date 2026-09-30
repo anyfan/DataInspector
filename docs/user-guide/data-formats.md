@@ -1,5 +1,7 @@
 # 数据格式
 
+> **状态**：现行 · **读者**：最终用户 / AI 代理 · **关联代码**：`dataloadworker.*`、`xlsxreader/writer.*`、`matwriter.*`、`exportvalidation.*` · **改解析/导出语义时同步更新本页**
+
 ## CSV / TXT
 
 ```text

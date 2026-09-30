@@ -1,5 +1,7 @@
 # 渲染管线
 
+> **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联代码**：`src/quick/render/`、`src/quick/plotitem.*`、`src/quick/plotblendmaterial.*` · **配套测试**：`rendercore_test`、`plotitem_lod_test`、`plotitem_blend_test`
+
 曲线使用 GPU 三角带绘制，不依赖 `GL_LINE` 宽度。整条管线按"原始数据 → LOD → 屏幕几何 → QSG 节点"四级组织。
 
 ## PlotSeriesStore（不可变原始数据）

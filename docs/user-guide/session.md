@@ -1,5 +1,7 @@
 # 会话保存与恢复
 
+> **状态**：现行 · **读者**：最终用户 / AI 代理 · **关联代码**：`sessiondocument.*`、`appcontroller_session.cpp` · **改动会话格式必须同步本页**
+
 ## 使用入口
 
 - **会话 → 保存会话…**（`Ctrl+S`）：保存为 `.disession`（也接受 `.json`）。
