@@ -81,11 +81,21 @@ static void appendSeriesLod(const PlotSeriesData &series,
     int currentBucket = -1;
     std::optional<IndexedPoint> minimum;
     std::optional<IndexedPoint> maximum;
+    qsizetype bucketSamples = 0;
+    double firstX = 0, lastX = 0;
 
     const double span = key.xMaximum - key.xMinimum;
     auto flushBucket = [&]() {
-        if (minimum.has_value())
+        if (minimum.has_value()) {
+            // Keep the actual sample extent (not the whole bin) so gaps and
+            // viewport neighbors are not filled by an envelope rectangle.
+            if (series.monotonicTime && bucketSamples >= 4
+                && minimum->index != maximum->index
+                && firstX >= key.xMinimum && lastX <= key.xMaximum)
+                current.denseBuckets.append({firstX, lastX, current.points.size()});
             appendReducedBucket(current.points, *minimum, *maximum);
+        }
+        bucketSamples = 0;
         minimum.reset();
         maximum.reset();
     };
@@ -122,6 +132,8 @@ static void appendSeriesLod(const PlotSeriesData &series,
         }
 
         const IndexedPoint candidate{point, index};
+        if (bucketSamples++ == 0) firstX = point.x();
+        lastX = point.x();
         if (!minimum.has_value()) {
             minimum = candidate;
             maximum = candidate;

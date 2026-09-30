@@ -24,6 +24,7 @@
 | 文档 | 主题 |
 | --- | --- |
 | [密集曲线缩放几何](mcp-dense-curve-zoom-geometry.md) | 三角形条带改为常宽四边形三角形列表，消除楔形填充 |
+| [密集曲线预览边缘凸点](mcp-dense-curve-round-joins.md) | 补圆角连接，统一 LOD 极值处的线宽覆盖 |
 | [PlotItem 输入线程安全](mcp-plotitem-input-thread-safety.md) | mousePress/mouseMove 锁内快照 |
 | [来源隔离、Y 范围索引、MAT 流式导出](mcp-source-isolation-and-export-performance.md) | plotrangeindex 线段树、mat5streamwriter、系列 ID 哈希 |
 | [代码审查：会话边界、数值稳定性与查询优化](mcp-review-numeric-and-query.md) | 14 色调色板越界、大时间戳刻度、LOD 浮点桶、时间范围摘要 |

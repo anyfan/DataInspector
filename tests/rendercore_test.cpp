@@ -10,6 +10,8 @@ class RenderCoreTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void denseLodHasUniformRoundExtrema();
+    void denseEnvelopeRetainsPeaksAndDisablesOnZoom();
     void indexedMeanAbsoluteMatchesRawSamples();
     void geometryWidthIsIndependentOfSlopeAndSampleSpacing();
     void binaryCursorMatchesOriginalOrderScan();
@@ -46,6 +48,92 @@ private slots:
     void geometryKeepsStrokeWhenASampleRepeats();
     void geometryDoesNotFillViewportWhenStaleLodClipsToEdges();
 };
+
+void RenderCoreTest::denseEnvelopeRetainsPeaksAndDisablesOnZoom()
+{
+    PlotSeriesInput input;
+    input.id = 1;
+    input.lineWidth = 2;
+    for (int i = 0; i < 10000; ++i) {
+        input.time.append(i);
+        input.values.append(i % 40);
+    }
+    input.values[5000] = 100; // A real peak must survive envelope rendering.
+    input.values[6000] = qQNaN();
+    PlotSeriesStore store;
+    store.replaceSeries({input});
+    const auto snapshot = store.snapshot({1});
+    const auto lod = PlotLodBuilder::build(snapshot, {snapshot.generation, {1}, 0, 10000, 100, 1});
+    QCOMPARE(lod.segments.size(), 2);
+    bool peakFound = false;
+    for (const auto &segment : lod.segments) {
+        QVERIFY(!segment.denseBuckets.isEmpty());
+        for (const auto &bucket : segment.denseBuckets) {
+            QVERIFY(!(bucket.firstX < 6000 && bucket.lastX > 6000));
+            peakFound |= segment.points[bucket.firstPoint].y() == 100
+                || segment.points[bucket.firstPoint + 1].y() == 100;
+        }
+    }
+    QVERIFY(peakFound);
+    auto ordinary = lod;
+    for (auto &segment : ordinary.segments) segment.denseBuckets.clear();
+    const GeometryRequest zoom{{4900, 5100, -10, 110, 100, 240}, 2};
+    const auto actual = PlotGeometryBuilder::build(lod, zoom);
+    const auto expected = PlotGeometryBuilder::build(ordinary, zoom);
+    QCOMPARE(actual.segments.size(), expected.segments.size());
+    for (qsizetype i = 0; i < actual.segments.size(); ++i)
+        QCOMPARE(actual.segments[i].vertices, expected.segments[i].vertices);
+    const GeometryRequest overview{{0, 10000, -10, 110, 100, 240}, 2};
+    const auto full = PlotGeometryBuilder::build(lod, overview);
+    bool peakDrawn = false;
+    for (const auto &segment : full.segments)
+        for (const auto &point : segment.vertices) peakDrawn |= point.y() <= 20;
+    QVERIFY(peakDrawn);
+}
+
+void RenderCoreTest::denseLodHasUniformRoundExtrema()
+{
+    PlotSeriesInput input;
+    input.id = 1;
+    input.lineWidth = 2;
+    for (int i = 0; i < 20000; ++i) {
+        input.time.append(i);
+        input.values.append((i % 37) < 18 ? 0.0 : 1000.0);
+    }
+    PlotSeriesStore store;
+    store.replaceSeries({input});
+    for (double width : {1.0, 2.0, 4.0}) {
+        store.updateSeriesPen(1, Qt::magenta, width, Qt::SolidLine);
+        const auto current = store.snapshot({1});
+        const auto lod = PlotLodBuilder::build(current,
+            {current.generation, {1}, 0, 20000, 320, 1});
+        const PlotViewTransform transform{0, 20000, -100, 1100, 320, 240};
+        const auto geometry = PlotGeometryBuilder::build(lod, {transform, width});
+        QCOMPARE(geometry.segments.size(), 1);
+        const auto &vertices = geometry.segments.first().vertices;
+        const auto covered = [&](QPointF probe) {
+            for (qsizetype i = 0; i + 2 < vertices.size(); i += 3) {
+                QPolygonF triangle;
+                triangle << vertices[i] << vertices[i + 1] << vertices[i + 2];
+                if (triangle.containsPoint(probe, Qt::OddEvenFill)) return true;
+            }
+            return false;
+        };
+        const auto &points = lod.segments.first().points;
+        // Every interior extremum must have the same outward stroke coverage,
+        // including where bucket order changes produce horizontal connections.
+        for (qsizetype i = 2; i + 2 < points.size(); ++i) {
+            auto probe = transform.map(points[i]);
+            if (probe.x() < 5 || probe.x() > 315) continue;
+            probe.ry() += points[i].y() == 1000 ? -width * .45 : width * .45;
+            QVERIFY2(covered(probe), "Missing join makes occasional horizontal LOD edges look like spikes");
+        }
+        for (const auto &vertex : vertices) {
+            QVERIFY(vertex.y() >= 20 - width / 2 - 1e-9);
+            QVERIFY(vertex.y() <= 220 + width / 2 + 1e-9);
+        }
+    }
+}
 
 void RenderCoreTest::indexedMeanAbsoluteMatchesRawSamples()
 {

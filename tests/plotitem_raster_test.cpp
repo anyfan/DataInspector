@@ -6,11 +6,15 @@
 #include <QSurfaceFormat>
 #include <QDebug>
 #include <QPainter>
+#include <QFile>
+#include <QTextStream>
 
 int main(int argc, char **argv)
 {
     QSurfaceFormat format; format.setSamples(4); QSurfaceFormat::setDefaultFormat(format);
     QGuiApplication app(argc, argv);
+    const bool dense = app.arguments().contains(QStringLiteral("--dense"));
+    const int csvIndex = app.arguments().indexOf(QStringLiteral("--csv"));
     if (QQuickWindow::graphicsApi() == QSGRendererInterface::Software) {
         qInfo() << "GPU raster test requires a hardware scene graph backend";
         return 77;
@@ -22,10 +26,31 @@ int main(int argc, char **argv)
     window.setColor(Qt::white);
     auto store = std::make_shared<PlotSeriesStore>();
     QVector<double> times, rising, falling;
-    for (int i=0; i<25; ++i) {
-        times.append(.1 + .8*i/24.0);
-        rising.append(i%2 ? .9 : .1);
+    const int count = dense ? 20000 : 25;
+    for (int i=0; i<count; ++i) {
+        times.append(.1 + .8*i/(count - 1.0));
+        rising.append(dense ? ((i % 37) < 18 ? .1 : .9) : (i%2 ? .9 : .1));
         falling.append(1-rising.last());
+    }
+    if (dense) {
+        times.clear(); rising.clear(); falling.clear();
+        if (csvIndex >= 0 && csvIndex + 1 < app.arguments().size()) {
+            QFile file(app.arguments()[csvIndex + 1]);
+            if (!file.open(QIODevice::ReadOnly)) return 4;
+            QTextStream stream(&file);
+            stream.readLine();
+            while (!stream.atEnd()) {
+                const auto fields = stream.readLine().split(',');
+                if (fields.size() != 2) return 4;
+                times.append(fields[0].toDouble()); rising.append(fields[1].toDouble());
+            }
+        } else {
+            for (int i = 0; i < 247511; ++i) {
+                times.append(87.065 + i * .025);
+                rising.append(20 + (i % 40) / 2 * 50 + (i % 2) * 20);
+            }
+        }
+        falling = rising;
     }
     store->replaceSeries({{1, times, rising, QColor("black"), 2},
                           {2, times, falling, QColor("black"), 2}});
@@ -38,8 +63,15 @@ int main(int argc, char **argv)
     first.setVisibleSeries({1}); second.setVisibleSeries({2});
     first.fitY(); second.fitY();
     first.setXRange(0,1); second.setXRange(0,1);
+    if (dense) {
+        window.resize(1920, 1000);
+        first.setX(40); first.setY(40); first.setWidth(1840); first.setHeight(900);
+        first.setXRange(0, 6400); first.setYRange(-40, 1050);
+        second.setVisible(false);
+    }
     window.show();
     int attempts = 0;
+    int densePhase = 0;
     QTimer timer;
     QObject::connect(&timer, &QTimer::timeout, &app, [&] {
         if (first.lodPending() || second.lodPending()) {
@@ -49,6 +81,31 @@ int main(int argc, char **argv)
         const QImage image = window.grabWindow().convertToFormat(QImage::Format_RGB32);
         if (image.isNull()) { qCritical() << "No raster capture"; app.exit(2); return; }
         image.save("plotitem-raster.png");
+        if (dense) {
+            const double scale = image.width() / 1920.0;
+            int minTop = image.height(), maxTop = 0, minBottom = image.height(), maxBottom = 0;
+            for (int x = qCeil((40 + 3300.0 / 6400 * 1840) * scale);
+                 x < qFloor((40 + 3900.0 / 6400 * 1840) * scale); ++x) {
+                int top = -1, bottom = -1;
+                for (int row = qCeil(40 * scale); row < qFloor(940 * scale); ++row) {
+                    if (qRed(image.pixel(x, row)) < 223) {
+                        if (top < 0) top = row;
+                        bottom = row;
+                    }
+                }
+                if (top < 0) { app.exit(3); return; }
+                minTop = qMin(minTop, top); maxTop = qMax(maxTop, top);
+                minBottom = qMin(minBottom, bottom); maxBottom = qMax(maxBottom, bottom);
+            }
+            qInfo() << "dense constant-envelope edge variation:" << maxTop - minTop << maxBottom - minBottom;
+            if (maxTop != minTop || maxBottom != minBottom) { app.exit(1); return; }
+            if (++densePhase < 5) {
+                first.setYRange(-40 + densePhase * .3, 1050 + densePhase * .3);
+                return;
+            }
+            app.exit(0);
+            return;
+        }
         double inkA=0, inkB=0, inkReference=0, difference=0;
         const double ratio = image.width()/320.0;
         const int n=qRound(128*ratio), x1=qRound(16*ratio), x2=qRound(176*ratio), y=qRound(16*ratio);

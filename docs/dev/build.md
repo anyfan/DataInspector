@@ -31,6 +31,8 @@ cmake --build --preset qt6-clang-debug
 | `ENABLE_MAT` | `ON` | MAT 读取/导出，依赖仓库内 matio/HDF5/zlib 静态库 |
 | `ENABLE_GPU_TESTS` | `OFF` | 注册 GPU 光栅测试到 CTest，需要硬件 Scene Graph 后端 |
 
+启用后包含 `plotitem_dense_raster_test`，复用 `plotitem_raster_test --dense` 验证密集预览的边缘覆盖。
+
 ## 关键 CMake 组织
 
 `CMakeLists.txt` 把源文件拆成共用列表，避免应用和测试目标重复罗列：

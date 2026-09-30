@@ -20,6 +20,7 @@ Release 把目录换成 `build_qt6-release`。
 | `plotitem_lod_test` | PlotItem LOD 调度、视窗投影 |
 | `plotitem_blend_test` | 曲线绘制层级（AmplitudeLayers 排序置顶） |
 | `plotitem_raster_test` | GPU 光栅路径（需 `-DENABLE_GPU_TESTS=ON`） |
+| `plotitem_dense_raster_test` | 密集锯齿波五档亚像素偏移下的上下沿一致性（GPU） |
 | `appcontroller_test` | 控制器集成：布局、自适应、游标、回退、会话入口、QML 加载 |
 | `session_test` | 会话往返、结构校验、失败保留、相对路径、子图生命周期 |
 | `signalselection_test` | 信号树模型、祖先路径、选择/拖拽 |
@@ -30,6 +31,10 @@ Release 把目录换成 `build_qt6-release`。
 | `startupdrop_test` | 启动后窗口拖放事件投递 |
 
 ## GPU 测试
+
+`rendercore_test::denseLodHasUniformRoundExtrema` 使用 2 万点固定上下限波形，经 320 桶 LOD 后验证 1/2/4 像素线宽下每个内部极值的向外覆盖一致，且几何不超出半线宽包络。该断言在缺少圆角连接的实现上失败。
+
+`denseEnvelopeRetainsPeaksAndDisablesOnZoom` 覆盖真实尖峰保留、NaN 分段和旧 LOD 放大后停止包络填充。`plotitem_raster_test.exe --dense` 使用 247511 点锯齿波逐列检查 GPU 图像边缘，覆盖仅验证极值坐标无法发现的亚像素覆盖差异；可附加 `--csv path` 读取带表头的 time,value 两列数据，检查当前视窗中 3300–3900 秒的恒定上下沿（此模式用于 GPS 毫秒数据复核）。
 
 默认 offscreen 平台运行，不等同人工 GUI 验收。需要 GPU 回归时：
 

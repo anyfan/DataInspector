@@ -17,6 +17,13 @@ struct LodRequestKey
     bool operator==(const LodRequestKey &other) const;
 };
 
+struct LodDenseBucket
+{
+    double firstX = 0;
+    double lastX = 0;
+    qsizetype firstPoint = 0;
+};
+
 struct LodSegment
 {
     PlotSeriesId seriesId = -1;
@@ -24,6 +31,7 @@ struct LodSegment
     QVector<QPointF> points;
     double lineWidth = 0.0;
     Qt::PenStyle lineStyle = Qt::SolidLine;
+    QVector<LodDenseBucket> denseBuckets;
 };
 
 struct LodResult

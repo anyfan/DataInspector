@@ -361,6 +361,10 @@ if(BUILD_TESTING)
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_raster_test>)
         set_tests_properties(plotitem_raster_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+        add_test(NAME plotitem_dense_raster_test COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_raster_test> --dense)
+        set_tests_properties(plotitem_dense_raster_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
         add_test(NAME plotitem_blend_test COMMAND ${CMAKE_COMMAND} -E env
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_blend_test>)
