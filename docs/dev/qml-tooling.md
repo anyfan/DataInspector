@@ -15,11 +15,11 @@ cmake --build build_qt6-debug --target DataInspector_qmllint
 
 ## 类型元数据
 
-- `src/quick/qmltypes.h` 用 `QML_FOREIGN` 声明 `PlotItem`、`AppController`、`SignalModel`。
+- `src/quick/qmltypes.h` 用 `QML_FOREIGN` 声明 `PlotItem`、`TrajectoryItem`、`AppController`、`SignalModel`。
 - CMake 自动生成注册代码和 `.qmltypes` 到 `<构建目录>/qml/DataInspector`。
 - 主程序用 `QQmlApplicationEngine::setInitialProperties` 注入控制器；测试用 `createWithInitialProperties`。
 - `Main.qml` 通过 `required property AppController appController` 接收，不依赖隐式上下文变量。
-- 四个 QML 文件显式 `pragma ComponentBehavior: Bound`。
+- 所有项目 QML 文件显式 `pragma ComponentBehavior: Bound`。
 
 > Qt 6.8 的注册模板即使对不可创建类型也会实例化 `QQmlElement<T>` 子类，因此 `AppController`/`SignalModel` 不能是 `final`。这是 Qt 限制，不是疏忽。
 
@@ -44,3 +44,7 @@ CMake 从 `qml/qmllint.ini.in` 生成本地 `qml/.qmllint.ini`，包含当前构
 - QML 静态零 warning ≠ 原生 C++ 编译零 warning；Qt 自身生成代码可能有 `Q_GLOBAL_STATIC` 提示。
 - 离屏测试环境可能产生字体路径/Windows 主题相关日志，这些不是 QML 绑定警告。
 - 静态检查不能替代真实 GPU、鼠标操作和部署目标上的人工 GUI 验收。
+
+## 编译后的状态刷新
+
+不要仅用未使用的局部变量读取版本号，例如 `const revision = controller.plotStateRevision`，期待它建立绑定依赖；qmlcachegen 会消除该读取，源码 QML 与编译版行为可能不同。航迹界面通过 `Connections.onPlotBindingsChanged` 显式更新模式、配置和候选列表，名称从候选快照派生。回归同时加载源码及编译资源，并实际打开和点击下拉选项。

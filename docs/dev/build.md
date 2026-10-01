@@ -39,7 +39,7 @@ GPU 套件包括复用 `plotitem_raster_test --dense` 的 `plotitem_dense_raster
 
 `CMakeLists.txt` 把源文件拆成共用列表，避免应用和测试目标重复罗列：
 
-- `DI_PLOTITEM_SOURCES` 统一包含 `plotitem.cpp`、`plotitem_cursor.cpp`、`plotitem_interaction.cpp`、`plotitem_render.cpp` 和头文件；应用与绘图测试共用，使用 Qt 内置材质。
+- `DI_PLOTITEM_SOURCES` 统一包含 `plotitem.cpp`、`plotitem_cursor.cpp`、`plotitem_interaction.cpp`、`plotitem_render.cpp` 和 `trajectoryitem.*`；应用与绘图测试共用，使用 Qt 内置材质。
 - 其他共用列表：`DI_RENDER_SOURCES`、`DI_SIGNAL_SOURCES`、`DI_XLSX_SOURCES`、`DI_MAT_SOURCES`、`DI_CONTROLLER_SOURCES`
 - `DI_QML_FILES`、`DI_ICON_FILES`
 - 函数：`di_add_icon_resources()`、`di_add_test()`
@@ -65,3 +65,9 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 - `assets/DataInspector.rc`：嵌入 exe 图标和应用清单。
 - `assets/DataInspector.manifest`：`asInvoker`、Per-Monitor v2 DPI、UTF-8 代码页、supportedOS。
 - 未嵌入清单时 Windows installer detection 可能把 exe 误判为安装程序而弹 UAC，进而导致资源管理器无法拖放文件进窗口（UIPI）。详见 [工具链排错](toolchain-troubleshooting.md)。
+
+## 轨迹模块
+
+轨迹核心 `render/trajectorybuilder.*` 纳入 DI_RENDER_SOURCES；`trajectoryitem.*` 纳入 DI_PLOTITEM_SOURCES；`appcontroller_trajectory.cpp` 和 qmltypes.h 纳入 DI_CONTROLLER_SOURCES；TrajectoryPlot.qml 纳入 DI_QML_FILES。没有新增 Qt 模块或第三方绘图库。
+
+新增 trajectory_test（默认离屏）和 trajectory_raster_test（ENABLE_GPU_TESTS 时注册）。trajectory_test 用独立 DataInspectorTrajectoryTest QML 模块编译相同界面，产物在 trajectory_test_qml；同时测试源码与 qmlcachegen 版本，避免仅源码测试漏掉编译后绑定刷新问题。测试目标通过 qmltypes.h 中的 QML_FOREIGN 元数据注册新类型，须由 AUTOMOC 编译该头文件。

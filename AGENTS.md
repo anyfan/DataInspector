@@ -28,6 +28,7 @@ DataInspector：Windows 上面向工程时间序列数据的高性能查看器�
 ```
 qml/                          界面层（QML）
   Main.qml                    主窗口、工具栏、信号树、子图网格
+  TrajectoryPlot.qml          二维/三维航迹界面与位置标记
   QuickPlot.qml               单个子图：坐标轴、游标、右键菜单
   PlotLegend.qml              图例
   PlotAxisArea.qml            X/Y 轴留白区交互
@@ -47,8 +48,11 @@ src/quick/
   plotitem_cursor.cpp         原始样本游标导航、读数
   plotitem_interaction.cpp    拾取、平移、滚轮与拖动
   plotitem_render.cpp         QSG 节点、几何上传、曲线层级
+  trajectoryitem.*           航迹投影、后台任务、旋转/平移交互
+  appcontroller_trajectory.cpp  轨迹绑定与时间游标联动
   qmltypes.h                  QML_FOREIGN 类型注册
   render/                     渲染内核（无 QQuickItem 依赖）
+    trajectorybuilder.*      两/三轴时间基校验、空间 LOD、等比例投影
     plotseriesstore.*         不可变原始序列 Store、代际号
     plotrangeindex.*          512 样本分块极值 + 线段树
     plotlodbuilder.*          视窗/屏幕桶 min/max LOD

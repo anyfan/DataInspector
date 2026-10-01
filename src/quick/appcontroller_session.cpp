@@ -1,5 +1,6 @@
 #include "appcontroller.h"
 #include "plotitem.h"
+#include "trajectoryitem.h"
 #include <QDir>
 #include <QFileInfo>
 #include <QUrl>
@@ -89,6 +90,7 @@ bool AppController::saveSession(const QVariant &filePath)
     for (int index = 0; index < state.rows * state.columns; ++index) {
         auto view = plotAt(index) ? capturePlotView(plotAt(index)) : m_plotViews.value(index);
         view.seriesIds = m_signals->plotRows(index);
+        view.trajectory = m_trajectories.value(index);
         state.plots.append(view);
     }
     QString error;
@@ -221,8 +223,14 @@ void AppController::finishSessionRestore()
     m_loadedPaths = QSet<QString>(m_sessionSourcePaths.cbegin(), m_sessionSourcePaths.cend());
     m_loadedFileNames = labels; m_sourcePathsByGroup = pathsByGroup;
     m_signals->setFilter({}); m_signals->setNames(originalNames, groups, colors);
-    m_plotViews.clear();
-    for (int i = 0; i < state.plots.size(); ++i) m_plotViews.insert(i, state.plots.at(i));
+    m_plotViews.clear(); m_trajectories.clear();
+    for (int i = 0; i < state.plots.size(); ++i) {
+        m_plotViews.insert(i, state.plots.at(i));
+        auto trajectory = state.plots.at(i).trajectory;
+        for (int &id : trajectory.axes) if (id >= 0) id = savedToCurrent.at(id);
+        for (int &id : trajectory.signalIds) id = savedToCurrent.at(id);
+        m_trajectories.insert(i, trajectory);
+    }
     m_sessionCursor = state.cursor; m_haveCursorState = true;
     m_sharedXMinimum = state.xMinimum; m_sharedXMaximum = state.xMaximum;
     setLayout(state.rows, state.columns);
@@ -241,6 +249,10 @@ void AppController::finishSessionRestore()
         plot->setSeriesStore(m_seriesStore); refreshPlot(i, false);
         applyPlotView(plot, state.plots.at(i));
     }
+    for (int i = 0; i < m_trajectoryPlots.size(); ++i) if (m_trajectoryPlots[i]) {
+        m_trajectoryPlots[i]->setCamera(m_trajectories.value(i).camera); refreshTrajectory(i);
+    }
+    syncTrajectoryCursors();
     updateCurrentFileLabel(); notifyPlotBindingsChanged();
     m_sessionPath = m_pendingSessionPath; emit sessionPathChanged();
     completeSessionRestore(true, QStringLiteral("已恢复会话：%1（%2 个文件，%3 个信号）")

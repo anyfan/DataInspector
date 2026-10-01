@@ -1,9 +1,11 @@
 // AppController: subplot bindings, legend actions, layout and view fitting.
 #include "appcontroller.h"
 #include "plotitem.h"
+#include "trajectoryitem.h"
 #include "render/plotaxisutils.h"
 
 #include <utility>
+#include <algorithm>
 #include <QtMath>
 #include <QScopedValueRollback>
 
@@ -22,7 +24,9 @@ void AppController::recordViewChange()
 {
     if (m_restoringView || m_syncingRanges || m_loading || m_restoringSession
         || m_applyingSession || (m_viewChangeDepth > 0 && m_viewChangeRecorded)) return;
-    ViewState state{m_sharedXMinimum, m_sharedXMaximum, {}};
+    ViewState state{m_sharedXMinimum, m_sharedXMaximum, {}, {}};
+    for (auto it = m_trajectories.cbegin(); it != m_trajectories.cend(); ++it)
+        if (it->enabled) state.cameras.insert(it.key(), it->camera);
     for (const auto &plot : m_plots)
         if (plot) state.ranges.append({plot, plot->yMinimum(), plot->yMaximum(), plot->normalizeY()});
     if (state.ranges.isEmpty()) return;
@@ -52,12 +56,20 @@ void AppController::undoView()
             range.plot->setNormalizeY(range.normalized);
             range.plot->setYRange(range.minimum, range.maximum);
         }
+    for (auto it = state.cameras.cbegin(); it != state.cameras.cend(); ++it) {
+        m_trajectories[it.key()].camera = it.value();
+        if (it.key() < m_trajectoryPlots.size() && m_trajectoryPlots[it.key()])
+            m_trajectoryPlots[it.key()]->setCamera(it.value());
+    }
     emit viewHistoryChanged();
 }
 
 void AppController::selectSignal(int row)
 {
     if (sessionInteractionBlocked()) return;
+    if (m_trajectories.value(m_signals->activePlot()).enabled) {
+        setTrajectorySignal(m_signals->activePlot(), row, true); return;
+    }
     if (row >= 0) m_signals->setChecked(row, true);
     const int plotIndex = m_signals->activePlot();
     if (plotIndex >= 0) refreshPlot(plotIndex);
@@ -69,6 +81,9 @@ void AppController::toggleSignal(int row)
     if (sessionInteractionBlocked()) return;
     const int plotIndex = m_signals->activePlot();
     if (plotIndex < 0 || row < 0) return;
+    if (m_trajectories.value(plotIndex).enabled) {
+        setTrajectorySignal(plotIndex, row, !plotSignalEnabled(plotIndex, row)); return;
+    }
     m_signals->setPlotChecked(plotIndex, row, !m_signals->plotRows(plotIndex).contains(row));
     refreshPlot(plotIndex);
     notifyPlotBindingsChanged();
@@ -82,6 +97,8 @@ void AppController::filterSignals(const QString &text)
 
 bool AppController::plotSignalEnabled(int plotIndex, int row) const
 {
+    const auto state = m_trajectories.value(plotIndex);
+    if (state.enabled) return state.signalIds.contains(row);
     return m_signals->plotRows(plotIndex).contains(row);
 }
 
@@ -185,7 +202,9 @@ void AppController::setSignalPen(int row, const QColor &color, double width, int
                                    m_signals->signalStyle(row));
     if (generation == m_seriesStore->generation()) return;
     for (int plotIndex = 0; plotIndex < m_plots.size(); ++plotIndex)
-        if (m_signals->plotRows(plotIndex).contains(row))
+        if (m_signals->plotRows(plotIndex).contains(row)
+            || (m_trajectories.value(plotIndex).enabled
+                && (m_trajectories.value(plotIndex).axes[0] == row || m_trajectories.value(plotIndex).axes[1] == row || m_trajectories.value(plotIndex).axes[2] == row)))
             refreshPlot(plotIndex, false);
     notifyPlotBindingsChanged();
 }
@@ -204,8 +223,11 @@ void AppController::moveLegendSignal(int fromPlot, int toPlot, int row)
     if (sessionInteractionBlocked()) return;
     if (fromPlot == toPlot || toPlot < 0 || toPlot >= m_plotRows * m_plotColumns
         || !plotSignalEnabled(fromPlot, row)) return;
-    m_signals->setPlotChecked(toPlot, row, true);
-    m_signals->setPlotChecked(fromPlot, row, false);
+    if (m_trajectories.value(toPlot).enabled) {
+        if (!setTrajectorySignal(toPlot, row, true)) return;
+    } else m_signals->setPlotChecked(toPlot, row, true);
+    if (m_trajectories.value(fromPlot).enabled) setTrajectorySignal(fromPlot, row, false);
+    else m_signals->setPlotChecked(fromPlot, row, false);
     refreshPlot(fromPlot);
     refreshPlot(toPlot, true);
     setActivePlot(toPlot);
@@ -215,6 +237,7 @@ void AppController::moveLegendSignal(int fromPlot, int toPlot, int row)
 void AppController::removeLegendSignal(int plotIndex, int row)
 {
     if (sessionInteractionBlocked()) return;
+    if (m_trajectories.value(plotIndex).enabled) { setTrajectorySignal(plotIndex, row, false); return; }
     m_signals->setPlotChecked(plotIndex, row, false);
     refreshPlot(plotIndex);
     notifyPlotBindingsChanged();
@@ -242,8 +265,13 @@ void AppController::clearAllPlotSignals()
 bool AppController::unbindPlotSignals(int plotIndex)
 {
     const QVector<int> rows = m_signals->plotRows(plotIndex);
-    if (rows.isEmpty()) return false;
-    for (int row : rows) m_signals->setPlotChecked(plotIndex, row, false);
+    bool trajectoryChanged = false;
+    auto &trajectory = m_trajectories[plotIndex];
+    if (trajectory.enabled && (!trajectory.signalIds.isEmpty() || trajectory.axes != std::array<int, 3>{{-1, -1, -1}})) {
+        trajectory.axes = {{-1, -1, -1}}; trajectory.signalIds.clear(); trajectoryChanged = true;
+    }
+    if (trajectory.enabled ? !trajectoryChanged : rows.isEmpty()) return false;
+    if (!trajectory.enabled) for (int row : rows) m_signals->setPlotChecked(plotIndex, row, false);
     refreshPlot(plotIndex);
     return true;
 }
@@ -269,6 +297,7 @@ void AppController::applySharedXRange(double xMinimum, double xMaximum, PlotItem
     for (const QPointer<PlotItem> &plot : std::as_const(m_plots))
         if (plot && plot != except) plot->setXRange(xMinimum, xMaximum);
     m_syncingRanges = false;
+    syncTrajectoryCursors();
 }
 
 void AppController::syncCursorsFrom(PlotItem *source, PlotItem *target)
@@ -324,6 +353,7 @@ void AppController::attachPlot(QObject *plot, int index)
         for (const QPointer<PlotItem> &other : std::as_const(m_plots))
             if (other && other != item) syncCursorsFrom(item, other);
         m_syncingCursors = false;
+        syncTrajectoryCursors();
     });
     connect(item, &PlotItem::normalizeYChanged, this, [this, item]() { cachePlotView(item); });
     connect(item, &PlotItem::lineWidthChanged, this, [this, item]() { cachePlotView(item); });
@@ -366,6 +396,11 @@ void AppController::setLayout(int rows, int columns)
         if (m_plots.at(index))
             disconnect(m_plots.at(index), nullptr, this, nullptr);
     m_plots.resize(plotCount);
+    for (int i = plotCount; i < m_trajectoryPlots.size(); ++i)
+        if (m_trajectoryPlots[i]) disconnect(m_trajectoryPlots[i], nullptr, this, nullptr);
+    m_trajectoryPlots.resize(plotCount);
+    for (auto it = m_trajectories.begin(); it != m_trajectories.end();)
+        if (it.key() >= plotCount) it = m_trajectories.erase(it); else ++it;
 
     ++m_plotStateRevision;
     const int previousActivePlot = m_signals->activePlot();
@@ -388,6 +423,7 @@ void AppController::setActivePlot(int index)
     if (sessionInteractionBlocked()) return;
     if (index == m_signals->activePlot()) return;
     m_signals->setActivePlot(index);
+    syncSignalSelection();
     emit activePlotChanged();
 }
 
@@ -419,7 +455,13 @@ void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
 {
     if (sessionInteractionBlocked()) return;
     beginViewChange();
-    if (fitX) {
+    bool includeTimePlot = false;
+    for (int i = 0; i < m_plotRows * m_plotColumns; ++i) if (fitScopeIncludes(i, allPlots)) {
+        if (m_trajectories.value(i).enabled) {
+            if ((fitX || fitY) && i < m_trajectoryPlots.size() && m_trajectoryPlots[i]) m_trajectoryPlots[i]->fitView();
+        } else includeTimePlot = true;
+    }
+    if (fitX && includeTimePlot) {
         const auto bounds = PlotSeriesStore::timeBounds(
                     m_seriesStore->snapshot(fitSourceRows(allPlots)));
         double xmin = 0, xmax = 10;
@@ -436,7 +478,7 @@ void AppController::fitPlots(bool fitX, bool fitY, bool allPlots)
     if (fitY) {
         for (int index = 0; index < m_plots.size(); ++index) {
             if (!m_plots.at(index)) continue;
-            if (!fitScopeIncludes(index, allPlots)) continue;
+            if (!fitScopeIncludes(index, allPlots) || m_trajectories.value(index).enabled) continue;
             m_plots.at(index)->fitY();
         }
     }
@@ -455,7 +497,7 @@ QVector<PlotSeriesId> AppController::fitSourceRows(bool allPlots) const
 {
     QVector<PlotSeriesId> ids;
     for (int index = 0; index < m_plotRows * m_plotColumns; ++index) {
-        if (!fitScopeIncludes(index, allPlots)) continue;
+        if (!fitScopeIncludes(index, allPlots) || m_trajectories.value(index).enabled) continue;
         for (int id : m_signals->plotRows(index))
             if (!ids.contains(id)) ids.append(id);
     }
@@ -464,14 +506,20 @@ QVector<PlotSeriesId> AppController::fitSourceRows(bool allPlots) const
 
 void AppController::refreshPlot(int index, bool fitY)
 {
+    refreshTrajectory(index);
     if (index < 0 || index >= m_plots.size() || !m_plots.at(index)) return;
     PlotItem *plot = m_plots.at(index);
-    const QVector<int> sortedRows = m_signals->plotRows(index);
+    QVector<int> sortedRows = m_signals->plotRows(index);
+    if (m_trajectories.value(index).enabled) {
+        const auto axes = m_trajectories.value(index).axes;
+        sortedRows = QVector<int>(axes.cbegin(), axes.cend());
+    }
     QVector<PlotSeriesId> visibleIds;
     visibleIds.reserve(sortedRows.size());
     for (int row : sortedRows)
         if (row >= 0 && row < m_signalColors.size()) visibleIds.append(row);
     plot->setVisibleSeries(visibleIds);
+    if (m_trajectories.value(index).enabled) return;
     if (fitY && !m_initialSignalFitDone && !visibleIds.isEmpty() && !m_applyingSession) {
         m_initialSignalFitDone = true;
         // fitView emits rangeChanged, synchronizing the first time fit to all plots.

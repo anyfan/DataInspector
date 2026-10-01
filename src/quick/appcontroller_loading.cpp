@@ -123,6 +123,7 @@ bool AppController::removeFile(const QString &fileName)
     if (removedRows.isEmpty()) return false;
 
     m_seriesStore->removeSeries(QSet<int>(removedRows.cbegin(), removedRows.cend()));
+    remapTrajectoryAxes(removedRows);
     for (auto it = removedRows.crbegin(); it != removedRows.crend(); ++it)
         if (*it >= 0 && *it < m_signalColors.size())
             m_signalColors.removeAt(*it);
@@ -150,7 +151,9 @@ bool AppController::collectExportTables(int scope, QVector<DataExportTable> *tab
         for (int plotIndex = 0; plotIndex < m_plotRows * m_plotColumns;
              ++plotIndex) {
             const QVector<int> plotRows = m_signals->plotRows(plotIndex);
-            for (int row : plotRows) uniqueRows.insert(row);
+            if (m_trajectories.value(plotIndex).enabled) {
+                for (int row : m_trajectories.value(plotIndex).axes) if (row >= 0) uniqueRows.insert(row);
+            } else for (int row : plotRows) uniqueRows.insert(row);
         }
         rows = QVector<int>(uniqueRows.cbegin(), uniqueRows.cend());
         std::sort(rows.begin(), rows.end());

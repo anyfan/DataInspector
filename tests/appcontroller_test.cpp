@@ -1,5 +1,6 @@
 #include "appcontroller.h"
 #include "plotitem.h"
+#include "qmltypes.h"
 #include "xlsxreader.h"
 
 #include <QDir>
@@ -878,6 +879,7 @@ void AppControllerTest::axisSelectionAppliesRange()
 
 void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
 {
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
     qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
@@ -1268,6 +1270,7 @@ void AppControllerTest::quotedCsvFieldsAreImported()
 
 void AppControllerTest::toolbarModesToggleAndRememberSelection()
 {
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
     qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
@@ -1934,6 +1937,7 @@ void AppControllerTest::timeOffsetsApplyToSignalsGroupsAndFiles()
 
 void AppControllerTest::editDialogsRememberAndResetValues()
 {
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
     qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");

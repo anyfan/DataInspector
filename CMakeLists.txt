@@ -28,6 +28,8 @@ configure_file(qml/qmllint.ini.in "${CMAKE_SOURCE_DIR}/qml/.qmllint.ini" @ONLY)
 set(DI_QUICK_DIR ${CMAKE_SOURCE_DIR}/src/quick)
 
 set(DI_RENDER_SOURCES
+    ${DI_QUICK_DIR}/render/trajectorybuilder.cpp
+    ${DI_QUICK_DIR}/render/trajectorybuilder.h
     ${DI_QUICK_DIR}/render/plotaxisutils.cpp
     ${DI_QUICK_DIR}/render/plotaxisutils.h
     ${DI_QUICK_DIR}/render/plotrangeindex.cpp
@@ -43,6 +45,8 @@ set(DI_RENDER_SOURCES
 )
 
 set(DI_PLOTITEM_SOURCES
+    ${DI_QUICK_DIR}/trajectoryitem.cpp
+    ${DI_QUICK_DIR}/trajectoryitem.h
     ${DI_QUICK_DIR}/plotitem.cpp
     ${DI_QUICK_DIR}/plotitem.h
     ${DI_QUICK_DIR}/plotitem_cursor.cpp
@@ -75,12 +79,14 @@ set(DI_MAT_SOURCES
 )
 
 set(DI_CONTROLLER_SOURCES
+    ${DI_QUICK_DIR}/qmltypes.h
     ${DI_QUICK_DIR}/sessiondocument.cpp
     ${DI_QUICK_DIR}/sessiondocument.h
     ${DI_QUICK_DIR}/appcontroller_session.cpp
     ${DI_QUICK_DIR}/appcontroller.cpp
     ${DI_QUICK_DIR}/appcontroller_loading.cpp
     ${DI_QUICK_DIR}/appcontroller_plots.cpp
+    ${DI_QUICK_DIR}/appcontroller_trajectory.cpp
     ${DI_QUICK_DIR}/appcontroller.h
     ${DI_QUICK_DIR}/startupfiles.cpp
     ${DI_QUICK_DIR}/startupfiles.h
@@ -121,6 +127,7 @@ set(DI_ICON_FILES
 set(DI_QML_FILES
     qml/Main.qml
     qml/QuickPlot.qml
+    qml/TrajectoryPlot.qml
     qml/PlotLegend.qml
     qml/PlotAxisArea.qml
     qml/Splash.qml
@@ -353,11 +360,32 @@ if(BUILD_TESTING)
     endif()
     di_add_test(startupdrop_test -platform offscreen)
 
+    add_executable(trajectory_test tests/trajectory_test.cpp ${DI_CONTROLLER_SOURCES})
+    target_include_directories(trajectory_test PRIVATE src/quick)
+    target_link_libraries(trajectory_test PRIVATE Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core)
+    di_add_icon_resources(trajectory_test)
+    # Exercise the same qmlcachegen bindings as the application, as well as source QML.
+    qt_add_qml_module(trajectory_test
+        URI DataInspectorTrajectoryTest
+        VERSION 1.0
+        OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/trajectory_test_qml"
+        IMPORT_PATH "${QT_QML_OUTPUT_DIRECTORY}"
+        QML_FILES ${DI_QML_FILES})
+    if(ENABLE_MAT)
+        target_link_libraries(trajectory_test PRIVATE di_mat)
+    endif()
+    di_add_test(trajectory_test -platform offscreen -o -,txt)
+
+    add_executable(trajectory_raster_test tests/trajectory_raster_test.cpp
+        ${DI_QUICK_DIR}/trajectoryitem.cpp ${DI_QUICK_DIR}/trajectoryitem.h)
+    target_link_libraries(trajectory_raster_test PRIVATE Qt6::Quick plot_render_core)
     add_executable(plotitem_raster_test tests/plotitem_raster_test.cpp ${DI_PLOTITEM_SOURCES})
     target_link_libraries(plotitem_raster_test PRIVATE Qt6::Quick plot_render_core)
     add_executable(plotitem_blend_test tests/plotitem_blend_test.cpp ${DI_PLOTITEM_SOURCES})
     target_link_libraries(plotitem_blend_test PRIVATE Qt6::Quick plot_render_core)
     if(ENABLE_GPU_TESTS)
+        di_add_test(trajectory_raster_test)
+        set_tests_properties(trajectory_raster_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
         add_test(NAME plotitem_raster_test COMMAND ${CMAKE_COMMAND} -E env
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_raster_test>)

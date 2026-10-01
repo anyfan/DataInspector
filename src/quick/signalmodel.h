@@ -5,6 +5,7 @@
 #include <QSet>
 #include <QVariantList>
 #include <QVector>
+#include <optional>
 
 // Qt 6.8 QML registration instantiates a QQmlElement<T> wrapper, even for
 // uncreatable types, so this QObject type must not be final.
@@ -61,6 +62,8 @@ public:
     int activePlot() const { return m_activePlot; }
     void setPlotChecked(int plotIndex, int row, bool checked);
     QVector<int> plotRows(int plotIndex) const;
+    // Active trajectory selection is separate from retained time-plot bindings.
+    void setSelectionOverride(std::optional<QSet<int>> rows, bool refresh = false);
 signals:
     void checkedCountChanged();
 private:
@@ -84,6 +87,7 @@ private:
     QHash<QString, int> m_groupRows;
     QSet<QString> m_expandedGroups;
     QVector<QSet<int>> m_plotRows;
+    std::optional<QSet<int>> m_selectionOverride;
     int m_plotCount = 0;
     int m_activePlot = -1;
     QString m_filter;

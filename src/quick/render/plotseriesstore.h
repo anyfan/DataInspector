@@ -85,6 +85,9 @@ public:
     quint64 generation() const;
     PlotSeriesSnapshot snapshot(const QVector<PlotSeriesId> &orderedIds) const;
 
+    // Index lookup within an inclusive, finite, monotonic raw-sample range.
+    static std::optional<qsizetype> nearestSampleIndex(const PlotSeriesData &series,
+        double time, qsizetype first, qsizetype last);
     static std::optional<double> nearestX(const PlotSeriesSnapshot &snapshot,
                                           double targetX);
     static QVector<PlotSample> nearestSamples(const PlotSeriesSnapshot &snapshot,

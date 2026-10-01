@@ -26,6 +26,7 @@ DataInspector 是面向工程时间序列数据的高性能查看器，基于 Qt
 | [**使用指南**](user-guide/manual.md) | **最终用户操作手册（推荐入口）** |
 | [快速上手](user-guide/quick-start.md) | 构建、部署、启动、加载第一个数据文件（偏工程） |
 | [数据格式](user-guide/data-formats.md) | CSV/TXT/XLSX/MAT 的导入规则与导出说明 |
+| [三维运动轨迹](user-guide/trajectory.md) | 二维/三维航迹、经纬度投影、子图信号绑定、视角与时间游标 |
 | [视图操作](user-guide/view-operations.md) | 平移/缩放/自适应/游标/快捷键表 |
 | [信号树与样式](user-guide/signals-and-styling.md) | 勾选、重命名、时间偏移、颜色/线宽/线型 |
 | [会话保存与恢复](user-guide/session.md) | `.disession` 文件、保存内容、恢复流程与边界 |

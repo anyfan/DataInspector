@@ -237,6 +237,20 @@ PlotSeriesSnapshot PlotSeriesStore::snapshot(const QVector<PlotSeriesId> &ordere
     return result;
 }
 
+std::optional<qsizetype> PlotSeriesStore::nearestSampleIndex(const PlotSeriesData &series,
+    double time, qsizetype first, qsizetype last)
+{
+    if (!qIsFinite(time) || first < 0 || last < first || last >= series.sampleCount()
+        || time < series.pointAt(first).x() || time > series.pointAt(last).x()) return std::nullopt;
+    qsizetype lo = first, hi = last + 1;
+    while (lo < hi) {
+        const qsizetype mid = lo + (hi - lo) / 2;
+        if (series.pointAt(mid).x() < time) lo = mid + 1; else hi = mid;
+    }
+    if (lo > first && (lo > last || time - series.pointAt(lo - 1).x() <= series.pointAt(lo).x() - time)) --lo;
+    return lo;
+}
+
 std::optional<double> PlotSeriesStore::nearestX(const PlotSeriesSnapshot &snapshot,
                                                 double targetX)
 {

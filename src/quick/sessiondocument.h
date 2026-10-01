@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QStringList>
 #include <QVector>
+#include "render/trajectorybuilder.h"
 
 struct SessionSignal
 {
@@ -17,15 +18,24 @@ struct SessionCursor
     int mode = 0;
     double x1 = 0.0, x2 = 1.0;
 };
+struct SessionTrajectory
+{
+    bool enabled = false;
+    bool geographic = false;
+    std::array<int, 3> axes{{-1, -1, -1}};
+    QVector<int> signalIds; // available sources in this trajectory subplot, independent of axis assignment
+    TrajectoryCamera camera;
+};
 struct SessionPlot
 {
+    SessionTrajectory trajectory;
     QVector<int> seriesIds;
     double yMinimum = -1.0, yMaximum = 1.0, lineWidth = 2.0;
     bool normalizeY = false;
 };
 struct SessionDocument
 {
-    static constexpr int version = 1;
+    static constexpr int version = 5;
     QStringList files; // Relative to the session document, or absolute.
     QVector<SessionSignal> series;
     QVector<SessionPlot> plots{SessionPlot{}};

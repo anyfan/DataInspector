@@ -8,6 +8,12 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [航迹高倍缩放与编译界面刷新](trajectory-zoom-binding-2026-10-02.md) | 解除四视口平移限制、滚轮后平移保留缩放、显式绑定刷新、编译 QML 回归 |
+| [航迹可用信号与小坐标轴拖动](trajectory-candidates-triad-2026-10-02.md) | 先加入子图再绑定轴、局部候选下拉框、小坐标轴左键旋转、v5 会话 |
+| [航迹自适应、鼠标路由与绑定](trajectory-fit-input-binding-2026-10-02.md) | 零定位只排除自适应、统一鼠标输入、指针缩放、轴指定替换与名称识别 |
+| [航迹信号树选择与当前视图旋转](trajectory-selection-camera-2026-10-02.md) | 直接打开、独立勾选状态、左键平移、中键自由旋转、v4 会话 |
+| [航迹交互性能与双参数](trajectory-interaction-2026-10-02.md) | 空间 LOD 加速旋转、方向修正、两轴平面航迹、扩大子图画布 |
+| [飞机位置投影与方向坐标轴](trajectory-geographic-projection.md) | 经纬度/高度米制投影、移除外框、随视角旋转的小坐标轴、v3 会话 |
 | [会话保存与恢复](mcp-session-save-restore.md) | `.disession` JSON 格式、事务式恢复、子图生命周期 |
 | [归一化 Y 轴](mcp-normalize-y.md) | 子图级 0..1 缩放，游标仍显示原始值 |
 | [拖到 exe 启动加载](mcp-startup-file-arguments.md) | 命令行参数解析、会话文件优先、去重 |
@@ -51,6 +57,7 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [三维运动轨迹子图](trajectory-mode-2026-10-01.md) | XYZ、后台投影、时间联动、v2 会话 |
 | [代码分类与历史设计清理（2026-10-01）](code-organization-cleanup-2026-10-01.md) | PlotItem 职责拆分、废弃混色和重复游标状态清理 |
 | [工程代码整理](mcp-code-cleanup.md) | 删除旧 QWidget 代码、AppController/QML 拆分、CMake 函数化 |
 | [QML 静态分析警告修复](mcp-qml-static-analysis.md) | qmltypes.h、pragma Bound、MaxWarnings=0 |

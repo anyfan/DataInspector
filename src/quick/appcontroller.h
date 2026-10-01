@@ -18,6 +18,7 @@
 class DataExportWorker;
 class DataLoadWorker;
 class PlotItem;
+class TrajectoryItem;
 class QThread;
 
 // GUI-thread session controller: owns the signal model, the shared series
@@ -118,6 +119,15 @@ public:
     // scope: 0 signal, 1 table group, 2 file.
     Q_INVOKABLE bool addTimeOffset(int scope, int row, const QString &group, double seconds);
 
+    // Spatial trajectories keep their axes/camera independent of the shared time axis.
+    Q_INVOKABLE QVariantMap trajectoryState(int index) const;
+    Q_INVOKABLE QVariantList trajectorySignalOptions(int index) const;
+    Q_INVOKABLE bool configureTrajectory(int index, bool enabled, int x, int y, int z, bool geographic = false);
+    Q_INVOKABLE void enterTrajectoryMode(int index);
+    Q_INVOKABLE bool bindTrajectoryAxis(int index, int axis, int row);
+    Q_INVOKABLE void attachTrajectory(QObject *item, int index);
+    Q_INVOKABLE void detachTrajectory(QObject *item, int index);
+
     // Subplots
     Q_INVOKABLE void attachPlot(QObject *plot, int index = 0);
     Q_INVOKABLE void detachPlot(QObject *plot, int index = 0);
@@ -172,6 +182,7 @@ private:
     struct ViewState {
         double xMinimum, xMaximum;
         QVector<ViewRange> ranges;
+        QHash<int, TrajectoryCamera> cameras;
     };
     QVector<ViewState> m_viewHistory;
     int m_viewChangeDepth = 0;
@@ -197,7 +208,12 @@ private:
     void setStatus(const QString &status);
     void updateCurrentFileLabel();
     void notifyPlotBindingsChanged();
+    void syncSignalSelection(bool refresh = false);
+    bool setTrajectorySignal(int index, int row, bool selected);
     void refreshPlot(int index, bool fitY = true);
+    void refreshTrajectory(int index);
+    void syncTrajectoryCursors();
+    void remapTrajectoryAxes(const QVector<int> &removed);
     bool unbindPlotSignals(int plotIndex);
     PlotItem *plotAt(int index) const;
     QSet<PlotSeriesId> timeOffsetRows(int scope, int row, const QString &group) const;
@@ -219,6 +235,8 @@ private:
     bool m_haveCursorState = false;
     SignalModel *m_signals;
     QVector<QPointer<PlotItem>> m_plots;
+    QVector<QPointer<TrajectoryItem>> m_trajectoryPlots;
+    QHash<int, SessionTrajectory> m_trajectories;
     int m_plotRows = 1;
     int m_plotColumns = 1;
     QString m_status = QStringLiteral("打开 CSV、TXT、Excel 或 MAT 文件开始查看");

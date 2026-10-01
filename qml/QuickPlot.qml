@@ -13,6 +13,12 @@ Rectangle {
     property int graphCursorMode: 0
     // 0: disabled, 1: X/Y region, 2: X only, 3: Y only.
     property int graphZoomMode: 0
+    property bool trajectoryMode: root.controller.trajectoryState(root.plotIndex).enabled
+    function refreshTrajectoryMode() {
+        if (root.controller) root.trajectoryMode = root.controller.trajectoryState(root.plotIndex).enabled
+    }
+    onPlotIndexChanged: refreshTrajectoryMode()
+    onControllerChanged: refreshTrajectoryMode()
     property bool darkTheme: false
     // Place smaller-amplitude curves in front, keeping original colours.
     // Disabling this restores plain "last drawn wins".
@@ -37,7 +43,7 @@ Rectangle {
     readonly property real yTickLabelMargin: 6
     // Width this subplot needs on its own; the parent may widen it via
     // sharedAxisLeft so all subplots keep identical X-axis extents.
-    readonly property real measuredAxisLeft: Math.ceil(yTickMetrics.advanceWidth) + yTickLabelMargin + 2
+    readonly property real measuredAxisLeft: root.trajectoryMode ? 0 : Math.ceil(yTickMetrics.advanceWidth) + yTickLabelMargin + 2
     property real sharedAxisLeft: 0
     readonly property real axisLeft: Math.max(measuredAxisLeft, sharedAxisLeft)
     TextMetrics {
@@ -184,7 +190,7 @@ Rectangle {
         sequence: "Space"
         // Over either axis gutter Space fits both axes; over the graph itself it
         // fits the Y axis of this subplot only.
-        enabled: root.hoveredAxis >= 0 || graphHover.hovered
+        enabled: !root.trajectoryMode && (root.hoveredAxis >= 0 || graphHover.hovered)
         onActivated: {
             if (root.hoveredAxis >= 0) {
                 root.controller.setActivePlot(root.plotIndex)
@@ -335,7 +341,10 @@ Rectangle {
     onCursorKeysEnabledChanged: Qt.callLater(root.ensureCursorFocus)
     Connections {
         target: root.controller
-        function onPlotBindingsChanged() { Qt.callLater(root.ensureCursorFocus) }
+        function onPlotBindingsChanged() {
+            root.refreshTrajectoryMode()
+            Qt.callLater(root.ensureCursorFocus)
+        }
         function onActivePlotChanged() { Qt.callLater(root.ensureCursorFocus) }
     }
     color: plotColor
@@ -359,6 +368,7 @@ Rectangle {
 
     Item {
         id: axisRect
+        visible: !root.trajectoryMode
         x: root.axisLeft
         y: root.axisTop
         width: Math.max(1, root.width - root.axisLeft - root.axisRight)
@@ -366,7 +376,7 @@ Rectangle {
         clip: true
 
         Repeater {
-            model: plotItem.xTicks
+            model: root.trajectoryMode ? [] : plotItem.xTicks
             delegate: Rectangle {
                 required property var modelData
                 x: root.xPixel(modelData.value)
@@ -378,7 +388,7 @@ Rectangle {
         }
 
         Repeater {
-            model: plotItem.yTicks
+            model: root.trajectoryMode ? [] : plotItem.yTicks
             delegate: Rectangle {
                 required property var modelData
                 y: root.yPixel(modelData.value)
@@ -528,7 +538,7 @@ Rectangle {
     }
 
     Repeater {
-        model: plotItem.xTicks
+        model: root.trajectoryMode ? [] : plotItem.xTicks
         delegate: Item {
             id: xTick
             required property var modelData
@@ -557,7 +567,7 @@ Rectangle {
     }
 
     Repeater {
-        model: plotItem.yTicks
+        model: root.trajectoryMode ? [] : plotItem.yTicks
         delegate: Item {
             id: yTick
             required property var modelData
@@ -585,9 +595,96 @@ Rectangle {
         }
     }
 
+    Loader {
+        anchors.fill: parent
+        anchors.margins: 2
+        z: 20
+        active: root.trajectoryMode
+        sourceComponent: Component {
+            TrajectoryPlot {
+                controller: root.controller
+                plotIndex: root.plotIndex
+                plotColor: root.plotColor
+                textColor: root.textColor
+                axisColor: root.axisColor
+                graphLineWidth: root.graphLineWidth
+                onEditAxesRequested: trajectoryDialog.open()
+            }
+        }
+    }
+    Dialog {
+        id: trajectoryDialog
+        objectName: "trajectoryAxesDialog"
+        title: "选择三维轨迹的坐标与信号"
+        modal: true
+        anchors.centerIn: parent
+        width: Math.max(240, Math.min(500, parent ? parent.width - 24 : root.width))
+        height: Math.min(implicitHeight, Math.max(160, parent ? parent.height - 24 : implicitHeight))
+        parent: Overlay.overlay
+        property var options: []
+        property string selectionError: ""
+        onOpened: {
+            options = root.controller.trajectorySignalOptions(root.plotIndex)
+            selectionError = ""
+            const state = root.controller.trajectoryState(root.plotIndex)
+            coordinateMode.currentIndex = state.geographic ? 1 : 0
+            for (const pair of [[axisX, state.x], [axisY, state.y], [axisZ, state.z]]) {
+                pair[0].currentIndex = Math.max(0, pair[0].indexOfValue(pair[1]))
+            }
+        }
+        footer: DialogButtonBox {
+            Button {
+                text: "确定"
+                objectName: "trajectoryConfirmButton"
+                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
+                onClicked: {
+                    if (root.controller.configureTrajectory(root.plotIndex, true,
+                            Number(axisX.currentValue), Number(axisY.currentValue), Number(axisZ.currentValue),
+                            coordinateMode.currentIndex === 1))
+                        trajectoryDialog.close()
+                    else trajectoryDialog.selectionError = root.controller.status
+                }
+            }
+            Button { text: "取消"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole; onClicked: trajectoryDialog.close() }
+        }
+        contentItem: ScrollView {
+            implicitHeight: coordinateFields.implicitHeight
+            contentWidth: availableWidth
+            clip: true
+            Column {
+                id: coordinateFields
+                width: trajectoryDialog.availableWidth
+                spacing: 8
+                Label { text: "坐标类型" }
+                ComboBox {
+                    id: coordinateMode
+                    objectName: "trajectoryCoordinateMode"
+                    width: parent.width
+                    model: ["空间 XYZ（相同长度单位）", "经纬度 / 高度（飞机位置）"]
+                }
+                Label {
+                    width: parent.width
+                    wrapMode: Text.Wrap
+                    text: coordinateMode.currentIndex === 1
+                        ? "纬度/经度为度，高度为米。高度留空时显示二维水平航迹；选择高度后显示三维航迹。X 向东、Y 向北、Z 向上。"
+                        : "任选两个坐标自动显示二维航迹，选三个坐标显示三维航迹。X 横向、Y 纵向、Z 垂直；飞机经纬度请选择经纬度模式。"
+                }
+                Label { text: "三个信号须具有相同时间基（包含时间偏移）"; wrapMode: Text.Wrap; width: parent.width }
+                Label { text: coordinateMode.currentIndex === 1 ? "纬度（°）" : "X 坐标（横向）" }
+                ComboBox { id: axisX; objectName: "trajectoryAxisX"; width: parent.width; model: trajectoryDialog.options; textRole: "label"; valueRole: "id" }
+                Label { text: coordinateMode.currentIndex === 1 ? "经度（°）" : "Y 坐标（纵向 / 前后）" }
+                ComboBox { id: axisY; objectName: "trajectoryAxisY"; width: parent.width; model: trajectoryDialog.options; textRole: "label"; valueRole: "id" }
+                Label { text: coordinateMode.currentIndex === 1 ? "高度（m，可选）" : "Z 坐标（垂直 / 高度）" }
+                ComboBox { id: axisZ; objectName: "trajectoryAxisZ"; width: parent.width; model: trajectoryDialog.options; textRole: "label"; valueRole: "id" }
+                Label { text: trajectoryDialog.selectionError; visible: text.length > 0 }
+            }
+        }
+    }
     Menu {
         id: plotContextMenu
         objectName: "plotContextMenu"
+        MenuItem { text: "切换为航迹视图"; objectName: "trajectoryModeMenuItem"; onTriggered: root.controller.enterTrajectoryMode(root.plotIndex) }
+        MenuSeparator { }
         MenuItem {
             text: "自适应当前 Y 轴"
             icon.source: "qrc:/icons/arrows_up_down.svg"
@@ -619,6 +716,7 @@ Rectangle {
     MouseArea {
         id: plotContextArea
         objectName: "plotContextArea"
+        visible: !root.trajectoryMode
         x: axisRect.x; y: axisRect.y
         width: axisRect.width; height: axisRect.height
         acceptedButtons: Qt.RightButton
@@ -631,6 +729,7 @@ Rectangle {
 
     PlotAxisArea {
         objectName: "xAxisArea"
+        visible: !root.trajectoryMode
         axis: 0
         plot: root
         renderer: plotItem
@@ -639,6 +738,7 @@ Rectangle {
     }
     PlotAxisArea {
         objectName: "yAxisArea"
+        visible: !root.trajectoryMode
         axis: 1
         plot: root
         renderer: plotItem
@@ -647,6 +747,7 @@ Rectangle {
     }
     PlotLegend {
         id: legend
+        visible: !root.trajectoryMode
         x: 30
         y: 1
         width: Math.max(1, root.width - 36)

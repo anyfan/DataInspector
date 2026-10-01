@@ -35,6 +35,7 @@ QVariant SignalModel::data(const QModelIndex &index, int role) const
     if (role == Qt::DisplayRole || role == NameRole) return m_names.at(sourceRow);
     if (role == IndexRole) return sourceRow;
     if (role == CheckedRole) {
+        if (m_selectionOverride) return m_selectionOverride->contains(sourceRow);
         return m_activePlot >= 0 && m_activePlot < m_plotRows.size()
             && m_plotRows.at(m_activePlot).contains(sourceRow);
     }
@@ -82,6 +83,7 @@ void SignalModel::setNames(const QStringList &names, const QStringList &groups,
     }
     rebuildVisibleNodes();
     for (QSet<int> &rows : m_plotRows) rows.clear();
+    m_selectionOverride.reset();
     endResetModel();
     emit checkedCountChanged();
 }
@@ -206,6 +208,7 @@ QVector<int> SignalModel::removeFile(const QString &fileName)
 
 int SignalModel::checkedCount() const
 {
+    if (m_selectionOverride) return m_selectionOverride->size();
     return m_activePlot >= 0 && m_activePlot < m_plotRows.size()
         ? m_plotRows.at(m_activePlot).size() : 0;
 }
@@ -213,6 +216,14 @@ int SignalModel::checkedCount() const
 void SignalModel::setChecked(int row, bool checked)
 {
     setPlotChecked(m_activePlot, row, checked);
+}
+void SignalModel::setSelectionOverride(std::optional<QSet<int>> rows, bool refresh)
+{
+    if (m_selectionOverride == rows && !refresh) return;
+    m_selectionOverride = std::move(rows);
+    if (!m_visibleNodes.isEmpty())
+        emit dataChanged(index(0), index(m_visibleNodes.size() - 1), {CheckedRole});
+    emit checkedCountChanged();
 }
 
 void SignalModel::setPlotCount(int count)

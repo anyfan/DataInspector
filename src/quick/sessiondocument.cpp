@@ -52,10 +52,23 @@ QJsonObject sessionToJson(const SessionDocument &s)
     }
     for (const auto &plot : s.plots) {
         QJsonArray bindings;
+        QJsonArray rotation;
+        QJsonArray available;
+        for (int id : plot.trajectory.signalIds) available.append(id);
+        if (plot.trajectory.camera.freeRotation)
+            for (double component : plot.trajectory.camera.rotation) rotation.append(component);
         for (int signal : plot.seriesIds) bindings.append(signal);
         plots.append(QJsonObject{{"signals", bindings},
             {"yRange", QJsonArray{plot.yMinimum, plot.yMaximum}},
-            {"normalizeY", plot.normalizeY}, {"lineWidth", plot.lineWidth}});
+            {"normalizeY", plot.normalizeY}, {"lineWidth", plot.lineWidth},
+            {"trajectory", QJsonObject{{"enabled", plot.trajectory.enabled},
+                {"geographic", plot.trajectory.geographic},
+                {"signals", available},
+                {"rotation", rotation}, {"viewScale", plot.trajectory.camera.viewScale},
+                {"panDepth", plot.trajectory.camera.panDepth},
+                {"axes", QJsonArray{plot.trajectory.axes[0], plot.trajectory.axes[1], plot.trajectory.axes[2]}},
+                {"camera", QJsonArray{plot.trajectory.camera.azimuth, plot.trajectory.camera.elevation,
+                    plot.trajectory.camera.zoom, plot.trajectory.camera.panX, plot.trajectory.camera.panY}}}}});
     }
     return {{"format", "DataInspectorSession"}, {"version", SessionDocument::version},
         {"files", files}, {"signals", series}, {"plots", plots},
@@ -72,7 +85,7 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
     };
     int version = 0;
     if (root.value("format").toString() != QStringLiteral("DataInspectorSession")
-        || !integer(root.value("version"), 1, 1, &version)) return fail("format/version");
+        || !integer(root.value("version"), 1, SessionDocument::version, &version)) return fail("format/version");
     SessionDocument parsed;
     const auto layout = root.value("layout").toObject();
     if (!integer(layout.value("rows"), 1, 8, &parsed.rows)
@@ -133,6 +146,52 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
             if (!integer(binding, 0, parsed.series.size() - 1, &signal) || used.contains(signal))
                 return fail("plots.signals");
             used.insert(signal); plot.seriesIds.append(signal);
+        }
+        if (version >= 2) {
+            const auto trajectory = obj.value("trajectory").toObject();
+            const auto axes = trajectory.value("axes").toArray();
+            const auto camera = trajectory.value("camera").toArray();
+            if (!trajectory.value("enabled").isBool() || axes.size() != 3 || camera.size() != 5)
+                return fail("plots.trajectory");
+            plot.trajectory.enabled = trajectory.value("enabled").toBool();
+            if (version >= 3) {
+                if (!trajectory.value("geographic").isBool()) return fail("plots.trajectory.geographic");
+                plot.trajectory.geographic = trajectory.value("geographic").toBool();
+            }
+            for (int axis = 0; axis < 3; ++axis)
+                if (!integer(axes[axis], -1, parsed.series.size() - 1, &plot.trajectory.axes[axis]))
+                    return fail("plots.trajectory.axes");
+            if (version >= 5) {
+                if (!trajectory.value("signals").isArray() || trajectory.value("signals").toArray().size() > maxSignals)
+                    return fail("plots.trajectory.signals");
+                QSet<int> available;
+                for (const auto &entry : trajectory.value("signals").toArray()) {
+                    int id = -1;
+                    if (!integer(entry, 0, parsed.series.size() - 1, &id) || available.contains(id))
+                        return fail("plots.trajectory.signals");
+                    available.insert(id); plot.trajectory.signalIds.append(id);
+                }
+                for (int id : plot.trajectory.axes) if (id >= 0 && !available.contains(id))
+                    return fail("plots.trajectory.axes");
+            } else {
+                for (int id : plot.trajectory.axes) if (id >= 0 && !plot.trajectory.signalIds.contains(id))
+                    plot.trajectory.signalIds.append(id);
+            }
+            auto &view = plot.trajectory.camera;
+            if (!number(camera[0], &view.azimuth) || !number(camera[1], &view.elevation)
+                || !number(camera[2], &view.zoom) || !number(camera[3], &view.panX)
+                || !number(camera[4], &view.panY) || !view.valid()) return fail("plots.trajectory.camera");
+            if (version >= 4) {
+                if (!trajectory.value("rotation").isArray()) return fail("plots.trajectory.rotation");
+                const auto rotation = trajectory.value("rotation").toArray();
+                if (!rotation.isEmpty() && rotation.size() != 4) return fail("plots.trajectory.rotation");
+                view.freeRotation = !rotation.isEmpty();
+                for (int i = 0; i < rotation.size(); ++i)
+                    if (!number(rotation[i], &view.rotation[i])) return fail("plots.trajectory.rotation");
+                if (!number(trajectory.value("viewScale"), &view.viewScale)
+                    || !number(trajectory.value("panDepth"), &view.panDepth) || !view.valid())
+                    return fail("plots.trajectory.camera");
+            }
         }
         parsed.plots.append(plot);
     }

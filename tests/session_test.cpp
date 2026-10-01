@@ -1,5 +1,6 @@
 #include "appcontroller.h"
 #include "plotitem.h"
+#include "qmltypes.h"
 #include "sessiondocument.h"
 #include <QDir>
 #include <QFile>
@@ -236,6 +237,7 @@ static QList<PlotItem *> visualPlots(QObject *root)
 
 void SessionTest::qmlRestoresToolbarAndPlotStates()
 {
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
     qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
