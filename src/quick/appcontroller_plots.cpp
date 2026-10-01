@@ -80,15 +80,6 @@ void AppController::filterSignals(const QString &text)
     m_signals->setFilter(text);
 }
 
-void AppController::setAllSignalsChecked(bool checked)
-{
-    if (sessionInteractionBlocked()) return;
-    m_signals->setAllChecked(checked);
-    const int plotIndex = m_signals->activePlot();
-    if (plotIndex >= 0) refreshPlot(plotIndex);
-    notifyPlotBindingsChanged();
-}
-
 bool AppController::plotSignalEnabled(int plotIndex, int row) const
 {
     return m_signals->plotRows(plotIndex).contains(row);

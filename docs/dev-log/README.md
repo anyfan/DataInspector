@@ -51,6 +51,7 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [代码分类与历史设计清理（2026-10-01）](code-organization-cleanup-2026-10-01.md) | PlotItem 职责拆分、废弃混色和重复游标状态清理 |
 | [工程代码整理](mcp-code-cleanup.md) | 删除旧 QWidget 代码、AppController/QML 拆分、CMake 函数化 |
 | [QML 静态分析警告修复](mcp-qml-static-analysis.md) | qmltypes.h、pragma Bound、MaxWarnings=0 |
 

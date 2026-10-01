@@ -18,7 +18,7 @@ Release 把目录换成 `build_qt6-release`。
 | --- | --- |
 | `rendercore_test` | LOD 构建、极值索引、范围查询、几何生成、浮点桶边界 |
 | `plotitem_lod_test` | PlotItem LOD 调度、视窗投影 |
-| `plotitem_blend_test` | 曲线绘制层级（AmplitudeLayers 排序置顶） |
+| `plotitem_blend_test` | 曲线绘制层级（AmplitudeLayers 排序、选中置顶、视窗变化、透明颜色） |
 | `plotitem_raster_test` | GPU 光栅路径（需 `-DENABLE_GPU_TESTS=ON`） |
 | `plotitem_dense_raster_test` | 密集锯齿波两种预览宽度、五档亚像素偏移的边缘一致性（GPU） |
 | `plotitem_compressed_raster_test` | 大范围共享 Y 轴下压缩密集波形的边缘一致性（GPU） |

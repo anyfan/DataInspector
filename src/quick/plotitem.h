@@ -11,6 +11,8 @@
 #include "render/plotlodbuilder.h"
 #include "render/plotlodscheduler.h"
 
+// Shared state and locking stay in one item; implementation is separated into
+// plotitem.cpp (views), _cursor.cpp, _interaction.cpp and _render.cpp.
 class PlotItem : public QQuickItem
 {
     Q_OBJECT
@@ -22,8 +24,6 @@ class PlotItem : public QQuickItem
     Q_PROPERTY(double yMinimum READ yMinimum NOTIFY viewChanged)
     Q_PROPERTY(double yMaximum READ yMaximum NOTIFY viewChanged)
     Q_PROPERTY(double lineWidth READ lineWidth WRITE setLineWidth NOTIFY lineWidthChanged)
-    Q_PROPERTY(bool cursorEnabled READ cursorEnabled WRITE setCursorEnabled NOTIFY cursorChanged)
-    Q_PROPERTY(double cursorX READ cursorX NOTIFY cursorChanged)
     Q_PROPERTY(double cursorX1 READ cursorX1 NOTIFY cursorChanged)
     Q_PROPERTY(double cursorX2 READ cursorX2 NOTIFY cursorChanged)
     Q_PROPERTY(double cursorDeltaT READ cursorDeltaT NOTIFY cursorDeltaTChanged)
@@ -33,13 +33,13 @@ class PlotItem : public QQuickItem
     // Draw every series scaled to [0, 1] by its own min/max. Cursor readouts
     // keep reporting raw values; only the drawn position is normalized.
     Q_PROPERTY(bool normalizeY READ normalizeY WRITE setNormalizeY NOTIFY normalizeYChanged)
-    // How overlapping curves combine: 0 opaque (last drawn wins), 1 darken
-    // (min), 2 lighten (max), 3 small amplitudes in front with original colours.
+    // Curve order: 0 binding order, 3 small amplitudes in front.
+    // Keep value 3 for the existing QML enum; retired values 1/2 fall back to 0.
     Q_PROPERTY(int blendMode READ blendMode WRITE setBlendMode NOTIFY blendModeChanged)
 public:
     enum CursorMode { NoCursor = 0, SingleCursor = 1, DoubleCursor = 2 };
     Q_ENUM(CursorMode)
-    enum BlendMode { OpaqueBlend = 0, DarkenBlend = 1, LightenBlend = 2, AmplitudeLayers = 3 };
+    enum BlendMode { OpaqueBlend = 0, AmplitudeLayers = 3 };
     Q_ENUM(BlendMode)
     explicit PlotItem(QQuickItem *parent = nullptr);
     int highlightedSeries() const;
@@ -50,8 +50,6 @@ public:
     double yMinimum() const;
     double yMaximum() const;
     double lineWidth() const;
-    bool cursorEnabled() const;
-    double cursorX() const;
     int cursorMode() const;
     double cursorX1() const;
     double cursorX2() const;
@@ -64,7 +62,6 @@ public:
     int blendMode() const;
     void setBlendMode(int mode);
     void setLineWidth(double width);
-    void setCursorEnabled(bool enabled);
     void setCursorMode(int mode);
     void setSeriesStore(const std::shared_ptr<const PlotSeriesStore> &store);
     void setVisibleSeries(const QVector<PlotSeriesId> &orderedIds);
@@ -107,7 +104,6 @@ protected:
     void mouseReleaseEvent(QMouseEvent *event) override;
     void mouseUngrabEvent() override;
     void wheelEvent(QWheelEvent *event) override;
-    void hoverMoveEvent(QHoverEvent *event) override;
 private:
     double nearestRawX(double x) const;
     void updateCursorValuesLocked();
@@ -131,12 +127,9 @@ private:
     double m_xMinimum = 0.0, m_xMaximum = 1.0, m_yMinimum = -1.0, m_yMaximum = 1.0;
     double m_lineWidth = 2.0;
     int m_highlightedSeries = -1;
-    bool m_cursorEnabled = false;
-    double m_cursorX = 0.0;
     int m_cursorMode = NoCursor;
     double m_cursorX1 = 0.0;
     double m_cursorX2 = 1.0;
-    QVector<QVector<double>> m_cursorValues;
     QVariantList m_xTicks;
     QVariantList m_yTicks;
     QVariantList m_cursorReadouts;

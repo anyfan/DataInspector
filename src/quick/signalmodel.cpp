@@ -204,19 +204,6 @@ QVector<int> SignalModel::removeFile(const QString &fileName)
     return removedRows;
 }
 
-void SignalModel::setAllChecked(bool checked)
-{
-    if (m_activePlot < 0 || m_activePlot >= m_plotRows.size()) return;
-    m_plotRows[m_activePlot].clear();
-    if (checked) {
-        for (int row = 0; row < m_names.size(); ++row)
-            m_plotRows[m_activePlot].insert(row);
-    }
-    if (!m_visibleNodes.isEmpty())
-        emit dataChanged(index(0), index(m_visibleNodes.size() - 1), {CheckedRole});
-    emit checkedCountChanged();
-}
-
 int SignalModel::checkedCount() const
 {
     return m_activePlot >= 0 && m_activePlot < m_plotRows.size()

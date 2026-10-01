@@ -51,7 +51,6 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 ┌──────────────▼───────────────────────────────────────────┐
 │  Scene Graph 项  src/quick/plotitem.*                     │
 │  视图状态、交互、QSG 节点提交、游标、归一化               │
-│  plotblendmaterial.*  flatcolor 材质与混合方程             │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -65,4 +64,13 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 
 ## 线程模型
 
-详见 [并发与线程安全](concurrency.md)。一句话：GUI 线程只做视图交互和节点提交；加载、索引构建、LOD 生成、导出写盘都在后台线程；跨线程共享的数据一律不可变快照。
+详见 [并发与线程安全](concurrency.md)。一句话：GUI 线程处理界面与视图交互，Scene Graph 渲染线程提交节点；加载、索引构建、LOD 生成、导出写盘都在后台线程；跨线程共享的数据一律不可变快照。
+
+## PlotItem 实现分工
+
+- `plotitem.cpp`：生命周期、不可变快照、视图范围与刻度。
+- `plotitem_cursor.cpp`：原始样本游标导航与读数；只保留双游标位置和供 QML 使用的读数列表。
+- `plotitem_interaction.cpp`：曲线拾取、平移、滚轮缩放和游标拖动。
+- `plotitem_render.cpp`：渲染线程拥有的 QSG 节点、几何上传与曲线排序，使用 Qt 内置 `QSGFlatColorMaterial`。
+
+这些文件共同实现同一个 `PlotItem`，状态仍由 `m_dataMutex` 保护，不增加跨线程可变对象。

@@ -45,8 +45,9 @@ set(DI_RENDER_SOURCES
 set(DI_PLOTITEM_SOURCES
     ${DI_QUICK_DIR}/plotitem.cpp
     ${DI_QUICK_DIR}/plotitem.h
-    ${DI_QUICK_DIR}/plotblendmaterial.cpp
-    ${DI_QUICK_DIR}/plotblendmaterial.h
+    ${DI_QUICK_DIR}/plotitem_cursor.cpp
+    ${DI_QUICK_DIR}/plotitem_interaction.cpp
+    ${DI_QUICK_DIR}/plotitem_render.cpp
 )
 
 set(DI_SIGNAL_SOURCES

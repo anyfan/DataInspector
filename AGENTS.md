@@ -44,7 +44,9 @@ src/quick/
   matwriter.* / mat5streamwriter.*  MAT5 流式写入
   exporttable.h / exportvalidation.*  导出共用结构与时间基校验
   plotitem.*                  Scene Graph 曲线项、视图交互、节点提交
-  plotblendmaterial.*         flatcolor 材质（AmplitudeLayers 层级）
+  plotitem_cursor.cpp         原始样本游标导航、读数
+  plotitem_interaction.cpp    拾取、平移、滚轮与拖动
+  plotitem_render.cpp         QSG 节点、几何上传、曲线层级
   qmltypes.h                  QML_FOREIGN 类型注册
   render/                     渲染内核（无 QQuickItem 依赖）
     plotseriesstore.*         不可变原始序列 Store、代际号

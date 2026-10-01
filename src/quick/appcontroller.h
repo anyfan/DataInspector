@@ -99,8 +99,6 @@ public:
     Q_INVOKABLE void selectSignal(int row);
     Q_INVOKABLE void toggleSignal(int row);
     Q_INVOKABLE void filterSignals(const QString &text);
-    Q_INVOKABLE void setAllSignalsChecked(bool checked);
-    Q_INVOKABLE int checkedSignalCount() const { return m_signals->checkedCount(); }
     Q_INVOKABLE bool plotSignalEnabled(int plotIndex, int row) const;
     Q_INVOKABLE QVariantList plotSignalRows(int plotIndex) const;
     Q_INVOKABLE QColor signalColor(int row) const { return m_signals->signalColor(row); }

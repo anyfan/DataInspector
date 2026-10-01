@@ -39,7 +39,8 @@ GPU 套件包括复用 `plotitem_raster_test --dense` 的 `plotitem_dense_raster
 
 `CMakeLists.txt` 把源文件拆成共用列表，避免应用和测试目标重复罗列：
 
-- `DI_RENDER_SOURCES`、`DI_PLOTITEM_SOURCES`、`DI_SIGNAL_SOURCES`、`DI_XLSX_SOURCES`、`DI_CONTROLLER_SOURCES`
+- `DI_PLOTITEM_SOURCES` 统一包含 `plotitem.cpp`、`plotitem_cursor.cpp`、`plotitem_interaction.cpp`、`plotitem_render.cpp` 和头文件；应用与绘图测试共用，使用 Qt 内置材质。
+- 其他共用列表：`DI_RENDER_SOURCES`、`DI_SIGNAL_SOURCES`、`DI_XLSX_SOURCES`、`DI_MAT_SOURCES`、`DI_CONTROLLER_SOURCES`
 - `DI_QML_FILES`、`DI_ICON_FILES`
 - 函数：`di_add_icon_resources()`、`di_add_test()`
 - MAT 通过 `di_mat` INTERFACE 目标统一暴露头文件和系统库

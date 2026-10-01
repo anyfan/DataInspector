@@ -1,6 +1,6 @@
 # 渲染管线
 
-> **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联代码**：`src/quick/render/`、`src/quick/plotitem.*`、`src/quick/plotblendmaterial.*` · **配套测试**：`rendercore_test`、`plotitem_lod_test`、`plotitem_blend_test`
+> **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联代码**：`src/quick/render/`、`src/quick/plotitem.*` · **配套测试**：`rendercore_test`、`plotitem_lod_test`、`plotitem_blend_test`
 
 曲线使用 GPU 三角带绘制，不依赖 `GL_LINE` 宽度。整条管线按"原始数据 → LOD → 屏幕几何 → QSG 节点"四级组织。
 
@@ -52,14 +52,14 @@
 - `AmplitudeLayers`（QML `blendOverlaps=true`，默认）：按当前可见区间内每条信号 `mean(abs(y))` 排序，幅值小的后画、叠在顶层，保留各自原色；点击选中的曲线额外置顶。
 - `OpaqueBlend`（关闭上述选项）：按原始绑定顺序绘制，后画的覆盖先画的。
 
-`plotblendmaterial.*` 复用 Qt 内置 `flatcolor` qsb 材质，仅通过 `updateGraphicsPipelineState` 设置混合方程。历史上曾提供 `Darken`/`Lighten`（`min`/`max`）两档做重叠区域的暗化/亮化混色，实际体验不好，已从 QML 菜单项移除；枚举值仍保留在头文件中以备复用，UI 不再切换。
+`plotitem_render.cpp` 使用 Qt 内置 `QSGFlatColorMaterial`。已删除界面停用的 Darken/Lighten 混色模式及自定义着色器；`AmplitudeLayers` 仍保留枚举值 3，曲线排序和选中置顶决定绘制层级，透明颜色走 Qt 标准 alpha 混合。旧模式值 1/2 和其他无效值回退为 `OpaqueBlend`。会话不保存混色模式枚举，JSON 格式不变。
 
 ## PlotItem（Scene Graph 项）
 
 - 维护视图状态、交互、游标、QSG 节点。
 - 曲线节点和材质复用，平移/缩放/游标更新不重建整棵节点树。
 - 游标查询始终访问原始样本，不插值、不用 LOD。
-- 归一化 Y 在 GUI 线程的 LOD 副本上就地缩放 y，共享 LOD 缓存仍是原始值；`fitY()` 在归一化模式下固定 `[-0.05, 1.05]`。
+- 归一化 Y 在渲染线程的局部 LOD 副本上就地缩放 y，共享 LOD 缓存仍是原始值；`fitY()` 在归一化模式下固定 `[-0.05, 1.05]`。
 
 ## 刻度
 

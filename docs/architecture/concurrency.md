@@ -6,7 +6,8 @@
 
 | 线程 | 职责 |
 | --- | --- |
-| GUI 主线程 | QML 事件、`PlotItem` 视图交互、`updatePaintNode` 提交、游标读数 |
+| GUI 主线程 | QML 事件、`PlotItem` 视图交互、游标读数 |
+| Scene Graph 渲染线程 | `updatePaintNode` 同步和节点提交、渲染线程拥有的 QSG 节点 |
 | 加载/导出工作线程 | `DataLoadWorker` 解析文件、构建 `PlotRangeIndex`；`DataExportWorker` 写 XLSX/MAT |
 | LOD 后台线程（最多 2 个） | `PlotLodScheduler` 生成结构化 LOD |
 

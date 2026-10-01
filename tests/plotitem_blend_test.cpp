@@ -1,6 +1,4 @@
-// GPU check for PlotItem::blendMode: two overlapping horizontal lines drawn
-// with Darken must produce min(red, blue) = near-black in the overlap, while
-// Opaque keeps the colour of the last drawn series.
+// GPU regression for binding order, amplitude ordering, selection and alpha.
 #include "plotitem.h"
 #include <QGuiApplication>
 #include <QQuickWindow>
@@ -24,15 +22,15 @@ int main(int argc, char **argv)
     const QVector<double> times{0.0, 1.0};
     store->replaceSeries({{1, times, {0.5, 0.5}, QColor(255, 0, 0), 6},
                           {2, times, {0.5, 0.5}, QColor(0, 0, 255), 6}});
-    PlotItem opaque(window.contentItem()), darken(window.contentItem());
+    PlotItem opaque(window.contentItem()), translucent(window.contentItem());
     PlotItem alternating(window.contentItem());
-    for (auto *plot : {&opaque, &darken, &alternating}) {
+    for (auto *plot : {&opaque, &translucent, &alternating}) {
         plot->setWidth(128); plot->setHeight(128); plot->setY(16);
         plot->setSeriesStore(store);
         plot->setVisibleSeries({1, 2});
         plot->setXRange(0, 1); plot->setYRange(0, 1);
     }
-    opaque.setX(16); darken.setX(176);
+    opaque.setX(16); translucent.setX(176);
     alternating.setX(336);
     alternating.setBlendMode(PlotItem::AmplitudeLayers);
     auto amplitudeStore = std::make_shared<PlotSeriesStore>();
@@ -41,13 +39,17 @@ int main(int argc, char **argv)
         {2, {0.0, 0.1, 0.9, 1.0}, {-0.9, 0.5, 0.5, 0.9}, QColor(0, 0, 255), 6}});
     alternating.setSeriesStore(amplitudeStore);
     opaque.setBlendMode(PlotItem::OpaqueBlend);
-    darken.setBlendMode(PlotItem::DarkenBlend);
+    translucent.setBlendMode(PlotItem::OpaqueBlend);
+    auto alphaStore = std::make_shared<PlotSeriesStore>();
+    alphaStore->replaceSeries({{1, times, {0.5, 0.5}, QColor(255, 0, 0, 128), 6},
+                               {2, times, {0.5, 0.5}, QColor(0, 0, 255, 128), 6}});
+    translucent.setSeriesStore(alphaStore);
     window.show();
     int attempts = 0;
     int stage = 0;
     QTimer timer;
     QObject::connect(&timer, &QTimer::timeout, &app, [&] {
-        if (opaque.lodPending() || darken.lodPending() || alternating.lodPending()) {
+        if (opaque.lodPending() || translucent.lodPending() || alternating.lodPending()) {
             if (++attempts > 10) { qCritical() << "LOD timeout"; app.exit(1); }
             return;
         }
@@ -70,19 +72,21 @@ int main(int argc, char **argv)
             return;
         }
         const QRgb opaquePixel = image.pixel(qRound((16 + 64) * ratio), qRound((16 + 64) * ratio));
-        const QRgb darkenPixel = image.pixel(qRound((176 + 64) * ratio), qRound((16 + 64) * ratio));
+        const QRgb translucentPixel = image.pixel(qRound((176 + 64) * ratio), qRound((16 + 64) * ratio));
         qInfo() << "opaque overlap" << QColor(opaquePixel).name()
-                << "darken overlap" << QColor(darkenPixel).name();
-        // Opaque: blue (drawn last) wins. Darken: min(red, blue) -> black.
+                << "translucent overlap" << QColor(translucentPixel).name();
+        // Standard source-over alpha: red then blue over a white background.
         const bool opaqueOk = qBlue(opaquePixel) > 200 && qRed(opaquePixel) < 60;
-        const bool darkenOk = qRed(darkenPixel) < 60 && qGreen(darkenPixel) < 60 && qBlue(darkenPixel) < 60;
+        const bool translucentOk = qAbs(qRed(translucentPixel) - 127) <= 3
+            && qAbs(qGreen(translucentPixel) - 63) <= 3
+            && qAbs(qBlue(translucentPixel) - 191) <= 3;
         bool smallAmplitudeInFront = true;
         for (int x : {10, 32, 54, 76, 98, 118}) {
             const auto pixel = image.pixel(qRound((336 + x) * ratio), qRound(80 * ratio));
             const bool red = qRed(pixel) > 200 && qBlue(pixel) < 60;
             smallAmplitudeInFront &= red;
         }
-        if (!(opaqueOk && darkenOk && smallAmplitudeInFront)) { app.exit(1); return; }
+        if (!(opaqueOk && translucentOk && smallAmplitudeInFront)) { app.exit(1); return; }
         alternating.setHighlightedSeries(2);
         stage = 1;
     });
