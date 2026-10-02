@@ -83,10 +83,18 @@ Rectangle {
             model: trajectory.markers
             delegate: Item {
                 required property var modelData
+                readonly property bool hasAttitude: modelData.attitude !== undefined && modelData.attitude.length === 4
                 x: modelData.x
                 y: modelData.y
-                Rectangle { x: -4; y: -4; width: 8; height: 8; radius: 4; color: parent.modelData.color }
-                Label { x: 7; y: -6; text: parent.modelData.name + " " + parent.modelData.text; color: parent.modelData.color; font.pixelSize: 11 }
+                Rectangle {
+                    width: parent.hasAttitude ? 3 : 8
+                    height: width
+                    x: -width / 2
+                    y: -height / 2
+                    radius: width / 2
+                    color: parent.modelData.color
+                }
+                Label { x: parent.hasAttitude ? 24 : 7; y: -6; text: parent.modelData.name + " " + parent.modelData.text; color: parent.modelData.color; font.pixelSize: 11 }
             }
         }
         Item {
@@ -326,18 +334,54 @@ Rectangle {
         ToolTip.visible: detailsHover.hovered
         ToolTip.text: root.sourceDescription + "\n" + trajectory.referenceOrigin + "\n" + trajectory.error + "\n" + trajectory.attitudeStatus + "\n" + trajectory.markers.map(value => value.details).join("\n") + "\n" + root.gestureHint
     }
+    // Explicit delegates avoid blank string-model entries and keep long source
+    // labels inside the popup, in both source and compiled Bound QML.
+    component PropertiesCombo: ComboBox {
+        id: control
+        Layout.fillWidth: true
+        Layout.minimumWidth: 0
+        implicitHeight: 30
+        contentItem: Label {
+            text: control.displayText
+            color: root.textColor
+            font.pixelSize: 12
+            elide: Text.ElideMiddle
+            verticalAlignment: Text.AlignVCenter
+        }
+        delegate: ItemDelegate {
+            id: option
+            required property var modelData
+            required property int index
+            width: control.width
+            height: 32
+            text: control.textRole.length > 0 ? String(modelData[control.textRole]) : String(modelData)
+            highlighted: control.highlightedIndex === option.index
+            contentItem: Label {
+                text: option.text
+                color: root.textColor
+                font.pixelSize: 12
+                elide: Text.ElideMiddle
+                verticalAlignment: Text.AlignVCenter
+            }
+            ToolTip.visible: hovered
+            ToolTip.text: text
+        }
+        ToolTip.visible: hovered && !popup.visible
+        ToolTip.text: displayText
+    }
     Dialog {
         id: properties
         objectName: "trajectoryPropertiesDialog"
         title: "活动航迹：样式与测量姿态"
         parent: Overlay.overlay
         anchors.centerIn: parent
-        width: Math.min(520, root.Window.width - 24)
-        height: Math.min(560, root.Window.height - 24)
+        width: Math.max(1, Math.min(600, root.Window.width - 24))
+        height: Math.max(1, Math.min(640, root.Window.height - 24))
         modal: true
         standardButtons: Dialog.Ok | Dialog.Cancel
         property var selectedSources: [-1, -1, -1, -1]
         onOpened: {
+            propertiesFlick.contentY = 0
             trackName.text = root.configuration.name
             trackColor.text = root.configuration.color.toString()
             trackWidth.value = root.configuration.width
@@ -354,48 +398,75 @@ Rectangle {
             root.controller.configureAttitude(root.plotIndex, attitudeMode.currentIndex, ids[0], ids[1], ids[2], ids[3], radians.checked, eulerOrder.currentIndex, scalarLast.checked, inverseDirection.checked)
         }
         contentItem: ScrollView {
+            id: propertiesScroll
+            objectName: "trajectoryPropertiesScroll"
             clip: true
-            ColumnLayout {
-                width: properties.availableWidth
-                Label { text: "名称 / 颜色（#RRGGBB 或 #AARRGGBB）/ 线宽" }
-                TextField { id: trackName; objectName: "trajectoryName"; Layout.fillWidth: true; maximumLength: 256 }
-                TextField { id: trackColor; objectName: "trajectoryColor"; Layout.fillWidth: true }
-                SpinBox { id: trackWidth; from: 1; to: 12 }
-                Label { text: "公共导航 NED：北、东、下；机体 FRD：前、右、下"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                Label { text: "零姿态：机头北、右翼东、机腹下。XYZ 输入需使用同一 NED 坐标系（米）。"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                ComboBox { id: attitudeMode; objectName: "trajectoryAttitudeMode"; model: ["关闭姿态", "滚转 / 俯仰 / 航向", "四元数"]; Layout.fillWidth: true }
-                Repeater {
-                    model: 4
-                    delegate: RowLayout {
-                        id: attitudeBinding
-                        required property int index
-                        visible: attitudeMode.currentIndex > 0 && (attitudeMode.currentIndex === 2 || index < 3)
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            ScrollBar.vertical: ScrollBar {
+                objectName: "trajectoryPropertiesScrollBar"
+                policy: propertiesFlick.contentHeight > propertiesFlick.height + 1 ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+            }
+            contentItem: Flickable {
+                id: propertiesFlick
+                objectName: "trajectoryPropertiesFlick"
+                clip: true
+                contentWidth: width
+                contentHeight: propertiesForm.implicitHeight + 8
+                boundsBehavior: Flickable.StopAtBounds
+                ColumnLayout {
+                    id: propertiesForm
+                    objectName: "trajectoryPropertiesForm"
+                    width: Math.max(1, propertiesFlick.width - propertiesScroll.effectiveScrollBarWidth - 8)
+                    spacing: 8
+                    Label { text: "航迹样式"; font.bold: true; color: root.textColor }
+                    RowLayout {
                         Layout.fillWidth: true
-                        Label { text: attitudeMode.currentIndex === 1 ? ["滚转", "俯仰", "航向", ""][attitudeBinding.index] : (scalarLast.checked ? ["x", "y", "z", "w"] : ["w", "x", "y", "z"])[attitudeBinding.index] }
-                        ComboBox {
-                            objectName: "trajectoryAttitudeSource" + attitudeBinding.index
-                            model: root.availableSources
-                            textRole: "label"
+                        Label { text: "名称"; Layout.preferredWidth: 46; color: root.textColor }
+                        TextField { id: trackName; objectName: "trajectoryName"; Layout.fillWidth: true; Layout.minimumWidth: 0; maximumLength: 256; implicitHeight: 30 }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Label { text: "颜色"; Layout.preferredWidth: 46; color: root.textColor }
+                        TextField { id: trackColor; objectName: "trajectoryColor"; Layout.fillWidth: true; Layout.minimumWidth: 0; placeholderText: "#RRGGBB 或 #AARRGGBB"; implicitHeight: 30 }
+                        Label { text: "线宽"; color: root.textColor }
+                        SpinBox { id: trackWidth; from: 1; to: 12; implicitHeight: 30 }
+                    }
+                    Label { text: "测量姿态"; font.bold: true; color: root.textColor }
+                    Label { text: "导航 NED：北 / 东 / 下；机体 FRD：前 / 右 / 下\n零姿态：机头北、右翼东、机腹下。XYZ 输入使用同一 NED 坐标系（米）。"; wrapMode: Text.Wrap; Layout.fillWidth: true; color: root.textColor; font.pixelSize: 12 }
+                    PropertiesCombo { id: attitudeMode; objectName: "trajectoryAttitudeMode"; model: ["关闭姿态", "滚转 / 俯仰 / 航向", "四元数"] }
+                    Repeater {
+                        model: 4
+                        delegate: RowLayout {
+                            id: attitudeBinding
+                            required property int index
+                            visible: attitudeMode.currentIndex > 0 && (attitudeMode.currentIndex === 2 || index < 3)
                             Layout.fillWidth: true
-                            currentIndex: {
-                                const id = properties.selectedSources[attitudeBinding.index]
-                                for (let i = 0; i < root.availableSources.length; ++i) if (root.availableSources[i].id === id) return i
-                                return 0
-                            }
-                            onActivated: function(index) {
-                                const ids = properties.selectedSources.slice()
-                                ids[attitudeBinding.index] = root.availableSources[index].id
-                                properties.selectedSources = ids
+                            Label { text: attitudeMode.currentIndex === 1 ? ["滚转", "俯仰", "航向", ""][attitudeBinding.index] : (scalarLast.checked ? ["x", "y", "z", "w"] : ["w", "x", "y", "z"])[attitudeBinding.index]; Layout.preferredWidth: 46; color: root.textColor }
+                            PropertiesCombo {
+                                objectName: "trajectoryAttitudeSource" + attitudeBinding.index
+                                model: root.availableSources
+                                textRole: "label"
+                                currentIndex: {
+                                    const id = properties.selectedSources[attitudeBinding.index]
+                                    for (let i = 0; i < root.availableSources.length; ++i) if (root.availableSources[i].id === id) return i
+                                    return 0
+                                }
+                                onActivated: function(index) {
+                                    const ids = properties.selectedSources.slice()
+                                    ids[attitudeBinding.index] = root.availableSources[index].id
+                                    properties.selectedSources = ids
+                                }
                             }
                         }
                     }
+                    CheckBox { id: radians; text: "角度单位为弧度（默认度）"; visible: attitudeMode.currentIndex === 1; font.pixelSize: 12 }
+                    Label { text: "欧拉旋转顺序"; visible: attitudeMode.currentIndex === 1; color: root.textColor }
+                    PropertiesCombo { id: eulerOrder; objectName: "trajectoryEulerOrder"; model: ["Rz(航向) · Ry(俯仰) · Rx(滚转)", "Rx(滚转) · Ry(俯仰) · Rz(航向)"]; visible: attitudeMode.currentIndex === 1 }
+                    CheckBox { id: scalarLast; text: "四元数输入顺序 xyzw（默认 wxyz）"; visible: attitudeMode.currentIndex === 2; font.pixelSize: 12 }
+                    CheckBox { id: inverseDirection; objectName: "trajectoryInverseDirection"; text: "输入为导航→机体（默认机体→导航）"; font.pixelSize: 12 }
+                    Label { text: "姿态随时间游标显示；位置与姿态各取最近原始样本，不插值、不跨缺口。读数显示两者时间差。"; wrapMode: Text.Wrap; Layout.fillWidth: true; color: root.textColor; font.pixelSize: 12 }
+                    Label { text: trajectory.referenceOrigin; wrapMode: Text.Wrap; Layout.fillWidth: true; color: root.textColor; font.pixelSize: 12 }
                 }
-                CheckBox { id: radians; text: "角度单位为弧度（默认度）"; visible: attitudeMode.currentIndex === 1 }
-                ComboBox { id: eulerOrder; model: ["Rz(航向) · Ry(俯仰) · Rx(滚转)", "Rx(滚转) · Ry(俯仰) · Rz(航向)"]; visible: attitudeMode.currentIndex === 1; Layout.fillWidth: true }
-                CheckBox { id: scalarLast; text: "四元数输入顺序 xyzw（默认 wxyz）"; visible: attitudeMode.currentIndex === 2 }
-                CheckBox { id: inverseDirection; text: "输入为导航→机体（默认机体→导航）" }
-                Label { text: "姿态随时间游标显示；位置与姿态各取最近原始样本，不插值、不跨缺口。读数显示两者时间差。"; wrapMode: Text.Wrap; Layout.fillWidth: true }
-                Label { text: trajectory.referenceOrigin; wrapMode: Text.Wrap; Layout.fillWidth: true }
             }
         }
     }

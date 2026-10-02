@@ -540,20 +540,46 @@ GeometryResult TrajectoryBuilder::attitudeGeometry(const QQuaternion &q, const T
         const auto ned = q.rotatedVector(body);
         double x = 0, y = 0;
         for (int a = 0; a < 3; ++a) { x += projection.horizontal[a] * ned[a]; y += projection.vertical[a] * ned[a]; }
-        return center + QPointF(x, y) * 22; // logical pixels, independent of fit/zoom
+        return center + QPointF(x, y) * 14; // logical pixels, independent of fit/zoom
     };
-    // FRD arrow aircraft: nose +X, right wing +Y, belly +Z. Distinct
-    // wing and fin surfaces keep roll readable, even in a front projection.
-    const std::array<QVector3D, 7> vertices{{{1.4f, 0, 0}, {-.8f, 0, 0}, {-.25f, 1, 0},
-        {-.25f, -1, 0}, {-.7f, 0, -.65f}, {-.65f, .45f, 0}, {-.65f, -.45f, 0}}};
+    // Compact FRD aircraft: a narrow fuselage, swept wings, tailplane and
+    // dorsal fin. Screen-space borders separate it from a same-colour path.
+    const QVector<QVector<QVector3D>> surfaces{
+        {{1.35f, 0, 0}, {.45f, .12f, .05f}, {-1.f, .09f, 0}, {-1.f, -.09f, 0}, {.45f, -.12f, .05f}},
+        {{.2f, .1f, 0}, {-.25f, .95f, 0}, {-.5f, .95f, 0}, {-.42f, .1f, 0}},
+        {{.2f, -.1f, 0}, {-.25f, -.95f, 0}, {-.5f, -.95f, 0}, {-.42f, -.1f, 0}},
+        {{-.72f, .08f, 0}, {-1.f, .42f, 0}, {-1.08f, .42f, 0}, {-1.03f, .08f, 0}},
+        {{-.72f, -.08f, 0}, {-1.f, -.42f, 0}, {-1.08f, -.42f, 0}, {-1.03f, -.08f, 0}},
+        {{-.65f, 0, 0}, {-.94f, 0, -.5f}, {-1.07f, 0, 0}},
+    };
+    QColor accent = QColor::fromHsvF(color.hsvHueF() < 0 ? .08 : std::fmod(color.hsvHueF() + .5, 1.0), .8, .98);
+    QVector<QVector<QPointF>> polygons;
+    for (const auto &surface : surfaces) {
+        QVector<QPointF> points; for (const auto &vertex : surface) points.append(map(vertex));
+        polygons.append(points);
+    }
     GeometryResult result;
-    const std::array<std::array<int, 3>, 4> faces{{{{0, 1, 2}}, {{0, 3, 1}}, {{1, 4, 0}}, {{1, 5, 6}}}};
-    for (int f = 0; f < int(faces.size()); ++f) {
-        GeometrySegment segment; segment.triangleList = true;
-        segment.color = f == 1 ? color.lighter(150) : f == 2 ? color.darker(160) : color;
-        for (int index : faces[f]) segment.vertices.append(map(vertices[index]));
+    const auto stroke = [&](const QColor &pen, double width) {
+        LodResult lod;
+        for (const auto &points : polygons) {
+            LodSegment segment; segment.color = pen; segment.lineWidth = width;
+            for (const auto &point : points) segment.points.append({point.x(), size.height() - point.y()});
+            const auto &first = points.first(); segment.points.append({first.x(), size.height() - first.y()});
+            lod.segments.append(segment);
+        }
+        const auto geometry = PlotGeometryBuilder::build(lod, {{0, size.width(), 0, size.height(), size.width(), size.height()}, width});
+        GeometrySegment merged; merged.color = pen; merged.triangleList = true;
+        for (const auto &segment : geometry.segments) merged.vertices += segment.vertices;
+        result.segments.append(merged);
+    };
+    stroke(Qt::white, 3.6); // halo first, then filled faces and a dark fine outline
+    for (int f = 0; f < polygons.size(); ++f) {
+        const auto &points = polygons[f]; GeometrySegment segment; segment.triangleList = true;
+        segment.color = f == 0 || f == 5 ? QColor("#fff4cf") : f % 2 ? accent : accent.lighter(140);
+        for (int i = 1; i + 1 < points.size(); ++i) segment.vertices += QVector<QPointF>{points[0], points[i], points[i + 1]};
         result.segments.append(segment);
     }
+    stroke(QColor("#202c38"), 1.1);
     return result;
 }
 TrajectoryPreview TrajectoryBuilder::preview(const TrajectoryData &data, const TrajectoryCamera &camera,

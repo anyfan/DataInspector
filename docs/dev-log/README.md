@@ -8,6 +8,7 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [飞机辨识度与姿态表单显示修复](trajectory-attitude-visual-form-2026-10-02.md) | 缩小飞机、机身机翼尾翼轮廓、对比描边、字段/滚动与下拉文字 |
 | [多航迹与实际三维姿态实施](trajectory-multi-attitude-2026-10-02.md) | 公共原点、活动航迹、测量姿态、v6 会话与回归边界 |
 | [多航迹与姿态显示工作量评估](trajectory-multi-attitude-estimate-2026-10-02.md) | 实施前的历史范围估算：单图叠加、公共原点、姿态信号与人天/内存边界 |
 | [航迹默认选入绑定与角度轴色](trajectory-default-bindings-colors-2026-10-02.md) | 默认经纬度、勾选补空轴、保留手动绑定、三轴角度独立着色 |

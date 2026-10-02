@@ -1077,6 +1077,52 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     auto *name = object->findChild<QObject *>("trajectoryName"); QVERIFY(name); name->setProperty("text", "Wing UI");
     auto *attitudeMode = object->findChild<QObject *>("trajectoryAttitudeMode"); QVERIFY(attitudeMode); attitudeMode->setProperty("currentIndex", 1);
     properties->setProperty("selectedSources", QVariantList{6, 7, 8, -1});
+    auto *form = object->findChild<QQuickItem *>("trajectoryPropertiesForm"); QVERIFY(form);
+    auto *flick = object->findChild<QQuickItem *>("trajectoryPropertiesFlick"); QVERIFY(flick);
+    auto *order = object->findChild<QQuickItem *>("trajectoryEulerOrder"); QVERIFY(order);
+    QTRY_VERIFY(form->width() <= flick->width());
+    QTRY_VERIFY(form->implicitHeight() > 0);
+    // Reach the lower settings through the actual scroll viewport, then inspect
+    // rendered delegate text for BOTH string-model entries (the first was blank).
+    QTest::qWait(50); // allow the mode-dependent rows to finish layout first
+    auto *scrollBar = object->findChild<QQuickItem *>("trajectoryPropertiesScrollBar"); QVERIFY(scrollBar);
+    const double bottom = qMax(0., flick->property("contentHeight").toDouble() - flick->height());
+    if (bottom > 1) QTRY_VERIFY(scrollBar->isVisible());
+    flick->setProperty("contentY", bottom);
+    QTest::qWait(50);
+    auto *orderPopup = order->property("popup").value<QObject *>(); QVERIFY(orderPopup);
+    QVERIFY(QMetaObject::invokeMethod(orderPopup, "open")); QTRY_VERIFY(orderPopup->property("visible").toBool());
+    QQuickItem *orderList = orderPopup->property("contentItem").value<QQuickItem *>(); QVERIFY(orderList);
+    const auto hasText = [&](const QString &text) {
+        QList<QQuickItem *> pending{orderList};
+        while (!pending.isEmpty()) {
+            auto *entry = pending.takeLast();
+            if (entry->property("text").toString() == text) return true;
+            pending.append(entry->childItems());
+        }
+        return false;
+    };
+    QTRY_VERIFY(hasText(QStringLiteral("Rz(航向) · Ry(俯仰) · Rx(滚转)")));
+    QTRY_VERIFY(hasText(QStringLiteral("Rx(滚转) · Ry(俯仰) · Rz(航向)")));
+    if (QGuiApplication::platformName() != "offscreen") {
+        QTest::qWait(100); QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-properties-order-ui.png")));
+    }
+    QVERIFY(QMetaObject::invokeMethod(orderPopup, "close"));
+    // The direction selector remains in the scroll content and reopening starts
+    // at the name field, rather than retaining an old scroll position.
+    auto *direction = object->findChild<QQuickItem *>("trajectoryInverseDirection"); QVERIFY(direction);
+    QVERIFY(direction->y() + direction->height() <= flick->property("contentHeight").toDouble());
+    const auto directionPosition = direction->mapToItem(flick, QPointF(0, direction->height()));
+    QVERIFY(directionPosition.y() <= flick->height() + 1 && directionPosition.y() >= 0);
+    QVERIFY(QMetaObject::invokeMethod(properties, "close"));
+    QTRY_VERIFY(!properties->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(propertiesButton, "clicked")); QTRY_VERIFY(properties->property("visible").toBool());
+    QTRY_COMPARE(flick->property("contentY").toDouble(), 0.);
+    name->setProperty("text", "Wing UI"); attitudeMode->setProperty("currentIndex", 1);
+    properties->setProperty("selectedSources", QVariantList{6, 7, 8, -1});
+    if (QGuiApplication::platformName() != "offscreen") {
+        QTest::qWait(100); QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-properties-form-ui.png")));
+    }
     QVERIFY(QMetaObject::invokeMethod(properties, "accepted")); QVERIFY(QMetaObject::invokeMethod(properties, "close"));
     QCOMPARE(c.trajectoryState(0)["name"].toString(), QString("Wing UI"));
     QCOMPARE(c.trajectoryState(0)["attitudeMode"].toInt(), 1);

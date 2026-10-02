@@ -122,6 +122,18 @@ int main(int argc, char **argv)
         }
         if (stage == 7) {
             if (image == noAttitude) { qCritical() << "Measured attitude was not rendered"; app.exit(1); return; }
+            int minX = image.width(), minY = image.height(), maxX = -1, maxY = -1, border = 0;
+            for (int y = 0; y < image.height(); ++y) for (int x = 0; x < image.width(); ++x) {
+                if (image.pixel(x, y) == noAttitude.pixel(x, y)) continue;
+                minX = qMin(minX, x); minY = qMin(minY, y); maxX = qMax(maxX, x); maxY = qMax(maxY, y);
+                const auto p = image.pixelColor(x, y);
+                if (p.red() < 80 && p.green() < 90 && p.blue() < 110) ++border;
+            }
+            const double dpr = window.devicePixelRatio();
+            qInfo() << "Aircraft logical footprint" << (maxX - minX + 1) / dpr << (maxY - minY + 1) / dpr << "dark border pixels" << border;
+            if ((maxX - minX + 1) / dpr > 42 || (maxY - minY + 1) / dpr > 42 || border < 12 * dpr * dpr) {
+                qCritical() << "Aircraft too large or missing contrast outline"; app.exit(1); return;
+            }
             withAttitude = image; image.save("trajectory-multi-attitude-zero.png");
             auto yaw = std::make_shared<PlotSeriesData>(*multi[1].attitudeSources[2]); yaw->values.fill(90); multi[1].attitudeSources[2] = yaw;
             item.setSources(multi); stage = 8; return;
