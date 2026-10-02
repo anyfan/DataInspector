@@ -61,3 +61,9 @@ CAD 旋转操纵器由 GUI 线程依据已显示相机生成，完成后整体�
 每次新的旋转手势从已显示相机开始并递增 interactionEpoch，同时将请求相机同步到这个基准。后台 Job 捕获该 epoch，finish 拒绝跨手势的过期帧，随后调度新手势最新请求，防止上一轮未显示相机插入后产生先前跳再回转。只在手势边界隔离，不逐次取消拖动请求，连续旋转仍能发布中间帧。
 
 角落控件的命中快照 `m_gizmo` 与可见快照 `m_visibleGizmo` 分开保存，GUI 在锁内整体发布或清空可见指针；SG 只读取可见快照，不读取 GUI 的悬停/展开布尔值。冻结拖动快照保持生命周期，拖出控件不影响当前手势。
+
+## 多航迹与姿态快照
+
+Job 捕获 QVector<TrajectorySource> 值快照（Store 指针均不可变），后台构建完整 TrajectoryFrame 和合并 TrajectoryPreview，保留两线程上限、请求合并及 interactionEpoch 跨手势隔离。提交要求来源配置完全匹配；旧来源任务取消后不能覆盖新帧。preparedFrame 保留旧准备数据供匹配复用，但不直接作为显示数据。
+
+GUI 游标/帧变化时构建实际姿态 GeometryResult，m_mutex 下整体替换 m_attitudeGeometry。updatePaintNode 在同一次锁内取得路径、操纵器和姿态三个不可变指针；渲染线程只更新自己的 QSG 节点。鼠标拖动依然冻结已显示公共范围/相机和环快照，旋转不读取各航迹的可变配置。

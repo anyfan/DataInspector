@@ -295,7 +295,8 @@ std::array<double, 3> TrajectoryBuilder::spatialPosition(const TrajectoryData &d
     return data.geographic ? data.projected.at(index) : position(data, index);
 }
 std::shared_ptr<const TrajectoryData> TrajectoryBuilder::build(
-    const std::array<PlotSeriesDataPtr, 3> &axes, const std::atomic_bool *cancel, bool geographic)
+    const std::array<PlotSeriesDataPtr, 3> &axes, const std::atomic_bool *cancel, bool geographic,
+    const std::optional<std::array<double, 3>> &origin)
 {
     auto data = std::make_shared<TrajectoryData>();
     data->axes = axes;
@@ -327,7 +328,8 @@ std::shared_ptr<const TrajectoryData> TrajectoryBuilder::build(
             if (raw[0] != 0 || raw[1] != 0) { originIndex = i; break; }
         }
         if (originIndex >= 0) {
-            data->origin = position(*data, originIndex); originEcef = surfaceEcef(data->origin[0], data->origin[1]);
+            data->localOrigin = position(*data, originIndex);
+            data->origin = origin.value_or(data->localOrigin); originEcef = surfaceEcef(data->origin[0], data->origin[1]);
             sinLat = std::sin(qDegreesToRadians(data->origin[0])); cosLat = std::cos(qDegreesToRadians(data->origin[0]));
             sinLon = std::sin(qDegreesToRadians(data->origin[1])); cosLon = std::cos(qDegreesToRadians(data->origin[1]));
         }
@@ -406,13 +408,163 @@ std::optional<qsizetype> TrajectoryBuilder::nearestSample(const TrajectoryData &
     }
     return std::nullopt;
 }
+std::shared_ptr<const TrajectoryFrame> TrajectoryBuilder::buildFrame(
+    const QVector<TrajectorySource> &sources, const std::atomic_bool *cancel, const TrajectoryFrame *previous)
+{
+    auto frame = std::make_shared<TrajectoryFrame>();
+    std::optional<std::array<double, 3>> origin;
+    std::optional<bool> geographic;
+    // Find an origin only after full validation, so a faulty first entry cannot
+    // shift or invalidate the other trajectories. Hidden entries retain origin.
+    for (const auto &source : sources) {
+        std::shared_ptr<const TrajectoryData> data;
+        const auto reuse = [&](const QVector<std::shared_ptr<const TrajectoryData>> &paths) {
+            for (const auto &path : paths) if (path->axes == source.axes && path->geographic == source.geographic
+                && (!source.geographic || (origin ? path->origin == *origin : path->origin == path->localOrigin))) { data = path; break; }
+        };
+        if (previous) reuse(previous->paths);
+        if (!data) reuse(frame->paths);
+        if (!data) data = build(source.axes, cancel, source.geographic, origin);
+        if (data->valid()) {
+            if (!geographic) geographic = source.geographic;
+            if (source.geographic && !origin) origin = data->origin;
+            if (*geographic != source.geographic) {
+                auto failed = std::make_shared<TrajectoryData>();
+                failed->error = QStringLiteral("同一子图不能混用地理与空间坐标"); data = failed;
+            }
+        }
+        frame->paths.append(data);
+        std::shared_ptr<const AttitudeData> attitude;
+        if (previous) for (const auto &prepared : previous->attitudes)
+            if (prepared->convention == source.attitude && prepared->sources == source.attitudeSources) { attitude = prepared; break; }
+        frame->attitudes.append(attitude ? attitude : buildAttitude(source, cancel));
+        if (cancel && cancel->load()) return frame;
+    }
+    std::shared_ptr<TrajectoryData> bounds;
+    for (int i = 0; i < sources.size(); ++i) {
+        const auto &data = frame->paths[i];
+        if (!sources[i].visible || !data->valid()) continue;
+        if (!bounds) {
+            // Bounds carry only frame metadata; never duplicate sample caches.
+            bounds = std::make_shared<TrajectoryData>();
+            bounds->geographic = data->geographic; bounds->origin = data->origin;
+            bounds->minimum = data->minimum; bounds->maximum = data->maximum;
+            bounds->planar = data->planar; bounds->horizontalAxis = data->horizontalAxis;
+            bounds->verticalAxis = data->verticalAxis; bounds->runs.append({0, 0});
+        } else {
+            bool representable = true;
+            for (int a = 0; a < 3; ++a)
+                representable = representable && qIsFinite(qMax(bounds->maximum[a], data->maximum[a]) - qMin(bounds->minimum[a], data->minimum[a]));
+            if (!representable) {
+                auto failed = std::make_shared<TrajectoryData>(); failed->error = QStringLiteral("与其他航迹的联合范围超出数值范围");
+                frame->paths[i] = failed; continue;
+            }
+            bounds->planar = bounds->planar && data->planar
+                && bounds->horizontalAxis == data->horizontalAxis && bounds->verticalAxis == data->verticalAxis;
+            for (int a = 0; a < 3; ++a) {
+                bounds->minimum[a] = qMin(bounds->minimum[a], data->minimum[a]);
+                bounds->maximum[a] = qMax(bounds->maximum[a], data->maximum[a]);
+            }
+        }
+    }
+    frame->bounds = bounds;
+    return frame;
+}
+std::shared_ptr<const AttitudeData> TrajectoryBuilder::buildAttitude(const TrajectorySource &source,
+    const std::atomic_bool *cancel)
+{
+    auto result = std::make_shared<AttitudeData>();
+    result->convention = source.attitude; result->sources = source.attitudeSources;
+    if (!source.attitude.mode) return result;
+    const int n = source.attitude.mode == 1 ? 3 : 4;
+    auto fail = [&](const QString &error) { result->error = error; result->runs.clear(); return result; };
+    for (int a = 0; a < n; ++a) if (!result->sources[a]) return fail(QStringLiteral("姿态来源未绑定或已移除"));
+    const auto &first = *result->sources[0]; const auto count = first.sampleCount();
+    for (int a = 1; a < n; ++a) if (result->sources[a]->sampleCount() != count)
+        return fail(QStringLiteral("姿态分量样本数不一致"));
+    qsizetype start = -1; double previous = -std::numeric_limits<double>::infinity();
+    for (qsizetype i = 0; i < count; ++i) {
+        if ((i & 1023) == 0 && cancel && cancel->load()) return fail(QStringLiteral("已取消"));
+        const double t = first.pointAt(i).x(); bool valid = qIsFinite(t); double norm = 0;
+        for (int a = 0; a < n; ++a) {
+            const auto p = result->sources[a]->pointAt(i);
+            if (qIsFinite(t) != qIsFinite(p.x()) || (qIsFinite(t) && t != p.x()))
+                return fail(QStringLiteral("姿态分量时间基不一致；不插值"));
+            valid = valid && qIsFinite(p.y()); norm += p.y() * p.y();
+        }
+        if (qIsFinite(t)) { if (t < previous) return fail(QStringLiteral("姿态时间未排序")); previous = t; }
+        if (n == 4) valid = valid && qIsFinite(norm) && norm > 1e-20;
+        if (valid) { if (start < 0) start = i; }
+        else if (start >= 0) { result->runs.append({start, i - 1}); start = -1; }
+    }
+    if (start >= 0) result->runs.append({start, count - 1});
+    if (result->runs.isEmpty()) return fail(QStringLiteral("没有有效姿态原始样本"));
+    return result;
+}
+std::optional<AttitudeSample> TrajectoryBuilder::attitudeSample(const AttitudeData &data, double time)
+{
+    if (!data.error.isEmpty() || !data.convention.mode || !qIsFinite(time)) return std::nullopt;
+    const auto &axis = *data.sources[0];
+    for (const auto &run : data.runs) {
+        if (time < axis.pointAt(run.first).x() || time > axis.pointAt(run.second).x()) continue;
+        const auto i = PlotSeriesStore::nearestSampleIndex(axis, time, run.first, run.second);
+        if (!i) return std::nullopt;
+        std::array<double, 4> values{};
+        for (int a = 0; a < (data.convention.mode == 1 ? 3 : 4); ++a) values[a] = data.sources[a]->pointAt(*i).y();
+        QQuaternion q;
+        if (data.convention.mode == 1) {
+            const double period = data.convention.radians ? 2 * M_PI : 360;
+            const double factor = data.convention.radians ? 180 / M_PI : 1;
+            for (int a = 0; a < 3; ++a) values[a] = std::remainder(values[a], period);
+            const auto x = QQuaternion::fromAxisAndAngle(1, 0, 0, float(values[0] * factor));
+            const auto y = QQuaternion::fromAxisAndAngle(0, 1, 0, float(values[1] * factor));
+            const auto z = QQuaternion::fromAxisAndAngle(0, 0, 1, float(values[2] * factor));
+            q = data.convention.order == 0 ? z * y * x : x * y * z;
+        } else {
+            const int w = data.convention.scalarLast ? 3 : 0;
+            const int x = data.convention.scalarLast ? 0 : 1;
+            double norm = 0; for (double v : values) norm += v * v;
+            norm = std::sqrt(norm);
+            q = QQuaternion(float(values[w] / norm), float(values[x] / norm), float(values[x + 1] / norm), float(values[x + 2] / norm));
+        }
+        if (data.convention.navigationToBody) q = q.conjugated();
+        return AttitudeSample{q.normalized(), axis.pointAt(*i).x()};
+    }
+    return std::nullopt;
+}
+GeometryResult TrajectoryBuilder::attitudeGeometry(const QQuaternion &q, const TrajectoryData &bounds,
+    const TrajectoryCamera &camera, const QSizeF &size, const QPointF &center, const QColor &color)
+{
+    const auto projection = screenProjection(bounds, camera, size);
+    const auto map = [&](const QVector3D &body) {
+        const auto ned = q.rotatedVector(body);
+        double x = 0, y = 0;
+        for (int a = 0; a < 3; ++a) { x += projection.horizontal[a] * ned[a]; y += projection.vertical[a] * ned[a]; }
+        return center + QPointF(x, y) * 22; // logical pixels, independent of fit/zoom
+    };
+    // FRD arrow aircraft: nose +X, right wing +Y, belly +Z. Distinct
+    // wing and fin surfaces keep roll readable, even in a front projection.
+    const std::array<QVector3D, 7> vertices{{{1.4f, 0, 0}, {-.8f, 0, 0}, {-.25f, 1, 0},
+        {-.25f, -1, 0}, {-.7f, 0, -.65f}, {-.65f, .45f, 0}, {-.65f, -.45f, 0}}};
+    GeometryResult result;
+    const std::array<std::array<int, 3>, 4> faces{{{{0, 1, 2}}, {{0, 3, 1}}, {{1, 4, 0}}, {{1, 5, 6}}}};
+    for (int f = 0; f < int(faces.size()); ++f) {
+        GeometrySegment segment; segment.triangleList = true;
+        segment.color = f == 1 ? color.lighter(150) : f == 2 ? color.darker(160) : color;
+        for (int index : faces[f]) segment.vertices.append(map(vertices[index]));
+        result.segments.append(segment);
+    }
+    return result;
+}
 TrajectoryPreview TrajectoryBuilder::preview(const TrajectoryData &data, const TrajectoryCamera &camera,
-    const QSizeF &size, double lineWidth, const QColor &axisColor, const std::atomic_bool *cancel, bool interactive)
+    const QSizeF &size, double lineWidth, const QColor &axisColor, const std::atomic_bool *cancel, bool interactive,
+    const TrajectoryData *bounds, bool drawAxes, const QColor &pathColor)
 {
     TrajectoryPreview result;
     if (!data.valid() || size.isEmpty()) return result;
-    const auto transform = screenProjection(data, camera, size);
-    const double pixelTolerance = (interactive ? 1.0 : .25) / transform.scale;
+    const auto transform = screenProjection(bounds ? *bounds : data, camera, size);
+    const auto local = screenProjection(data, camera, size);
+    const double pixelTolerance = (interactive ? 1.0 : .25) / transform.scale * transform.span / local.span;
     const TrajectoryData::Level *level = nullptr;
     for (const auto &candidate : data.levels) {
         if (candidate.tolerance <= pixelTolerance || (interactive && candidate.count > 16000)) level = &candidate;
@@ -436,7 +588,10 @@ TrajectoryPreview TrajectoryBuilder::preview(const TrajectoryData &data, const T
         for (qsizetype j = 0; j < count;) {
             if ((result.projectedSamples & 1023) == 0 && cancel && cancel->load()) return {};
             const qsizetype i = indices ? indices->at(j) : run.first + j;
-            const auto screen = transform.mapNormalized(data.normalized[i]);
+            const auto &p = data.normalized[i];
+            std::array<double, 3> shared;
+            for (int a = 0; a < 3; ++a) shared[a] = (double(p[a]) * local.span + local.center[a] - transform.center[a]) / transform.span;
+            const auto screen = transform.mapNormalized(shared);
             ++result.projectedSamples;
             // Screen-space thinning keeps complete XYZ samples. Every omitted point
             // lies within .35 pixel of a retained point; never connect across a gap.
@@ -447,21 +602,23 @@ TrajectoryPreview TrajectoryBuilder::preview(const TrajectoryData &data, const T
             if (j == count - 1) break;
             j = qMin(count - 1, j + stride);
         }
-        if (points.size() > 1) addLine(points, data.axes[data.timeAxis]->color, lineWidth);
+        if (points.size() > 1) addLine(points, pathColor.isValid() ? pathColor : data.axes[data.timeAxis]->color, lineWidth);
     }
+    if (drawAxes) {
+    const auto &display = bounds ? *bounds : data;
     // A fixed-size orientation triad replaces the outer box. Only rotation
     // affects it: pan, zoom and data extents must not move or distort the gizmo.
     const double length = qMin(30.0, qMin(size.width(), size.height()) * .18);
     const QPointF base(qMin(55.0, size.width() * .25), size.height() - qMin(55.0, size.height() * .25));
-    if (!data.planar)
+    if (!display.planar)
         result.orientationRect = QRectF(base - QPointF(length + 10, length + 10), QSizeF(2 * length + 48, 2 * length + 36))
             .intersected(QRectF(QPointF(), size));
     const std::array<QColor, 3> colors{{QColor("#d94b4b"), QColor("#27945b"), QColor("#397bc5")}};
     addLine({base + QPointF(-2, 0), base + QPointF(2, 0)}, axisColor, 1);
     for (int axis = 0; axis < 3; ++axis) {
-        if (data.planar && axis != data.horizontalAxis && axis != data.verticalAxis) continue;
+        if (display.planar && axis != display.horizontalAxis && axis != display.verticalAxis) continue;
         std::array<double, 3> unit{}; unit[axis] = 1;
-        const auto delta = data.planar ? QPointF(transform.horizontal[axis] * length, transform.vertical[axis] * length)
+        const auto delta = display.planar ? QPointF(transform.horizontal[axis] * length, transform.vertical[axis] * length)
                                       : rotatedDirection(unit, camera) * length;
         const auto end = base + delta;
         const double distance = std::hypot(delta.x(), delta.y());
@@ -472,9 +629,10 @@ TrajectoryPreview TrajectoryBuilder::preview(const TrajectoryData &data, const T
             addLine({end - along * 5 + normal * 2.5, end, end - along * 5 - normal * 2.5}, colors[axis], 1.5);
         }
         const auto label = distance > 1 ? end : base + QPointF(-22, 5);
-        const QString name = data.geographic ? QStringList{"X 北", "Y 东", "Z 地"}.at(axis)
+        const QString name = display.geographic ? QStringList{"X 北", "Y 东", "Z 地"}.at(axis)
                                              : QStringList{"X", "Y", "Z"}.at(axis);
         result.labels.append(QVariantMap{{"x", label.x()}, {"y", label.y()}, {"text", name}, {"color", colors[axis]}});
+    }
     }
     result.geometry = PlotGeometryBuilder::build(lod,
         {{0, size.width(), 0, size.height(), size.width(), size.height()}, lineWidth});

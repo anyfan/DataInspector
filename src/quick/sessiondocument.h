@@ -18,11 +18,30 @@ struct SessionCursor
     int mode = 0;
     double x1 = 0.0, x2 = 1.0;
 };
-struct SessionTrajectory
+struct SessionTrajectoryEntry
+{
+    QString id = QStringLiteral("trajectory-1"), name = QStringLiteral("航迹 1");
+    bool geographic = true, visible = true;
+    QColor color = QColor("#0072bd");
+    double width = 2;
+    std::array<int, 3> axes{{-1, -1, -1}};
+    TrajectoryAttitude attitude;
+};
+struct SessionTrajectory : SessionTrajectoryEntry
 {
     bool enabled = false;
-    bool geographic = false;
-    std::array<int, 3> axes{{-1, -1, -1}};
+    int active = 0;
+    // The inherited entry is the active editing state. entries() publishes a
+    // complete value snapshot; selecting another entry flushes this state first.
+    QVector<SessionTrajectoryEntry> tracks{SessionTrajectoryEntry{}};
+    QVector<SessionTrajectoryEntry> entries() const {
+        auto result = tracks;
+        if (active >= 0 && active < result.size()) result[active] = static_cast<const SessionTrajectoryEntry &>(*this);
+        return result;
+    }
+    void select(int index) {
+        tracks = entries(); active = index; static_cast<SessionTrajectoryEntry &>(*this) = tracks.at(active);
+    }
     QVector<int> signalIds; // available sources in this trajectory subplot, independent of axis assignment
     TrajectoryCamera camera;
 };
@@ -35,7 +54,7 @@ struct SessionPlot
 };
 struct SessionDocument
 {
-    static constexpr int version = 5;
+    static constexpr int version = 6;
     QStringList files; // Relative to the session document, or absolute.
     QVector<SessionSignal> series;
     QVector<SessionPlot> plots{SessionPlot{}};

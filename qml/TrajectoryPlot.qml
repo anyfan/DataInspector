@@ -19,7 +19,7 @@ Rectangle {
     objectName: "trajectoryView"
 
     property var configuration: root.controller.trajectoryState(root.plotIndex)
-    readonly property bool planarMode: root.configuration.planar
+    readonly property bool planarMode: trajectory.planar
     property var availableSources: root.controller.trajectorySignalOptions(root.plotIndex)
     // Explicit notification survives qmlcachegen eliminating unused revision reads.
     function refreshBindings() {
@@ -56,7 +56,7 @@ Rectangle {
         id: viewport
         objectName: "trajectoryViewport"
         anchors.fill: parent
-        anchors.topMargin: 28
+        anchors.topMargin: 56
         anchors.bottomMargin: 18
         clip: true
         TrajectoryItem {
@@ -86,7 +86,7 @@ Rectangle {
                 x: modelData.x
                 y: modelData.y
                 Rectangle { x: -4; y: -4; width: 8; height: 8; radius: 4; color: parent.modelData.color }
-                Label { x: 7; y: -6; text: parent.modelData.text; color: parent.modelData.color; font.pixelSize: 11 }
+                Label { x: 7; y: -6; text: parent.modelData.name + " " + parent.modelData.text; color: parent.modelData.color; font.pixelSize: 11 }
             }
         }
         Item {
@@ -108,7 +108,7 @@ Rectangle {
                 : (root.configuration.x < 0 ? 0 : 1) + (root.configuration.y < 0 ? 0 : 1) + (root.configuration.z < 0 ? 0 : 1) < 2
                     ? root.selectionHint : trajectory.error
             color: root.textColor
-            visible: (trajectory.pending && trajectory.axisLabels.length === 0) || trajectory.error.length > 0
+            visible: trajectory.axisLabels.length === 0
         }
         MouseArea {
             id: trajectoryInput
@@ -170,7 +170,38 @@ Rectangle {
         }
     }
     RowLayout {
+        id: management
+        objectName: "trajectoryManagement"
         anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: 3
+        height: 24
+        spacing: 2
+        ComboBox {
+            id: trackSelector
+            objectName: "trajectorySelector"
+            Layout.fillWidth: true
+            Layout.minimumWidth: 60
+            implicitHeight: 24
+            model: root.configuration.tracks
+            textRole: "name"
+            currentIndex: root.configuration.active
+            onActivated: function(index) { root.controller.selectTrajectory(root.plotIndex, index) }
+        }
+        ToolButton { objectName: "trajectoryAdd"; text: "+"; implicitHeight: 24; onClicked: root.controller.addTrajectory(root.plotIndex) }
+        ToolButton { objectName: "trajectoryRemove"; text: "−"; implicitHeight: 24; onClicked: root.controller.removeTrajectory(root.plotIndex, root.configuration.active) }
+        CheckBox {
+            objectName: "trajectoryVisible"
+            text: "显示"
+            checked: root.configuration.visible
+            implicitHeight: 24
+            onClicked: root.controller.styleTrajectory(root.plotIndex, root.configuration.name, root.configuration.color, root.configuration.width, checked)
+        }
+        ToolButton { objectName: "trajectoryProperties"; text: "样式 / 姿态"; implicitHeight: 24; onClicked: properties.open() }
+    }
+    RowLayout {
+        anchors.top: management.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.margins: 3
@@ -287,12 +318,86 @@ Rectangle {
         text: {
             const values = trajectory.markers
             const cursors = values.filter(value => value.text.indexOf("游标") === 0)
+            if (trajectory.error.length > 0 || trajectory.attitudeStatus.length > 0) return [trajectory.error, trajectory.attitudeStatus].filter(value => value.length > 0).join(" | ")
             return cursors.length > 0 ? cursors.map(value => value.details).join("  |  ")
                 : values.length > 0 ? values[values.length - 1].details : root.sourceDescription
         }
         HoverHandler { id: detailsHover }
         ToolTip.visible: detailsHover.hovered
-        ToolTip.text: root.sourceDescription + "\n" + trajectory.markers.map(value => value.details).join("\n") + "\n" + root.gestureHint
+        ToolTip.text: root.sourceDescription + "\n" + trajectory.referenceOrigin + "\n" + trajectory.error + "\n" + trajectory.attitudeStatus + "\n" + trajectory.markers.map(value => value.details).join("\n") + "\n" + root.gestureHint
+    }
+    Dialog {
+        id: properties
+        objectName: "trajectoryPropertiesDialog"
+        title: "活动航迹：样式与测量姿态"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(520, root.Window.width - 24)
+        height: Math.min(560, root.Window.height - 24)
+        modal: true
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        property var selectedSources: [-1, -1, -1, -1]
+        onOpened: {
+            trackName.text = root.configuration.name
+            trackColor.text = root.configuration.color.toString()
+            trackWidth.value = root.configuration.width
+            attitudeMode.currentIndex = root.configuration.attitudeMode
+            radians.checked = root.configuration.radians
+            eulerOrder.currentIndex = root.configuration.order
+            scalarLast.checked = root.configuration.scalarLast
+            inverseDirection.checked = root.configuration.navigationToBody
+            properties.selectedSources = root.configuration.attitudeSources.slice()
+        }
+        onAccepted: {
+            root.controller.styleTrajectory(root.plotIndex, trackName.text, trackColor.text, trackWidth.value, root.configuration.visible)
+            const ids = properties.selectedSources
+            root.controller.configureAttitude(root.plotIndex, attitudeMode.currentIndex, ids[0], ids[1], ids[2], ids[3], radians.checked, eulerOrder.currentIndex, scalarLast.checked, inverseDirection.checked)
+        }
+        contentItem: ScrollView {
+            clip: true
+            ColumnLayout {
+                width: properties.availableWidth
+                Label { text: "名称 / 颜色（#RRGGBB 或 #AARRGGBB）/ 线宽" }
+                TextField { id: trackName; objectName: "trajectoryName"; Layout.fillWidth: true; maximumLength: 256 }
+                TextField { id: trackColor; objectName: "trajectoryColor"; Layout.fillWidth: true }
+                SpinBox { id: trackWidth; from: 1; to: 12 }
+                Label { text: "公共导航 NED：北、东、下；机体 FRD：前、右、下"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                Label { text: "零姿态：机头北、右翼东、机腹下。XYZ 输入需使用同一 NED 坐标系（米）。"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                ComboBox { id: attitudeMode; objectName: "trajectoryAttitudeMode"; model: ["关闭姿态", "滚转 / 俯仰 / 航向", "四元数"]; Layout.fillWidth: true }
+                Repeater {
+                    model: 4
+                    delegate: RowLayout {
+                        id: attitudeBinding
+                        required property int index
+                        visible: attitudeMode.currentIndex > 0 && (attitudeMode.currentIndex === 2 || index < 3)
+                        Layout.fillWidth: true
+                        Label { text: attitudeMode.currentIndex === 1 ? ["滚转", "俯仰", "航向", ""][attitudeBinding.index] : (scalarLast.checked ? ["x", "y", "z", "w"] : ["w", "x", "y", "z"])[attitudeBinding.index] }
+                        ComboBox {
+                            objectName: "trajectoryAttitudeSource" + attitudeBinding.index
+                            model: root.availableSources
+                            textRole: "label"
+                            Layout.fillWidth: true
+                            currentIndex: {
+                                const id = properties.selectedSources[attitudeBinding.index]
+                                for (let i = 0; i < root.availableSources.length; ++i) if (root.availableSources[i].id === id) return i
+                                return 0
+                            }
+                            onActivated: function(index) {
+                                const ids = properties.selectedSources.slice()
+                                ids[attitudeBinding.index] = root.availableSources[index].id
+                                properties.selectedSources = ids
+                            }
+                        }
+                    }
+                }
+                CheckBox { id: radians; text: "角度单位为弧度（默认度）"; visible: attitudeMode.currentIndex === 1 }
+                ComboBox { id: eulerOrder; model: ["Rz(航向) · Ry(俯仰) · Rx(滚转)", "Rx(滚转) · Ry(俯仰) · Rz(航向)"]; visible: attitudeMode.currentIndex === 1; Layout.fillWidth: true }
+                CheckBox { id: scalarLast; text: "四元数输入顺序 xyzw（默认 wxyz）"; visible: attitudeMode.currentIndex === 2 }
+                CheckBox { id: inverseDirection; text: "输入为导航→机体（默认机体→导航）" }
+                Label { text: "姿态随时间游标显示；位置与姿态各取最近原始样本，不插值、不跨缺口。读数显示两者时间差。"; wrapMode: Text.Wrap; Layout.fillWidth: true }
+                Label { text: trajectory.referenceOrigin; wrapMode: Text.Wrap; Layout.fillWidth: true }
+            }
+        }
     }
     Shortcut {
         sequence: "Space"

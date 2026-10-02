@@ -4,9 +4,15 @@
 #include <QTimer>
 #include <QImage>
 #include <QDebug>
+#include <QFile>
 #include <QtMath>
 int main(int argc, char **argv)
 {
+    QFile("trajectory-raster-results.txt").remove();
+    qInstallMessageHandler([](QtMsgType, const QMessageLogContext &, const QString &message) {
+        QFile log("trajectory-raster-results.txt");
+        if (log.open(QIODevice::WriteOnly | QIODevice::Append)) { log.write(message.toUtf8()); log.write("\n"); }
+    });
     QGuiApplication app(argc, argv);
     if (QQuickWindow::graphicsApi() == QSGRendererInterface::Software) return 77;
     QQuickWindow window; window.setFlags(Qt::Tool | Qt::FramelessWindowHint | Qt::WindowDoesNotAcceptFocus);
@@ -17,6 +23,7 @@ int main(int argc, char **argv)
     const auto snapshot = store.snapshot({0, 1, 2});
     TrajectoryItem item(window.contentItem()); item.setWidth(400); item.setHeight(320); item.setLineWidth(3);
     item.setAxes({snapshot.series[0], snapshot.series[1], snapshot.series[2]}); window.show();
+    QVector<TrajectorySource> multi; QImage noAttitude, withAttitude;
     int attempts = 0, stage = 0, redBefore = 0, redExpanded = 0; QImage first; QTimer timer;
     QPointF ringStart, ringEnd;
     const auto redPixels = [](const QImage &image) {
@@ -28,9 +35,11 @@ int main(int argc, char **argv)
         return count;
     };
     QObject::connect(&timer, &QTimer::timeout, &app, [&] {
-        if (++attempts > 50) { qCritical() << "Trajectory render timeout"; app.exit(1); return; }
+        if (++attempts > 100) { qCritical() << "Trajectory render timeout"; app.exit(1); return; }
         if (item.pending()) return;
         if (!item.error().isEmpty()) { qCritical() << item.error(); app.exit(1); return; }
+        if (stage == 0) qInfo() << "Scene Graph API" << window.rendererInterface()->graphicsApi()
+            << "D3D11 enum" << QSGRendererInterface::Direct3D11 << "platform" << QGuiApplication::platformName();
         const auto image = window.grabWindow().convertToFormat(QImage::Format_RGB32);
         if (image.isNull()) { app.exit(2); return; }
         int ink = 0;
@@ -81,11 +90,52 @@ int main(int argc, char **argv)
             if (item.rotationGizmoVisible()) { qCritical() << "Corner control did not collapse"; app.exit(1); return; }
             stage = 5; return;
         }
-        const QRect centralRegion(int(image.width() * .3), int(image.height() * .15), int(image.width() * .6), int(image.height() * .6));
-        if (redPixels(image) >= redExpanded * .5 || image.copy(centralRegion) != first.copy(centralRegion)) {
-            qCritical() << "Collapsed handles still obscure the trajectory"; app.exit(1); return;
+
+        if (stage == 5) {
+            const QRect centralRegion(int(image.width() * .3), int(image.height() * .15), int(image.width() * .6), int(image.height() * .6));
+            if (redPixels(image) >= redExpanded * .5 || image.copy(centralRegion) != first.copy(centralRegion)) {
+                qCritical() << "Collapsed handles still obscure the trajectory"; app.exit(1); return;
+            }
+            image.save("trajectory-cad-corner-idle.png");
+            TrajectorySource a; a.id = "leader"; a.name = "Leader"; a.axes = {snapshot.series[0], snapshot.series[1], snapshot.series[2]}; a.color = QColor("#0072bd"); a.width = 3;
+            TrajectorySource b = a; b.id = "wing"; b.name = "Wing"; b.color = QColor("#e68722");
+            auto shifted = std::make_shared<PlotSeriesData>(*b.axes[0]); shifted->values = x;
+            for (double &value : shifted->values) value += 3;
+            b.axes[0] = shifted;
+            multi = {a, b}; item.setSources(multi); item.presetView(0); item.fitView(); item.setTimeCursor(1, .5, 1, 0, 1); stage = 6; return;
         }
-        image.save("trajectory-cad-corner-idle.png"); app.exit(0);
+        if (stage == 6) {
+            int orange = 0;
+            for (int y = 0; y < image.height(); ++y) for (int x = 0; x < image.width(); ++x) {
+                const auto p = image.pixel(x, y);
+                if (qRed(p) > 180 && qGreen(p) > 90 && qGreen(p) < 170 && qBlue(p) < 70) ++orange;
+            }
+            qInfo() << "Second trajectory orange pixels" << orange;
+            if (orange < 250) { qCritical() << "Missing overlay path"; app.exit(1); return; }
+            noAttitude = image; image.save("trajectory-multi.png");
+            multi[1].attitude.mode = 1;
+            for (int a = 0; a < 3; ++a) {
+                auto component = std::make_shared<PlotSeriesData>(*snapshot.series[0]); component->values.fill(0);
+                multi[1].attitudeSources[a] = component;
+            }
+            item.setSources(multi); stage = 7; return;
+        }
+        if (stage == 7) {
+            if (image == noAttitude) { qCritical() << "Measured attitude was not rendered"; app.exit(1); return; }
+            withAttitude = image; image.save("trajectory-multi-attitude-zero.png");
+            auto yaw = std::make_shared<PlotSeriesData>(*multi[1].attitudeSources[2]); yaw->values.fill(90); multi[1].attitudeSources[2] = yaw;
+            item.setSources(multi); stage = 8; return;
+        }
+        if (stage == 8) {
+            if (image == withAttitude) { qCritical() << "Measured yaw does not change aircraft"; app.exit(1); return; }
+            image.save("trajectory-multi-attitude-yaw.png");
+            auto yaw = std::make_shared<PlotSeriesData>(*multi[1].attitudeSources[2]); yaw->values.fill(qQNaN()); multi[1].attitudeSources[2] = yaw;
+            item.setSources(multi); stage = 9; return;
+        }
+        if (image != noAttitude || !item.attitudeStatus().contains(QStringLiteral("有效姿态"))) {
+            qCritical() << "Missing attitude did not hide measured model"; app.exit(1); return;
+        }
+        image.save("trajectory-multi-attitude-missing.png"); app.exit(0);
     });
     timer.start(250); return app.exec();
 }

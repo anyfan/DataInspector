@@ -152,7 +152,10 @@ bool AppController::collectExportTables(int scope, QVector<DataExportTable> *tab
              ++plotIndex) {
             const QVector<int> plotRows = m_signals->plotRows(plotIndex);
             if (m_trajectories.value(plotIndex).enabled) {
-                for (int row : m_trajectories.value(plotIndex).axes) if (row >= 0) uniqueRows.insert(row);
+                for (const auto &track : m_trajectories.value(plotIndex).entries()) if (track.visible) {
+                    for (int row : track.axes) if (row >= 0) uniqueRows.insert(row);
+                    if (track.attitude.mode) for (int a = 0; a < (track.attitude.mode == 1 ? 3 : 4); ++a) { const int row = track.attitude.sources[a]; if (row >= 0) uniqueRows.insert(row); }
+                }
             } else for (int row : plotRows) uniqueRows.insert(row);
         }
         rows = QVector<int>(uniqueRows.cbegin(), uniqueRows.cend());

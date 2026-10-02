@@ -6,6 +6,8 @@
 
 class TrajectoryItem : public QQuickItem {
     Q_OBJECT
+    Q_PROPERTY(QString referenceOrigin READ referenceOrigin NOTIFY previewChanged)
+    Q_PROPERTY(QString attitudeStatus READ attitudeStatus NOTIFY markersChanged)
     Q_PROPERTY(bool pending READ pending NOTIFY previewChanged)
     Q_PROPERTY(QString error READ error NOTIFY previewChanged)
     Q_PROPERTY(bool planar READ planar NOTIFY previewChanged)
@@ -22,6 +24,7 @@ class TrajectoryItem : public QQuickItem {
 public:
     explicit TrajectoryItem(QQuickItem *parent = nullptr);
     ~TrajectoryItem() override;
+    void setSources(const QVector<TrajectorySource> &sources);
     void setAxes(const std::array<PlotSeriesDataPtr, 3> &axes, bool geographic = false);
     void setTimeCursor(int mode, double t1, double t2, double minimum, double maximum);
     TrajectoryCamera camera() const;
@@ -37,6 +40,8 @@ public:
     Q_INVOKABLE void zoomAt(const QPointF &position, double wheelDelta);
     bool pending() const { return bool(m_job); }
     QString error() const;
+    QString referenceOrigin() const;
+    QString attitudeStatus() const;
     bool planar() const;
     QVariantList axisLabels() const;
     QRectF orientationRect() const;
@@ -75,12 +80,15 @@ private:
     void start();
     void finish();
     void refreshGizmo();
+    void refreshAttitudes();
     bool nearRotationControl(const QPointF &position) const;
     struct Job {
         std::atomic_bool cancelled{false}, done{false};
         quint64 revision = 0;
         quint64 interactionEpoch = 0;
         std::shared_ptr<const TrajectoryData> data;
+        std::shared_ptr<const TrajectoryFrame> frame;
+        QVector<TrajectorySource> sources;
         std::shared_ptr<const TrajectoryPreview> preview;
         TrajectoryCamera camera;
         QSizeF size;
@@ -91,6 +99,10 @@ private:
     quint64 m_revision = 0;
     quint64 m_interactionEpoch = 0;
     std::array<PlotSeriesDataPtr, 3> m_axes;
+    QVector<TrajectorySource> m_sources;
+    std::shared_ptr<const TrajectoryFrame> m_frame;
+    std::shared_ptr<const TrajectoryFrame> m_preparedFrame; // GUI cache, never displayed after source changes
+    std::shared_ptr<const GeometryResult> m_attitudeGeometry;
     bool m_geographic = false; // GUI-owned, captured by value for background jobs
     mutable QMutex m_mutex;
     std::shared_ptr<const TrajectoryData> m_data;

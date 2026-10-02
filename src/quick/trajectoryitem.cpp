@@ -20,6 +20,7 @@ struct TrajectoryRoot : QSGNode {
     QVector<QSGGeometryNode *> nodes;
     std::shared_ptr<const TrajectoryPreview> preview;
     std::shared_ptr<const TrajectoryRotationGizmo> gizmo;
+    std::shared_ptr<const GeometryResult> attitudes;
 };
 double ringAngle(const TrajectoryRotationGizmo::Ring &ring, const QPointF &center, const QPointF &position)
 {
@@ -42,7 +43,37 @@ TrajectoryItem::~TrajectoryItem() { if (m_job) m_job->cancelled = true; }
 QString TrajectoryItem::error() const
 {
     QMutexLocker lock(&m_mutex);
-    return m_data ? m_data->error : QStringLiteral("请选择至少两个坐标信号");
+    QStringList errors;
+    if (m_frame) for (int i = 0; i < m_frame->paths.size(); ++i)
+        if (m_sources[i].visible && !m_frame->paths[i]->error.isEmpty()) errors.append(m_sources[i].name + ": " + m_frame->paths[i]->error);
+    if (!errors.isEmpty()) return errors.join("\n");
+    return m_data ? m_data->error : QStringLiteral("请选择至少两个坐标信号或显示有效航迹");
+}
+QString TrajectoryItem::referenceOrigin() const
+{
+    QMutexLocker lock(&m_mutex);
+    if (!m_data || !m_data->geographic) return QStringLiteral("空间 XYZ 共用坐标系（NED 米）");
+    return QStringLiteral("公共原点：纬 %1° 经 %2° 高 %3 m（首条有效航迹；隐藏保留）")
+        .arg(QString::number(m_data->origin[0], 'g', 12), QString::number(m_data->origin[1], 'g', 12), QString::number(m_data->origin[2], 'g', 12));
+}
+QString TrajectoryItem::attitudeStatus() const
+{
+    QMutexLocker lock(&m_mutex); QStringList status;
+    if (!m_frame) return {};
+    for (int i = 0; i < m_sources.size(); ++i) {
+        if (!m_sources[i].visible || !m_sources[i].attitude.mode) continue;
+        if (!m_cursorMode) { status.append(m_sources[i].name + QStringLiteral("：启用时间游标显示姿态")); continue; }
+        for (int c = 0; c < m_cursorMode; ++c) {
+            const double t = c == 0 ? m_t1 : m_t2;
+            const auto &position = *m_frame->paths[i]; const auto &attitude = *m_frame->attitudes[i];
+            QString reason;
+            if (t < m_timeMinimum || t > m_timeMaximum) reason = QStringLiteral("游标在可见时间范围外");
+            else if (!TrajectoryBuilder::nearestSample(position, t)) reason = QStringLiteral("位置缺口或时间范围外");
+            else if (!TrajectoryBuilder::attitudeSample(attitude, t)) reason = attitude.error.isEmpty() ? QStringLiteral("姿态缺口或时间范围外") : attitude.error;
+            if (!reason.isEmpty()) status.append(m_sources[i].name + QStringLiteral(" 游标 %1：姿态隐藏，").arg(c + 1) + reason);
+        }
+    }
+    return status.join("\n");
 }
 bool TrajectoryItem::planar() const
 {
@@ -129,12 +160,19 @@ void TrajectoryItem::setAxisColor(const QColor &color)
 }
 void TrajectoryItem::setAxes(const std::array<PlotSeriesDataPtr, 3> &axes, bool geographic)
 {
-    if (m_axes == axes && m_geographic == geographic) return;
+    TrajectorySource source; source.axes = axes; source.geographic = geographic;
+    source.width = lineWidth();
+    setSources({source});
+}
+void TrajectoryItem::setSources(const QVector<TrajectorySource> &sources)
+{
+    if (m_sources == sources) return;
     endDrag(); m_hoverHandle = -1; m_gizmoExpanded = false;
-    m_axes = axes; m_geographic = geographic;
+    m_sources = sources;
+    m_axes = sources.isEmpty() ? std::array<PlotSeriesDataPtr, 3>{} : sources.first().axes;
+    m_geographic = !sources.isEmpty() && sources.first().geographic;
     if (m_job) m_job->cancelled = true;
-    // Do not expose a previous source's position or trajectory while a new one builds.
-    { QMutexLocker lock(&m_mutex); m_data.reset(); m_preview.reset(); m_gizmo.reset(); m_visibleGizmo.reset(); }
+    { QMutexLocker lock(&m_mutex); m_data.reset(); m_frame.reset(); m_preview.reset(); m_attitudeGeometry.reset(); m_gizmo.reset(); m_visibleGizmo.reset(); }
     emit interactionChanged();
     requestPreview(); emit markersChanged(); update();
 }
@@ -169,31 +207,39 @@ void TrajectoryItem::requestPreview()
 }
 void TrajectoryItem::start()
 {
-    const int selected = int(bool(m_axes[0])) + int(bool(m_axes[1])) + int(bool(m_axes[2]));
-    if (selected < 2 || width() <= 0 || height() <= 0) {
+    if (m_sources.isEmpty() || width() <= 0 || height() <= 0) {
         m_poll.stop();
-        { QMutexLocker lock(&m_mutex); m_data.reset(); m_preview.reset(); m_gizmo.reset(); m_visibleGizmo.reset(); }
+        { QMutexLocker lock(&m_mutex); m_data.reset(); m_frame.reset(); m_preview.reset(); m_attitudeGeometry.reset(); m_gizmo.reset(); m_visibleGizmo.reset(); }
         emit interactionChanged(); emit previewChanged(); emit markersChanged(); update(); return;
     }
     m_job = std::make_shared<Job>();
     const auto job = m_job;
     job->revision = m_revision; job->camera = camera(); job->size = QSizeF(width(), height());
     job->interactionEpoch = m_interactionEpoch;
-    const auto axes = m_axes;
-    std::shared_ptr<const TrajectoryData> previous;
-    { QMutexLocker lock(&m_mutex); previous = m_data; }
-    const auto width = lineWidth(); const auto color = axisColor(); const bool geographic = m_geographic;
-    const bool interactive = m_dragging;
-    trajectoryPool().start([job, axes, previous, width, color, geographic, interactive] {
+    job->sources = m_sources;
+    std::shared_ptr<const TrajectoryFrame> previous;
+    { QMutexLocker lock(&m_mutex); previous = m_preparedFrame; }
+    const auto color = axisColor(); const bool interactive = m_dragging;
+    trajectoryPool().start([job, previous, color, interactive] {
         try {
-            job->data = previous && previous->axes == axes && previous->geographic == geographic ? previous
-                : TrajectoryBuilder::build(axes, &job->cancelled, geographic);
-            if (!job->cancelled)
-                job->preview = std::make_shared<TrajectoryPreview>(TrajectoryBuilder::preview(
-                    *job->data, job->camera, job->size, width, color, &job->cancelled, interactive));
+            job->frame = TrajectoryBuilder::buildFrame(job->sources, &job->cancelled, previous.get());
+            job->data = job->frame->bounds;
+            auto preview = std::make_shared<TrajectoryPreview>();
+            if (job->data && !job->cancelled) {
+                bool axesDrawn = false;
+                for (int i = 0; i < job->sources.size(); ++i) {
+                    const auto &source = job->sources[i]; const auto &data = job->frame->paths[i];
+                    if (!source.visible || !data->valid()) continue;
+                    auto part = TrajectoryBuilder::preview(*data, job->camera, job->size, source.width,
+                        color, &job->cancelled, interactive, job->data.get(), !axesDrawn, source.color);
+                    if (!axesDrawn) { preview->labels = part.labels; preview->orientationRect = part.orientationRect; axesDrawn = true; }
+                    preview->projectedSamples += part.projectedSamples;
+                    preview->geometry.segments += part.geometry.segments;
+                }
+            }
+            job->preview = preview;
         } catch (...) {
             auto failed = std::make_shared<TrajectoryData>();
-            failed->axes = axes; failed->geographic = geographic;
             failed->error = QStringLiteral("轨迹构建失败：资源不足"); job->data = failed;
         }
         job->done.store(true, std::memory_order_release);
@@ -206,15 +252,15 @@ void TrajectoryItem::finish()
     const auto job = std::move(m_job);
     m_poll.stop();
     if (!job->cancelled && job->interactionEpoch == m_interactionEpoch
-        && job->data && job->data->axes == m_axes && job->data->geographic == m_geographic) {
+        && job->sources == m_sources) {
         QMutexLocker lock(&m_mutex);
-        m_data = job->data; m_preview = job->preview;
+        m_data = job->data; m_frame = job->frame; m_preparedFrame = job->frame; m_preview = job->preview;
         m_displayCamera = job->camera; m_displaySize = job->size;
     }
     if (job->revision != m_revision) start();
     refreshGizmo();
     if (!m_dragging) hoverAt(m_pointerPosition);
-    emit previewChanged(); emit markersChanged(); update();
+    refreshAttitudes(); emit previewChanged(); emit markersChanged(); update();
 }
 void TrajectoryItem::setTimeCursor(int mode, double t1, double t2, double minimum, double maximum)
 {
@@ -225,52 +271,87 @@ void TrajectoryItem::setTimeCursor(int mode, double t1, double t2, double minimu
         m_cursorMode = mode; m_t1 = t1; m_t2 = t2;
         m_timeMinimum = minimum; m_timeMaximum = maximum;
     }
-    emit markersChanged();
+    refreshAttitudes(); emit markersChanged(); update();
 }
 QVariantList TrajectoryItem::markers() const
 {
     QMutexLocker lock(&m_mutex);
     QVariantList result;
-    if (!m_data || !m_data->valid() || !m_preview) return result;
-    const auto append = [&](qsizetype index, const QString &label, const QColor &color) {
-        const auto xyz = TrajectoryBuilder::position(*m_data, index);
-        const auto spatial = TrajectoryBuilder::spatialPosition(*m_data, index);
-        const auto screen = TrajectoryBuilder::project(*m_data, spatial, m_displayCamera, m_displaySize);
-        const double time = m_data->axes[m_data->timeAxis]->pointAt(index).x();
-        QString details = QStringLiteral("%1  t=%2").arg(label, QString::number(time, 'g', 12));
-        const QStringList names = m_data->geographic ? QStringList{QStringLiteral("纬度"), QStringLiteral("经度"), QStringLiteral("高度")}
-                                                    : QStringList{"X", "Y", "Z"};
-        for (int axis = 0; axis < 3; ++axis) if (m_data->axes[axis]) {
-            details += QStringLiteral("  %1=%2").arg(names[axis], QString::number(xyz[axis], 'g', 12));
-            if (m_data->geographic) details += axis == 2 ? QStringLiteral(" m") : QStringLiteral("°");
+    if (!m_frame || !m_data || !m_data->valid() || !m_preview) return result;
+    for (int path = 0; path < m_frame->paths.size(); ++path) {
+        const auto &data = *m_frame->paths[path]; const auto &source = m_sources[path];
+        if (!source.visible || !data.valid()) continue;
+        const auto append = [&](qsizetype index, const QString &label, const QColor &color, int cursor) {
+            const auto xyz = TrajectoryBuilder::position(data, index);
+            const auto spatial = TrajectoryBuilder::spatialPosition(data, index);
+            const auto screen = TrajectoryBuilder::project(*m_data, spatial, m_displayCamera, m_displaySize);
+            const double time = data.axes[data.timeAxis]->pointAt(index).x();
+            QString details = source.name + QStringLiteral(" %1  t=%2").arg(label, QString::number(time, 'g', 12));
+            const QStringList names = data.geographic ? QStringList{QStringLiteral("纬度"), QStringLiteral("经度"), QStringLiteral("高度")} : QStringList{"X", "Y", "Z"};
+            for (int axis = 0; axis < 3; ++axis) if (data.axes[axis]) {
+                details += QStringLiteral("  %1=%2").arg(names[axis], QString::number(xyz[axis], 'g', 12));
+                if (data.geographic) details += axis == 2 ? QStringLiteral(" m") : QStringLiteral("°");
+            }
+            QVariantMap marker{{"x", screen.x()}, {"y", screen.y()}, {"color", color}, {"trajectory", source.id},
+                {"text", label}, {"name", source.name}, {"details", details}, {"time", time}, {"cursor", cursor},
+                {"spatialX", spatial[0]}, {"spatialY", spatial[1]}, {"spatialZ", spatial[2]},
+                {"rawX", data.axes[0] ? QVariant(xyz[0]) : QVariant()},
+                {"rawY", data.axes[1] ? QVariant(xyz[1]) : QVariant()},
+                {"rawZ", data.axes[2] ? QVariant(xyz[2]) : QVariant()}};
+            if (cursor >= 0 && source.attitude.mode) {
+                const auto &attitude = *m_frame->attitudes[path];
+                const double requested = cursor == 0 ? m_t1 : m_t2;
+                const auto sample = TrajectoryBuilder::attitudeSample(attitude, requested);
+                if (sample) {
+                    marker["attitudeTime"] = sample->time; marker["attitudeDelta"] = sample->time - time;
+                    const auto q = sample->bodyToNavigation;
+                    marker["attitude"] = QVariantList{q.scalar(), q.x(), q.y(), q.z()};
+                    details += QStringLiteral("  姿态 t=%1 Δt(姿态−位置)=%2 s").arg(QString::number(sample->time, 'g', 12), QString::number(sample->time - time, 'g', 8));
+                } else details += QStringLiteral("  姿态隐藏：") + (attitude.error.isEmpty() ? QStringLiteral("游标位于姿态缺口或时间范围外") : attitude.error);
+                marker["details"] = details;
+            }
+            result.append(marker);
+        };
+        append(data.runs.first().first, QStringLiteral("起点"), QColor("#1aa05b"), -1);
+        append(data.runs.last().second, QStringLiteral("终点"), QColor("#e34d59"), -1);
+        for (int cursor = 0; cursor < m_cursorMode; ++cursor) {
+            const double time = cursor == 0 ? m_t1 : m_t2;
+            if (time < m_timeMinimum || time > m_timeMaximum) continue;
+            const auto sample = TrajectoryBuilder::nearestSample(data, time);
+            if (sample) append(*sample, QStringLiteral("游标 %1").arg(cursor + 1), QColor(cursor == 0 ? "#e34d59" : "#4e79e7"), cursor);
         }
-        result.append(QVariantMap{{"x", screen.x()}, {"y", screen.y()}, {"color", color},
-            {"text", label}, {"details", details}, {"time", time},
-            {"spatialX", spatial[0]}, {"spatialY", spatial[1]}, {"spatialZ", spatial[2]},
-            {"rawX", m_data->axes[0] ? QVariant(xyz[0]) : QVariant()},
-            {"rawY", m_data->axes[1] ? QVariant(xyz[1]) : QVariant()},
-            {"rawZ", m_data->axes[2] ? QVariant(xyz[2]) : QVariant()}});
-    };
-    append(m_data->runs.first().first, QStringLiteral("起点"), QColor("#1aa05b"));
-    append(m_data->runs.last().second, QStringLiteral("终点"), QColor("#e34d59"));
-    for (int cursor = 0; cursor < m_cursorMode; ++cursor) {
-        const double time = cursor == 0 ? m_t1 : m_t2;
-        if (time < m_timeMinimum || time > m_timeMaximum) continue;
-        const auto sample = TrajectoryBuilder::nearestSample(*m_data, time);
-        if (sample) append(*sample, QStringLiteral("游标 %1").arg(cursor + 1),
-                           QColor(cursor == 0 ? "#e34d59" : "#4e79e7"));
     }
     return result;
+}
+void TrajectoryItem::refreshAttitudes()
+{
+    auto geometry = std::make_shared<GeometryResult>();
+    const auto readings = markers();
+    {
+        QMutexLocker lock(&m_mutex);
+        if (m_data) for (const auto &entry : readings) {
+            const auto marker = entry.toMap(); const auto q = marker.value("attitude").toList();
+            if (q.size() != 4) continue;
+            const auto source = std::find_if(m_sources.cbegin(), m_sources.cend(), [&](const TrajectorySource &s) { return s.id == marker.value("trajectory").toString(); });
+            const auto part = TrajectoryBuilder::attitudeGeometry(QQuaternion(q[0].toFloat(), q[1].toFloat(), q[2].toFloat(), q[3].toFloat()),
+                *m_data, m_displayCamera, m_displaySize, {marker.value("x").toDouble(), marker.value("y").toDouble()},
+                source != m_sources.cend() && source->color.isValid() ? source->color : QColor("#ef971b"));
+            geometry->segments += part.segments;
+        }
+        m_attitudeGeometry = geometry;
+    }
 }
 QSGNode *TrajectoryItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *)
 {
     auto *root = oldNode ? static_cast<TrajectoryRoot *>(oldNode) : new TrajectoryRoot;
     std::shared_ptr<const TrajectoryPreview> preview;
     std::shared_ptr<const TrajectoryRotationGizmo> gizmo;
-    { QMutexLocker lock(&m_mutex); preview = m_preview; gizmo = m_visibleGizmo; }
-    if (root->preview == preview && root->gizmo == gizmo) return root;
+    std::shared_ptr<const GeometryResult> attitudes;
+    { QMutexLocker lock(&m_mutex); preview = m_preview; gizmo = m_visibleGizmo; attitudes = m_attitudeGeometry; }
+    if (root->preview == preview && root->gizmo == gizmo && root->attitudes == attitudes) return root;
     const int pathCount = preview ? preview->geometry.segments.size() : 0;
-    const int count = pathCount + (gizmo ? gizmo->geometry.segments.size() : 0);
+    const int gizmoCount = gizmo ? gizmo->geometry.segments.size() : 0;
+    const int count = pathCount + gizmoCount + (attitudes ? attitudes->segments.size() : 0);
     while (root->nodes.size() < count) {
         auto *node = new QSGGeometryNode;
         auto *geometry = new QSGGeometry(QSGGeometry::defaultAttributes_Point2D(), 0);
@@ -282,7 +363,8 @@ QSGNode *TrajectoryItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *
         if (i < pathCount && root->preview == preview) continue; // Hover only updates the handles.
         auto *node = root->nodes.at(i); auto *geometry = node->geometry();
         const GeometrySegment *segment = i < pathCount ? &preview->geometry.segments.at(i)
-            : i < count ? &gizmo->geometry.segments.at(i - pathCount) : nullptr;
+            : i < pathCount + gizmoCount ? &gizmo->geometry.segments.at(i - pathCount)
+            : i < count ? &attitudes->segments.at(i - pathCount - gizmoCount) : nullptr;
         geometry->setDrawingMode(segment && segment->triangleList ? QSGGeometry::DrawTriangles : QSGGeometry::DrawTriangleStrip);
         geometry->allocate(segment ? segment->vertices.size() : 0);
         if (segment) {
@@ -294,7 +376,7 @@ QSGNode *TrajectoryItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *
         }
         geometry->markVertexDataDirty(); node->markDirty(QSGNode::DirtyGeometry | QSGNode::DirtyMaterial);
     }
-    root->preview = preview; root->gizmo = gizmo; return root;
+    root->preview = preview; root->gizmo = gizmo; root->attitudes = attitudes; return root;
 }
 void TrajectoryItem::geometryChange(const QRectF &next, const QRectF &old)
 {

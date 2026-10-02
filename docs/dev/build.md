@@ -71,3 +71,5 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 轨迹核心 `render/trajectorybuilder.*` 纳入 DI_RENDER_SOURCES；`trajectoryitem.*` 纳入 DI_PLOTITEM_SOURCES；`appcontroller_trajectory.cpp` 和 qmltypes.h 纳入 DI_CONTROLLER_SOURCES；TrajectoryPlot.qml 纳入 DI_QML_FILES。没有新增 Qt 模块或第三方绘图库。
 
 新增 trajectory_test（默认离屏）和 trajectory_raster_test（ENABLE_GPU_TESTS 时注册）。trajectory_test 用独立 DataInspectorTrajectoryTest QML 模块编译相同界面，产物在 trajectory_test_qml；同时测试源码与 qmlcachegen 版本，避免仅源码测试漏掉编译后绑定刷新问题。测试目标通过 qmltypes.h 中的 QML_FOREIGN 元数据注册新类型，须由 AUTOMOC 编译该头文件。
+
+多航迹/姿态继续使用 trajectorybuilder.*、trajectoryitem.*、appcontroller_trajectory.cpp 现有源列表；会话升级 v6，无新增绘图库、Qt 模块或模型加载依赖。

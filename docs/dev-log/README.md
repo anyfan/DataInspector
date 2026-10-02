@@ -8,7 +8,8 @@
 
 | 文档 | 主题 |
 | --- | --- |
-| [多航迹与姿态显示工作量评估](trajectory-multi-attitude-estimate-2026-10-02.md) | 未实施的范围估算：单图叠加、公共原点、姿态信号与人天/内存边界 |
+| [多航迹与实际三维姿态实施](trajectory-multi-attitude-2026-10-02.md) | 公共原点、活动航迹、测量姿态、v6 会话与回归边界 |
+| [多航迹与姿态显示工作量评估](trajectory-multi-attitude-estimate-2026-10-02.md) | 实施前的历史范围估算：单图叠加、公共原点、姿态信号与人天/内存边界 |
 | [航迹默认选入绑定与角度轴色](trajectory-default-bindings-colors-2026-10-02.md) | 默认经纬度、勾选补空轴、保留手动绑定、三轴角度独立着色 |
 | [航迹 NED 坐标与角度零基准](trajectory-ned-angle-reference-2026-10-02.md) | 北内、东右、地下为零姿态；世界轴绝对读数与标准视图回归 |
 | [航迹方向跳变与绝对视角读数](trajectory-direction-pose-2026-10-02.md) | 环中心死区、跨手势旧帧隔离、当前 X/Y/Z 姿态角 |

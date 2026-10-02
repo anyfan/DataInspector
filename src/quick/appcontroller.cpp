@@ -105,7 +105,11 @@ void AppController::clear()
     }
     clearViewHistory();
     m_seriesStore->clear();
-    for (auto &state : m_trajectories) { state.axes = {{-1, -1, -1}}; state.signalIds.clear(); }
+    for (auto &state : m_trajectories) {
+        auto tracks = state.entries();
+        for (auto &track : tracks) { track.axes.fill(-1); track.attitude.sources.fill(-1); }
+        state.tracks = tracks; static_cast<SessionTrajectoryEntry &>(state) = tracks[state.active]; state.signalIds.clear();
+    }
     for (int i = 0; i < m_trajectoryPlots.size(); ++i) refreshTrajectory(i);
     m_initialSignalFitDone = false;
     m_signalColors.clear();

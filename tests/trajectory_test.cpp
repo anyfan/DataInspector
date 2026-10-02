@@ -6,6 +6,8 @@
 #include <QTemporaryDir>
 #include <QFile>
 #include <QJsonArray>
+#include <QJsonDocument>
+#include "dataloadworker.h"
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickWindow>
@@ -16,6 +18,10 @@
 class TrajectoryTest : public QObject {
     Q_OBJECT
 private slots:
+    void sharedFrameAndErrorIsolation();
+    void measurementAttitudeConventionsAndGaps();
+    void multiControllerSessionRemapAndExport();
+    void multiTrajectoryCost();
     void timeBasesAndMissingCoordinates();
     void projectionPreservesSpatialScaleAndPrecision();
     void geographicProjectionUsesMetresAndRawReadings();
@@ -869,7 +875,7 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QTRY_VERIFY(object->findChild<TrajectoryItem *>("trajectoryItem"));
     auto *item = object->findChild<TrajectoryItem *>("trajectoryItem");
     QTRY_VERIFY_WITH_TIMEOUT(!item->pending(), 5000); QVERIFY(item->error().isEmpty());
-    QVERIFY(item->height() >= 480 - 50); QVERIFY(item->width() >= 640 - 12);
+    QVERIFY(item->height() >= 480 - 80); QVERIFY(item->width() >= 640 - 12);
     // Deliver real window events through QML, rather than invoking the C++ handlers directly.
     const auto initialView = item->camera();
     const QPoint dragStart = item->mapToScene(QPointF(item->width() * .5, item->height() * .5)).toPoint();
@@ -1050,11 +1056,49 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QVERIFY(QMetaObject::invokeMethod(confirm, "clicked")); QTRY_VERIFY(!dialog->property("visible").toBool());
     QTRY_VERIFY(!item->pending()); QVERIFY(item->planar()); QVERIFY(item->orientationRect().isEmpty());
     quick->setWidth(320); quick->setHeight(240); window.resize(320, 240);
-    QTRY_VERIFY(!item->pending()); QVERIFY(item->height() >= 190); QVERIFY(item->width() >= 308);
+    QTRY_VERIFY(!item->pending()); QVERIFY(item->height() >= 160); QVERIFY(item->width() >= 308);
     if (QQuickWindow::graphicsApi() != QSGRendererInterface::Software && QGuiApplication::platformName() != "offscreen") {
         QTest::qWait(100);
         QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-planar-small-ui.png")));
     }
+
+    // The same window event chain exercises management and measurement controls
+    // in both source QML and qmlcachegen builds.
+    quick->setWidth(900); quick->setHeight(600); window.resize(900, 600);
+    csv(dir.filePath("wing.csv"), "t,lat,lon,height,roll,pitch,yaw\n0,40.87,109.57,1325,0,0,0\n180,40.88,109.58,1505,20,10,90\n");
+    QVERIFY(c.loadCsv(dir.filePath("wing.csv"))); QTRY_VERIFY(!c.loading());
+    auto *add = object->findChild<QObject *>("trajectoryAdd"); QVERIFY(add);
+    QVERIFY(QMetaObject::invokeMethod(add, "clicked")); QCOMPARE(c.trajectoryState(0)["active"].toInt(), 1);
+    for (int row = 3; row < 9; ++row) c.selectSignal(row);
+    auto *propertiesButton = object->findChild<QObject *>("trajectoryProperties"); QVERIFY(propertiesButton);
+    QVERIFY(QMetaObject::invokeMethod(propertiesButton, "clicked"));
+    auto *properties = object->findChild<QObject *>("trajectoryPropertiesDialog"); QVERIFY(properties);
+    QTRY_VERIFY(properties->property("visible").toBool());
+    auto *name = object->findChild<QObject *>("trajectoryName"); QVERIFY(name); name->setProperty("text", "Wing UI");
+    auto *attitudeMode = object->findChild<QObject *>("trajectoryAttitudeMode"); QVERIFY(attitudeMode); attitudeMode->setProperty("currentIndex", 1);
+    properties->setProperty("selectedSources", QVariantList{6, 7, 8, -1});
+    QVERIFY(QMetaObject::invokeMethod(properties, "accepted")); QVERIFY(QMetaObject::invokeMethod(properties, "close"));
+    QCOMPARE(c.trajectoryState(0)["name"].toString(), QString("Wing UI"));
+    QCOMPARE(c.trajectoryState(0)["attitudeMode"].toInt(), 1);
+    QTRY_VERIFY(!item->pending()); QVERIFY(item->error().isEmpty());
+    item->fitView(); QTRY_VERIFY(!item->pending());
+    c.setCursorMode(1);
+    if (auto *plot = object->findChild<PlotItem *>()) plot->setCursorPosition(90, 1);
+    QCOMPARE(item->markers().size() >= 4, true);
+    QVERIFY(item->markers().last().toMap().contains("attitude"));
+    if (QGuiApplication::platformName() != "offscreen") {
+        QTest::qWait(100); QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-multi-attitude-ui.png")));
+    }
+    auto *selector = object->findChild<QObject *>("trajectorySelector"); QVERIFY(selector);
+    selector->setProperty("currentIndex", 0); QVERIFY(QMetaObject::invokeMethod(selector, "activated", Q_ARG(int, 0)));
+    QCOMPARE(c.trajectoryState(0)["active"].toInt(), 0);
+    auto *visibility = object->findChild<QObject *>("trajectoryVisible"); QVERIFY(visibility);
+    visibility->setProperty("checked", false); QVERIFY(QMetaObject::invokeMethod(visibility, "clicked")); QTRY_VERIFY(!item->pending());
+    QCOMPARE(item->markers().size() >= 2, true);
+    auto *remove = object->findChild<QObject *>("trajectoryRemove"); QVERIFY(remove);
+    QVERIFY(QMetaObject::invokeMethod(remove, "clicked")); QTRY_VERIFY(!item->pending());
+    QCOMPARE(c.trajectoryState(0)["tracks"].toList().size(), 1);
+    QCOMPARE(c.trajectoryState(0)["name"].toString(), QString("Wing UI"));
     QVERIFY(c.configureTrajectory(0, false, 0, 1, 2, true));
     QTRY_VERIFY(!object->property("trajectoryMode").toBool());
     object.reset();
@@ -1115,6 +1159,181 @@ void TrajectoryTest::continuousCameraRequestsPublishFrames()
     timer.start(5); QTRY_VERIFY_WITH_TIMEOUT(!moving, 10000);
     QVERIFY2(changedWhileMoving >= 3, "Continuous camera changes must not starve visible previews");
     QTRY_VERIFY_WITH_TIMEOUT(!item.pending(), 10000);
+}
+
+void TrajectoryTest::sharedFrameAndErrorIsolation()
+{
+    TrajectorySource a; a.id = "a"; a.name = "A"; a.geographic = true;
+    a.axes = axes({0, 1, 2}, {22, 22.001, 22.002}, {114, 114.001, 114.002}, {100, 110, 120});
+    TrajectorySource b = a; b.id = "b"; b.name = "B";
+    b.axes = axes({0, .5, 1, 1.5, 2}, {22.01, 22.011, 22.012, 22.013, 22.014}, {114.01, 114.011, 114.012, 114.013, 114.014}, {200, 210, 220, 230, 240});
+    TrajectorySource bad = a; bad.id = "bad"; bad.name = "Bad";
+    auto shifted = std::make_shared<PlotSeriesData>(*bad.axes[1]); shifted->timeOffset = .1; bad.axes[1] = shifted;
+    const auto frame = TrajectoryBuilder::buildFrame({bad, a, b});
+    QVERIFY(!frame->paths[0]->valid()); QVERIFY(frame->bounds); QVERIFY(frame->bounds->valid());
+    QCOMPARE(frame->paths[1]->origin, frame->paths[2]->origin);
+    QCOMPARE(frame->bounds->origin, (std::array<double, 3>{22, 114, 100}));
+    const auto startB = TrajectoryBuilder::spatialPosition(*frame->paths[2], 0);
+    QVERIFY(startB[0] > 1000); QVERIFY(startB[1] > 1000); QCOMPARE(startB[2], -100.0);
+    QVERIFY(frame->bounds->maximum[0] >= startB[0]); QVERIFY(frame->bounds->minimum[2] <= -140);
+    TrajectoryCamera view;
+    QVERIFY(QLineF(TrajectoryBuilder::project(*frame->bounds, {0, 0, 0}, view, {800, 600}),
+        TrajectoryBuilder::project(*frame->bounds, startB, view, {800, 600})).length() > 50);
+    QCOMPARE(TrajectoryBuilder::nearestSample(*frame->paths[1], .6).value(), qsizetype(1));
+    QCOMPARE(TrajectoryBuilder::nearestSample(*frame->paths[2], .6).value(), qsizetype(1));
+    TrajectoryItem item; item.setWidth(800); item.setHeight(600); item.setSources({bad, a, b});
+    item.setTimeCursor(1, .6, 1, 0, 2); QTRY_VERIFY(!item.pending());
+    QVERIFY(item.error().contains("Bad")); QCOMPARE(item.markers().size(), 6);
+    QCOMPARE(item.markers()[2].toMap()["time"].toDouble(), 1.0);
+    QCOMPARE(item.markers()[5].toMap()["time"].toDouble(), .5);
+    a.visible = false; const auto hidden = TrajectoryBuilder::buildFrame({a, b});
+    QCOMPARE(hidden->bounds->origin, frame->bounds->origin);
+    QCOMPARE(hidden->bounds->minimum, hidden->paths[1]->minimum);
+    const auto reused = TrajectoryBuilder::buildFrame({a, b}, nullptr, hidden.get());
+    QCOMPARE(reused->paths[0], hidden->paths[0]); QCOMPARE(reused->paths[1], hidden->paths[1]);
+    const auto removedOrigin = TrajectoryBuilder::buildFrame({b}, nullptr, hidden.get());
+    QCOMPARE(removedOrigin->bounds->origin, (std::array<double, 3>{22.01, 114.01, 200}));
+    QCOMPARE(TrajectoryBuilder::spatialPosition(*removedOrigin->paths[0], 0), (std::array<double, 3>{0, 0, 0}));
+    item.setSources({a, b}); QTRY_VERIFY(!item.pending()); QCOMPARE(item.markers().size(), 3);
+    b.visible = false; item.setSources({a, b}); QTRY_VERIFY(!item.pending()); QVERIFY(item.markers().isEmpty());
+}
+void TrajectoryTest::measurementAttitudeConventionsAndGaps()
+{
+    TrajectorySource source; source.attitude.mode = 1;
+    const auto make = [&](double roll, double pitch, double yaw) {
+        const auto input = axes({0, 1}, {roll, roll}, {pitch, pitch}, {yaw, yaw});
+        source.attitudeSources = {input[0], input[1], input[2], {}};
+        return TrajectoryBuilder::attitudeSample(*TrajectoryBuilder::buildAttitude(source), .5).value().bodyToNavigation;
+    };
+    const auto zero = make(0, 0, 0);
+    QCOMPARE(zero.rotatedVector({1, 0, 0}), QVector3D(1, 0, 0));
+    QCOMPARE(zero.rotatedVector({0, 1, 0}), QVector3D(0, 1, 0));
+    QCOMPARE(zero.rotatedVector({0, 0, 1}), QVector3D(0, 0, 1));
+    for (double angle : {-90., 90.}) {
+        const float sign = angle > 0 ? 1 : -1;
+        QVERIFY((make(angle, 0, 0).rotatedVector({0, 1, 0}) - QVector3D(0, 0, sign)).length() < 1e-5);
+        QVERIFY((make(0, angle, 0).rotatedVector({1, 0, 0}) - QVector3D(0, 0, -sign)).length() < 1e-5);
+        QVERIFY((make(0, 0, angle).rotatedVector({1, 0, 0}) - QVector3D(0, sign, 0)).length() < 1e-5);
+    }
+    const auto expected = QQuaternion::fromAxisAndAngle(0, 0, 1, 63) * QQuaternion::fromAxisAndAngle(0, 1, 0, -21) * QQuaternion::fromAxisAndAngle(1, 0, 0, 37);
+    QVERIFY(std::abs(QQuaternion::dotProduct(make(37, -21, 63), expected)) > .99999);
+    source.attitude.radians = true;
+    QVERIFY(std::abs(QQuaternion::dotProduct(make(qDegreesToRadians(37.), qDegreesToRadians(-21.), qDegreesToRadians(63.)), expected)) > .99999);
+    source.attitude.radians = false; source.attitude.order = 1;
+    const auto xyz = QQuaternion::fromAxisAndAngle(1, 0, 0, 37) * QQuaternion::fromAxisAndAngle(0, 1, 0, -21) * QQuaternion::fromAxisAndAngle(0, 0, 1, 63);
+    QVERIFY(std::abs(QQuaternion::dotProduct(make(37, -21, 63), xyz)) > .99999);
+    source.attitude.navigationToBody = true;
+    QVERIFY(std::abs(QQuaternion::dotProduct(make(37, -21, 63), xyz.conjugated())) > .99999);
+    source.attitude.mode = 2;
+    for (bool scalarLast : {false, true}) for (bool inverse : {false, true}) {
+        source.attitude.scalarLast = scalarLast; source.attitude.navigationToBody = inverse;
+        const auto q = inverse ? expected.conjugated() : expected;
+        const QVector<double> values = scalarLast ? QVector<double>{q.x(), q.y(), q.z(), q.scalar()} : QVector<double>{q.scalar(), q.x(), q.y(), q.z()};
+        PlotSeriesStore store; QVector<PlotSeriesInput> inputs;
+        for (int a = 0; a < 4; ++a) inputs.append({a, {0, 1, 2, 3, 4}, {values[a] * 2, values[a] * 2, qQNaN(), values[a], values[a]}, Qt::red, 2});
+        store.replaceSeries(inputs); const auto snapshots = store.snapshot({0, 1, 2, 3});
+        for (int a = 0; a < 4; ++a) source.attitudeSources[a] = snapshots.series[a];
+        const auto data = TrajectoryBuilder::buildAttitude(source);
+        QVERIFY(TrajectoryBuilder::attitudeSample(*data, .7));
+        QVERIFY(std::abs(QQuaternion::dotProduct(TrajectoryBuilder::attitudeSample(*data, .7)->bodyToNavigation, expected)) > .99999);
+        QVERIFY(!TrajectoryBuilder::attitudeSample(*data, 2)); QVERIFY(!TrajectoryBuilder::attitudeSample(*data, 2.5));
+        QVERIFY(!TrajectoryBuilder::attitudeSample(*data, -1));
+    }
+    source.attitude.mode = 1; source.attitude.order = 0; source.attitude.navigationToBody = false;
+    const auto att = axes({0, .5, 1, 1.5, 2}, {0, 0, 0, 0, 0}, {0, 0, 0, 0, 0}, {0, 30, qQNaN(), 90, 90});
+    source.attitudeSources = {att[0], att[1], att[2], {}}; source.id = "aircraft"; source.name = "Aircraft"; source.color = Qt::magenta;
+    source.axes = axes({0, 1, 2}, {0, 10, 20}, {0, 0, 0}, {0, 0, 0});
+    TrajectoryItem item; item.setWidth(800); item.setHeight(600); item.setSources({source});
+    item.setTimeCursor(1, .4, 0, 0, 2); QTRY_VERIFY(!item.pending());
+    auto marker = item.markers().last().toMap(); QCOMPARE(marker["time"].toDouble(), 0.);
+    QCOMPARE(marker["attitudeTime"].toDouble(), .5); QCOMPARE(marker["attitudeDelta"].toDouble(), .5);
+    const auto qBefore = marker["attitude"]; item.presetView(3); QTRY_VERIFY(!item.pending());
+    QCOMPARE(item.markers().last().toMap()["attitude"], qBefore); // camera never substitutes measurement
+    item.setTimeCursor(1, 1, 0, 0, 2); QVERIFY(!item.markers().last().toMap().contains("attitude"));
+    QVERIFY(item.attitudeStatus().contains(QStringLiteral("姿态缺口")));
+    const auto bounds = TrajectoryBuilder::build(source.axes);
+    TrajectoryCamera camera; camera.azimuth = camera.elevation = 0;
+    const auto geometry = TrajectoryBuilder::attitudeGeometry(expected, *bounds, camera, {800, 600}, {200, 200}, Qt::red);
+    camera.zoom = 100;
+    const auto zoomed = TrajectoryBuilder::attitudeGeometry(expected, *bounds, camera, {800, 600}, {200, 200}, Qt::red);
+    QCOMPARE(geometry.segments[0].vertices, zoomed.segments[0].vertices);
+    auto wrong = std::make_shared<PlotSeriesData>(*source.attitudeSources[1]); wrong->timeOffset = .1; source.attitudeSources[1] = wrong;
+    QVERIFY(TrajectoryBuilder::buildAttitude(source)->error.contains(QStringLiteral("时间基")));
+}
+void TrajectoryTest::multiControllerSessionRemapAndExport()
+{
+    QTemporaryDir dir; const auto left = dir.filePath("left.csv"), right = dir.filePath("right.csv");
+    csv(left, "time,lat,lon,height,roll,pitch,yaw\n0,22,114,100,0,0,0\n1,22.001,114.001,110,0,0,90\n");
+    csv(right, "time,lat,lon,height,roll,pitch,yaw\n0,22.01,114.01,200,0,0,0\n0.5,22.011,114.011,210,10,20,30\n1,22.012,114.012,220,0,0,90\n");
+    AppController c; PlotItem time; TrajectoryItem item; item.setWidth(800); item.setHeight(600);
+    c.attachPlot(&time, 0); c.attachTrajectory(&item, 0);
+    QCOMPARE(c.loadFiles(QVariantList{left, right}), 2); QTRY_VERIFY(!c.loading()); c.enterTrajectoryMode(0);
+    for (int i = 0; i < 6; ++i) c.selectSignal(i);
+    QVERIFY(c.configureAttitude(0, 1, 3, 4, 5, -1, false, 0, false, false));
+    QVERIFY(c.styleTrajectory(0, "Leader", Qt::magenta, 4, true)); QVERIFY(c.addTrajectory(0));
+    for (int i = 6; i < 12; ++i) c.selectSignal(i);
+    QCOMPARE(c.trajectoryState(0)["x"].toInt(), 6); QCOMPARE(c.trajectoryState(0)["z"].toInt(), 8);
+    QVERIFY(c.configureAttitude(0, 1, 9, 10, 11, -1, false, 0, false, false));
+    QVERIFY(c.styleTrajectory(0, "Wing", Qt::cyan, 3, true));
+    const auto stableId = c.trajectoryState(0)["tracks"].toList()[1].toMap()["id"];
+    time.setCursorMode(PlotItem::SingleCursor); time.setCursorPosition(.6, 1); QTRY_VERIFY(!item.pending());
+    QCOMPARE(item.markers().size(), 6);
+    const auto saved = dir.filePath("multi.disession"); QVERIFY(c.saveSession(saved));
+    SessionDocument doc; QString error; QVERIFY2(readSessionDocument(saved, &doc, &error), qPrintable(error));
+    QCOMPARE(doc.plots[0].trajectory.entries().size(), 2); QCOMPARE(doc.plots[0].trajectory.active, 1);
+    QCOMPARE(doc.plots[0].trajectory.entries()[0].attitude.sources[0], 3);
+    QVERIFY(c.addTrajectory(0)); QVERIFY(c.configureTrajectory(0, true, 0, 1, 2, true));
+    QVERIFY(c.configureAttitude(0, 1, 3, 4, 5, -1, false, 0, false, false)); // duplicated sources must export once
+    const auto exported = dir.filePath("multi.xlsx"); QVERIFY(c.exportXlsx(exported, AppController::PlottedSignals, false)); QTRY_VERIFY(!c.exporting());
+    DataLoadWorker loader; QVector<LoadedTable> tables;
+    connect(&loader, &DataLoadWorker::finished, this, [&](const QString &, const QVector<LoadedTable> &loaded, int, const QString &error) { QVERIFY2(error.isEmpty(), qPrintable(error)); tables = loaded; });
+    loader.loadFile(exported); QCOMPARE(tables.size(), 2); QCOMPARE(tables[0].values.size(), 6); QCOMPARE(tables[1].values.size(), 6);
+    AppController restored; QVERIFY(restored.restoreSession(saved)); QTRY_VERIFY(!restored.restoringSession());
+    QCOMPARE(restored.trajectoryState(0)["tracks"].toList().size(), 2);
+    QVERIFY(restored.selectTrajectory(0, 0)); QCOMPARE(restored.trajectoryState(0)["name"].toString(), QString("Leader"));
+    QVERIFY(restored.removeFile(restored.signalModel()->groupAt(0)));
+    QVERIFY(restored.selectTrajectory(0, 1)); QCOMPARE(restored.trajectoryState(0)["x"].toInt(), 0);
+    QCOMPARE(restored.trajectoryState(0)["attitudeSources"].toList()[0].toInt(), 3);
+    QCOMPARE(restored.trajectoryState(0)["tracks"].toList()[1].toMap()["id"], stableId);
+    QVERIFY(restored.removeTrajectory(0, 0)); QCOMPARE(restored.trajectoryState(0)["active"].toInt(), 0);
+    QCOMPARE(restored.trajectoryState(0)["name"].toString(), QString("Wing"));
+    const auto base = sessionToJson(doc);
+    const auto reject = [&](QJsonObject track) {
+        auto json = base; auto plots = json["plots"].toArray(); auto plot = plots[0].toObject(); auto trajectory = plot["trajectory"].toObject();
+        auto tracks = trajectory["tracks"].toArray(); tracks[0] = track; trajectory["tracks"] = tracks; plot["trajectory"] = trajectory; plots[0] = plot; json["plots"] = plots;
+        SessionDocument parsed; QString reason; return !sessionFromJson(json, &parsed, &reason);
+    };
+    const auto first = base["plots"].toArray()[0].toObject()["trajectory"].toObject()["tracks"].toArray()[0].toObject();
+    auto invalid = first; invalid["visible"] = 1; QVERIFY(reject(invalid));
+    invalid = first; invalid["id"] = stableId.toString(); QVERIFY(reject(invalid));
+    invalid = first; auto attitude = invalid["attitude"].toObject(); attitude["order"] = 9; invalid["attitude"] = attitude; QVERIFY(reject(invalid));
+    invalid = first; invalid["geographic"] = false; QVERIFY(reject(invalid));
+    // A malformed restore never changes the active session.
+    auto broken = base; broken["version"] = 99; csv(dir.filePath("broken.disession"), QJsonDocument(broken).toJson());
+    QVERIFY(!restored.restoreSession(dir.filePath("broken.disession"))); QCOMPARE(restored.signalCount(), 6);
+    for (int version = 1; version <= 5; ++version) {
+        auto legacy = base; legacy["version"] = version; SessionDocument parsed;
+        QVERIFY2(sessionFromJson(legacy, &parsed, &error), qPrintable(error));
+        QCOMPARE(parsed.plots[0].trajectory.entries().size(), 1);
+        QCOMPARE(parsed.plots[0].trajectory.attitude.mode, 0);
+    }
+}
+void TrajectoryTest::multiTrajectoryCost()
+{
+    QVector<double> time, x, y, z;
+    for (int i = 0; i < 100000; ++i) { time.append(i * .01); x.append(22 + i * 1e-7); y.append(114 + std::sin(i * .0001) * .01); z.append(100 + std::cos(i * .001) * 10); }
+    QVector<TrajectorySource> sources;
+    for (int i = 0; i < 8; ++i) { TrajectorySource source; source.geographic = true; source.axes = axes(time, x, y, z); sources.append(source); }
+    QElapsedTimer timer; timer.start(); const auto frame = TrajectoryBuilder::buildFrame(sources);
+    qInfo() << "Eight geographic trajectories, 100000 samples each, preparation ms" << timer.elapsed();
+    for (const auto &path : frame->paths) QVERIFY(path->valid());
+    timer.restart(); qsizetype samples = 0;
+    for (int turn = 0; turn < 20; ++turn) {
+        TrajectoryCamera camera; camera.azimuth += turn * 3;
+        for (const auto &path : frame->paths) samples += TrajectoryBuilder::preview(*path, camera, {1200, 800}, 2, Qt::gray, nullptr, true, frame->bounds.get(), false).projectedSamples;
+    }
+    qInfo() << "Eight trajectories, 20 interactive frames ms" << timer.elapsed() << "projected samples" << samples;
+    QVERIFY(samples > 0); // measurement, no unsubstantiated fps promise
 }
 QTEST_MAIN(TrajectoryTest)
 #include "trajectory_test.moc"

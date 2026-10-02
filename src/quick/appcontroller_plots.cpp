@@ -204,7 +204,7 @@ void AppController::setSignalPen(int row, const QColor &color, double width, int
     for (int plotIndex = 0; plotIndex < m_plots.size(); ++plotIndex)
         if (m_signals->plotRows(plotIndex).contains(row)
             || (m_trajectories.value(plotIndex).enabled
-                && (m_trajectories.value(plotIndex).axes[0] == row || m_trajectories.value(plotIndex).axes[1] == row || m_trajectories.value(plotIndex).axes[2] == row)))
+                && m_trajectories.value(plotIndex).signalIds.contains(row)))
             refreshPlot(plotIndex, false);
     notifyPlotBindingsChanged();
 }
@@ -268,7 +268,10 @@ bool AppController::unbindPlotSignals(int plotIndex)
     bool trajectoryChanged = false;
     auto &trajectory = m_trajectories[plotIndex];
     if (trajectory.enabled && (!trajectory.signalIds.isEmpty() || trajectory.axes != std::array<int, 3>{{-1, -1, -1}})) {
-        trajectory.axes = {{-1, -1, -1}}; trajectory.signalIds.clear(); trajectoryChanged = true;
+        auto tracks = trajectory.entries();
+        for (auto &track : tracks) { track.axes = {{-1, -1, -1}}; track.attitude.sources.fill(-1); }
+        trajectory.tracks = tracks; static_cast<SessionTrajectoryEntry &>(trajectory) = tracks[trajectory.active];
+        trajectory.signalIds.clear(); trajectoryChanged = true;
     }
     if (trajectory.enabled ? !trajectoryChanged : rows.isEmpty()) return false;
     if (!trajectory.enabled) for (int row : rows) m_signals->setPlotChecked(plotIndex, row, false);
@@ -511,8 +514,11 @@ void AppController::refreshPlot(int index, bool fitY)
     PlotItem *plot = m_plots.at(index);
     QVector<int> sortedRows = m_signals->plotRows(index);
     if (m_trajectories.value(index).enabled) {
-        const auto axes = m_trajectories.value(index).axes;
-        sortedRows = QVector<int>(axes.cbegin(), axes.cend());
+        sortedRows.clear();
+        for (const auto &track : m_trajectories.value(index).entries()) if (track.visible) {
+            for (int id : track.axes) if (id >= 0 && !sortedRows.contains(id)) sortedRows.append(id);
+            if (track.attitude.mode) for (int a = 0; a < (track.attitude.mode == 1 ? 3 : 4); ++a) { const int id = track.attitude.sources[a]; if (id >= 0 && !sortedRows.contains(id)) sortedRows.append(id); }
+        }
     }
     QVector<PlotSeriesId> visibleIds;
     visibleIds.reserve(sortedRows.size());

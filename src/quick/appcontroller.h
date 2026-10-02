@@ -120,6 +120,12 @@ public:
     Q_INVOKABLE bool addTimeOffset(int scope, int row, const QString &group, double seconds);
 
     // Spatial trajectories keep their axes/camera independent of the shared time axis.
+    Q_INVOKABLE bool addTrajectory(int index);
+    Q_INVOKABLE bool removeTrajectory(int index, int track);
+    Q_INVOKABLE bool selectTrajectory(int index, int track);
+    Q_INVOKABLE bool styleTrajectory(int index, const QString &name, const QColor &color, double width, bool visible);
+    Q_INVOKABLE bool configureAttitude(int index, int mode, int a, int b, int c, int d,
+        bool radians, int order, bool scalarLast, bool navigationToBody);
     Q_INVOKABLE QVariantMap trajectoryState(int index) const;
     Q_INVOKABLE QVariantList trajectorySignalOptions(int index) const;
     Q_INVOKABLE bool configureTrajectory(int index, bool enabled, int x, int y, int z, bool geographic = false);

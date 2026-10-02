@@ -227,7 +227,12 @@ void AppController::finishSessionRestore()
     for (int i = 0; i < state.plots.size(); ++i) {
         m_plotViews.insert(i, state.plots.at(i));
         auto trajectory = state.plots.at(i).trajectory;
-        for (int &id : trajectory.axes) if (id >= 0) id = savedToCurrent.at(id);
+        auto tracks = trajectory.entries();
+        for (auto &track : tracks) {
+            for (int &id : track.axes) if (id >= 0) id = savedToCurrent.at(id);
+            for (int &id : track.attitude.sources) if (id >= 0) id = savedToCurrent.at(id);
+        }
+        trajectory.tracks = tracks; static_cast<SessionTrajectoryEntry &>(trajectory) = tracks[trajectory.active];
         for (int &id : trajectory.signalIds) id = savedToCurrent.at(id);
         m_trajectories.insert(i, trajectory);
     }
