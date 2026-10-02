@@ -3,6 +3,7 @@
 #include <QThreadPool>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <QHoverEvent>
 #include <QSGGeometryNode>
 #include <QSGFlatColorMaterial>
 #include <QtMath>
@@ -18,12 +19,21 @@ QThreadPool &trajectoryPool()
 struct TrajectoryRoot : QSGNode {
     QVector<QSGGeometryNode *> nodes;
     std::shared_ptr<const TrajectoryPreview> preview;
+    std::shared_ptr<const TrajectoryRotationGizmo> gizmo;
 };
+double ringAngle(const TrajectoryRotationGizmo::Ring &ring, const QPointF &center, const QPointF &position)
+{
+    const auto d = position - center;
+    const double determinant = ring.u.x() * ring.v.y() - ring.u.y() * ring.v.x();
+    return std::atan2((ring.u.x() * d.y() - ring.u.y() * d.x()) / determinant,
+                      (d.x() * ring.v.y() - d.y() * ring.v.x()) / determinant);
+}
 }
 TrajectoryItem::TrajectoryItem(QQuickItem *parent) : QQuickItem(parent)
 {
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::MiddleButton);
+    setAcceptHoverEvents(true);
     setClip(true);
     m_poll.setInterval(12);
     connect(&m_poll, &QTimer::timeout, this, &TrajectoryItem::finish);
@@ -48,6 +58,60 @@ TrajectoryCamera TrajectoryItem::camera() const { QMutexLocker lock(&m_mutex); r
 QRectF TrajectoryItem::orientationRect() const {
     QMutexLocker lock(&m_mutex); return m_preview ? m_preview->orientationRect : QRectF();
 }
+QRectF TrajectoryItem::rotationRect() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_gizmo ? QRectF(m_gizmo->center - QPointF(m_gizmo->radius, m_gizmo->radius),
+                           QSizeF(m_gizmo->radius * 2, m_gizmo->radius * 2)) : QRectF();
+}
+QVector3D TrajectoryItem::viewAngles() const
+{
+    QMutexLocker lock(&m_mutex);
+    return (m_preview ? m_displayCamera : m_camera).viewAngles();
+}
+bool TrajectoryItem::rotationGizmoVisible() const
+{
+    QMutexLocker lock(&m_mutex); return bool(m_visibleGizmo);
+}
+bool TrajectoryItem::nearRotationControl(const QPointF &position) const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_gizmo && (QLineF(position, m_gizmo->center).length() <= m_gizmo->radius + 10
+        || (m_preview && m_preview->orientationRect.contains(position)));
+}
+int TrajectoryItem::rotationHandleAt(const QPointF &position) const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_gizmo ? m_gizmo->pick(position) : -1;
+}
+void TrajectoryItem::refreshGizmo()
+{
+    TrajectoryCamera shown; QSizeF size; bool valid;
+    {
+        QMutexLocker lock(&m_mutex);
+        valid = m_data && m_data->valid() && !m_data->planar && bool(m_preview);
+        shown = m_displayCamera; size = m_displaySize;
+    }
+    const auto gizmo = valid ? TrajectoryBuilder::rotationGizmo(shown, size, axisColor(), rotationHandle()) : nullptr;
+    const bool show = m_dragging ? rotating() && m_dragFromAxes : m_gizmoExpanded;
+    bool visibilityChanged;
+    {
+        QMutexLocker lock(&m_mutex);
+        visibilityChanged = bool(m_visibleGizmo) != (bool(gizmo) && show);
+        m_gizmo = gizmo; m_visibleGizmo = show ? gizmo : nullptr;
+    }
+    if (visibilityChanged) emit interactionChanged();
+    update();
+}
+void TrajectoryItem::hoverAt(const QPointF &position)
+{
+    m_pointerPosition = position;
+    if (m_dragging) return;
+    const bool expanded = nearRotationControl(position);
+    const int handle = rotationHandleAt(position);
+    if (handle == m_hoverHandle && expanded == m_gizmoExpanded) return;
+    m_hoverHandle = handle; m_gizmoExpanded = expanded; refreshGizmo(); emit interactionChanged();
+}
 double TrajectoryItem::lineWidth() const { QMutexLocker lock(&m_mutex); return m_lineWidth; }
 QColor TrajectoryItem::axisColor() const { QMutexLocker lock(&m_mutex); return m_axisColor; }
 void TrajectoryItem::setLineWidth(double width)
@@ -61,15 +125,17 @@ void TrajectoryItem::setAxisColor(const QColor &color)
 {
     if (!color.isValid()) return;
     { QMutexLocker lock(&m_mutex); if (m_axisColor == color) return; m_axisColor = color; }
-    emit styleChanged(); requestPreview();
+    emit styleChanged(); refreshGizmo(); requestPreview();
 }
 void TrajectoryItem::setAxes(const std::array<PlotSeriesDataPtr, 3> &axes, bool geographic)
 {
     if (m_axes == axes && m_geographic == geographic) return;
+    endDrag(); m_hoverHandle = -1; m_gizmoExpanded = false;
     m_axes = axes; m_geographic = geographic;
     if (m_job) m_job->cancelled = true;
     // Do not expose a previous source's position or trajectory while a new one builds.
-    { QMutexLocker lock(&m_mutex); m_data.reset(); m_preview.reset(); }
+    { QMutexLocker lock(&m_mutex); m_data.reset(); m_preview.reset(); m_gizmo.reset(); m_visibleGizmo.reset(); }
+    emit interactionChanged();
     requestPreview(); emit markersChanged(); update();
 }
 void TrajectoryItem::setCamera(const TrajectoryCamera &view)
@@ -106,12 +172,13 @@ void TrajectoryItem::start()
     const int selected = int(bool(m_axes[0])) + int(bool(m_axes[1])) + int(bool(m_axes[2]));
     if (selected < 2 || width() <= 0 || height() <= 0) {
         m_poll.stop();
-        { QMutexLocker lock(&m_mutex); m_data.reset(); m_preview.reset(); }
-        emit previewChanged(); emit markersChanged(); update(); return;
+        { QMutexLocker lock(&m_mutex); m_data.reset(); m_preview.reset(); m_gizmo.reset(); m_visibleGizmo.reset(); }
+        emit interactionChanged(); emit previewChanged(); emit markersChanged(); update(); return;
     }
     m_job = std::make_shared<Job>();
     const auto job = m_job;
     job->revision = m_revision; job->camera = camera(); job->size = QSizeF(width(), height());
+    job->interactionEpoch = m_interactionEpoch;
     const auto axes = m_axes;
     std::shared_ptr<const TrajectoryData> previous;
     { QMutexLocker lock(&m_mutex); previous = m_data; }
@@ -138,12 +205,15 @@ void TrajectoryItem::finish()
     if (!m_job || !m_job->done.load(std::memory_order_acquire)) return;
     const auto job = std::move(m_job);
     m_poll.stop();
-    if (!job->cancelled && job->data && job->data->axes == m_axes && job->data->geographic == m_geographic) {
+    if (!job->cancelled && job->interactionEpoch == m_interactionEpoch
+        && job->data && job->data->axes == m_axes && job->data->geographic == m_geographic) {
         QMutexLocker lock(&m_mutex);
         m_data = job->data; m_preview = job->preview;
         m_displayCamera = job->camera; m_displaySize = job->size;
     }
     if (job->revision != m_revision) start();
+    refreshGizmo();
+    if (!m_dragging) hoverAt(m_pointerPosition);
     emit previewChanged(); emit markersChanged(); update();
 }
 void TrajectoryItem::setTimeCursor(int mode, double t1, double t2, double minimum, double maximum)
@@ -196,9 +266,11 @@ QSGNode *TrajectoryItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *
 {
     auto *root = oldNode ? static_cast<TrajectoryRoot *>(oldNode) : new TrajectoryRoot;
     std::shared_ptr<const TrajectoryPreview> preview;
-    { QMutexLocker lock(&m_mutex); preview = m_preview; }
-    if (root->preview == preview) return root;
-    const int count = preview ? preview->geometry.segments.size() : 0;
+    std::shared_ptr<const TrajectoryRotationGizmo> gizmo;
+    { QMutexLocker lock(&m_mutex); preview = m_preview; gizmo = m_visibleGizmo; }
+    if (root->preview == preview && root->gizmo == gizmo) return root;
+    const int pathCount = preview ? preview->geometry.segments.size() : 0;
+    const int count = pathCount + (gizmo ? gizmo->geometry.segments.size() : 0);
     while (root->nodes.size() < count) {
         auto *node = new QSGGeometryNode;
         auto *geometry = new QSGGeometry(QSGGeometry::defaultAttributes_Point2D(), 0);
@@ -207,8 +279,10 @@ QSGNode *TrajectoryItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *
         root->appendChildNode(node); root->nodes.append(node);
     }
     for (int i = 0; i < root->nodes.size(); ++i) {
+        if (i < pathCount && root->preview == preview) continue; // Hover only updates the handles.
         auto *node = root->nodes.at(i); auto *geometry = node->geometry();
-        const GeometrySegment *segment = i < count ? &preview->geometry.segments.at(i) : nullptr;
+        const GeometrySegment *segment = i < pathCount ? &preview->geometry.segments.at(i)
+            : i < count ? &gizmo->geometry.segments.at(i - pathCount) : nullptr;
         geometry->setDrawingMode(segment && segment->triangleList ? QSGGeometry::DrawTriangles : QSGGeometry::DrawTriangleStrip);
         geometry->allocate(segment ? segment->vertices.size() : 0);
         if (segment) {
@@ -220,7 +294,7 @@ QSGNode *TrajectoryItem::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *
         }
         geometry->markVertexDataDirty(); node->markDirty(QSGNode::DirtyGeometry | QSGNode::DirtyMaterial);
     }
-    root->preview = preview; return root;
+    root->preview = preview; root->gizmo = gizmo; return root;
 }
 void TrajectoryItem::geometryChange(const QRectF &next, const QRectF &old)
 {
@@ -229,11 +303,40 @@ void TrajectoryItem::geometryChange(const QRectF &next, const QRectF &old)
 void TrajectoryItem::mousePressEvent(QMouseEvent *event)
 {
     if (event->button() != Qt::LeftButton && event->button() != Qt::MiddleButton) return;
-    beginDrag(event->position(), event->button() == Qt::MiddleButton
-        || (event->button() == Qt::LeftButton && orientationRect().contains(event->position()))); event->accept();
+    beginPointerDrag(event->position(), int(event->button()), int(event->modifiers())); event->accept();
+}
+bool TrajectoryItem::beginPointerDrag(const QPointF &position, int button, int modifiers)
+{
+    if (button != Qt::LeftButton && button != Qt::MiddleButton) return false;
+    const bool isPlanar = planar();
+    if (isPlanar && button == Qt::MiddleButton) { endDrag(); emit activated(); return false; }
+    const bool shift = modifiers & Qt::ShiftModifier;
+    const int handle = !isPlanar && button == Qt::LeftButton && !shift ? rotationHandleAt(position) : -1;
+    const bool rotate = !isPlanar && !shift && (button == Qt::MiddleButton || handle >= 0
+        || (modifiers & Qt::AltModifier) || orientationRect().contains(position));
+    if (!beginDrag(position, rotate)) return false;
+    if (rotate && handle > 0 && m_dragGizmo) {
+        m_dragAxis = handle;
+        const auto &ring = m_dragGizmo->rings[handle - 1];
+        double parameter = 0;
+        m_dragGizmo->pick(position, &parameter);
+        const double determinant = ring.u.x() * ring.v.y() - ring.u.y() * ring.v.x();
+        m_dragRingEdgeOn = std::abs(determinant) < m_dragGizmo->radius * m_dragGizmo->radius * .15;
+        if (m_dragRingEdgeOn) {
+            m_dragTangent = -ring.u * std::sin(parameter) + ring.v * std::cos(parameter);
+            if (QPointF::dotProduct(m_dragTangent, m_dragTangent) < std::pow(m_dragGizmo->radius * .2, 2))
+                m_dragTangent = QPointF::dotProduct(ring.u, ring.u) > QPointF::dotProduct(ring.v, ring.v) ? -ring.u : ring.v;
+        } else {
+            m_dragLastAngle = ringAngle(ring, m_dragGizmo->center, position);
+            m_dragRingPosition = position;
+        }
+        refreshGizmo(); emit interactionChanged();
+    }
+    return true;
 }
 bool TrajectoryItem::beginDrag(const QPointF &position, bool rotate)
 {
+    if (!qIsFinite(position.x()) || !qIsFinite(position.y())) return false;
     endDrag();
     emit activated();
     if (rotate && planar()) return false;
@@ -244,6 +347,11 @@ bool TrajectoryItem::beginDrag(const QPointF &position, bool rotate)
         m_dragCamera = rotate && m_preview ? m_displayCamera : m_camera;
         m_dragSize = rotate && m_preview ? m_displaySize : QSizeF(width(), height());
         m_dragStart = position;
+        m_pointerPosition = position;
+        m_dragAxis = 0; m_dragAngle = 0; m_dragLastAngle = 0;
+        m_dragGizmo = m_gizmo;
+        m_dragFromAxes = (m_preview && m_preview->orientationRect.contains(position))
+            || (m_gizmo && QLineF(position, m_gizmo->center).length() <= m_gizmo->radius + 10);
         m_dragScale = m_data && m_data->valid()
             ? TrajectoryBuilder::projectionScale(*m_data, m_dragCamera, m_dragSize) : qMin(width(), height());
         m_dragScale = qMax(1.0, m_dragScale);
@@ -251,7 +359,14 @@ bool TrajectoryItem::beginDrag(const QPointF &position, bool rotate)
             m_dragCamera.viewScale = m_dragScale / m_dragCamera.zoom / qMax(1.0, qMin(m_dragSize.width(), m_dragSize.height()));
     }
     m_pan = !rotate;
-    m_dragging = true; requestPreview(); return true;
+    m_dragging = true;
+    if (rotate) {
+        // A new gesture starts from the displayed frame. Pending frames from
+        // the preceding gesture must not briefly overtake this new baseline.
+        ++m_interactionEpoch;
+        setCamera(m_dragCamera);
+    }
+    refreshGizmo(); emit interactionChanged(); requestPreview(); return true;
 }
 void TrajectoryItem::mouseMoveEvent(QMouseEvent *event)
 {
@@ -259,16 +374,61 @@ void TrajectoryItem::mouseMoveEvent(QMouseEvent *event)
 }
 void TrajectoryItem::dragTo(const QPointF &position)
 {
-    if (!m_dragging) return;
+    if (!m_dragging || !qIsFinite(position.x()) || !qIsFinite(position.y())) return;
+    m_pointerPosition = position;
     const auto delta = position - m_dragStart;
-    if (delta.isNull()) return;
     auto view = m_dragCamera;
     if (m_pan) {
         view.panX += delta.x() / qMax(1.0, m_dragSize.width());
         view.panY += delta.y() / qMax(1.0, m_dragSize.height());
     } else {
-        const auto turn = QQuaternion::fromAxisAndAngle(QVector3D(float(delta.y()), float(delta.x()), 0),
-                                                       float(std::hypot(delta.x(), delta.y()) * .4));
+        QQuaternion turn;
+        if (m_dragAxis != 0) {
+            const auto &ring = m_dragGizmo->rings[m_dragAxis - 1];
+            if (m_dragRingEdgeOn) {
+                m_dragAngle = QPointF::dotProduct(delta, m_dragTangent) / qMax(1.0, QPointF::dotProduct(m_dragTangent, m_dragTangent));
+            } else {
+                const auto center = m_dragGizmo->center;
+                const auto previous = m_dragRingPosition;
+                m_dragRingPosition = position;
+                const auto fromCenter = position - center;
+                const double deadZone2 = std::pow(m_dragGizmo->radius * .08, 2);
+                if (QPointF::dotProduct(fromCenter, fromCenter) < deadZone2) return;
+                const double angle = ringAngle(ring, m_dragGizmo->center, position);
+                const auto segment = position - previous;
+                const double length2 = QPointF::dotProduct(segment, segment);
+                const double t = length2 > 0 ? qBound(0.0, QPointF::dotProduct(center - previous, segment) / length2, 1.0) : 0;
+                const auto closest = previous + segment * t - center;
+                if (QPointF::dotProduct(closest, closest) < deadZone2) {
+                    // The angle at the ring centre is undefined. Rebase after
+                    // crossing it instead of injecting a half-turn.
+                    m_dragLastAngle = angle;
+                    return;
+                }
+                m_dragAngle += std::remainder(angle - m_dragLastAngle, 2 * M_PI);
+                m_dragLastAngle = angle;
+            }
+            QVector3D axis;
+            axis[m_dragAxis - 1] = 1;
+            // Fixed world axes, expressed in the displayed camera frame.
+            axis = m_dragCamera.orientation().rotatedVector(axis);
+            turn = QQuaternion::fromAxisAndAngle(axis, float(qRadiansToDegrees(m_dragAngle)));
+        } else {
+            const double radius = m_dragFromAxes && m_dragGizmo ? m_dragGizmo->radius
+                : qMax(1.0, qMin(m_dragSize.width(), m_dragSize.height()) * .45);
+            const QPointF center(m_dragSize.width() * .5, m_dragSize.height() * .5);
+            // The corner triad acts as a handle for the centre of the trackball.
+            const QPointF start = m_dragFromAxes ? center : m_dragStart;
+            const auto sphere = [radius, center](const QPointF &point) {
+                double x = (point.x() - center.x()) / radius;
+                double y = (center.y() - point.y()) / radius;
+                const double r2 = x * x + y * y;
+                // Sphere / hyperbolic sheet gives continuous control beyond the rim.
+                const double z = r2 <= .5 ? std::sqrt(1 - r2) : .5 / std::sqrt(r2);
+                return QVector3D(float(x), float(y), float(z)).normalized();
+            };
+            turn = QQuaternion::rotationTo(sphere(start), sphere(start + delta));
+        }
         const auto orientation = (turn * m_dragCamera.orientation()).normalized();
         view.freeRotation = true;
         view.rotation = {{orientation.scalar(), orientation.x(), orientation.y(), orientation.z()}};
@@ -280,10 +440,11 @@ void TrajectoryItem::dragTo(const QPointF &position)
         view.panDepth = translation.z();
     }
     setCamera(view);
+    if (m_dragAxis > 0) emit interactionChanged();
 }
 void TrajectoryItem::mouseReleaseEvent(QMouseEvent *event)
 {
-    mouseUngrabEvent(); event->accept();
+    mouseUngrabEvent(); hoverAt(event->position()); event->accept();
 }
 void TrajectoryItem::mouseUngrabEvent()
 {
@@ -292,7 +453,15 @@ void TrajectoryItem::mouseUngrabEvent()
 void TrajectoryItem::endDrag()
 {
     if (!m_dragging) return;
-    m_dragging = false; requestPreview(); emit viewInteractionFinished();
+    m_dragging = false; m_dragGizmo.reset();
+    m_gizmoExpanded = nearRotationControl(m_pointerPosition);
+    m_hoverHandle = rotationHandleAt(m_pointerPosition);
+    refreshGizmo(); emit interactionChanged(); requestPreview(); emit viewInteractionFinished();
+}
+void TrajectoryItem::hoverMoveEvent(QHoverEvent *event) { hoverAt(event->position()); }
+void TrajectoryItem::hoverLeaveEvent(QHoverEvent *)
+{
+    hoverAt({-1e6, -1e6});
 }
 void TrajectoryItem::wheelEvent(QWheelEvent *event)
 {

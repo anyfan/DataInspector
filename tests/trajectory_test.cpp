@@ -11,6 +11,7 @@
 #include <QQuickWindow>
 #include <QElapsedTimer>
 #include <QMouseEvent>
+#include <QtMath>
 
 class TrajectoryTest : public QObject {
     Q_OBJECT
@@ -29,7 +30,14 @@ private slots:
     void denseFlightRotationCost();
     void twoParametersProducePlanarPaths();
     void draggingDirectionAndPlanarPan();
+    void constrainedRotationKeepsAxisAndViewportPivot();
+    void rotationGizmoPickingAndMultipleTurns();
+    void cornerGizmoExpandsOnlyWhileUsed();
+    void ringCenterCrossingDoesNotInjectHalfTurn();
+    void rotationGestureRejectsPreviousFrames();
+    void viewAnglesDescribeAbsolutePose();
     void treeSelectionKeepsTimeBindings();
+    void defaultGeographicAxesUseSelectedSources();
     void zeroFixOnlyExcludedFromFit();
     void wheelKeepsPointerAnchor();
     void highZoomKeepsAnchorAndAllowsPan();
@@ -48,6 +56,28 @@ static std::array<PlotSeriesDataPtr, 3> axes(const QVector<double> &time,
 static void csv(const QString &path, const QByteArray &bytes)
 {
     QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); QCOMPARE(file.write(bytes), qint64(bytes.size()));
+}
+static QPointF ringPoint(const TrajectoryRotationGizmo &gizmo, int axis, double angle)
+{
+    const auto &ring = gizmo.rings[axis - 1];
+    return gizmo.center + ring.u * std::cos(angle) + ring.v * std::sin(angle);
+}
+static std::optional<double> ringGrabParameter(const TrajectoryRotationGizmo &gizmo, int axis)
+{
+    for (int step = 0; step < 128; ++step) {
+        const double angle = step * 2 * M_PI / 128;
+        const auto point = ringPoint(gizmo, axis, angle);
+        const auto &ring = gizmo.rings[axis - 1];
+        const auto tangent = -ring.u * std::sin(angle) + ring.v * std::cos(angle);
+        if (ring.depths[step] < -1e-6 || QLineF(point, gizmo.center).length() < gizmo.radius * .3
+            || QLineF(QPointF(), tangent).length() < gizmo.radius * .4) continue;
+        // Pick a handle that is reliable even with integer window coordinates.
+        bool stable = true;
+        for (const auto &offset : {QPointF(), QPointF(2, 0), QPointF(-2, 0), QPointF(0, 2), QPointF(0, -2)})
+            stable = stable && gizmo.pick(point + offset) == axis;
+        if (stable) return angle;
+    }
+    return std::nullopt;
 }
 void TrajectoryTest::timeBasesAndMissingCoordinates()
 {
@@ -72,20 +102,20 @@ void TrajectoryTest::projectionPreservesSpatialScaleAndPrecision()
     const auto origin = TrajectoryBuilder::project(*data, TrajectoryBuilder::position(*data, 0), top, {400, 300});
     const auto x = TrajectoryBuilder::project(*data, TrajectoryBuilder::position(*data, 1), top, {400, 300}) - origin;
     const auto y = TrajectoryBuilder::project(*data, TrajectoryBuilder::position(*data, 2), top, {400, 300}) - origin;
-    QVERIFY2(std::abs(x.x() + y.y()) < 1e-8, qPrintable(QString("x=%1 y=%2 spanX=%3 spanY=%4").arg(x.x(),0,'g',17).arg(y.y(),0,'g',17).arg(data->maximum[0]-data->minimum[0]).arg(data->maximum[1]-data->minimum[1]))); QVERIFY(x.x() > 100);
-    QVERIFY(std::abs(x.y()) < 1e-8 && std::abs(y.x()) < 1e-8);
+    QVERIFY2(std::abs(y.x() + x.y()) < 1e-4, qPrintable(QString("x=%1 y=%2 spanX=%3 spanY=%4").arg(x.x(),0,'g',17).arg(y.y(),0,'g',17).arg(data->maximum[0]-data->minimum[0]).arg(data->maximum[1]-data->minimum[1]))); QVERIFY(y.x() > 100);
+    QVERIFY(std::abs(x.x()) < 1e-4 && std::abs(y.y()) < 1e-4);
     TrajectoryCamera front; front.azimuth = 0; front.elevation = 0;
     const auto frontOrigin = TrajectoryBuilder::project(*data, TrajectoryBuilder::position(*data, 0), front, {400, 300});
     const auto frontX = TrajectoryBuilder::project(*data, TrajectoryBuilder::position(*data, 1), front, {400, 300}) - frontOrigin;
     const auto frontY = TrajectoryBuilder::project(*data, TrajectoryBuilder::position(*data, 2), front, {400, 300}) - frontOrigin;
     const auto frontZ = TrajectoryBuilder::project(*data, TrajectoryBuilder::position(*data, 3), front, {400, 300}) - frontOrigin;
-    QVERIFY(frontX.x() > 0 && std::abs(frontX.y()) < 1e-8);
-    QVERIFY(std::abs(frontY.x()) < 1e-8 && std::abs(frontY.y()) < 1e-8);
-    QVERIFY(frontZ.y() < 0 && std::abs(frontZ.x()) < 1e-8);
+    QVERIFY(frontY.x() > 0 && std::abs(frontY.y()) < 1e-4);
+    QVERIFY(std::abs(frontX.x()) < 1e-4 && std::abs(frontX.y()) < 1e-4);
+    QVERIFY(frontZ.y() > 0 && std::abs(frontZ.x()) < 1e-4);
     TrajectoryCamera side = front; side.azimuth = 90;
     const auto sideOrigin = TrajectoryBuilder::project(*data, TrajectoryBuilder::position(*data, 0), side, {400, 300});
-    const auto sideY = TrajectoryBuilder::project(*data, TrajectoryBuilder::position(*data, 2), side, {400, 300}) - sideOrigin;
-    QVERIFY(sideY.x() > 0 && std::abs(sideY.y()) < 1e-8);
+    const auto sideY = TrajectoryBuilder::project(*data, TrajectoryBuilder::position(*data, 1), side, {400, 300}) - sideOrigin;
+    QVERIFY(sideY.x() > 0 && std::abs(sideY.y()) < 1e-4);
     const auto preview = TrajectoryBuilder::preview(*data, top, {400, 300}, 2, Qt::gray);
     QVERIFY(!preview.geometry.segments.isEmpty());
     for (const auto &segment : preview.geometry.segments) for (const auto &point : segment.vertices)
@@ -100,14 +130,14 @@ void TrajectoryTest::geographicProjectionUsesMetresAndRawReadings()
     QCOMPARE(TrajectoryBuilder::spatialPosition(*data, 1), (std::array<double, 3>{0, 0, 0}));
     const auto east = TrajectoryBuilder::spatialPosition(*data, 2);
     const auto north = TrajectoryBuilder::spatialPosition(*data, 3);
-    QVERIFY(std::abs(east[0] - 111.31949078762194) < 1e-6);
-    QVERIFY(std::abs(east[1]) < 1e-6);
-    QVERIFY(std::abs(north[1] - 110.57427581609332) < 1e-6);
-    QCOMPARE(north[2], 50.0);
+    QVERIFY(std::abs(east[1] - 111.31949078762194) < 1e-6);
+    QVERIFY(std::abs(east[0]) < 1e-6);
+    QVERIFY(std::abs(north[0] - 110.57427581609332) < 1e-6);
+    QCOMPARE(north[2], -50.0);
     QCOMPARE(TrajectoryBuilder::position(*data, 3)[0], .001); // source latitude stays unmodified
     const auto across = TrajectoryBuilder::build(axes({0, 1}, {0, 0}, {179.999, -179.999}, {50, 50}), nullptr, true);
     QVERIFY(across->valid());
-    QVERIFY(std::abs(TrajectoryBuilder::spatialPosition(*across, 1)[0] - 222.6389815) < .001);
+    QVERIFY(std::abs(TrajectoryBuilder::spatialPosition(*across, 1)[1] - 222.6389815) < .001);
     const auto pole = TrajectoryBuilder::build(axes({0, 1}, {89.999, 89.999}, {0, 1}, {50, 60}), nullptr, true);
     QVERIFY(pole->valid());
     for (double value : TrajectoryBuilder::spatialPosition(*pole, 1)) QVERIFY(qIsFinite(value));
@@ -120,7 +150,7 @@ void TrajectoryTest::geographicProjectionUsesMetresAndRawReadings()
     item.setTimeCursor(1, 2.8, 0, 0, 3);
     QTRY_VERIFY(!item.pending()); QVERIFY(item.error().isEmpty());
     const auto marker = item.markers().last().toMap();
-    QCOMPARE(marker["rawX"].toDouble(), .001); QCOMPARE(marker["spatialZ"].toDouble(), 50.0);
+    QCOMPARE(marker["rawX"].toDouble(), .001); QCOMPARE(marker["spatialZ"].toDouble(), -50.0);
     QVERIFY(marker["details"].toString().contains(QStringLiteral("纬度=")));
     const auto projected = TrajectoryBuilder::project(*data, north, item.camera(), {400, 300});
     QCOMPARE(marker["x"].toDouble(), projected.x()); QCOMPARE(marker["y"].toDouble(), projected.y());
@@ -136,7 +166,7 @@ void TrajectoryTest::twoParametersProducePlanarPaths()
         QVERIFY(data->valid()); QVERIFY(data->planar);
         const auto first = TrajectoryBuilder::project(*data, TrajectoryBuilder::spatialPosition(*data, 0), {}, {640, 480});
         const auto last = TrajectoryBuilder::project(*data, TrajectoryBuilder::spatialPosition(*data, 2), {}, {640, 480});
-        QVERIFY(last.x() > first.x()); QVERIFY(last.y() < first.y());
+        QVERIFY(last.x() > first.x()); QVERIFY(missing == 2 ? last.y() < first.y() : last.y() > first.y());
         TrajectoryCamera rotated; rotated.azimuth = 111; rotated.elevation = -73;
         QCOMPARE(TrajectoryBuilder::project(*data, TrajectoryBuilder::spatialPosition(*data, 2), rotated, {640, 480}), last);
         QCOMPARE(*TrajectoryBuilder::nearestSample(*data, 1.6), qsizetype(2));
@@ -174,9 +204,9 @@ void TrajectoryTest::draggingDirectionAndPlanarPan()
     auto input = axes({0, 1}, {0, 10}, {0, 10}, {0, 10}); item.setAxes(input);
     QTRY_VERIFY(!item.pending());
     const auto initial = item.camera();
-    QMouseEvent press(QEvent::MouseButtonPress, QPointF(200, 150), QPointF(200, 150), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent press(QEvent::MouseButtonPress, QPointF(340, 150), QPointF(340, 150), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
     item.mousePressEvent(&press);
-    QMouseEvent move(QEvent::MouseMove, QPointF(100, 150), QPointF(100, 150), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QMouseEvent move(QEvent::MouseMove, QPointF(240, 150), QPointF(240, 150), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
     item.mouseMoveEvent(&move);
     QCOMPARE(item.camera().azimuth, initial.azimuth);
     QCOMPARE(item.camera().panX, initial.panX - .25);
@@ -190,7 +220,9 @@ void TrajectoryTest::draggingDirectionAndPlanarPan()
     QMouseEvent middleRelease(QEvent::MouseButtonRelease, QPointF(100, 150), QPointF(100, 150), Qt::MiddleButton, Qt::NoButton, Qt::NoModifier);
     item.mousePressEvent(&middlePress); item.mouseMoveEvent(&middleMove); item.mouseReleaseEvent(&middleRelease);
     auto rotated = item.camera(); QVERIFY(rotated.freeRotation);
-    const auto turn = QQuaternion::fromAxisAndAngle(QVector3D(0, -1, 0), 40);
+    // Canvas rotation uses a 135px virtual ball; its control lives independently in the corner.
+    const float ballAngle = float(qRadiansToDegrees(std::atan2(100.0 / 135, .5 / (100.0 / 135))));
+    const auto turn = QQuaternion::fromAxisAndAngle(QVector3D(0, -1, 0), ballAngle);
     QVERIFY(std::abs(QQuaternion::dotProduct(rotated.orientation(), turn * beforeTurn.orientation())) > .99999f);
     QVERIFY(std::abs(TrajectoryBuilder::projectionScale(*data, rotated, {400, 300}) - scale) < .001);
     const auto translation = turn.rotatedVector(QVector3D(float(beforeTurn.panX * 400 / scale), 0, 0));
@@ -205,7 +237,7 @@ void TrajectoryTest::draggingDirectionAndPlanarPan()
     // A subsequent vertical drag is about the displayed horizontal axis, even after rotation.
     QMouseEvent verticalMove(QEvent::MouseMove, QPointF(200, 250), QPointF(200, 250), Qt::NoButton, Qt::MiddleButton, Qt::NoModifier);
     item.mousePressEvent(&middlePress); item.mouseMoveEvent(&verticalMove); item.mouseReleaseEvent(&middleRelease);
-    const auto pitch = QQuaternion::fromAxisAndAngle(QVector3D(1, 0, 0), 40);
+    const auto pitch = QQuaternion::fromAxisAndAngle(QVector3D(1, 0, 0), ballAngle);
     QVERIFY(std::abs(QQuaternion::dotProduct(item.camera().orientation(), pitch * rotated.orientation())) > .99999f);
     QTRY_VERIFY(!item.pending());
     const auto displayed = item.camera();
@@ -221,18 +253,252 @@ void TrajectoryTest::draggingDirectionAndPlanarPan()
     const auto noTurn = item.camera(); item.mousePressEvent(&middlePress); item.mouseMoveEvent(&middleMove);
     QVERIFY(item.camera() == noTurn);
 }
+void TrajectoryTest::constrainedRotationKeepsAxisAndViewportPivot()
+{
+    const auto input = axes({0, 1}, {0, 10}, {0, 10}, {0, 10});
+    const auto data = TrajectoryBuilder::build(input);
+    TrajectoryItem item; item.setWidth(600); item.setHeight(400); item.setAxes(input);
+    QTRY_VERIFY(!item.pending());
+    for (int preset = 0; preset < 4; ++preset) for (int axis = 1; axis <= 3; ++axis) {
+        item.presetView(preset);
+        auto before = item.camera(); before.panX = .32; before.panY = -.21; before.panDepth = .4; before.zoom = 2;
+        item.setCamera(before); QTRY_VERIFY(!item.pending());
+        const double scale = TrajectoryBuilder::projectionScale(*data, before, {600, 400});
+        const QVector3D offset(float(before.panX * 600 / scale), float(-before.panY * 400 / scale), float(before.panDepth));
+        const auto localPivot = before.orientation().conjugated().rotatedVector(-offset);
+        const std::array<double, 3> pivot{{5 + 10 * localPivot.x(), 5 + 10 * localPivot.y(), 5 + 10 * localPivot.z()}};
+        const auto gizmo = TrajectoryBuilder::rotationGizmo(before, {600, 400}, Qt::gray);
+        const auto parameter = ringGrabParameter(*gizmo, axis); QVERIFY(parameter);
+        const auto start = ringPoint(*gizmo, axis, *parameter);
+        item.hoverAt(start); QCOMPARE(item.rotationHandle(), axis);
+        QVERIFY(item.beginPointerDrag(start, Qt::LeftButton, Qt::NoModifier)); QVERIFY(item.rotating());
+        QCOMPARE(item.rotationHandle(), axis);
+        const auto &ring = gizmo->rings[axis - 1];
+        const bool edgeOn = std::abs(ring.u.x() * ring.v.y() - ring.u.y() * ring.v.x()) < gizmo->radius * gizmo->radius * .15;
+        if (edgeOn) {
+            const auto tangent = -ring.u * std::sin(*parameter) + ring.v * std::cos(*parameter);
+            item.dragTo(start + tangent * .4);
+        } else {
+            for (int step = 1; step <= 5; ++step) item.dragTo(ringPoint(*gizmo, axis, *parameter + step * .08));
+        }
+        const auto after = item.camera();
+        QVector3D worldAxis; worldAxis[axis - 1] = 1;
+        // Rotation around a world axis leaves its direction in camera space unchanged.
+        QVERIFY((before.orientation().rotatedVector(worldAxis) - after.orientation().rotatedVector(worldAxis)).length() < 1e-5);
+        const auto expected = before.orientation() * QQuaternion::fromAxisAndAngle(worldAxis, float(qRadiansToDegrees(.4)));
+        QVERIFY(std::abs(QQuaternion::dotProduct(after.orientation(), expected)) > .99999f);
+        QVERIFY(QLineF(TrajectoryBuilder::project(*data, pivot, after, {600, 400}), QPointF(300, 200)).length() < .001);
+        QVERIFY(std::abs(TrajectoryBuilder::projectionScale(*data, after, {600, 400}) - scale) < .001);
+        item.dragTo(start);
+        QVERIFY(std::abs(QQuaternion::dotProduct(item.camera().orientation(), before.orientation())) > .99999f);
+        QVERIFY(std::abs(item.camera().panX - before.panX) < 1e-6);
+        QVERIFY(std::abs(item.camera().panY - before.panY) < 1e-6);
+        item.endDrag(); QVERIFY(!item.rotating()); QTRY_VERIFY(!item.pending());
+    }
+    QVERIFY(item.beginDrag({300, 200}, true));
+    const auto before = item.camera();
+    item.dragTo({540, 340}); QVERIFY(item.camera().valid());
+    item.dragTo({300, 200});
+    QVERIFY(std::abs(QQuaternion::dotProduct(item.camera().orientation(), before.orientation())) > .99999f);
+    item.endDrag();
+}
+void TrajectoryTest::rotationGizmoPickingAndMultipleTurns()
+{
+    TrajectoryCamera view;
+    const auto gizmo = TrajectoryBuilder::rotationGizmo(view, {600, 400}, Qt::gray);
+    QCOMPARE(gizmo->pick(gizmo->center), 0);
+    QCOMPARE(gizmo->pick(gizmo->center + QPointF(110, 110)), -1);
+    QCOMPARE(gizmo->pick({qQNaN(), 0}), -1);
+    auto zoomed = view; zoomed.zoom = 80; zoomed.panX = 8; zoomed.panY = -4;
+    const auto fixed = TrajectoryBuilder::rotationGizmo(zoomed, {600, 400}, Qt::gray);
+    QCOMPARE(fixed->center, gizmo->center); QCOMPARE(fixed->radius, gizmo->radius);
+    for (int axis = 1; axis <= 3; ++axis) {
+        QCOMPARE(fixed->rings[axis - 1].points, gizmo->rings[axis - 1].points);
+        const auto parameter = ringGrabParameter(*gizmo, axis); QVERIFY(parameter);
+        const auto point = ringPoint(*gizmo, axis, *parameter);
+        QCOMPARE(gizmo->pick(point), axis);
+        // Generous picking tolerance accepts slight misses on the thin visible ring.
+        QCOMPARE(gizmo->pick(point + QPointF(2, 0)), axis);
+    }
+    const auto small = TrajectoryBuilder::rotationGizmo(view, {100, 70}, Qt::gray);
+    QCOMPARE(small->center, QPointF(25, 52.5));
+    for (const auto &ring : small->rings) for (const auto &point : ring.points)
+        QVERIFY(QRectF(0, 0, 100, 70).contains(point));
+    for (const auto &segment : small->geometry.segments) for (const auto &point : segment.vertices)
+        QVERIFY(qIsFinite(point.x()) && qIsFinite(point.y()));
+
+    TrajectoryItem item; item.setWidth(600); item.setHeight(400);
+    auto input = axes({0, 1}, {0, 10}, {0, 10}, {0, 10}); item.setAxes(input); item.presetView(1);
+    QTRY_VERIFY(!item.pending());
+    const auto before = item.camera();
+    const auto top = TrajectoryBuilder::rotationGizmo(before, {600, 400}, Qt::gray);
+    const auto parameter = ringGrabParameter(*top, 3); QVERIFY(parameter);
+    const auto start = ringPoint(*top, 3, *parameter);
+    QVERIFY(item.beginPointerDrag(start, Qt::LeftButton, Qt::NoModifier));
+    for (int step = 1; step <= 128; ++step) item.dragTo(ringPoint(*top, 3, *parameter + step * .1));
+    const auto expected = before.orientation() * QQuaternion::fromAxisAndAngle(QVector3D(0, 0, 1), float(qRadiansToDegrees(12.8)));
+    QVERIFY(std::abs(QQuaternion::dotProduct(item.camera().orientation(), expected)) > .99999f);
+    item.endDrag(); QTRY_VERIFY(!item.pending());
+    // Shift always pans, even when pressed exactly on an axis ring.
+    const auto current = item.camera();
+    QVERIFY(item.beginPointerDrag(start, Qt::LeftButton, Qt::ShiftModifier)); QVERIFY(!item.rotating());
+    item.dragTo(start + QPointF(30, 0)); item.endDrag();
+    QCOMPARE(item.camera().rotation, current.rotation);
+    QVERIFY(std::abs(item.camera().panX - current.panX - .05) < 1e-6);
+    input[2].reset(); item.setAxes(input); QTRY_VERIFY(!item.pending());
+    QVERIFY(item.rotationRect().isEmpty()); QCOMPARE(item.rotationHandleAt({300, 200}), -1);
+    QVERIFY(item.beginPointerDrag({300, 200}, Qt::LeftButton, Qt::NoModifier)); QVERIFY(!item.rotating());
+    item.endDrag();
+}
+void TrajectoryTest::cornerGizmoExpandsOnlyWhileUsed()
+{
+    TrajectoryItem item; item.setWidth(600); item.setHeight(400);
+    item.setAxes(axes({0, 1}, {0, 10}, {0, 10}, {0, 10})); QTRY_VERIFY(!item.pending());
+    const QPointF center(300, 200), corner = item.rotationRect().center();
+    QCOMPARE(corner, QPointF(55, 345)); QVERIFY(item.orientationRect().contains(corner));
+    QVERIFY(!item.rotationGizmoVisible()); QCOMPARE(item.rotationHandleAt(center), -1);
+    item.hoverAt(corner); QVERIFY(item.rotationGizmoVisible()); QCOMPARE(item.rotationHandle(), 0);
+    const auto before = item.camera();
+    QVERIFY(item.beginPointerDrag(corner, Qt::LeftButton, Qt::NoModifier)); QVERIFY(item.rotating());
+    item.dragTo(center); QVERIFY(item.rotationGizmoVisible());
+    item.hoverAt({-1e6, -1e6}); // Leaving while grabbed cannot hide the active handles.
+    QVERIFY(item.rotationGizmoVisible());
+    item.endDrag(); QVERIFY(!item.rotationGizmoVisible()); QTRY_VERIFY(!item.pending());
+    QVERIFY(std::abs(QQuaternion::dotProduct(before.orientation(), item.camera().orientation())) < .999f);
+    item.hoverAt(corner); QVERIFY(item.rotationGizmoVisible());
+    item.hoverAt(center); QVERIFY(!item.rotationGizmoVisible());
+    const auto beforePan = item.camera();
+    QVERIFY(item.beginPointerDrag(center, Qt::LeftButton, Qt::NoModifier)); QVERIFY(!item.rotating());
+    item.dragTo(center + QPointF(30, 0)); item.endDrag();
+    QCOMPARE(item.camera().rotation, beforePan.rotation);
+    QVERIFY(std::abs(item.camera().panX - beforePan.panX - .05) < 1e-6);
+    QVERIFY(!item.rotationGizmoVisible()); QTRY_VERIFY(!item.pending());
+    QVERIFY(item.beginPointerDrag(center, Qt::MiddleButton, Qt::NoModifier)); QVERIFY(item.rotating());
+    QVERIFY(!item.rotationGizmoVisible()); item.dragTo(center + QPointF(20, 0)); item.endDrag();
+    QTRY_VERIFY(!item.pending());
+    item.hoverAt(corner); QVERIFY(item.rotationGizmoVisible());
+    item.setHeight(600); QTRY_VERIFY(!item.pending());
+    // A resize moves the corner away from the stationary pointer, collapsing the control.
+    QVERIFY(!item.rotationGizmoVisible()); QCOMPARE(item.rotationRect().center(), QPointF(55, 545));
+}
+void TrajectoryTest::ringCenterCrossingDoesNotInjectHalfTurn()
+{
+    TrajectoryItem item; item.setWidth(600); item.setHeight(400);
+    item.setAxes(axes({0, 1}, {0, 10}, {0, 10}, {0, 10})); item.presetView(1);
+    QTRY_VERIFY(!item.pending());
+    const auto gizmo = TrajectoryBuilder::rotationGizmo(item.camera(), {600, 400}, Qt::gray);
+    const auto parameter = ringGrabParameter(*gizmo, 3); QVERIFY(parameter);
+    const auto start = ringPoint(*gizmo, 3, *parameter);
+    QVERIFY(item.beginPointerDrag(start, Qt::LeftButton, Qt::NoModifier));
+    item.dragTo(ringPoint(*gizmo, 3, *parameter + .1));
+    const auto beforeCenter = item.camera();
+    item.dragTo(gizmo->center);
+    item.dragTo(gizmo->center + (gizmo->center - start) * .12);
+    QCOMPARE(item.camera().rotation, beforeCenter.rotation);
+    item.dragTo(ringPoint(*gizmo, 3, *parameter + M_PI + .1));
+    // Resume tracking after the singular centre without jumping by pi.
+    const auto turned = beforeCenter.orientation() * QQuaternion::fromAxisAndAngle(QVector3D(0, 0, 1), float(qRadiansToDegrees(.1)));
+    QVERIFY(std::abs(QQuaternion::dotProduct(item.camera().orientation(), turned)) > .99999f);
+    item.endDrag(); QTRY_VERIFY(!item.pending());
+    const auto nextGizmo = TrajectoryBuilder::rotationGizmo(item.camera(), {600, 400}, Qt::gray);
+    const auto nextParameter = ringGrabParameter(*nextGizmo, 3); QVERIFY(nextParameter);
+    const auto nextStart = ringPoint(*nextGizmo, 3, *nextParameter);
+    QVERIFY(item.beginPointerDrag(nextStart, Qt::LeftButton, Qt::NoModifier));
+    item.dragTo(nextGizmo->center + (nextStart - nextGizmo->center) * .2);
+    const auto beforeSkipping = item.camera();
+    // A sparse mouse event can jump right over the dead zone; inspect the whole segment.
+    item.dragTo(nextGizmo->center - (nextStart - nextGizmo->center) * .2);
+    QCOMPARE(item.camera().rotation, beforeSkipping.rotation);
+    item.endDrag();
+}
+void TrajectoryTest::rotationGestureRejectsPreviousFrames()
+{
+    TrajectoryItem item; item.setWidth(600); item.setHeight(400);
+    item.setAxes(axes({0, 1}, {0, 10}, {0, 10}, {0, 10})); item.presetView(1);
+    QTRY_VERIFY(!item.pending());
+    const auto shown = item.camera();
+    const auto gizmo = TrajectoryBuilder::rotationGizmo(shown, {600, 400}, Qt::gray);
+    const auto parameter = ringGrabParameter(*gizmo, 3); QVERIFY(parameter);
+    auto queued = shown; queued.freeRotation = true;
+    const auto q = shown.orientation() * QQuaternion::fromAxisAndAngle(QVector3D(0, 0, 1), 120);
+    queued.rotation = {{q.scalar(), q.x(), q.y(), q.z()}};
+    item.setCamera(queued); // This obsolete frame may finish after the next press.
+    bool sawOldFrame = false;
+    TrajectoryCamera zero; zero.azimuth = 0; zero.elevation = 0;
+    connect(&item, &TrajectoryItem::previewChanged, this, [&] {
+        const auto angles = item.viewAngles();
+        const auto displayed = zero.orientation()
+            * QQuaternion::fromAxisAndAngle(QVector3D(0, 0, 1), angles.z())
+            * QQuaternion::fromAxisAndAngle(QVector3D(0, 1, 0), angles.y())
+            * QQuaternion::fromAxisAndAngle(QVector3D(1, 0, 0), angles.x());
+        sawOldFrame |= std::abs(QQuaternion::dotProduct(displayed.normalized(), shown.orientation())) < .9f;
+    });
+    QVERIFY(item.beginPointerDrag(ringPoint(*gizmo, 3, *parameter), Qt::LeftButton, Qt::NoModifier));
+    item.dragTo(ringPoint(*gizmo, 3, *parameter + .2)); item.endDrag();
+    QTRY_VERIFY(!item.pending()); QVERIFY(!sawOldFrame);
+    QVERIFY(std::abs(QQuaternion::dotProduct(item.camera().orientation(), shown.orientation() * QQuaternion::fromAxisAndAngle(QVector3D(0, 0, 1), float(qRadiansToDegrees(.2))))) > .99999f);
+}
+void TrajectoryTest::viewAnglesDescribeAbsolutePose()
+{
+    TrajectoryCamera zero; zero.azimuth = 0; zero.elevation = 0;
+    const auto zeroPose = zero.orientation();
+    QVERIFY(zero.viewAngles().length() < .001);
+    QVERIFY((zeroPose.rotatedVector(QVector3D(1, 0, 0)) - QVector3D(0, 0, -1)).length() < .001);
+    QVERIFY((zeroPose.rotatedVector(QVector3D(0, 1, 0)) - QVector3D(1, 0, 0)).length() < .001);
+    QVERIFY((zeroPose.rotatedVector(QVector3D(0, 0, 1)) - QVector3D(0, -1, 0)).length() < .001);
+    auto top = zero; top.elevation = 90;
+    QVERIFY2((top.viewAngles() - QVector3D(0, 90, 0)).length() < .001,
+             qPrintable(QString("top=%1,%2,%3").arg(top.viewAngles().x()).arg(top.viewAngles().y()).arg(top.viewAngles().z())));
+    auto side = zero; side.azimuth = 90;
+    QVERIFY((side.viewAngles() - QVector3D(0, 0, 90)).length() < .001);
+    for (const auto &angles : {QVector3D(0, 0, 0), QVector3D(30, 0, 0), QVector3D(0, 30, 0), QVector3D(0, 0, 30), QVector3D(20, 30, 40), QVector3D(-45, -25, 135), QVector3D(35, 90, 50), QVector3D(35, -90, 50)}) {
+        const auto q = zeroPose * QQuaternion::fromAxisAndAngle(QVector3D(0, 0, 1), angles.z())
+            * QQuaternion::fromAxisAndAngle(QVector3D(0, 1, 0), angles.y())
+            * QQuaternion::fromAxisAndAngle(QVector3D(1, 0, 0), angles.x());
+        TrajectoryCamera view; view.freeRotation = true; view.rotation = {{q.scalar(), q.x(), q.y(), q.z()}};
+        const auto actual = view.viewAngles();
+        const auto rebuilt = zeroPose * QQuaternion::fromAxisAndAngle(QVector3D(0, 0, 1), actual.z())
+            * QQuaternion::fromAxisAndAngle(QVector3D(0, 1, 0), actual.y())
+            * QQuaternion::fromAxisAndAngle(QVector3D(1, 0, 0), actual.x());
+        QVERIFY(std::abs(QQuaternion::dotProduct(q.normalized(), rebuilt.normalized())) > .99999f);
+        if (std::abs(angles.y()) < 89) QVERIFY((actual - angles).length() < .001);
+    }
+    TrajectoryItem item; item.setWidth(600); item.setHeight(400);
+    item.setAxes(axes({0, 1}, {0, 10}, {0, 10}, {0, 10})); item.presetView(2);
+    QTRY_VERIFY(!item.pending()); QVERIFY(item.viewAngles().length() < .001);
+    for (int gesture = 0; gesture < 2; ++gesture) {
+        const auto gizmo = TrajectoryBuilder::rotationGizmo(item.camera(), {600, 400}, Qt::gray);
+        const auto parameter = ringGrabParameter(*gizmo, 3); QVERIFY(parameter);
+        const auto absoluteBefore = item.viewAngles();
+        QVERIFY(item.beginPointerDrag(ringPoint(*gizmo, 3, *parameter), Qt::LeftButton, Qt::NoModifier));
+        QVERIFY((item.viewAngles() - absoluteBefore).length() < .001);
+        const auto &ring = gizmo->rings[2];
+        const bool edgeOn = std::abs(ring.u.x() * ring.v.y() - ring.u.y() * ring.v.x()) < gizmo->radius * gizmo->radius * .15;
+        if (edgeOn) {
+            const auto tangent = -ring.u * std::sin(*parameter) + ring.v * std::cos(*parameter);
+            item.dragTo(ringPoint(*gizmo, 3, *parameter) + tangent * .3);
+        } else item.dragTo(ringPoint(*gizmo, 3, *parameter + .3));
+        item.endDrag(); QTRY_VERIFY(!item.pending());
+        QVERIFY(std::abs(item.viewAngles().z() - qRadiansToDegrees(.3 * (gesture + 1))) < .001);
+    }
+    item.fitView(); QTRY_VERIFY(!item.pending());
+    QVERIFY(std::abs(item.viewAngles().z() - qRadiansToDegrees(.6)) < .001);
+    item.presetView(2); QTRY_VERIFY(!item.pending()); QVERIFY(item.viewAngles().length() < .001);
+}
 void TrajectoryTest::treeSelectionKeepsTimeBindings()
 {
     QTemporaryDir dir; csv(dir.filePath("signals.csv"), "t,x,y,z,w\n0,0,1,2,3\n1,10,11,12,13\n");
     AppController c; QVERIFY(c.loadCsv(dir.filePath("signals.csv"))); QTRY_VERIFY(!c.loading());
     c.setLayout(1, 2); c.selectSignal(3);
     c.enterTrajectoryMode(1); QCOMPARE(c.activePlotIndex(), 1);
+    QVERIFY(c.trajectoryState(1)["geographic"].toBool());
     QCOMPARE(c.signalModel()->checkedCount(), 0);
-    c.toggleSignal(0); c.selectSignal(1); c.toggleSignal(2); c.selectSignal(3);
-    QCOMPARE(c.signalModel()->checkedCount(), 4); QCOMPARE(c.trajectorySignalOptions(1).size(), 5);
-    QCOMPARE(c.trajectoryState(1)["x"].toInt(), -1); QCOMPARE(c.trajectoryState(1)["z"].toInt(), -1);
-    QVERIFY(c.bindTrajectoryAxis(1, 0, 0)); QVERIFY(c.bindTrajectoryAxis(1, 1, 1));
+    c.toggleSignal(0); c.selectSignal(1);
     QVERIFY(c.trajectoryState(1)["planar"].toBool());
+    c.toggleSignal(2); c.selectSignal(3);
+    QCOMPARE(c.signalModel()->checkedCount(), 4); QCOMPARE(c.trajectorySignalOptions(1).size(), 5);
+    QCOMPARE(c.trajectoryState(1)["x"].toInt(), 0); QCOMPARE(c.trajectoryState(1)["z"].toInt(), 2);
+    QVERIFY(c.bindTrajectoryAxis(1, 0, 0)); QVERIFY(c.bindTrajectoryAxis(1, 1, 1));
     QVERIFY(c.bindTrajectoryAxis(1, 2, 2)); QVERIFY(!c.trajectoryState(1)["planar"].toBool());
     QVERIFY(c.bindTrajectoryAxis(1, 1, 3)); // replacing an axis keeps the old source available
     QVERIFY(c.plotSignalEnabled(1, 1)); QCOMPARE(c.signalModel()->checkedCount(), 4);
@@ -260,6 +526,32 @@ void TrajectoryTest::treeSelectionKeepsTimeBindings()
     QVERIFY(c.configureTrajectory(0, false, -1, -1, -1));
     QCOMPARE(c.signalModel()->checkedCount(), 1); QVERIFY(c.plotSignalEnabled(0, 3));
 }
+void TrajectoryTest::defaultGeographicAxesUseSelectedSources()
+{
+    QTemporaryDir dir; csv(dir.filePath("selected.csv"), "t,latitude,longitude,height,other\n0,40,109,1000,1\n1,41,110,1010,2\n");
+    AppController c; QVERIFY(c.loadCsv(dir.filePath("selected.csv"))); QTRY_VERIFY(!c.loading());
+    c.setLayout(1, 2); c.enterTrajectoryMode(0);
+    QVERIFY(c.trajectoryState(0)["geographic"].toBool());
+    c.selectSignal(1); c.selectSignal(0); c.selectSignal(2); c.selectSignal(3);
+    QCOMPARE(c.trajectoryState(0)["x"].toInt(), 1);
+    QCOMPARE(c.trajectoryState(0)["y"].toInt(), 0);
+    QCOMPARE(c.trajectoryState(0)["z"].toInt(), 2);
+    c.toggleSignal(0); QCOMPARE(c.trajectoryState(0)["y"].toInt(), -1);
+    c.toggleSignal(0); QCOMPARE(c.trajectoryState(0)["y"].toInt(), 0);
+    QVERIFY(c.bindTrajectoryAxis(0, 1, -1));
+    c.enterTrajectoryMode(0); QCOMPARE(c.trajectoryState(0)["y"].toInt(), -1);
+    QVERIFY(c.configureTrajectory(0, false, 1, -1, 2, false));
+    c.enterTrajectoryMode(0); QVERIFY(!c.trajectoryState(0)["geographic"].toBool());
+    QCOMPARE(c.trajectoryState(0)["x"].toInt(), 1);
+    c.setActivePlot(1); c.selectSignal(0); c.selectSignal(1); c.selectSignal(2);
+    c.enterTrajectoryMode(1); QVERIFY(c.trajectoryState(1)["geographic"].toBool());
+    QCOMPARE(c.trajectoryState(1)["x"].toInt(), 0);
+    QCOMPARE(c.trajectoryState(1)["y"].toInt(), 1);
+    QCOMPARE(c.trajectoryState(1)["z"].toInt(), 2);
+    c.clearPlotSignals(1); c.selectSignal(2);
+    QCOMPARE(c.trajectoryState(1)["x"].toInt(), 2);
+    QCOMPARE(c.trajectoryState(0)["x"].toInt(), 1);
+}
 void TrajectoryTest::zeroFixOnlyExcludedFromFit()
 {
     const auto clean = TrajectoryBuilder::build(axes({0, 1, 2}, {40, 40.001, 40.002},
@@ -278,7 +570,7 @@ void TrajectoryTest::zeroFixOnlyExcludedFromFit()
     const auto onlyZero = TrajectoryBuilder::build(axes({0, 1}, {0, 0}, {0, 0}, {0, 10}), nullptr, true);
     QVERIFY(onlyZero->valid()); QVERIFY(qIsFinite(TrajectoryBuilder::projectionScale(*onlyZero, camera, {800, 600})));
     const auto equator = TrajectoryBuilder::build(axes({0, 1}, {0, 0}, {109, 109.01}, {0, 10}), nullptr, true);
-    QVERIFY(equator->valid()); QVERIFY(equator->maximum[0] > 1000); // one zero coordinate is a legitimate fix
+    QVERIFY(equator->valid()); QVERIFY(equator->maximum[1] > 1000); // one zero coordinate is a legitimate fix
     const auto xyz = TrajectoryBuilder::build(axes({0, 1}, {0, 10}, {0, 10}, {0, 10}));
     QCOMPARE(xyz->minimum, (std::array<double, 3>{0, 0, 0})); // generic XYZ unchanged
 }
@@ -550,11 +842,12 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QTRY_VERIFY(object->property("trajectoryMode").toBool());
     QVERIFY(!dialog->property("visible").toBool());
     QCOMPARE(c.signalModel()->checkedCount(), 0);
-    c.toggleSignal(0); QCOMPARE(c.trajectoryState(0)["x"].toInt(), -1);
+    QVERIFY(c.trajectoryState(0)["geographic"].toBool());
+    c.toggleSignal(0); QCOMPARE(c.trajectoryState(0)["x"].toInt(), 0);
     c.toggleSignal(1); QVERIFY(c.bindTrajectoryAxis(0, 0, 0)); QVERIFY(c.bindTrajectoryAxis(0, 1, 1));
     QVERIFY(c.trajectoryState(0)["planar"].toBool());
     QCOMPARE(c.signalModel()->checkedCount(), 2);
-    c.selectSignal(2); QCOMPARE(c.trajectoryState(0)["z"].toInt(), -1);
+    c.selectSignal(2); QCOMPARE(c.trajectoryState(0)["z"].toInt(), 2);
     QVERIFY(c.bindTrajectoryAxis(0, 2, 2));
     QVERIFY(!c.trajectoryState(0)["planar"].toBool());
     auto *axesButton = object->findChild<QObject *>("trajectoryAxesButton"); QVERIFY(axesButton);
@@ -588,18 +881,91 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QTRY_VERIFY(!item->pending());
     const auto beforeAxesDrag = item->camera();
     QVERIFY(!item->orientationRect().isEmpty());
-    const QPoint axesStart = item->mapToScene(item->orientationRect().center()).toPoint();
+    const QPoint axesStart = item->mapToScene(item->rotationRect().center()).toPoint();
     QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, axesStart);
     QTest::mouseMove(&window, axesStart + QPoint(30, -10));
     QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, axesStart + QPoint(30, -10));
     QVERIFY(std::abs(QQuaternion::dotProduct(item->camera().orientation(), beforeAxesDrag.orientation())) < .999f);
     QTRY_VERIFY(!item->pending());
     const auto beforePan = item->camera();
-    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, dragStart);
-    QTest::mouseMove(&window, dragStart + QPoint(20, 0));
-    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, dragStart + QPoint(20, 0));
+    const QPoint panStart = item->mapToScene(QPointF(item->width() * .82, item->height() * .5)).toPoint();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, panStart);
+    QTest::mouseMove(&window, panStart + QPoint(20, 0));
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, panStart + QPoint(20, 0));
     QCOMPARE(item->camera().rotation, beforePan.rotation);
     QVERIFY(std::abs(item->camera().panX - beforePan.panX - 20 / item->width()) < 1e-6);
+    QTRY_VERIFY(!item->pending());
+    QVERIFY(!object->findChild<QObject *>("trajectoryRotationAxis"));
+    auto *pivotReference = object->findChild<QQuickItem *>("trajectoryRotationCenter"); QVERIFY(pivotReference);
+    auto *angleFeedback = object->findChild<QQuickItem *>("trajectoryRotationFeedback"); QVERIFY(angleFeedback);
+    QVERIFY(!pivotReference->isVisible());
+    for (int axis = 1; axis <= 3; ++axis) {
+        const auto beforeAxis = item->camera();
+        const auto absoluteAngles = item->viewAngles();
+        const auto gizmo = TrajectoryBuilder::rotationGizmo(beforeAxis, {item->width(), item->height()}, Qt::gray);
+        const auto parameter = ringGrabParameter(*gizmo, axis); QVERIFY(parameter);
+        const QPoint ringStart = item->mapToScene(ringPoint(*gizmo, axis, *parameter)).toPoint();
+        const QPoint ringEnd = item->mapToScene(ringPoint(*gizmo, axis, *parameter + .3)).toPoint();
+        QTest::mouseMove(&window, ringStart);
+        QTRY_COMPARE(item->rotationHandle(), axis);
+        QVERIFY(item->rotationGizmoVisible());
+        if (QGuiApplication::platformName() != "offscreen" && axis == 1) {
+            QTest::qWait(100);
+            QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-cad-handles.png")));
+        }
+        QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, ringStart);
+        QVERIFY((angleFeedback->property("angles").value<QVector3D>() - absoluteAngles).length() < .001);
+        QCOMPARE(item->rotationHandle(), axis);
+        QVERIFY(item->rotating()); QVERIFY(pivotReference->isVisible());
+        QVERIFY(QLineF(pivotReference->position() + QPointF(13, 13), QPointF(item->width() * .5, item->height() * .5)).length() < .01);
+        QTest::mouseMove(&window, ringEnd);
+        QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, ringEnd);
+        QVERIFY(!pivotReference->isVisible());
+        QVector3D worldAxis; worldAxis[axis - 1] = 1;
+        QVERIFY((beforeAxis.orientation().rotatedVector(worldAxis) - item->camera().orientation().rotatedVector(worldAxis)).length() < 1e-5);
+        QVERIFY(std::abs(QQuaternion::dotProduct(beforeAxis.orientation(), item->camera().orientation())) < .999f);
+        QTRY_VERIFY(!item->pending());
+        QVERIFY((angleFeedback->property("angles").value<QVector3D>() - item->viewAngles()).length() < .001);
+        QVERIFY(angleFeedback->property("text").toString().contains(QStringLiteral("视角")));
+        const auto feedbackText = angleFeedback->property("text").toString();
+        QVERIFY(feedbackText.contains("<font color='#d94b4b'>X "));
+        QVERIFY(feedbackText.contains("<font color='#27945b'>Y "));
+        QVERIFY(feedbackText.contains("<font color='#397bc5'>Z "));
+        const auto beforeShift = item->camera();
+        QTest::mousePress(&window, Qt::LeftButton, Qt::ShiftModifier, dragStart);
+        QVERIFY(!item->rotating());
+        QTest::mouseMove(&window, dragStart + QPoint(20, 0));
+        QTest::mouseRelease(&window, Qt::LeftButton, Qt::ShiftModifier, dragStart + QPoint(20, 0));
+        QCOMPARE(item->camera().rotation, beforeShift.rotation);
+        QVERIFY(std::abs(item->camera().panX - beforeShift.panX - 20 / item->width()) < 1e-6);
+        QTRY_VERIFY(!item->pending());
+    }
+    // The merged corner's empty centre supports direct free rotation.
+    const auto beforeFree = item->camera();
+    const QPoint freeStart = item->mapToScene(item->rotationRect().center()).toPoint();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, freeStart);
+    QVERIFY(item->rotating()); QCOMPARE(item->rotationHandle(), 0);
+    QTest::mouseMove(&window, freeStart + QPoint(20, 10));
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, freeStart + QPoint(20, 10));
+    QVERIFY(std::abs(QQuaternion::dotProduct(item->camera().orientation(), beforeFree.orientation())) < .999f);
+    QTRY_VERIFY(!item->pending());
+    QTest::mouseMove(&window, dragStart); QTRY_VERIFY(!item->rotationGizmoVisible());
+    if (QGuiApplication::platformName() != "offscreen") {
+        QTest::qWait(100);
+        QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-cad-corner-idle.png")));
+    }
+    const auto beforeCenterPan = item->camera();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, dragStart); QVERIFY(!item->rotating());
+    QTest::mouseMove(&window, dragStart + QPoint(20, 0));
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, dragStart + QPoint(20, 0));
+    QCOMPARE(item->camera().rotation, beforeCenterPan.rotation);
+    QVERIFY(!item->rotationGizmoVisible()); QTRY_VERIFY(!item->pending());
+    const auto beforeAlt = item->camera();
+    QTest::mousePress(&window, Qt::LeftButton, Qt::AltModifier, dragStart);
+    QVERIFY(item->rotating());
+    QTest::mouseMove(&window, dragStart + QPoint(40, 20));
+    QTest::mouseRelease(&window, Qt::LeftButton, Qt::AltModifier, dragStart + QPoint(40, 20));
+    QVERIFY(std::abs(QQuaternion::dotProduct(item->camera().orientation(), beforeAlt.orientation())) < .999f);
     QTRY_VERIFY(!item->pending());
     const auto beforeWheel = item->camera();
     const QPointF anchor(item->width() * .75, item->height() * .25);

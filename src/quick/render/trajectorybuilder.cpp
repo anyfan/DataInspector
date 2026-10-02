@@ -1,6 +1,7 @@
 #include "trajectorybuilder.h"
 #include <QtMath>
 #include <QVariantMap>
+#include <QLineF>
 #include <algorithm>
 #include <limits>
 
@@ -46,11 +47,8 @@ ScreenProjection screenProjection(const TrajectoryData &data, const TrajectoryCa
     }
     result.span = span > 0 ? span : 1;
     if (data.planar) {
-        result.horizontal[data.horizontalAxis] = 1; result.vertical[data.verticalAxis] = -1;
-    } else if (!camera.freeRotation) {
-        const double az = qDegreesToRadians(camera.azimuth), el = qDegreesToRadians(camera.elevation);
-        result.horizontal = {std::cos(az), std::sin(az), 0};
-        result.vertical = {std::sin(el) * std::sin(az), -std::sin(el) * std::cos(az), -std::cos(el)};
+        result.horizontal[data.horizontalAxis] = 1; result.vertical[data.verticalAxis] = data.verticalAxis == 2 ? 1 : -1;
+        if (data.geographic) { result.horizontal = {0, 1, 0}; result.vertical = {-1, 0, 0}; }
     } else {
         const auto matrix = camera.orientation().toRotationMatrix();
         for (int axis = 0; axis < 3; ++axis) {
@@ -165,7 +163,23 @@ QQuaternion TrajectoryCamera::orientation() const
     matrix(0, 0) = float(std::cos(az)); matrix(0, 1) = float(std::sin(az)); matrix(0, 2) = 0;
     matrix(1, 0) = float(-std::sin(el) * std::sin(az)); matrix(1, 1) = float(std::sin(el) * std::cos(az)); matrix(1, 2) = float(std::cos(el));
     matrix(2, 0) = float(std::cos(el) * std::sin(az)); matrix(2, 1) = float(-std::cos(el) * std::cos(az)); matrix(2, 2) = float(std::sin(el));
-    return QQuaternion::fromRotationMatrix(matrix).normalized();
+    // NED world axes mapped to the east/north/up projection basis.
+    const auto nedToEnu = QQuaternion::fromAxisAndAngle(QVector3D(1, 1, 0), 180);
+    return (QQuaternion::fromRotationMatrix(matrix) * nedToEnu).normalized();
+}
+QVector3D TrajectoryCamera::viewAngles() const
+{
+    // NED zero pose: north into screen, east right, down on screen (YZ front view).
+    TrajectoryCamera zero; zero.azimuth = 0; zero.elevation = 0;
+    const auto zeroPose = zero.orientation();
+    const auto matrix = (zeroPose.conjugated() * orientation()).normalized().toRotationMatrix();
+    const double cosY = std::hypot(double(matrix(0, 0)), double(matrix(1, 0)));
+    const double y = std::atan2(-double(matrix(2, 0)), cosY);
+    // At the Y singularity there is no unique X/Z split; use the equivalent Z=0 pose.
+    const double x = cosY > 1e-6 ? std::atan2(double(matrix(2, 1)), double(matrix(2, 2)))
+                                : std::atan2(-double(matrix(1, 2)), double(matrix(1, 1)));
+    const double z = cosY > 1e-6 ? std::atan2(double(matrix(1, 0)), double(matrix(0, 0))) : 0;
+    return QVector3D(float(qRadiansToDegrees(x)), float(qRadiansToDegrees(y)), float(qRadiansToDegrees(z)));
 }
 bool TrajectoryCamera::valid() const
 {
@@ -182,6 +196,89 @@ bool TrajectoryCamera::valid() const
         && (!freeRotation || std::abs(norm - 1) < 1e-5)
         && qIsFinite(viewScale) && viewScale >= 0 && viewScale <= 1e6
         && qIsFinite(panDepth) && std::abs(panDepth) <= MaximumTranslation;
+}
+int TrajectoryRotationGizmo::pick(const QPointF &position, double *parameter) const
+{
+    if (radius <= 0 || !qIsFinite(position.x()) || !qIsFinite(position.y())) return -1;
+    const double radial = QLineF(center, position).length();
+    if (radial < radius * .16) return 0; // Keep a reliably grabbable free-rotation centre.
+    const double tolerance = qMin(8.0, radius * .12);
+    double closest = tolerance, depth = -std::numeric_limits<double>::infinity(), angle = 0;
+    int picked = -1;
+    for (int axis = 0; axis < 3; ++axis) {
+        const auto &ring = rings[axis];
+        for (qsizetype i = 1; i < ring.points.size(); ++i) {
+            const QPointF a = ring.points[i - 1], delta = ring.points[i] - a;
+            const double length2 = QPointF::dotProduct(delta, delta);
+            if (length2 < 1e-12) continue;
+            const double t = qBound(0.0, QPointF::dotProduct(position - a, delta) / length2, 1.0);
+            const double distance = QLineF(position, a + delta * t).length();
+            const double z = ring.depths[i - 1] * (1 - t) + ring.depths[i] * t;
+            // At crossings prefer the front arc; elsewhere prefer the nearest stroke.
+            if (distance <= tolerance && (picked < 0 || distance < closest - .75
+                || (std::abs(distance - closest) <= .75 && z > depth))) {
+                closest = distance; depth = z; picked = axis + 1;
+                angle = (double(i - 1) + t) * 2 * M_PI / double(ring.points.size() - 1);
+            }
+        }
+    }
+    if (picked > 0 && parameter) *parameter = angle;
+    return picked > 0 ? picked : radial <= radius ? 0 : -1;
+}
+std::shared_ptr<const TrajectoryRotationGizmo> TrajectoryBuilder::rotationGizmo(
+    const TrajectoryCamera &camera, const QSizeF &size, const QColor &axisColor, int highlighted)
+{
+    auto result = std::make_shared<TrajectoryRotationGizmo>();
+    if (size.isEmpty() || !camera.valid()) return result;
+    // Share the origin of the corner direction triad; the world rotation pivot
+    // remains the viewport centre and is independent of this control position.
+    result->center = QPointF(qMin(55.0, size.width() * .25), size.height() - qMin(55.0, size.height() * .25));
+    result->radius = qMin(44.0, qMin(size.width(), size.height()) * .18);
+    const auto orientation = camera.orientation();
+    constexpr int steps = 128;
+    const std::array<QColor, 3> colors{{QColor("#e45b5b"), QColor("#36ac72"), QColor("#478fe0")}};
+    for (int axis = 0; axis < 3; ++axis) {
+        QVector3D u, v; u[(axis + 1) % 3] = 1; v[(axis + 2) % 3] = 1;
+        const auto cu = orientation.rotatedVector(u), cv = orientation.rotatedVector(v);
+        auto &ring = result->rings[axis];
+        ring.u = QPointF(cu.x(), -cu.y()) * result->radius;
+        ring.v = QPointF(cv.x(), -cv.y()) * result->radius;
+        for (int i = 0; i <= steps; ++i) {
+            const double angle = i * 2 * M_PI / steps, c = std::cos(angle), s = std::sin(angle);
+            ring.points.append(result->center + ring.u * c + ring.v * s);
+            ring.depths.append(cu.z() * c + cv.z() * s);
+        }
+    }
+    const auto appendLines = [&](const QVector<QVector<QPointF>> &lines, const QColor &color, double width) {
+        LodResult lod;
+        for (const auto &line : lines) {
+            LodSegment segment; segment.color = color; segment.lineWidth = width;
+            for (const auto &point : line) segment.points.append({point.x(), size.height() - point.y()});
+            lod.segments.append(std::move(segment));
+        }
+        auto geometry = PlotGeometryBuilder::build(lod, {{0, size.width(), 0, size.height(), size.width(), size.height()}, width});
+        // Each colour/depth layer uses one reusable SG node, not one node per arc edge.
+        GeometrySegment merged; merged.color = color; merged.triangleList = true;
+        for (const auto &segment : geometry.segments) merged.vertices += segment.vertices;
+        if (!merged.vertices.isEmpty()) result->geometry.segments.append(std::move(merged));
+    };
+    // Draw dim rear arcs first, then front arcs. The grabbed ring is drawn last.
+    for (int front = 0; front < 2; ++front) for (int pass = 0; pass < 2; ++pass) for (int axis = 0; axis < 3; ++axis) {
+        const bool selected = highlighted == axis + 1;
+        if (selected != bool(pass)) continue;
+        const auto &ring = result->rings[axis];
+        QVector<QVector<QPointF>> lines;
+        for (int i = 1; i <= steps; ++i) {
+            if ((ring.depths[i - 1] + ring.depths[i] >= 0) == bool(front))
+                lines.append({ring.points[i - 1], ring.points[i]});
+        }
+        QColor color = colors[axis]; color.setAlphaF(front ? (selected ? 1 : .8) : (selected ? .65 : .25));
+        appendLines(lines, color, selected ? 4 : front ? 2 : 1.5);
+    }
+    // The preview already draws the direction triad at this same origin.
+    appendLines({{result->center + QPointF(-3, 0), result->center + QPointF(3, 0)},
+                 {result->center + QPointF(0, -3), result->center + QPointF(0, 3)}}, axisColor, 2);
+    return result;
 }
 double TrajectoryBuilder::projectionScale(const TrajectoryData &data, const TrajectoryCamera &camera, const QSizeF &size)
 {
@@ -264,11 +361,10 @@ std::shared_ptr<const TrajectoryData> TrajectoryBuilder::build(
                 return fail(QStringLiteral("经纬度超出范围：纬度须为 [-90,90]°，经度须为 [-180,180]°，高度单位为米"));
             const auto ecef = surfaceEcef(p[0], p[1]);
             const double dx = ecef[0] - originEcef[0], dy = ecef[1] - originEcef[1], dz = ecef[2] - originEcef[2];
-            // ECEF delta dotted with the origin's east/north unit vectors. Keep
-            // recorded height differences as Z, without earth-curvature sag.
-            p = {-sinLon * dx + cosLon * dy,
-                 -sinLat * cosLon * dx - sinLat * sinLon * dy + cosLat * dz,
-                 p[2] - data->origin[2]};
+            // NED: north/east tangent plane and downward recorded-height difference.
+            p = {-sinLat * cosLon * dx - sinLat * sinLon * dy + cosLat * dz,
+                 -sinLon * dx + cosLon * dy,
+                 data->origin[2] - p[2]};
             if (!qIsFinite(p[0]) || !qIsFinite(p[1]) || !qIsFinite(p[2]))
                 return fail(QStringLiteral("投影坐标超出可表示数值范围"));
             data->projected[i] = p;
@@ -365,7 +461,7 @@ TrajectoryPreview TrajectoryBuilder::preview(const TrajectoryData &data, const T
     for (int axis = 0; axis < 3; ++axis) {
         if (data.planar && axis != data.horizontalAxis && axis != data.verticalAxis) continue;
         std::array<double, 3> unit{}; unit[axis] = 1;
-        const auto delta = data.planar ? QPointF(axis == data.horizontalAxis ? length : 0, axis == data.verticalAxis ? -length : 0)
+        const auto delta = data.planar ? QPointF(transform.horizontal[axis] * length, transform.vertical[axis] * length)
                                       : rotatedDirection(unit, camera) * length;
         const auto end = base + delta;
         const double distance = std::hypot(delta.x(), delta.y());
@@ -376,7 +472,7 @@ TrajectoryPreview TrajectoryBuilder::preview(const TrajectoryData &data, const T
             addLine({end - along * 5 + normal * 2.5, end, end - along * 5 - normal * 2.5}, colors[axis], 1.5);
         }
         const auto label = distance > 1 ? end : base + QPointF(-22, 5);
-        const QString name = data.geographic ? QStringList{"X 东", "Y 北", "Z 高"}.at(axis)
+        const QString name = data.geographic ? QStringList{"X 北", "Y 东", "Z 地"}.at(axis)
                                              : QStringList{"X", "Y", "Z"}.at(axis);
         result.labels.append(QVariantMap{{"x", label.x()}, {"y", label.y()}, {"text", name}, {"color", colors[axis]}});
     }

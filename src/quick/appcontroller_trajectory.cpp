@@ -45,7 +45,18 @@ void AppController::enterTrajectoryMode(int index)
 {
     if (sessionInteractionBlocked() || m_loading || index < 0 || index >= m_plotRows * m_plotColumns) return;
     auto &state = m_trajectories[index];
-    if (state.signalIds.isEmpty()) state.signalIds = m_signals->plotRows(index);
+    if (!state.enabled && state.signalIds.isEmpty()
+        && std::all_of(state.axes.cbegin(), state.axes.cend(), [](int id) { return id < 0; }))
+        state.geographic = true;
+    if (state.signalIds.isEmpty()) {
+        state.signalIds = m_signals->plotRows(index);
+        for (int row : state.signalIds) {
+            if (std::find(state.axes.cbegin(), state.axes.cend(), row) != state.axes.cend()) continue;
+            const auto empty = std::find(state.axes.begin(), state.axes.end(), -1);
+            if (empty == state.axes.end()) break;
+            *empty = row;
+        }
+    }
     if (configureTrajectory(index, true, state.axes[0], state.axes[1], state.axes[2], state.geographic))
         setActivePlot(index);
 }
@@ -57,13 +68,14 @@ bool AppController::setTrajectorySignal(int index, int row, bool selected)
     if (selected) {
         if (state.signalIds.contains(row)) return true;
         state.signalIds.append(row);
+        const auto empty = std::find(state.axes.begin(), state.axes.end(), -1);
+        if (empty != state.axes.end()) *empty = row;
     } else {
         state.signalIds.removeAll(row);
         for (int &id : state.axes) if (id == row) id = -1;
     }
     m_trajectories.insert(index, state);
-    refreshPlot(index, false); notifyPlotBindingsChanged();
-    return true;
+    return configureTrajectory(index, true, state.axes[0], state.axes[1], state.axes[2], state.geographic);
 }
 bool AppController::bindTrajectoryAxis(int index, int axis, int row)
 {

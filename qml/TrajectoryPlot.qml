@@ -34,8 +34,9 @@ Rectangle {
         function onPlotBindingsChanged() { root.refreshBindings() }
     }
     readonly property string selectionHint: root.configuration.signalCount === 0
-        ? "从信号树勾选信号加入此子图，再用顶部下拉框设置各轴绑定"
-        : "已加入 " + root.configuration.signalCount + " 个信号；请在顶部选择至少两个轴的来源"
+        ? "从信号树依次勾选" + (root.configuration.geographic ? "纬度、经度、高度" : "X、Y、Z")
+            + "，自动填入空轴；顶部下拉框可调整来源"
+        : "已加入 " + root.configuration.signalCount + " 个信号；新选信号自动填入空轴，顶部下拉框可调整来源"
     readonly property string sourceDescription: {
         const state = root.configuration
         const labels = state.geographic ? ["纬度", "经度", "高度"] : ["X", "Y", "Z"]
@@ -49,7 +50,7 @@ Rectangle {
         return parts.join("    ")
     }
     readonly property string gestureHint: root.planarMode ? "左键平移 · 滚轮缩放 · 空格适应视图"
-        : "左键平移 · 中键或左键拖动小坐标轴旋转 · 滚轮缩放 · 空格适应视图"
+        : "靠近左下坐标轴展开旋转环 · 拖红/绿/蓝环绕 X/Y/Z 轴旋转 · 环内自由旋转 · 画布或 Shift+左键平移 · 中键 / Alt+左键自由旋转 · 滚轮缩放 · 空格适应"
 
     Item {
         id: viewport
@@ -88,6 +89,16 @@ Rectangle {
                 Label { x: 7; y: -6; text: parent.modelData.text; color: parent.modelData.color; font.pixelSize: 11 }
             }
         }
+        Item {
+            objectName: "trajectoryRotationCenter"
+            anchors.centerIn: parent
+            width: 26
+            height: 26
+            visible: trajectory.rotating
+            opacity: 0.6
+            Rectangle { anchors.centerIn: parent; width: 14; height: 1; color: root.axisColor }
+            Rectangle { anchors.centerIn: parent; width: 1; height: 14; color: root.axisColor }
+        }
         Label {
             anchors.centerIn: parent
             width: Math.max(1, parent.width - 30)
@@ -111,16 +122,22 @@ Rectangle {
                 return rect.width > 0 && x >= rect.x && x <= rect.x + rect.width
                     && y >= rect.y && y <= rect.y + rect.height
             }
-            cursorShape: onOrientationAxes(mouseX, mouseY) ? (pressed ? Qt.ClosedHandCursor : Qt.OpenHandCursor) : Qt.ArrowCursor
+            cursorShape: trajectory.rotating ? Qt.ClosedHandCursor
+                : trajectory.rotationHandle >= 0 || onOrientationAxes(mouseX, mouseY) ? Qt.OpenHandCursor : Qt.ArrowCursor
             onPressed: function(mouse) {
                 if (mouse.button !== Qt.RightButton)
-                    trajectory.beginDrag(Qt.point(mouse.x, mouse.y), mouse.button === Qt.MiddleButton
-                        || (mouse.button === Qt.LeftButton && onOrientationAxes(mouse.x, mouse.y)))
+                    trajectory.beginPointerDrag(Qt.point(mouse.x, mouse.y), mouse.button, mouse.modifiers)
             }
             onPositionChanged: function(mouse) {
                 if (pressed) trajectory.dragTo(Qt.point(mouse.x, mouse.y))
+                else trajectory.hoverAt(Qt.point(mouse.x, mouse.y))
             }
-            onReleased: trajectory.endDrag()
+            onEntered: trajectory.hoverAt(Qt.point(mouseX, mouseY))
+            onExited: trajectory.hoverAt(Qt.point(-1000000, -1000000))
+            onReleased: function(mouse) {
+                trajectory.endDrag()
+                trajectory.hoverAt(Qt.point(mouse.x, mouse.y))
+            }
             onCanceled: trajectory.endDrag()
             onWheel: function(wheel) {
                 trajectory.zoomAt(Qt.point(wheel.x, wheel.y), wheel.angleDelta.y || wheel.pixelDelta.y * 2)
@@ -131,6 +148,25 @@ Rectangle {
                 root.controller.setActivePlot(root.plotIndex)
                 contextMenu.popup()
             }
+        }
+        Label {
+            id: rotationFeedback
+            objectName: "trajectoryRotationFeedback"
+            readonly property int handle: trajectory.rotationHandle
+            readonly property vector3d angles: trajectory.viewAngles
+            function degrees(value: real): string { return (Math.abs(value) < 0.05 ? 0 : value).toFixed(1) + "°" }
+            width: Math.min(270, Math.max(1, viewport.width - 6))
+            wrapMode: Text.Wrap
+            textFormat: Text.RichText
+            x: Math.max(3, Math.min(viewport.width - width - 3, trajectory.rotationRect.x))
+            y: Math.max(3, trajectory.rotationRect.y - height - 6)
+            visible: trajectory.rotationGizmoVisible
+            font.pixelSize: 11
+            color: handle > 0 ? ["#e45b5b", "#36ac72", "#478fe0"][handle - 1] : root.textColor
+            text: (handle > 0 ? "绕 " + ["X", "Y", "Z"][handle - 1] + " 轴" : "自由旋转")
+                + "<br>视角 <font color='#d94b4b'>X " + rotationFeedback.degrees(angles.x)
+                + "</font>  <font color='#27945b'>Y " + rotationFeedback.degrees(angles.y)
+                + "</font>  <font color='#397bc5'>Z " + rotationFeedback.degrees(angles.z) + "</font>"
         }
     }
     RowLayout {
@@ -266,8 +302,8 @@ Rectangle {
     Menu {
         id: viewMenu
         MenuItem { text: "俯视 XY"; onTriggered: trajectory.presetView(1) }
-        MenuItem { text: "正视 XZ"; onTriggered: trajectory.presetView(2) }
-        MenuItem { text: "侧视 YZ"; onTriggered: trajectory.presetView(3) }
+        MenuItem { text: "正视 YZ"; onTriggered: trajectory.presetView(2) }
+        MenuItem { text: "侧视 XZ"; onTriggered: trajectory.presetView(3) }
         MenuItem { text: "复位"; onTriggered: trajectory.presetView(0) }
     }
     Menu {
@@ -276,7 +312,7 @@ Rectangle {
         MenuItem { text: "适应轨迹"; onTriggered: trajectory.fitView() }
         MenuItem { text: "等轴测视角"; visible: !root.planarMode; onTriggered: trajectory.presetView(0) }
         MenuItem { text: "俯视 XY"; visible: !root.planarMode; onTriggered: trajectory.presetView(1) }
-        MenuItem { text: "正视 XZ"; visible: !root.planarMode; onTriggered: trajectory.presetView(2) }
-        MenuItem { text: "侧视 YZ"; visible: !root.planarMode; onTriggered: trajectory.presetView(3) }
+        MenuItem { text: "正视 YZ"; visible: !root.planarMode; onTriggered: trajectory.presetView(2) }
+        MenuItem { text: "侧视 XZ"; visible: !root.planarMode; onTriggered: trajectory.presetView(3) }
     }
 }

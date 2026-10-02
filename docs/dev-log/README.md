@@ -8,6 +8,13 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [多航迹与姿态显示工作量评估](trajectory-multi-attitude-estimate-2026-10-02.md) | 未实施的范围估算：单图叠加、公共原点、姿态信号与人天/内存边界 |
+| [航迹默认选入绑定与角度轴色](trajectory-default-bindings-colors-2026-10-02.md) | 默认经纬度、勾选补空轴、保留手动绑定、三轴角度独立着色 |
+| [航迹 NED 坐标与角度零基准](trajectory-ned-angle-reference-2026-10-02.md) | 北内、东右、地下为零姿态；世界轴绝对读数与标准视图回归 |
+| [航迹方向跳变与绝对视角读数](trajectory-direction-pose-2026-10-02.md) | 环中心死区、跨手势旧帧隔离、当前 X/Y/Z 姿态角 |
+| [航迹角落旋转环与自动收起](trajectory-corner-gizmo-2026-10-02.md) | 与方向坐标轴合并、靠近展开/离开收起、保留绘图区中心支点 |
+| [航迹 CAD 三轴旋转操纵器](trajectory-cad-gizmo-2026-10-02.md) | 直接拖彩色轴环、环内自由旋转、环外平移、侧视回退、无模式切换 |
+| [航迹中心旋转与轴约束](trajectory-axis-rotation-2026-10-02.md) | 虚拟轨迹球、自由/X/Y/Z 模式、中心参考、Shift 平移与 Alt 旋转 |
 | [航迹高倍缩放与编译界面刷新](trajectory-zoom-binding-2026-10-02.md) | 解除四视口平移限制、滚轮后平移保留缩放、显式绑定刷新、编译 QML 回归 |
 | [航迹可用信号与小坐标轴拖动](trajectory-candidates-triad-2026-10-02.md) | 先加入子图再绑定轴、局部候选下拉框、小坐标轴左键旋转、v5 会话 |
 | [航迹自适应、鼠标路由与绑定](trajectory-fit-input-binding-2026-10-02.md) | 零定位只排除自适应、统一鼠标输入、指针缩放、轴指定替换与名称识别 |
