@@ -72,7 +72,15 @@ jobs:
           QT_QUICK_CONTROLS_STYLE: Fusion
           QT_QPA_PLATFORM: offscreen
           QT_QUICK_BACKEND: software
-        run: ctest --test-dir build_ci --output-on-failure --timeout 180 --output-junit test-results.xml
+        run: |
+          $testOutput = & ctest --test-dir build_ci --output-on-failure --timeout 180 --output-junit test-results.xml 2>&1
+          $testExit = $LASTEXITCODE
+          $testOutput | Write-Host
+          if ($testExit -ne 0) {
+            $message = ($testOutput -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error::$message"
+            exit $testExit
+          }
 
       - name: Upload test results
         if: always()
