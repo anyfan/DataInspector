@@ -23,14 +23,14 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Qt and LLVM-MinGW
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.3'
           arch: win64_llvm_mingw
-          modules: qtsvg
+          # SVG is included in the base Qt 6.8.3 archives, not an add-on.
           tools: tools_llvm_mingw1706
           cache: true
 
@@ -64,7 +64,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: windows-test-results
           path: build_ci/test-results.xml
@@ -88,7 +88,7 @@ jobs:
           $hash = (Get-FileHash dist/DataInspector-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  DataInspector-windows-x64.zip" | Set-Content dist/SHA256SUMS.txt -Encoding ascii
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v5
         with:
           name: DataInspector-windows-x64
           path: |
@@ -106,7 +106,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           name: DataInspector-windows-x64
           path: release
