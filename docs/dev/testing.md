@@ -5,12 +5,12 @@
 ## 运行
 
 ```powershell
-cmake --build build_qt6-debug --target DataInspector appcontroller_test session_test --parallel 4
+cmake --build --preset qt6-clang-debug --target DataInspector appcontroller_test session_test
 $env:QT_QUICK_CONTROLS_STYLE = 'Fusion'
 ctest --test-dir build_qt6-debug --output-on-failure
 ```
 
-Release 把目录换成 `build_qt6-release`。
+构建预设自动按逻辑 CPU 核数并行。Release 构建使用 `qt6-clang-release` 预设，测试目录换成 `build_qt6-release`。
 
 默认测试数据在测试内部生成，不依赖本机未提交的 `test_file/`。多工作表导入回归生成三个不同时间基的工作表（1、2、17），共 80 个信号和 12 行数据，在干净 checkout 和 GitHub Actions 上同样运行。真实大文件性能测试仍通过显式环境变量启用。
 
@@ -34,6 +34,8 @@ Release 把目录换成 `build_qt6-release`。
 | `matwriter_test` | MAT5 流式写入、pN/pN_title、取消保留 |
 | `startupfiles_test` | 命令行参数解析、开关跳过、会话优先 |
 | `startupdrop_test` | 启动后窗口拖放事件投递 |
+
+`appcontroller_test::signalTreeDragAddsToTargetPlot` 使用实际窗口鼠标按下、移动和松开验证信号树拖拽：搜索后的源行映射、目标边框高亮、跨图添加保留原图绑定、重复添加、图外取消及无效索引。信号名称需要拖动超过 8 个逻辑像素；测试从名称区域开始，不触发复选框或线型编辑。
 
 ## GPU 测试
 

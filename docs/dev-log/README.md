@@ -8,6 +8,8 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [信号树展开及滚动稳定性](signal-tree-scroll-stability-2026-10-08.md) | 局部行通知、保留浏览位置、固定滚动区域及拖动手势隔离 |
+| [信号树拖拽到子图](signal-tree-drag-2026-10-08.md) | 目标高亮、指定子图添加、重复与取消行为、鼠标事件回归 |
 | [信号树分组标题与左对齐](signal-tree-sections-2026-10-08.md) | 取消累计缩进、分组路径标题条、吸顶路径和深色主题 |
 | [飞机辨识度与姿态表单显示修复](trajectory-attitude-visual-form-2026-10-02.md) | 缩小飞机、机身机翼尾翼轮廓、对比描边、字段/滚动与下拉文字 |
 | [多航迹与实际三维姿态实施](trajectory-multi-attitude-2026-10-02.md) | 公共原点、活动航迹、测量姿态、v6 会话与回归边界 |
@@ -55,6 +57,8 @@
 | [信号重命名、MAT 导出与线型预览单击编辑](mcp-signal-rename-mat-export.md) | matwriter、pN/pN_title 布局、renameSignal |
 
 ## 构建、部署与工具链
+
+- [构建自动并行（2026-10-08）](build-parallel-2026-10-08.md)：Debug/Release 预设按本机逻辑 CPU 数设置并行任务。
 
 - [GitHub Windows 自动构建发布（2026-10-08）](github-actions-release-2026-10-08.md)：main 开发版、版本标签正式版、MAT 支持及部署启动门槛。
 

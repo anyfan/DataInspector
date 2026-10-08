@@ -2,6 +2,7 @@
 #include "signalmodel.h"
 
 #include <QtTest>
+#include <QAbstractItemModelTester>
 
 class SignalSelectionTest final : public QObject
 {
@@ -19,6 +20,7 @@ private slots:
     void appendingSignalsPreservesBindingsAndPenProperties();
     void nestedFileAndTableGroupsExpandIndependently();
     void ancestorPathReportsVisibleGroupChain();
+    void groupChangesKeepPersistentRowsWithoutReset();
     void removingFileGroupReindexesPlotBindings();
 };
 
@@ -209,6 +211,36 @@ void SignalSelectionTest::nestedFileAndTableGroupsExpandIndependently()
 
     model.toggleGroup(QStringLiteral("flight.mat"));
     QCOMPARE(model.rowCount(), 1);
+}
+
+void SignalSelectionTest::groupChangesKeepPersistentRowsWithoutReset()
+{
+    SignalModel model;
+    QAbstractItemModelTester tester(&model, QAbstractItemModelTester::FailureReportingMode::QtTest);
+    model.setNames({"A", "B"}, QStringList{"file/p1/inner", "file/p2"});
+    QSignalSpy reset(&model, &QAbstractItemModel::modelReset);
+    QSignalSpy removed(&model, &QAbstractItemModel::rowsRemoved);
+    QSignalSpy inserted(&model, &QAbstractItemModel::rowsInserted);
+    QPersistentModelIndex sibling(model.index(4));
+    QCOMPARE(sibling.data(SignalModel::NameRole).toString(), QStringLiteral("p2"));
+    model.toggleGroup("file/p1");
+    QCOMPARE(model.rowCount(), 4); // All descendants, including still-expanded inner groups, disappear.
+    QVERIFY(sibling.isValid());
+    QCOMPARE(sibling.row(), 2);
+    QCOMPARE(sibling.data(SignalModel::NameRole).toString(), QStringLiteral("p2"));
+    QCOMPARE(removed.count(), 1);
+    QCOMPARE(reset.count(), 0);
+    model.toggleGroup("file/p1");
+    QCOMPARE(model.rowCount(), 6);
+    QCOMPARE(sibling.row(), 4);
+    QCOMPARE(inserted.count(), 1);
+    QCOMPARE(reset.count(), 0);
+    model.toggleGroup("file");
+    QCOMPARE(model.rowCount(), 1);
+    QCOMPARE(reset.count(), 0);
+    model.toggleGroup("file");
+    QCOMPARE(model.rowCount(), 6);
+    QCOMPARE(model.ancestorPath(5).last().toMap().value("row").toInt(), 4);
 }
 
 void SignalSelectionTest::ancestorPathReportsVisibleGroupChain()

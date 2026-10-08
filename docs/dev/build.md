@@ -24,6 +24,8 @@ cmake --build --preset qt6-clang-debug
 
 预设里已钉死 `CMAKE_RC_COMPILER` 到 `llvm-windres.exe`，避免 GNU windres 找不到配套 gcc（见 [工具链排错](toolchain-troubleshooting.md)）。
 
+Debug/Release 构建预设通过 Windows 的 `NUMBER_OF_PROCESSORS` 设置 `CMAKE_BUILD_PARALLEL_LEVEL`，自动使用本机逻辑 CPU 核数，不再固定为 4 个任务。使用 `cmake --build --preset qt6-clang-debug`（或 Release 预设）即可；需要手动限制时加 `--parallel 8` 等参数。直接指定构建目录而不使用预设时，需自行设置该环境变量或传入 `--parallel`。
+
 ## 选项
 
 | 选项 | 默认 | 说明 |

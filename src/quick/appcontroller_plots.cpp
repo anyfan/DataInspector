@@ -76,6 +76,14 @@ void AppController::selectSignal(int row)
     notifyPlotBindingsChanged();
 }
 
+void AppController::addSignalToPlot(int plotIndex, int row)
+{
+    if (sessionInteractionBlocked() || plotIndex < 0 || plotIndex >= m_plotRows * m_plotColumns
+        || row < 0 || row >= signalCount()) return;
+    setActivePlot(plotIndex);
+    if (!plotSignalEnabled(plotIndex, row)) selectSignal(row);
+}
+
 void AppController::toggleSignal(int row)
 {
     if (sessionInteractionBlocked()) return;

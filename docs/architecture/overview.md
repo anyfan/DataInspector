@@ -62,6 +62,10 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 4. `PlotGeometryBuilder` 把 LOD 转成裁剪后的屏幕空间三角带，由 `PlotItem::updatePaintNode` 提交给 Scene Graph。
 5. 导出时 `DataExportWorker` 从 Store 取不可变快照，后台写 XLSX/MAT。
 
+信号树内部拖拽由 Main.qml 在 GUI 线程管理预览与可见子图命中，复用 QuickPlot 的目标边框高亮。松开调用 AppController::addSignalToPlot 校验源/目标并激活目标，通过现有 selectSignal 添加时间图绑定或航迹候选；重复添加保持幂等，模型重置清理拖拽状态。它独立于窗口外部文件拖放，不修改 Store 或线程模型。
+
+SignalModel 的组展开/折叠使用局部行增删及展开角色通知，保留未受影响节点的持久索引与 ListView 浏览位置；深层节点检查全部祖先展开状态。单行路径导航覆盖在固定视窗上，不通过显隐改变列表或滚动条轨道几何。名称拖拽从左键按下起禁止父 Flickable 抢占手势，滚轮及滚动条浏览独立保留。
+
 ## 线程模型
 
 详见 [并发与线程安全](concurrency.md)。一句话：GUI 线程处理界面与视图交互，Scene Graph 渲染线程提交节点；加载、索引构建、LOD 生成、导出写盘都在后台线程；跨线程共享的数据一律不可变快照。

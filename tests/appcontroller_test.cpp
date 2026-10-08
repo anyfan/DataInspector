@@ -19,6 +19,7 @@
 #include <QtTest>
 
 #include <algorithm>
+#include <functional>
 #include <limits>
 #ifdef ENABLE_MAT
 #include "matio.h"
@@ -66,6 +67,7 @@ private slots:
     void interactingWithSubplotSelectsIt();
     void toolbarModesToggleAndRememberSelection();
     void signalSectionsKeepNestedPathsAndAlignedNames();
+    void signalTreeDragAddsToTargetPlot();
     void editDialogsRememberAndResetValues();
     void realMatImportPerformanceWhenRequested();
     void realCsvImportPerformanceWhenRequested();
@@ -1563,6 +1565,148 @@ void AppControllerTest::quotedCsvFieldsAreImported()
     QCOMPARE(controller.signalName(0), QStringLiteral("Pitch,deg"));
 }
 
+void AppControllerTest::signalTreeDragAddsToTargetPlot()
+{
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
+    qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
+    qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
+    QTemporaryDir temp;
+    const QString csv = temp.filePath("drag.csv");
+    QByteArray csvData = "time,A,B";
+    for (int i = 0; i < 60; ++i) csvData += ",Extra" + QByteArray::number(i);
+    csvData += "\n0,1,2";
+    for (int i = 0; i < 60; ++i) csvData += ",3";
+    csvData += "\n1,3,4";
+    for (int i = 0; i < 60; ++i) csvData += ",5";
+    csvData += '\n';
+    writeCsvFile(csv, csvData);
+    AppController controller;
+    controller.setLayout(1, 2);
+    QVERIFY(controller.loadCsv(csv));
+    QTRY_VERIFY(!controller.loading());
+    controller.addSignalToPlot(0, 1);
+    QQmlEngine engine;
+    QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) {
+        for (const auto &error : errors) warnings.append(error.toString());
+    });
+    const QDir directory = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml");
+    qmlRegisterType(QUrl::fromLocalFile(directory.filePath("QuickPlot.qml")), "DataInspector", 1, 0, "QuickPlot");
+    QQmlComponent component(&engine, QUrl::fromLocalFile(directory.filePath("Main.qml")));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties(
+        {{"visible", false}, {"appController", QVariant::fromValue(&controller)}}));
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto *host = qobject_cast<QQuickWindow *>(object.get());
+    QVERIFY(host);
+    host->show();
+    QVERIFY(QTest::qWaitForWindowExposed(host));
+    const auto visualItem = [&](const std::function<bool(QQuickItem *)> &matches) -> QQuickItem * {
+        QList<QQuickItem *> pending{host->contentItem()};
+        while (!pending.isEmpty()) {
+            auto *item = pending.takeLast();
+            if (matches(item)) return item;
+            pending.append(item->childItems());
+        }
+        return nullptr;
+    };
+    auto *search = object->findChild<QQuickItem *>("signalSearch");
+    auto *preview = object->findChild<QQuickItem *>("signalTreeDragPreview");
+    QVERIFY(search && preview);
+    search->setProperty("text", "B");
+    const auto signalLabel = [&]() {
+        return visualItem([](QQuickItem *item) {
+            return item->objectName() == "signalTreeName"
+                && item->parentItem()->parentItem()->property("signalIndex").toInt() == 1;
+        });
+    };
+    QTRY_VERIFY(signalLabel());
+    auto *target = visualItem([](QQuickItem *item) {
+        return item->property("dropHighlighted").isValid() && item->property("plotIndex").toInt() == 1;
+    });
+    QVERIFY(target);
+    QTRY_VERIFY(target->width() > 100 && signalLabel()->width() > 20);
+    const auto startDrag = [&]() {
+        auto *label = signalLabel();
+        const QPoint start = label->mapToScene(QPointF(label->width() / 2, label->height() / 2)).toPoint();
+        QTest::mousePress(host, Qt::LeftButton, Qt::NoModifier, start);
+        QTest::mouseMove(host, start + QPoint(20, 0), 40);
+        return start;
+    };
+    const QPoint destination = target->mapToScene(QPointF(target->width() / 2, target->height() / 2)).toPoint();
+    auto *sourceRow = signalLabel()->parentItem()->parentItem();
+    const QPointF nameOrigin = signalLabel()->mapToScene(QPointF());
+    const QPoint pressPosition = startDrag();
+    QCOMPARE(preview->property("signalName").toString(), QStringLiteral("B"));
+    QVERIFY(sourceRow->isVisible());
+    QCOMPARE(sourceRow->opacity(), 1.0);
+    QVERIFY(qAbs(preview->mapToScene(QPointF()).x() - nameOrigin.x() - 20 + 22) < 1);
+    QVERIFY(qAbs(preview->mapToScene(QPointF()).y() - nameOrigin.y() + 6) < 1);
+    QTest::mouseMove(host, destination, 40);
+    QVERIFY(preview->isVisible());
+    const QPointF expectedOrigin = QPointF(destination) - (QPointF(pressPosition) - nameOrigin) - QPointF(22, 6);
+    QVERIFY(qAbs(preview->mapToScene(QPointF()).x() - expectedOrigin.x()) < 1);
+    QVERIFY(qAbs(preview->mapToScene(QPointF()).y() - expectedOrigin.y()) < 1);
+    auto *cursor = object->findChild<QQuickItem *>("signalDragCursor");
+    QVERIFY(cursor && cursor->isVisible());
+    QCOMPARE(cursor->property("cursorShape").toInt(), int(Qt::BlankCursor));
+    QVERIFY(target->property("dropHighlighted").toBool());
+    QCOMPARE(controller.activePlotIndex(), 0);
+    QTest::mouseRelease(host, Qt::LeftButton, Qt::NoModifier, destination);
+    QTRY_VERIFY(controller.plotSignalEnabled(1, 1));
+    QVERIFY(controller.plotSignalEnabled(0, 1)); // Adding preserves the source plot's binding.
+    QVERIFY(!controller.plotSignalEnabled(1, 0)); // Filtered row maps to B, not A.
+    QCOMPARE(controller.activePlotIndex(), 1);
+    QVERIFY(!preview->isVisible());
+    QVERIFY(!cursor->isVisible());
+    QVERIFY(!target->property("dropHighlighted").toBool());
+    startDrag();
+    QTest::mouseMove(host, destination, 40);
+    QTest::mouseRelease(host, Qt::LeftButton, Qt::NoModifier, destination);
+    QCOMPARE(controller.plotSignalRows(1).size(), 1); // Duplicate drops are idempotent.
+    controller.setActivePlot(0);
+    startDrag();
+    const QPoint outside(host->width() / 2, 5);
+    QTest::mouseMove(host, outside, 40);
+    QTest::mouseRelease(host, Qt::LeftButton, Qt::NoModifier, outside);
+    QCOMPARE(controller.activePlotIndex(), 0);
+    QVERIFY(!preview->isVisible());
+    // The row's vertical padding and color swatch also initiate a drag.
+    for (const QPointF &offset : {QPointF(80, 2), QPointF(sourceRow->width() - 20, 15)}) {
+        const QPoint start = sourceRow->mapToScene(offset).toPoint();
+        QTest::mousePress(host, Qt::LeftButton, Qt::NoModifier, start);
+        QTest::mouseMove(host, start + QPoint(20, 0), 40);
+        QVERIFY(preview->isVisible());
+        QTest::mouseMove(host, destination, 40);
+        QTest::mouseRelease(host, Qt::LeftButton, Qt::NoModifier, destination);
+        QCOMPARE(controller.activePlotIndex(), 1);
+        QCOMPARE(controller.plotSignalRows(1).size(), 1);
+        QCOMPARE(object->property("editingSignalIndex").toInt(), -1);
+        controller.setActivePlot(0);
+    }
+    controller.addSignalToPlot(99, 1);
+    controller.addSignalToPlot(1, 99);
+    QCOMPARE(controller.activePlotIndex(), 0);
+    search->setProperty("text", "");
+    QTRY_VERIFY(signalLabel());
+    auto *list = object->findChild<QQuickItem *>("signalList");
+    QVERIFY(list);
+    QTRY_VERIFY(list->property("contentHeight").toDouble() > list->height());
+    const double beforeDrag = list->property("contentY").toDouble();
+    const QPoint verticalStart = signalLabel()->mapToScene(
+        QPointF(signalLabel()->width() / 2, signalLabel()->height() / 2)).toPoint();
+    QTest::mousePress(host, Qt::LeftButton, Qt::NoModifier, verticalStart);
+    QTest::mouseMove(host, verticalStart + QPoint(0, 4), 40);
+    QTest::mouseMove(host, verticalStart + QPoint(0, 30), 40);
+    QTest::mouseMove(host, verticalStart + QPoint(0, 60), 40);
+    QVERIFY(preview->isVisible());
+    QCOMPARE(list->property("contentY").toDouble(), beforeDrag);
+    QTest::mouseRelease(host, Qt::LeftButton, Qt::NoModifier, verticalStart + QPoint(0, 60));
+    QVERIFY(!preview->isVisible());
+    QCOMPARE(list->property("contentY").toDouble(), beforeDrag);
+    QCOMPARE(warnings, QStringList());
+}
+
 void AppControllerTest::signalSectionsKeepNestedPathsAndAlignedNames()
 {
     qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
@@ -1634,16 +1778,61 @@ void AppControllerTest::signalSectionsKeepNestedPathsAndAlignedNames()
         extraNames.append(QStringLiteral("Sample%1").arg(i));
         extraGroups.append("flight.mat/p2/navigation/position");
     }
+    for (int i = 0; i < 60; ++i) {
+        extraNames.append(QStringLiteral("Other%1").arg(i));
+        extraGroups.append("flight.mat/p3");
+    }
     controller.signalModel()->appendNames(extraNames, extraGroups, {});
     auto *list = object->findChild<QQuickItem *>("signalList");
     auto *header = object->findChild<QQuickItem *>("signalStickyHeader");
     auto *breadcrumb = object->findChild<QQuickItem *>("signalBreadcrumb");
     QVERIFY(list && header && breadcrumb);
-    list->setProperty("contentY", 220.0);
+    auto *bar = object->findChild<QQuickItem *>("signalScrollBar");
+    QVERIFY(bar);
+    list->setProperty("contentY", 100.0);
+    QTest::qWait(80); // Let the path timer and layout settle before measuring the clicked header.
+    const double previousY = list->property("contentY").toDouble();
+    auto *positionRow = findRow("position");
+    QVERIFY(positionRow);
+    const double headerY = positionRow->mapToScene(QPointF()).y();
+    positionName = positionRow->findChild<QQuickItem *>("signalTreeName");
+    QTest::mouseClick(host, Qt::LeftButton, Qt::NoModifier,
+        positionName->mapToScene(QPointF(positionName->width() / 2, positionName->height() / 2)).toPoint());
+    QTRY_VERIFY(!findRow("position")->property("groupExpanded").toBool());
+    QCOMPARE(list->property("contentY").toDouble(), previousY);
+    QCOMPARE(findRow("position")->mapToScene(QPointF()).y(), headerY);
+    QVERIFY(QMetaObject::invokeMethod(list, "toggleGroup",
+        Q_ARG(QVariant, "flight.mat/p2/navigation/position"), Q_ARG(QVariant, 5)));
+    QTRY_VERIFY(findRow("position")->property("groupExpanded").toBool());
+    QCOMPARE(list->property("contentY").toDouble(), previousY);
+    QCOMPARE(findRow("position")->mapToScene(QPointF()).y(), headerY);
+    const double viewportHeight = list->height(), scrollHeight = bar->height(), scrollY = bar->y();
+    QVERIFY(QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, 6), Q_ARG(int, 0)));
     QTRY_COMPARE(header->property("pathText").toString(),
         QStringLiteral("flight.mat › p2 › navigation › position"));
     QCOMPARE(header->height(), 28.0); // Deep paths still occupy exactly one row.
-    QCOMPARE(list->y(), header->height()); // Navigation does not cover the first signal.
+    QCOMPARE(list->y(), 0.0); // Overlay navigation never resizes the scroll viewport.
+    const auto pathSegment = [&](const QString &name) -> QQuickItem * {
+        QList<QQuickItem *> pending{breadcrumb};
+        while (!pending.isEmpty()) {
+            auto *item = pending.takeLast();
+            if (item->objectName() == "signalBreadcrumbSegment"
+                && item->property("text").toString() == name) return item;
+            pending.append(item->childItems());
+        }
+        return nullptr;
+    };
+    QTRY_VERIFY(pathSegment("position"));
+    auto *positionSegment = pathSegment("position");
+    QTest::mouseClick(host, Qt::LeftButton, Qt::NoModifier,
+        positionSegment->mapToScene(QPointF(positionSegment->width() / 2, positionSegment->height() / 2)).toPoint());
+    QTRY_COMPARE(list->property("currentIndex").toInt(), 5);
+    QTRY_COMPARE(header->property("pathText").toString(),
+        QStringLiteral("flight.mat › p2 › navigation › position"));
+    QCOMPARE(object->property("editingSignalIndex").toInt(), -1);
+    QTest::mouseClick(host, Qt::LeftButton, Qt::NoModifier,
+        header->mapToScene(QPointF(header->width() - 12, header->height() / 2)).toPoint());
+    QCOMPARE(object->property("editingSignalIndex").toInt(), -1); // Blank navigation space consumes clicks too.
     const auto firstSegment = [&]() -> QQuickItem * {
         QList<QQuickItem *> pending{breadcrumb};
         while (!pending.isEmpty()) {
@@ -1664,6 +1853,37 @@ void AppControllerTest::signalSectionsKeepNestedPathsAndAlignedNames()
         segment->mapToScene(QPointF(segment->width() / 2, segment->height() / 2)).toPoint());
     QTRY_COMPARE(list->property("currentIndex").toInt(), 0);
     QTRY_VERIFY(!header->isVisible());
+    QCOMPARE(list->height(), viewportHeight);
+    QCOMPARE(bar->height(), scrollHeight);
+    QCOMPARE(bar->y(), scrollY);
+    const QPoint thumb = bar->mapToScene(QPointF(bar->width() / 2,
+        bar->height() * bar->property("size").toDouble() / 2)).toPoint();
+    QTest::mousePress(host, Qt::LeftButton, Qt::NoModifier, thumb);
+    double lastScroll = list->property("contentY").toDouble();
+    for (int offset : {6, 12, 24, 40, 70}) {
+        QTest::mouseMove(host, thumb + QPoint(0, offset), 60);
+        QVERIFY(list->property("contentY").toDouble() >= lastScroll - 1);
+        lastScroll = list->property("contentY").toDouble();
+        QCOMPARE(bar->height(), scrollHeight);
+        QCOMPARE(bar->y(), scrollY);
+    }
+    QTest::mouseRelease(host, Qt::LeftButton, Qt::NoModifier, thumb + QPoint(0, 70));
+    QVERIFY(lastScroll > 0);
+    const QString longFile = QStringLiteral("2026-09-22_11-38-58_") + QString(100, QLatin1Char('a')) + ".mat";
+    controller.signalModel()->setNames(extraNames, QStringList(extraNames.size(), longFile + "/p19"));
+    QTRY_VERIFY(findRow("p19"));
+    QVERIFY(QMetaObject::invokeMethod(list, "positionViewAtIndex", Q_ARG(int, 2), Q_ARG(int, 0)));
+    QTRY_COMPARE(header->property("pathText").toString(), longFile + QStringLiteral(" › p19"));
+    QTRY_VERIFY(pathSegment("p19"));
+    auto *shortSegment = pathSegment("p19");
+    QTRY_VERIFY(shortSegment->width() >= shortSegment->implicitWidth() - 1);
+    QVERIFY(shortSegment->mapToScene(QPointF(shortSegment->width(), 0)).x()
+        <= header->mapToScene(QPointF(header->width(), 0)).x());
+    QTest::mouseDClick(host, Qt::LeftButton, Qt::NoModifier,
+        shortSegment->mapToScene(QPointF(shortSegment->width() / 2, shortSegment->height() / 2)).toPoint());
+    QTRY_COMPARE(controller.signalModel()->rowCount(), 2);
+    QVERIFY(!findRow("p19")->property("groupExpanded").toBool());
+    QCOMPARE(object->property("editingSignalIndex").toInt(), -1);
     QCOMPARE(warnings, QStringList());
 }
 

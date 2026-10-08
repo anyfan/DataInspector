@@ -35,12 +35,16 @@
         {
             "name": "qt6-clang-debug",
             "configurePreset": "qt6-clang-debug",
-            "jobs": 4
+            "environment": {
+                "CMAKE_BUILD_PARALLEL_LEVEL": "$penv{NUMBER_OF_PROCESSORS}"
+            }
         },
         {
             "name": "qt6-clang-release",
             "configurePreset": "qt6-clang-release",
-            "jobs": 4
+            "environment": {
+                "CMAKE_BUILD_PARALLEL_LEVEL": "$penv{NUMBER_OF_PROCESSORS}"
+            }
         }
     ]
 }

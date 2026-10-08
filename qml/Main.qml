@@ -49,6 +49,77 @@ ApplicationWindow {
     property int pendingExportScope: 0
     property bool exportZipCompression: true
 
+    property var signalDragDestination: null
+    property int signalDragRow: -1
+    readonly property bool signalTreeDragging: signalTreeDragPreview.visible
+    function cancelSignalTreeDrag() {
+        if (signalDragDestination) signalDragDestination.dropHighlighted = false
+        signalDragDestination = null
+        signalDragRow = -1
+        signalTreeDragPreview.visible = false
+    }
+    function updateSignalTreeDrag(source, x, y, rowItem, pressPoint) {
+        if (signalDragDestination) signalDragDestination.dropHighlighted = false
+        signalDragDestination = null
+        signalDragRow = rowItem.signalIndex
+        signalTreeDragPreview.signalName = rowItem.signalName
+        signalTreeDragPreview.signalColor = rowItem.signalColor
+        const point = source.mapToItem(window.contentItem, x, y)
+        signalTreeDragPreview.x = point.x - pressPoint.x - 22
+        signalTreeDragPreview.y = point.y - pressPoint.y - 6
+        signalTreeDragPreview.visible = true
+        for (let i = 0; i < plotRepeater.count; ++i) {
+            const plot = (plotRepeater.itemAt(i) as QuickPlot)
+            if (!plot || !plot.visible) continue
+            const position = source.mapToItem(plot, x, y)
+            if (position.x >= 0 && position.y >= 0 && position.x < plot.width && position.y < plot.height) {
+                signalDragDestination = plot
+                plot.dropHighlighted = true
+                break
+            }
+        }
+    }
+    function finishSignalTreeDrag() {
+        const destination = signalDragDestination
+        const row = signalDragRow
+        cancelSignalTreeDrag()
+        if (destination) window.appController.addSignalToPlot(destination.plotIndex, row)
+    }
+    Rectangle {
+        id: signalTreeDragPreview
+        objectName: "signalTreeDragPreview"
+        parent: window.contentItem
+        z: 2000
+        visible: false
+        property string signalName: ""
+        property color signalColor: "transparent"
+        width: Math.min(280, signalDragLabel.implicitWidth + 30)
+        height: signalDragLabel.implicitHeight + 12
+        radius: 4
+        color: window.panelColor
+        border.color: window.accentColor
+        Rectangle { x: 8; anchors.verticalCenter: parent.verticalCenter; width: 8; height: 8; color: signalTreeDragPreview.signalColor }
+        Label {
+            id: signalDragLabel
+            x: 22
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.max(0, parent.width - 28)
+            text: signalTreeDragPreview.signalName
+            color: window.treeTextColor
+            elide: Text.ElideRight
+        }
+    }
+    MouseArea {
+        objectName: "signalDragCursor"
+        parent: window.contentItem
+        anchors.fill: parent
+        z: 2001
+        visible: window.signalTreeDragging
+        acceptedButtons: Qt.NoButton
+        hoverEnabled: true
+        cursorShape: Qt.BlankCursor
+    }
+
     function signalGroupTitle(group) {
         const parts = group.split("/")
         return parts.length > 1 ? parts.slice(1).join(" / ") : group
@@ -599,7 +670,7 @@ ApplicationWindow {
         implicitHeight: 40
         implicitWidth: menuArrow ? 54 : 40
         Accessible.name: hint
-        ToolTip.visible: hovered
+        ToolTip.visible: hovered && !window.signalTreeDragging
         ToolTip.delay: 400
         ToolTip.text: hint
     }
@@ -626,7 +697,7 @@ ApplicationWindow {
                 highlighted: splitTool.checked
                 onClicked: splitTool.primaryClicked()
                 Accessible.name: splitTool.hint
-                ToolTip.visible: hovered
+                ToolTip.visible: hovered && !window.signalTreeDragging
                 ToolTip.delay: 400
                 ToolTip.text: splitTool.hint
             }
@@ -637,7 +708,7 @@ ApplicationWindow {
                 font.pixelSize: 10
                 onClicked: splitTool.arrowClicked()
                 Accessible.name: "选择" + splitTool.hint + "模式"
-                ToolTip.visible: hovered
+                ToolTip.visible: hovered && !window.signalTreeDragging
                 ToolTip.delay: 400
                 ToolTip.text: "选择" + splitTool.hint + "模式"
             }
@@ -848,14 +919,15 @@ ApplicationWindow {
             ColumnLayout { anchors.fill: parent; anchors.margins: 10; anchors.rightMargin: 0; spacing: 8
                 RowLayout { Layout.fillWidth: true; spacing: 4
                     TextField { id: signalSearch; objectName: "signalSearch"; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: window.appController.filterSignals(text) }
-                    ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered; ToolTip.text: "清除搜索" }
-                    ToolButton { text: "‹"; onClicked: window.signalTreeVisible = false; ToolTip.visible: hovered; ToolTip.text: "隐藏信号树（可从设置恢复）" }
+                    ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered && !window.signalTreeDragging; ToolTip.text: "清除搜索" }
+                    ToolButton { text: "‹"; onClicked: window.signalTreeVisible = false; ToolTip.visible: hovered && !window.signalTreeDragging; ToolTip.text: "隐藏信号树（可从设置恢复）" }
                 }
                 Item { Layout.fillWidth: true; Layout.fillHeight: true
                 ListView { id: signalList; anchors.fill: parent; clip: true; model: window.appController.signalModel
                     objectName: "signalList"
                     anchors.rightMargin: 5
-                    anchors.topMargin: stickyHeader.visible ? stickyHeader.height : 0
+                    // Overlay navigation must never resize the viewport or thumb.
+                    boundsBehavior: Flickable.StopAtBounds
                     // Sticky hierarchy: the file/table ancestors of the row at the
                     // top edge, but only those already scrolled out of view.
                     // Recomputed at most once per stickyTimer tick and only when
@@ -878,6 +950,31 @@ ApplicationWindow {
                         stickyPath = []
                         scheduleStickyPath()
                     }
+                    function toggleGroup(group, row) {
+                        cancelFlick()
+                        const item = itemAtIndex(row)
+                        const offset = item ? item.y - contentY : 0
+                        model.toggleGroup(group)
+                        forceLayout()
+                        if (item) {
+                            positionViewAtIndex(row, ListView.Beginning)
+                            forceLayout()
+                            const anchor = itemAtIndex(row)
+                            if (anchor) {
+                                const end = Math.max(originY, originY + contentHeight - height)
+                                contentY = Math.max(originY, Math.min(end, anchor.y - offset))
+                            }
+                        }
+                        stickyTopRow = -1
+                        updateStickyPath()
+                    }
+                    function navigationPath(row, item) {
+                        const path = model.ancestorPath(row)
+                        if (item && item.groupNode && !item.fileNode)
+                            path.push({name: item.signalName, group: item.groupName,
+                                       depth: item.nodeDepth, row: row})
+                        return path
+                    }
                     function updateStickyPath() {
                         if (count === 0 || !model) {
                             stickyTopRow = -1
@@ -890,11 +987,13 @@ ApplicationWindow {
                         if (topRow < 0) { scheduleStickyPath(); return }
                         if (topRow === stickyTopRow) return
                         stickyTopRow = topRow
-                        const path = model.ancestorPath(topRow)
+                        // A group aligned at the top is covered by the navigation;
+                        // include it so jumping to pN keeps pN in the path.
+                        const path = navigationPath(topRow, itemAtIndex(topRow))
                         const hidden = []
                         let key = ""
                         for (let i = 0; i < path.length; ++i)
-                            if (path[i].row >= 0 && path[i].row < topRow) {
+                            if (path[i].row >= 0 && path[i].row <= topRow) {
                                 hidden.push(path[i])
                                 key += path[i].row + ":" + path[i].group + "|"
                             }
@@ -902,11 +1001,11 @@ ApplicationWindow {
                     }
                     onContentYChanged: scheduleStickyPath()
                     onMovementEnded: updateStickyPath()
-                    onCountChanged: resetStickyPath()
+                    onCountChanged: { stickyTopRow = -1; scheduleStickyPath() }
                     onHeightChanged: scheduleStickyPath()
                     Connections {
                         target: signalList.model
-                        function onModelReset() { signalList.resetStickyPath() }
+                        function onModelReset() { window.cancelSignalTreeDrag(); signalList.resetStickyPath() }
                     }
                     delegate: Item {
                         id: signalDelegate
@@ -940,7 +1039,7 @@ ApplicationWindow {
                                        : window.panelColor
                         }
                         HoverHandler { onHoveredChanged: signalDelegate.rowHovered = hovered }
-                        ToolTip.visible: rowHovered
+                        ToolTip.visible: rowHovered && !window.signalTreeDragging
                         ToolTip.delay: 600
                         ToolTip.text: groupNode ? groupName : groupName + " / " + signalName
 
@@ -956,6 +1055,7 @@ ApplicationWindow {
                         RowLayout {
                             anchors.fill: parent
                             anchors.leftMargin: 12
+                            id: signalRowLayout
                             anchors.rightMargin: 4
                             spacing: 4
                             ToolButton {
@@ -967,7 +1067,7 @@ ApplicationWindow {
                                 palette.buttonText: signalDelegate.groupNode
                                                     ? window.treeHeaderTextColor
                                                     : window.treeTextColor
-                                onClicked: window.appController.signalModel.toggleGroup(signalDelegate.groupName)
+                                onClicked: signalList.toggleGroup(signalDelegate.groupName, signalDelegate.index)
                             }
                             CheckBox {
                                 id: signalCheck
@@ -987,6 +1087,7 @@ ApplicationWindow {
                                 }
                             }
                             Label {
+                                id: signalNameLabel
                                 objectName: "signalTreeName"
                                 text: window.highlightedSearchText(signalDelegate.displayName)
                                 textFormat: Text.StyledText
@@ -995,11 +1096,46 @@ ApplicationWindow {
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                                 MouseArea {
+                                    id: signalNameMouse
+                                    parent: signalDelegate.groupNode ? signalNameLabel : signalDelegate
                                     anchors.fill: parent
-                                    onClicked: {
+                                    anchors.leftMargin: signalDelegate.groupNode ? 0
+                                        : signalRowLayout.x + signalCheck.x + signalCheck.width
+                                    z: 1
+                                    property point pressPoint
+                                    property point namePressPoint
+                                    property bool moving: false
+                                    property bool canceledDrag: false
+                                    preventStealing: !signalDelegate.groupNode
+                                    cursorShape: moving ? Qt.BlankCursor : Qt.ArrowCursor
+                                    onPressed: mouse => {
+                                        pressPoint = Qt.point(mouse.x, mouse.y)
+                                        namePressPoint = mapToItem(signalNameLabel, mouse.x, mouse.y)
+                                        moving = false
+                                        canceledDrag = false
+                                    }
+                                    onPositionChanged: mouse => {
+                                        if (signalDelegate.groupNode || !(pressedButtons & Qt.LeftButton) || canceledDrag) return
+                                        if (!moving && Math.hypot(mouse.x - pressPoint.x, mouse.y - pressPoint.y) < 8) return
+                                        moving = true
+                                        const point = mapToItem(signalNameLabel, mouse.x, mouse.y)
+                                        window.updateSignalTreeDrag(signalNameLabel, point.x, point.y,
+                                            signalDelegate, namePressPoint)
+                                    }
+                                    onReleased: {
+                                        if (moving && !canceledDrag) window.finishSignalTreeDrag()
+                                        canceledDrag = canceledDrag || moving
+                                        moving = false
+                                    }
+                                    onCanceled: { canceledDrag = true; moving = false; window.cancelSignalTreeDrag() }
+                                    Component.onDestruction: { if (moving) window.cancelSignalTreeDrag() }
+                                    onClicked: mouse => {
+                                        if (moving || canceledDrag) return
                                         signalList.currentIndex = signalDelegate.index
                                         if (signalDelegate.groupNode)
-                                            window.appController.signalModel.toggleGroup(signalDelegate.groupName)
+                                            signalList.toggleGroup(signalDelegate.groupName, signalDelegate.index)
+                                        else if (mapToItem(penPreview, mouse.x, mouse.y).x >= 0)
+                                            window.editSignalPen(signalDelegate.signalIndex)
                                     }
                                 }
                             }
@@ -1012,7 +1148,7 @@ ApplicationWindow {
                                 palette.buttonText: window.treeTextColor
                                 onClicked: window.requestRemoveFile(
                                                signalDelegate.groupName)
-                                ToolTip.visible: hovered
+                                ToolTip.visible: hovered && !window.signalTreeDragging
                                 ToolTip.text: "移除文件"
                             }
                             // Scene-graph stroke instead of a Canvas: no per-row
@@ -1080,7 +1216,6 @@ ApplicationWindow {
                         objectName: "signalScrollBar"
                         parent: signalList.parent
                         anchors.top: parent.top
-                        anchors.topMargin: signalList.anchors.topMargin
                         anchors.bottom: parent.bottom
                         anchors.right: parent.right
                         width: 5
@@ -1112,7 +1247,7 @@ ApplicationWindow {
                     function navigate(index, collapse) {
                         const entry = signalList.stickyPath[index]
                         if (!entry) return
-                        if (collapse) window.appController.signalModel.toggleGroup(entry.group)
+                        if (collapse) signalList.toggleGroup(entry.group, entry.row)
                         signalList.positionViewAtIndex(Math.min(entry.row, signalList.count - 1), ListView.Beginning)
                         signalList.currentIndex = Math.min(entry.row, signalList.count - 1)
                     }
@@ -1122,6 +1257,11 @@ ApplicationWindow {
                         anchors.bottom: parent.bottom
                         height: 1
                         color: window.darkTheme ? "#3b4652" : "#d7dfe8"
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        preventStealing: true
                     }
                     RowLayout {
                         id: breadcrumb
@@ -1136,10 +1276,13 @@ ApplicationWindow {
                                 id: breadcrumbSegment
                                 required property var modelData
                                 required property int index
-                                Layout.fillWidth: true
-                                Layout.preferredWidth: implicitWidth
-                                Layout.maximumWidth: implicitWidth
-                                Layout.minimumWidth: separator.implicitWidth
+                                readonly property real segmentWidth: index === 0 ? implicitWidth
+                                    : Math.min(implicitWidth, Math.max(20,
+                                        (breadcrumb.width - 40) / Math.max(1, signalList.stickyPath.length - 1)))
+                                Layout.fillWidth: index === 0
+                                Layout.preferredWidth: segmentWidth
+                                Layout.maximumWidth: segmentWidth
+                                Layout.minimumWidth: index === 0 ? Math.min(implicitWidth, 40) : segmentWidth
                                 spacing: 0
                                 Label {
                                     objectName: "signalBreadcrumbSegment"
@@ -1150,10 +1293,12 @@ ApplicationWindow {
                                     color: window.treeHeaderTextColor
                                     font.weight: Font.Normal
                                     elide: Text.ElideMiddle
-                                    TapHandler {
+                                    MouseArea {
+                                        anchors.fill: parent
                                         acceptedButtons: Qt.LeftButton
-                                        onSingleTapped: stickyHeader.navigate(breadcrumbSegment.index, false)
-                                        onDoubleTapped: stickyHeader.navigate(breadcrumbSegment.index, true)
+                                        preventStealing: true
+                                        onClicked: stickyHeader.navigate(breadcrumbSegment.index, false)
+                                        onDoubleClicked: stickyHeader.navigate(breadcrumbSegment.index, true)
                                     }
                                 }
                                 Label {
@@ -1167,7 +1312,7 @@ ApplicationWindow {
                         Item { Layout.fillWidth: true; Layout.preferredWidth: 0 }
                     }
                     HoverHandler { id: stickyHover }
-                    ToolTip.visible: stickyHover.hovered
+                    ToolTip.visible: stickyHover.hovered && !window.signalTreeDragging
                     ToolTip.delay: 600
                     ToolTip.text: pathText + "\n单击路径回到该层级，双击折叠"
                 }
@@ -1178,7 +1323,7 @@ ApplicationWindow {
                     color: window.treeTextColor
                     font.pixelSize: 11
                     elide: Text.ElideRight
-                    ToolTip.visible: statusHover.hovered
+                    ToolTip.visible: statusHover.hovered && !window.signalTreeDragging
                     ToolTip.text: text
                     HoverHandler { id: statusHover }
                 }
@@ -1263,7 +1408,7 @@ ApplicationWindow {
                     Layout.preferredHeight: 30
                     text: "×"
                     onClicked: window.appController.cancelExport()
-                    ToolTip.visible: hovered
+                    ToolTip.visible: hovered && !window.signalTreeDragging
                     ToolTip.text: "取消导出"
                 }
             }

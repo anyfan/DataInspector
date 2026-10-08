@@ -135,11 +135,46 @@ void SignalModel::setFilter(const QString &text)
 void SignalModel::toggleGroup(const QString &group)
 {
     if (group.isEmpty() || !groupExists(group)) return;
-    beginResetModel();
+    const auto previousNodes = m_visibleNodes;
+    const auto previousGroupRows = m_groupRows;
     if (m_expandedGroups.contains(group)) m_expandedGroups.remove(group);
     else m_expandedGroups.insert(group);
     rebuildVisibleNodes();
-    endResetModel();
+    const auto nextNodes = m_visibleNodes;
+    m_visibleNodes = previousNodes;
+    m_groupRows = previousGroupRows;
+    const auto sameNode = [](const VisibleNode &a, const VisibleNode &b) {
+        return a.groupNode == b.groupNode && a.sourceRow == b.sourceRow
+            && a.group == b.group && a.depth == b.depth;
+    };
+    int first = 0;
+    while (first < previousNodes.size() && first < nextNodes.size()
+           && sameNode(previousNodes[first], nextNodes[first])) ++first;
+    int tail = 0;
+    while (tail < previousNodes.size() - first && tail < nextNodes.size() - first
+           && sameNode(previousNodes[previousNodes.size() - tail - 1],
+                       nextNodes[nextNodes.size() - tail - 1])) ++tail;
+    const auto updateGroupRows = [this]() {
+        m_groupRows.clear();
+        for (int row = 0; row < m_visibleNodes.size(); ++row)
+            if (m_visibleNodes[row].groupNode) m_groupRows.insert(m_visibleNodes[row].group, row);
+    };
+    const int removed = previousNodes.size() - first - tail;
+    if (removed > 0) {
+        beginRemoveRows({}, first, first + removed - 1);
+        m_visibleNodes.remove(first, removed);
+        updateGroupRows();
+        endRemoveRows();
+    }
+    const int inserted = nextNodes.size() - first - tail;
+    if (inserted > 0) {
+        beginInsertRows({}, first, first + inserted - 1);
+        m_visibleNodes = nextNodes;
+        updateGroupRows();
+        endInsertRows();
+    }
+    const int groupRow = m_groupRows.value(group, -1);
+    if (groupRow >= 0) emit dataChanged(index(groupRow), index(groupRow), {ExpandedRole});
 }
 
 QVector<int> SignalModel::removeFile(const QString &fileName)
@@ -352,8 +387,15 @@ void SignalModel::rebuildVisibleNodes()
 
     for (const QString &group : std::as_const(orderedGroups)) {
         const QString parent = group.section(QLatin1Char('/'), 0, -2);
-        if (m_filter.isEmpty() && !parent.isEmpty()
-            && !m_expandedGroups.contains(parent)) continue;
+        if (m_filter.isEmpty() && !parent.isEmpty()) {
+            QString prefix;
+            bool visible = true;
+            for (const QString &part : parent.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
+                prefix = prefix.isEmpty() ? part : prefix + QLatin1Char('/') + part;
+                if (!m_expandedGroups.contains(prefix)) { visible = false; break; }
+            }
+            if (!visible) continue;
+        }
         QVector<int> matchingRows;
         bool hasSignalMatch = false;
         for (int row = 0; row < m_names.size(); ++row) {

@@ -98,6 +98,7 @@ public:
 
     // Signal selection and styling
     Q_INVOKABLE void selectSignal(int row);
+    Q_INVOKABLE void addSignalToPlot(int plotIndex, int row);
     Q_INVOKABLE void toggleSignal(int row);
     Q_INVOKABLE void filterSignals(const QString &text);
     Q_INVOKABLE bool plotSignalEnabled(int plotIndex, int row) const;
