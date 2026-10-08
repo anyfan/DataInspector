@@ -2,6 +2,7 @@
 #include "plotitem.h"
 #include "qmltypes.h"
 #include "xlsxreader.h"
+#include "xlsxwriter.h"
 
 #include <QDir>
 #include <QElapsedTimer>
@@ -1389,17 +1390,37 @@ void AppControllerTest::toolbarModesToggleAndRememberSelection()
 
 void AppControllerTest::xlsxWorkbookImportsAllWorksheets()
 {
-    const QString path = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath())
-                             .filePath(QStringLiteral(
-                                 "../test_file/2026-09-05_06-43-26.dat.xlsx"));
-    QVERIFY2(QFileInfo::exists(path), qPrintable(path));
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const QString path = directory.filePath(QStringLiteral("worksheets.xlsx"));
+    QVector<XlsxExportTable> tables;
+    const QStringList names{QStringLiteral("1"), QStringLiteral("2"), QStringLiteral("17")};
+    const int signalCounts[] = {25, 25, 30};
+    int signalId = 0;
+    for (int sheet = 0; sheet < names.size(); ++sheet) {
+        XlsxExportTable table;
+        table.name = names.at(sheet);
+        for (int column = 0; column < signalCounts[sheet]; ++column) {
+            auto data = std::make_shared<PlotSeriesData>();
+            data->id = signalId++;
+            for (int row = 0; row < sheet + 3; ++row) {
+                data->time.append(sheet * 10.0 + row);
+                data->values.append(column * 100.0 + row);
+            }
+            table.series.append({QStringLiteral("Signal%1").arg(column), data});
+        }
+        tables.append(table);
+    }
+    const auto written = writeXlsxWorkbook(path, tables);
+    QVERIFY2(written.error.isEmpty(), qPrintable(written.error));
+    QVERIFY(!written.cancelled);
 
     AppController controller;
     QVERIFY(controller.loadCsv(path));
     QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 10000);
     QVERIFY2(controller.loadedFileCount() == 1, qPrintable(controller.status()));
     QCOMPARE(controller.signalCount(), 80);
-    QVERIFY2(controller.status().contains(QStringLiteral("12105 行")),
+    QVERIFY2(controller.status().contains(QStringLiteral("12 行")),
              qPrintable(controller.status()));
 
     QStringList worksheetGroups;

@@ -12,6 +12,8 @@ ctest --test-dir build_qt6-debug --output-on-failure
 
 Release 把目录换成 `build_qt6-release`。
 
+默认测试数据在测试内部生成，不依赖本机未提交的 `test_file/`。多工作表导入回归生成三个不同时间基的工作表（1、2、17），共 80 个信号和 12 行数据，在干净 checkout 和 GitHub Actions 上同样运行。真实大文件性能测试仍通过显式环境变量启用。
+
 ## CTest 套件
 
 | 套件 | 覆盖范围 |
