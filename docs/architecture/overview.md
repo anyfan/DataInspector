@@ -75,6 +75,8 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 
 这些文件共同实现同一个 `PlotItem`，状态仍由 `m_dataMutex` 保护，不增加跨线程可变对象。
 
+游标键盘目标由 PlotItem 的 activeCursorIndex 保存，在锁内读写，独立 activeCursorChanged 通知避免仅选择游标触发位置同步。1/2 表示单个目标，0 表示两个目标；点击/拖动线选择目标，拖过另一线时连同操作目标交接。stepCursor 默认移动选中目标；选中两个时根据第一条线相邻原始样本的时间差同步平移，moveCursorPair 原子发布两个位置，保持间距并在原先都可见时整体裁剪到视窗边界；显式 index=0 保留分别步进的内部入口。单转双只在活动视窗内初始化 T2，位置同步与会话恢复仍使用精确状态。QML 的 X 轴留白固定为 22 像素，三个数字示数紧贴轴线，按实际宽度水平避让和省略过长文字；仅一条线可见时隐藏差值。Text 内 MouseArea 用固定按下坐标和时间快照拖动，时间示数选择单条，差值选择两条，轴其他留白仍负责框选；示数悬停不显示提示或特殊鼠标图标。
+
 ## 二维/三维航迹子图
 
 - `AppController::m_trajectories` 独立保存每个子图的模式、航迹列表、活动项、子图共用候选与相机状态；`appcontroller_trajectory.cpp` 负责生命周期、信号行号重映射和时间游标联动。

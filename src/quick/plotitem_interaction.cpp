@@ -58,6 +58,8 @@ void PlotItem::mousePressEvent(QMouseEvent *e)
         if (cursorHit(e->position().x(), &cursorIndex)) {
             m_cursorDragIndex = cursorIndex;
             m_dragging = false;
+            lock.unlock();
+            setActiveCursorIndex(cursorIndex);
             e->accept();
             return;
         }
@@ -89,6 +91,7 @@ void PlotItem::mouseMoveEvent(QMouseEvent *e)
             else if (m_cursorDragIndex == 2 && x < x1) { setCursorX(x1, 2); m_cursorDragIndex = 1; }
         }
         setCursorX(x, m_cursorDragIndex);
+        setActiveCursorIndex(m_cursorDragIndex);
         e->accept();
         return;
     }
@@ -121,6 +124,7 @@ void PlotItem::mouseUngrabEvent()
 
 void PlotItem::wheelEvent(QWheelEvent *e)
 {
+    emit activated();
     // Zoom both axes around the pointer position.
     const double factor = e->angleDelta().y() > 0 ? .85 : 1 / .85;
     const QPointF anchor = pixelToData(e->position());

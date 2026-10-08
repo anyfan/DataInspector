@@ -19,6 +19,7 @@ class PlotItem : public QQuickItem
     Q_PROPERTY(int highlightedSeries READ highlightedSeries WRITE setHighlightedSeries NOTIFY highlightedSeriesChanged)
     Q_PROPERTY(bool lodPending READ lodPending NOTIFY lodChanged)
     Q_PROPERTY(int cursorMode READ cursorMode WRITE setCursorMode NOTIFY cursorChanged)
+    Q_PROPERTY(int activeCursorIndex READ activeCursorIndex WRITE setActiveCursorIndex NOTIFY activeCursorChanged)
     Q_PROPERTY(double xMinimum READ xMinimum NOTIFY viewChanged)
     Q_PROPERTY(double xMaximum READ xMaximum NOTIFY viewChanged)
     Q_PROPERTY(double yMinimum READ yMinimum NOTIFY viewChanged)
@@ -51,6 +52,8 @@ public:
     double yMaximum() const;
     double lineWidth() const;
     int cursorMode() const;
+    int activeCursorIndex() const;
+    void setActiveCursorIndex(int index);
     double cursorX1() const;
     double cursorX2() const;
     double cursorDeltaT() const;
@@ -67,12 +70,14 @@ public:
     void setVisibleSeries(const QVector<PlotSeriesId> &orderedIds);
     QVector<PlotSeriesId> visibleSeriesIds() const;
     Q_INVOKABLE void setCursorX(double x, int cursorIndex = 1);
+    Q_INVOKABLE void moveCursorPair(double startX1, double startX2, double offset);
     void setCursorPosition(double x, int cursorIndex = 1);
     // Session/peer state is exact, including disabled or off-screen cursors.
     void restoreCursorState(int mode, double x1, double x2);
     // direction < 0 moves to the previous raw sample, direction > 0 to the next;
     // cursorIndex 0 steps every cursor enabled by the current mode.
-    Q_INVOKABLE void stepCursor(int direction, int cursorIndex = 0);
+    // Omitted index steps the selected cursor; explicit 0 steps both.
+    Q_INVOKABLE void stepCursor(int direction, int cursorIndex = -1);
     Q_INVOKABLE void fitView();
     Q_INVOKABLE void zoomAxis(int axis, double fraction, double steps);
     Q_INVOKABLE void fitY();
@@ -87,6 +92,7 @@ signals:
     void viewChanged();
     void lineWidthChanged();
     void cursorChanged();
+    void activeCursorChanged();
     void cursorDeltaTChanged();
     void cursorValuesChanged();
     void axisTicksChanged();
@@ -128,6 +134,7 @@ private:
     double m_lineWidth = 2.0;
     int m_highlightedSeries = -1;
     int m_cursorMode = NoCursor;
+    int m_activeCursorIndex = 1;
     double m_cursorX1 = 0.0;
     double m_cursorX2 = 1.0;
     QVariantList m_xTicks;

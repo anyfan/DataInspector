@@ -12,6 +12,7 @@
 #include <QQmlEngine>
 #include <QSignalSpy>
 #include <QQuickWindow>
+#include <QWheelEvent>
 #include <QTemporaryDir>
 #include <QUrl>
 #include <QtCore/private/qzipwriter_p.h>
@@ -60,6 +61,9 @@ private slots:
     void fittingUsesUnionOfSubplotTimeRanges();
     void asynchronousLodKeepsLatestRequest();
     void quickPlotLoadsWithLegendAndCursors();
+    void cursorBadgesInitializeCenteredWithDelta();
+    void cursorBadgeDragsSelectAndMoveOneOrBoth();
+    void interactingWithSubplotSelectsIt();
     void toolbarModesToggleAndRememberSelection();
     void editDialogsRememberAndResetValues();
     void realMatImportPerformanceWhenRequested();
@@ -320,6 +324,21 @@ void AppControllerTest::cursorsInitializeFromSelectedPlot()
     controller.setCursorMode(PlotItem::DoubleCursor);
     QCOMPARE(first.cursorX2(), 2.0);
     QCOMPARE(second.cursorX2(), first.cursorX2());
+
+    controller.setCursorMode(PlotItem::SingleCursor);
+    first.setCursorPosition(2);
+    first.setXRange(6, 10);
+    controller.setCursorMode(PlotItem::DoubleCursor);
+    QCOMPARE(first.cursorX1(), 2.0);
+    QCOMPARE(first.cursorX2(), 8.0);
+    QCOMPARE(second.cursorX2(), 8.0);
+    QCOMPARE(first.activeCursorIndex(), 2);
+    // A view between sparse raw samples still gets a visible second cursor.
+    controller.setCursorMode(PlotItem::SingleCursor);
+    first.setXRange(4, 6);
+    controller.setCursorMode(PlotItem::DoubleCursor);
+    QVERIFY(first.cursorX2() >= 4 && first.cursorX2() <= 6);
+    QCOMPARE(second.cursorX2(), first.cursorX2());
 }
 
 void AppControllerTest::cursorReadoutsFollowVisibleXRange()
@@ -429,10 +448,22 @@ void AppControllerTest::cursorKeyboardStepsAcrossRawSamples()
     plot.stepCursor(0, 1);
     QCOMPARE(plot.cursorX1(), 4.0);
 
+    plot.setActiveCursorIndex(2);
     plot.stepCursor(1);
-    QCOMPARE(plot.cursorX1(), 5.0);
+    QCOMPARE(plot.cursorX1(), 4.0);
     QCOMPARE(plot.cursorX2(), 9.0);
     plot.stepCursor(-1);
+    QCOMPARE(plot.cursorX1(), 4.0);
+    QCOMPARE(plot.cursorX2(), 5.0);
+    plot.setActiveCursorIndex(1);
+    plot.stepCursor(1);
+    QCOMPARE(plot.cursorX1(), 5.0);
+    QCOMPARE(plot.cursorX2(), 5.0);
+    plot.stepCursor(-1);
+    plot.stepCursor(1, 0);
+    QCOMPARE(plot.cursorX1(), 5.0);
+    QCOMPARE(plot.cursorX2(), 9.0);
+    plot.stepCursor(-1, 0);
     QCOMPARE(plot.cursorX1(), 4.0);
     QCOMPARE(plot.cursorX2(), 5.0);
 
@@ -878,6 +909,220 @@ void AppControllerTest::axisSelectionAppliesRange()
     QCOMPARE(plot.yMaximum(), 7.0);
 }
 
+void AppControllerTest::cursorBadgesInitializeCenteredWithDelta()
+{
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    AppController controller;
+    QQmlEngine engine;
+    QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) {
+        for (const auto &error : errors) warnings.append(error.toString());
+    });
+    const QString path = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml/QuickPlot.qml");
+    QQmlComponent component(&engine, QUrl::fromLocalFile(path));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {"plotIndex", 0}, {"controller", QVariant::fromValue<QObject *>(&controller)},
+        {"width", 1400}, {"height", 400}, {"graphCursorMode", 2}}));
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto *root = qobject_cast<QQuickItem *>(object.get());
+    auto *plot = object->findChild<PlotItem *>();
+    auto *delta = object->findChild<QQuickItem *>("cursorDeltaBadge");
+    QVERIFY(root && plot && delta);
+    QList<QQuickItem *> times;
+    for (auto *child : root->childItems())
+        if (child->objectName() == "cursorTimeLabel") times.append(child);
+    QCOMPARE(times.size(), 2);
+    // Check initial creation before any cursor movement can refresh a stale binding.
+    QTRY_VERIFY(delta->isVisible());
+    const auto verifyCenters = [&]() {
+        const double origin = plot->mapToItem(root, QPointF()).x();
+        const double values[] = {plot->cursorX1(), plot->cursorX2()};
+        for (int i = 0; i < 2; ++i) {
+            const double line = origin + (values[i] - plot->xMinimum())
+                / (plot->xMaximum() - plot->xMinimum()) * plot->width();
+            QVERIFY2(qAbs(times[i]->x() + times[i]->width() / 2 - line) < .01,
+                qPrintable(QString("cursor %1: center %2 line %3; range %4..%5")
+                    .arg(i).arg(times[i]->x() + times[i]->width() / 2).arg(line)
+                    .arg(plot->xMinimum()).arg(plot->xMaximum())));
+            QCOMPARE(times[i]->y(), plot->mapToItem(root, QPointF(0, plot->height())).y());
+        }
+        QCOMPARE(root->property("axisBottom").toDouble(), 22.0);
+        QVERIFY(delta->isVisible());
+    };
+    verifyCenters();
+    // Reproduce the reported numeric range and rebuild the delegates on re-enable.
+    plot->setXRange(375, 900);
+    plot->setCursorPosition(468.96, 1);
+    plot->setCursorPosition(831.56, 2);
+    QCoreApplication::processEvents();
+    verifyCenters();
+    root->setProperty("graphCursorMode", 0);
+    root->setProperty("graphCursorMode", 2);
+    QTRY_VERIFY(delta->isVisible());
+    times.clear();
+    for (auto *child : root->childItems())
+        if (child->objectName() == "cursorTimeLabel") times.append(child);
+    QCOMPARE(times.size(), 2);
+    verifyCenters();
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+}
+
+void AppControllerTest::cursorBadgeDragsSelectAndMoveOneOrBoth()
+{
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    AppController controller;
+    QQmlEngine engine;
+    const QString path = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml/QuickPlot.qml");
+    QQmlComponent component(&engine, QUrl::fromLocalFile(path));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {"plotIndex", 0}, {"controller", QVariant::fromValue<QObject *>(&controller)},
+        {"width", 800}, {"height", 400}, {"graphCursorMode", 2}}));
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto *root = qobject_cast<QQuickItem *>(object.get());
+    auto *plot = object->findChild<PlotItem *>();
+    auto *delta = object->findChild<QQuickItem *>("cursorDeltaBadge");
+    QVERIFY(root && plot && delta);
+    auto store = std::make_shared<PlotSeriesStore>();
+    QVector<double> xs, ys;
+    for (int i = 0; i <= 100; ++i) { xs.append(i); ys.append(i); }
+    store->replaceSeries({{1, xs, ys, QColor("red")}});
+    plot->setSeriesStore(store); plot->setVisibleSeries({1});
+    plot->setXRange(0, 100);
+    plot->setCursorPosition(25, 1); plot->setCursorPosition(75, 2);
+    QList<QQuickItem *> times;
+    for (auto *child : root->childItems())
+        if (child->objectName() == "cursorTimeLabel") times.append(child);
+    QCOMPARE(times.size(), 2);
+    QQuickWindow window;
+    window.resize(800, 400);
+    root->setParentItem(window.contentItem());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTest::qWait(30);
+    const auto center = [](QQuickItem *item) {
+        return item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint();
+    };
+    QTest::mouseMove(&window, center(times[0]), 30);
+    auto *axisCursor = object->findChild<QQuickItem *>("axisZoomCursor");
+    QVERIFY(axisCursor && !axisCursor->isVisible());
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, center(times[1]));
+    QCOMPARE(plot->activeCursorIndex(), 2);
+    QTest::keyClick(&window, Qt::Key_Right);
+    QCOMPARE(plot->cursorX1(), 25.0); QCOMPARE(plot->cursorX2(), 76.0);
+    const auto drag = [&](QQuickItem *badge, double fraction) {
+        const QPoint start = center(badge);
+        const QPoint end = start + QPoint(qRound(plot->width() * fraction), 0);
+        QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, start);
+        QTest::mouseMove(&window, end, 30);
+        QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, end);
+    };
+    drag(times[0], .2);
+    QCOMPARE(plot->activeCursorIndex(), 1);
+    QCOMPARE(plot->cursorX1(), 45.0); QCOMPARE(plot->cursorX2(), 76.0);
+    drag(delta, .1);
+    QCOMPARE(plot->activeCursorIndex(), 0);
+    QCOMPARE(plot->cursorX1(), 55.0); QCOMPARE(plot->cursorX2(), 86.0);
+    QCOMPARE(plot->cursorDeltaT(), 31.0);
+    QTest::keyClick(&window, Qt::Key_Right);
+    QCOMPARE(plot->cursorX1(), 56.0); QCOMPARE(plot->cursorX2(), 87.0);
+    QTest::keyClick(&window, Qt::Key_Left);
+    QCOMPARE(plot->cursorX1(), 55.0); QCOMPARE(plot->cursorX2(), 86.0);
+    drag(delta, .15);
+    QCOMPARE(plot->cursorX1(), 69.0); QCOMPARE(plot->cursorX2(), 100.0);
+    QTest::keyClick(&window, Qt::Key_Right);
+    QCOMPARE(plot->cursorX1(), 69.0); QCOMPARE(plot->cursorX2(), 100.0);
+    QCOMPARE(plot->cursorDeltaT(), 31.0);
+    QVERIFY(!root->property("axisSelecting").toBool());
+    QCOMPARE(plot->xMinimum(), 0.0); QCOMPARE(plot->xMaximum(), 100.0);
+    plot->setCursorPosition(50, 1); plot->setCursorPosition(50, 2);
+    QCoreApplication::processEvents();
+    QVERIFY(delta->isVisible());
+    QVERIFY(times[0]->x() + times[0]->width() + 4 <= delta->x());
+    QVERIFY(delta->x() + delta->width() + 4 <= times[1]->x());
+    plot->setXRange(80, 90);
+    QVERIFY(!delta->isVisible());
+    plot->setXRange(0, 100);
+    plot->setCursorPosition(25, 1); plot->setCursorPosition(75, 2);
+    plot->setXRange(50, 100);
+    QVERIFY(!delta->isVisible()); // Only one visible line has no visible difference badge.
+    root->setProperty("graphCursorMode", 1);
+    QVERIFY(!delta->isVisible());
+    QCOMPARE(root->property("axisBottom").toDouble(), 22.0);
+}
+
+void AppControllerTest::interactingWithSubplotSelectsIt()
+{
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    AppController controller;
+    controller.setLayout(1, 2);
+    QQmlEngine engine;
+    const QString path = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml/QuickPlot.qml");
+    QQmlComponent component(&engine, QUrl::fromLocalFile(path));
+    QQuickWindow window;
+    window.resize(1000, 400);
+    std::unique_ptr<QObject> objects[2];
+    QQuickItem *roots[2];
+    PlotItem *plots[2];
+    for (int i = 0; i < 2; ++i) {
+        objects[i].reset(component.createWithInitialProperties({
+            {"plotIndex", i}, {"controller", QVariant::fromValue<QObject *>(&controller)},
+            {"x", i * 500}, {"width", 500}, {"height", 400}}));
+        QVERIFY2(objects[i], qPrintable(component.errorString()));
+        roots[i] = qobject_cast<QQuickItem *>(objects[i].get());
+        plots[i] = objects[i]->findChild<PlotItem *>();
+        QVERIFY(roots[i] && plots[i]);
+        roots[i]->setParentItem(window.contentItem());
+        plots[i]->setYRange(-10, 10);
+    }
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTest::qWait(30);
+    const auto point = [](QQuickItem *item) { return item->mapToScene(QPointF(item->width() * .37, item->height() * .37)); };
+    for (int i = 0; i < 2; ++i) {
+        auto *xArea = objects[i]->findChild<QQuickItem *>("xAxisArea");
+        auto *yArea = objects[i]->findChild<QQuickItem *>("yAxisArea");
+        QVERIFY(xArea && yArea);
+        // Wheel interactions select before changing the range, on graph or either axis.
+        for (auto *target : {static_cast<QQuickItem *>(plots[i]), xArea, yArea}) {
+            controller.setActivePlot(1 - i);
+            const QPointF scene = point(target);
+            QWheelEvent wheel(scene, window.mapToGlobal(scene.toPoint()), QPoint(), QPoint(0, 120),
+                Qt::NoButton, Qt::NoModifier, Qt::NoScrollPhase, false);
+            QCoreApplication::sendEvent(&window, &wheel);
+            QCOMPARE(controller.activePlotIndex(), i);
+        }
+        // Axis selection and graph panning/box zoom also select on press.
+        for (auto *target : {xArea, yArea, static_cast<QQuickItem *>(plots[i])}) {
+            controller.setActivePlot(1 - i);
+            const QPoint scene = point(target).toPoint();
+            QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, scene);
+            QCOMPARE(controller.activePlotIndex(), i);
+            QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, scene);
+        }
+        roots[i]->setProperty("graphZoomMode", 1);
+        controller.setActivePlot(1 - i);
+        const QPoint graph = point(plots[i]).toPoint();
+        QTest::mousePress(&window, Qt::LeftButton, Qt::NoModifier, graph);
+        QCOMPARE(controller.activePlotIndex(), i);
+        QTest::mouseRelease(&window, Qt::LeftButton, Qt::NoModifier, graph);
+        roots[i]->setProperty("graphZoomMode", 0);
+        controller.setActivePlot(1 - i);
+        QTest::mouseMove(&window, graph, 30);
+        QCOMPARE(controller.activePlotIndex(), 1 - i); // Hover alone does not change the active subplot.
+        QTest::keyClick(&window, Qt::Key_Space);
+        QCOMPARE(controller.activePlotIndex(), i);
+    }
+}
+
 void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
 {
     qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
@@ -944,8 +1189,10 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QTRY_VERIFY(legendNames().contains("A"));
 
     const double plotBottom = plot->parentItem()->y() + plot->height();
-    // Cursor time badges sit flush on the X axis, with no gap below the plot.
+    // Fixed gutter, badges flush to the axis, and close readouts never overlap.
     for (const auto *label : visualTimes) QCOMPARE(label->y(), plotBottom);
+    QCOMPARE(object->property("axisBottom").toDouble(), 22.0);
+    QVERIFY(visualTimes[0]->x() + visualTimes[0]->width() + 4 <= visualTimes[1]->x());
     QQuickWindow window;
     window.resize(800, 400);
     auto *item = qobject_cast<QQuickItem *>(object.get());
@@ -953,6 +1200,50 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     item->setParentItem(window.contentItem());
     window.show();
     QTest::qWait(50);
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    plot->setXRange(0, 1);
+    plot->setCursorPosition(.25, 1);
+    plot->setCursorPosition(.75, 2);
+    // Clicking a cursor line selects the keyboard target without dragging it.
+    const QPoint secondLine = plot->mapToScene(QPointF(plot->width() * .75, 40)).toPoint();
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, secondLine);
+    QCOMPARE(plot->activeCursorIndex(), 2);
+    QTest::keyClick(&window, Qt::Key_Right);
+    QCOMPARE(plot->cursorX1(), .25);
+    QCOMPARE(plot->cursorX2(), 1.0);
+    QTest::keyClick(&window, Qt::Key_Left);
+    QCOMPARE(plot->cursorX1(), .25);
+    QCOMPARE(plot->cursorX2(), 0.0);
+    // Time badges select their cursor and consume the press instead of zooming.
+    plot->setCursorPosition(.25, 1);
+    plot->setCursorPosition(.75, 2);
+    QCoreApplication::processEvents();
+    const QPoint badgeStart = visualTimes[0]->mapToScene(QPointF(visualTimes[0]->width() / 2, 8)).toPoint();
+    const QPoint badgeEnd = visualTimes[1]->mapToScene(QPointF(visualTimes[1]->width() / 2, 8)).toPoint();
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, badgeStart);
+    QCOMPARE(plot->activeCursorIndex(), 1);
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, badgeEnd);
+    QCOMPARE(plot->activeCursorIndex(), 2);
+    QVERIFY(!item->property("axisSelecting").toBool());
+    QCOMPARE(plot->xMinimum(), 0.0);
+    QCOMPARE(plot->xMaximum(), 1.0);
+    plot->setXRange(0, 1);
+    plot->setCursorPosition(.5, 1);
+    plot->setCursorPosition(.50001, 2);
+    QTRY_VERIFY(visualTimes[0]->x() + visualTimes[0]->width() + 4 <= visualTimes[1]->x());
+    auto *delta = object->findChild<QQuickItem *>("cursorDeltaBadge");
+    QVERIFY(delta && delta->isVisible());
+    item->setWidth(100);
+    QTRY_VERIFY(visualTimes[0]->x() + visualTimes[0]->width() + 4 <= visualTimes[1]->x());
+    QCOMPARE(visualTimes[0]->y(), visualTimes[1]->y());
+    QCOMPARE(object->property("axisBottom").toDouble(), 22.0);
+    for (auto *label : visualTimes) {
+        QVERIFY(label->x() >= 0);
+        QVERIFY(label->x() + label->width() <= item->width());
+    }
+    item->setWidth(800);
+    plot->setCursorPosition(.25, 1);
+    plot->setCursorPosition(.75, 2);
     // Cursor focus recovery must not steal focus from either text input type.
     for (const QByteArray &type : {QByteArray("TextInput"), QByteArray("TextEdit")}) {
         QQmlComponent editorComponent(&engine);
@@ -968,8 +1259,10 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
         QCOMPARE(window.activeFocusItem(), textItem);
     }
     item->forceActiveFocus();
+    plot->setActiveCursorIndex(1);
     QTest::keyClick(&window, Qt::Key_Right);
     QCOMPARE(plot->cursorX1(), 1.0);
+    QCOMPARE(plot->cursorX2(), .75);
     auto *axisCursor = item->findChild<QQuickItem *>("axisZoomCursor");
     QVERIFY(axisCursor);
 
@@ -1099,7 +1392,7 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QVERIFY(QMetaObject::invokeMethod(object.get(), "formatCompact", Q_RETURN_ARG(QVariant, formatted),
                                      Q_ARG(QVariant, 100.0), Q_ARG(QVariant, 7)));
     QCOMPARE(formatted.toString(), "100");
-    plot->setXRange(.6, .8);
+    plot->setXRange(.4, .6);
     QCoreApplication::processEvents();
     for (const auto *label : visualTimes) QVERIFY(!label->isVisible());
     controller.setLayout(1, 2);
@@ -1308,6 +1601,30 @@ void AppControllerTest::toolbarModesToggleAndRememberSelection()
     QCOMPARE(object->property("selectedCursorMode").toInt(), 0);
     QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleCursorTool"));
     QCOMPARE(object->property("selectedCursorMode").toInt(), 1);
+
+    auto *singleOption = object->findChild<QQuickItem *>("singleCursorOption");
+    auto *doubleOption = object->findChild<QQuickItem *>("doubleCursorOption");
+    auto *mainWindow = qobject_cast<QQuickWindow *>(object.get());
+    QVERIFY(singleOption && doubleOption && mainWindow);
+    mainWindow->show();
+    QVERIFY(QTest::qWaitForWindowExposed(mainWindow));
+    const auto chooseCursor = [&](QQuickItem *option) {
+        QMetaObject::invokeMethod(cursorTool, "arrowClicked");
+        QTest::qWait(50);
+        QTest::mouseClick(mainWindow, Qt::LeftButton, Qt::NoModifier,
+            option->mapToScene(QPointF(option->width() / 2, option->height() / 2)).toPoint());
+        QCoreApplication::processEvents();
+    };
+    chooseCursor(singleOption);
+    QVERIFY(singleOption->property("checked").toBool());
+    QVERIFY(!doubleOption->property("checked").toBool());
+    chooseCursor(doubleOption);
+    QVERIFY(doubleOption->property("checked").toBool());
+    QVERIFY(!singleOption->property("checked").toBool());
+    chooseCursor(doubleOption);
+    QVERIFY(doubleOption->property("checked").toBool());
+    QCOMPARE(object->property("preferredCursorMode").toInt(), 2);
+    mainWindow->hide();
 
     QCOMPARE(object->property("activeZoomMode").toInt(), 0);
     QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleZoomTool"));

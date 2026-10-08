@@ -122,6 +122,7 @@ Rectangle {
         return true
     }
     function beginAxisSelection(axis, position) {
+        controller.setActivePlot(plotIndex)
         axisSelecting = true
         axisSelection = axis
         axisSelectionStart = position
@@ -192,8 +193,8 @@ Rectangle {
         // fits the Y axis of this subplot only.
         enabled: !root.trajectoryMode && (root.hoveredAxis >= 0 || graphHover.hovered)
         onActivated: {
+            root.controller.setActivePlot(root.plotIndex)
             if (root.hoveredAxis >= 0) {
-                root.controller.setActivePlot(root.plotIndex)
                 root.controller.fitPlots(true, true)
             } else
                 root.controller.fitPlotY(root.plotIndex)
@@ -269,6 +270,7 @@ Rectangle {
     property var rawReadouts: ({})
     property alias renderer: plotItem
     function toggleReadout(key) {
+        controller.setActivePlot(plotIndex)
         const next = Object.assign({}, rawReadouts)
         next[key] = !next[key]
         rawReadouts = next
@@ -276,14 +278,63 @@ Rectangle {
     function cursorInView(value) {
         return value >= plotItem.xMinimum && value <= plotItem.xMaximum
     }
-    function tickCovered(value) {
+    readonly property bool bothCursorTimesVisible: plotItem.cursorMode === 2
+        && cursorInView(plotItem.cursorX1) && cursorInView(plotItem.cursorX2)
+    property var cursorTimeItems: [null, null]
+    function refreshCursorTimeItems() {
+        cursorTimeItems = [cursorTimes.itemAt(0), cursorTimes.itemAt(1)]
+    }
+    readonly property var cursorBadgePositions: {
+        const labels = root.cursorTimeItems
+        const values = [plotItem.cursorX1, plotItem.cursorX2]
+        const positions = [root.axisLeft, root.axisLeft, root.axisLeft]
+        const entries = []
+        for (const i of [0, 2, 1]) {
+            const value = i === 2 ? (values[0] + values[1]) / 2 : values[i]
+            const width = i === 2 ? deltaBadge.width : (labels[i] ? labels[i].width : 0)
+            const center = root.axisLeft + root.xPixel(value)
+            positions[i] = Math.max(root.axisLeft, Math.min(root.axisLeft + axisRect.width - width, center - width / 2))
+            if (i === 2 ? root.bothCursorTimesVisible : (i < plotItem.cursorMode && root.cursorInView(value)))
+                entries.push({index: i, width: width, center: center})
+        }
+        entries.sort(function(a, b) { return a.center - b.center })
+        let remaining = entries.reduce(function(total, item) { return total + item.width }, 0)
+            + Math.max(0, entries.length - 1) * 4
+        let left = root.axisLeft
+        for (const entry of entries) {
+            positions[entry.index] = Math.max(left, Math.min(entry.center - entry.width / 2,
+                root.axisLeft + axisRect.width - remaining))
+            left = positions[entry.index] + entry.width + 4
+            remaining -= entry.width + 4
+        }
+        return positions
+    }
+    function beginCursorBadgeDrag(area, mouse, index) {
+        controller.setActivePlot(plotIndex)
+        plotItem.activeCursorIndex = index
+        forceActiveFocus()
+        area.startPixel = area.mapToItem(root, mouse.x, mouse.y).x
+        area.startX1 = plotItem.cursorX1
+        area.startX2 = plotItem.cursorX2
+    }
+    function moveCursorBadge(area, mouse, index) {
+        if (!area.pressed) return
+        const pixelOffset = area.mapToItem(root, mouse.x, mouse.y).x - area.startPixel
+        if (Math.abs(pixelOffset) < 2) return
+        const offset = pixelOffset / axisRect.width * (plotItem.xMaximum - plotItem.xMinimum)
+        if (index === 0) plotItem.moveCursorPair(area.startX1, area.startX2, offset)
+        else plotItem.setCursorX((index === 1 ? area.startX1 : area.startX2) + offset, index)
+    }
+    function tickCovered(value, labelWidth) {
         const px = root.axisLeft + root.xPixel(value)
         for (let i = 0; i < cursorTimes.count; ++i) {
             const label = cursorTimes.itemAt(i)
-            if (label && label.visible && px + 22 > label.x && px - 22 < label.x + label.width)
+            if (label && label.visible && px + labelWidth / 2 + 2 > label.x
+                && px - labelWidth / 2 - 2 < label.x + label.width)
                 return true
         }
-        return deltaBadge.visible && px + 22 > deltaBadge.x && px - 22 < deltaBadge.x + deltaBadge.width
+        return deltaBadge.visible && px + labelWidth / 2 + 2 > deltaBadge.x
+            && px - labelWidth / 2 - 2 < deltaBadge.x + deltaBadge.width
     }
     function formatCompact(value, precision) {
         const parts = Number(value).toPrecision(precision).split("e")
@@ -517,23 +568,47 @@ Rectangle {
     Repeater {
         id: cursorTimes
         model: plotItem.cursorMode
-        delegate: Label {
+        // itemAt() alone does not notify bindings when delegates first appear.
+        onItemAdded: { root.cursorTimeItems = [null, null]; Qt.callLater(root.refreshCursorTimeItems) }
+        onItemRemoved: { root.cursorTimeItems = [null, null]; Qt.callLater(root.refreshCursorTimeItems) }
+        delegate: Text {
+            id: cursorTime
             required property int index
             readonly property real value: index === 0 ? plotItem.cursorX1 : plotItem.cursorX2
             readonly property string formatKey: "x:" + index
             objectName: "cursorTimeLabel"
             visible: root.cursorInView(value)
-            x: Math.max(root.axisLeft, Math.min(root.width - root.axisRight - width,
-                        root.axisLeft + root.xPixel(value) - width / 2))
-            // Flush against the X axis: no gap between the axis line and the
-            // cursor time badge.
+            x: root.cursorBadgePositions[index]
             y: axisRect.y + axisRect.height
-            text: root.rawReadouts[formatKey] ? root.formatRaw(value) : root.formatCompact(value, 10)
+            width: Math.min(implicitWidth, root.bothCursorTimesVisible
+                ? Math.max(1, (axisRect.width - 8) / 3)
+                : axisRect.width)
+            text: root.formatCompact(value, 9)
             padding: 3
-            color: "#ffffff"
-            background: Rectangle { color: "#59636e" }
+            font.pixelSize: 10
+            elide: Text.ElideRight
+            color: root.textColor
+            Rectangle {
+                anchors.fill: parent
+                z: -1
+                color: root.darkTheme ? "#29323d" : "#f5f7fa"
+                radius: 3
+                border.color: cursorTime.index === 0 ? "#ef4452" : "#4778ed"
+                border.width: plotItem.activeCursorIndex === 0 || plotItem.activeCursorIndex === cursorTime.index + 1 ? 2 : 1
+            }
             z: 10
-            MouseArea { anchors.fill: parent; onClicked: root.toggleReadout(parent.formatKey) }
+            MouseArea {
+                id: timeDrag
+                anchors.fill: parent
+                cursorShape: Qt.ArrowCursor
+                hoverEnabled: true
+                onEntered: { root.hoveredAxis = -1; root.updateAxisCursor("", 0, 0, false) }
+                property real startPixel: 0
+                property real startX1: 0
+                property real startX2: 0
+                onPressed: function(mouse) { root.beginCursorBadgeDrag(timeDrag, mouse, cursorTime.index + 1) }
+                onPositionChanged: function(mouse) { root.moveCursorBadge(timeDrag, mouse, cursorTime.index + 1) }
+            }
         }
     }
 
@@ -559,7 +634,7 @@ Rectangle {
                 width: implicitWidth
                 horizontalAlignment: Text.AlignHCenter
                 text: xTick.modelData.label
-                visible: !root.tickCovered(xTick.modelData.value)
+                visible: !root.tickCovered(xTick.modelData.value, implicitWidth)
                 color: root.textColor
                 font.pixelSize: 10
             }
@@ -771,30 +846,39 @@ Rectangle {
 
     Rectangle {
         id: deltaBadge
-        x: Math.max(root.axisLeft,
-                    Math.min(root.width - root.axisRight - width,
-                             root.axisLeft
-                             + root.xPixel((plotItem.cursorX1 + plotItem.cursorX2) * 0.5)
-                             - width / 2))
+        objectName: "cursorDeltaBadge"
+        x: root.cursorBadgePositions[2]
         y: axisRect.y + axisRect.height
         z: 9
-        visible: plotItem.cursorMode === 2
-                 && root.cursorInView(plotItem.cursorX1) && root.cursorInView(plotItem.cursorX2)
-                 && cursorTimes.count === 2
-                 && Math.abs(root.xPixel(plotItem.cursorX2) - root.xPixel(plotItem.cursorX1))
-                    > width + Math.max(cursorTimes.itemAt(0) ? cursorTimes.itemAt(0).width : 0,
-                                       cursorTimes.itemAt(1) ? cursorTimes.itemAt(1).width : 0) + 12
+        visible: root.bothCursorTimesVisible && root.cursorTimeItems[0] !== null && root.cursorTimeItems[1] !== null
         color: "#59636e"
         radius: 3
         border.color: root.frameColor
+        border.width: plotItem.activeCursorIndex === 0 ? 2 : 1
         implicitWidth: deltaLabel.implicitWidth + 14
+        width: Math.min(implicitWidth, Math.max(1, (axisRect.width - 8) / 3))
         implicitHeight: deltaLabel.implicitHeight + 5
-        Label {
+        Text {
             id: deltaLabel
             anchors.centerIn: parent
+            width: Math.max(0, parent.width - 14)
+            elide: Text.ElideRight
+            horizontalAlignment: Text.AlignHCenter
             text: root.formatCompact(plotItem.cursorDeltaT, 7)
             color: "#ffffff"
             font.pixelSize: 10
+        }
+        MouseArea {
+            id: deltaDrag
+            anchors.fill: parent
+            cursorShape: Qt.ArrowCursor
+            hoverEnabled: true
+            onEntered: { root.hoveredAxis = -1; root.updateAxisCursor("", 0, 0, false) }
+            property real startPixel: 0
+            property real startX1: 0
+            property real startX2: 0
+            onPressed: function(mouse) { root.beginCursorBadgeDrag(deltaDrag, mouse, 0) }
+            onPositionChanged: function(mouse) { root.moveCursorBadge(deltaDrag, mouse, 0) }
         }
     }
 }

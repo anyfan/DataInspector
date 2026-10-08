@@ -51,6 +51,7 @@ MouseArea {
         leave()
     }
     onWheel: function(wheel) {
+        plot.controller.setActivePlot(plot.plotIndex)
         renderer.zoomAxis(axis, axis === 0 ? wheel.x / width : wheel.y / height,
                           wheel.angleDelta.y / 120)
         wheel.accepted = true

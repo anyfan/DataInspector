@@ -755,8 +755,9 @@ ApplicationWindow {
                 onArrowClicked: cursorMenu.popup()
                 Menu {
                     id: cursorMenu
-                    MenuItem { text: "单游标"; icon.source: "qrc:/icons/cursor_1.svg"; checkable: true; checked: window.preferredCursorMode === 1; onTriggered: window.selectCursorMode(1) }
-                    MenuItem { text: "双游标"; icon.source: "qrc:/icons/cursor_2.svg"; checkable: true; checked: window.preferredCursorMode === 2; onTriggered: window.selectCursorMode(2) }
+                    ButtonGroup { id: cursorModeGroup }
+                    MenuItem { objectName: "singleCursorOption"; text: "单游标"; icon.source: "qrc:/icons/cursor_1.svg"; checkable: true; ButtonGroup.group: cursorModeGroup; checked: window.preferredCursorMode === 1; onTriggered: window.selectCursorMode(1) }
+                    MenuItem { objectName: "doubleCursorOption"; text: "双游标"; icon.source: "qrc:/icons/cursor_2.svg"; checkable: true; ButtonGroup.group: cursorModeGroup; checked: window.preferredCursorMode === 2; onTriggered: window.selectCursorMode(2) }
                 }
             }
             SplitIconTool {

@@ -301,8 +301,8 @@ Rectangle {
         }
 
         ToolButton { text: "坐标"; implicitHeight: 24; font.pixelSize: 11; objectName: "trajectoryAxesButton"; onClicked: { root.controller.setActivePlot(root.plotIndex); root.editAxesRequested() } }
-        ToolButton { text: "视角"; visible: !root.planarMode; implicitHeight: 24; font.pixelSize: 11; onClicked: viewMenu.popup() }
-        ToolButton { text: "适应"; implicitHeight: 24; font.pixelSize: 11; onClicked: trajectory.fitView() }
+        ToolButton { text: "视角"; visible: !root.planarMode; implicitHeight: 24; font.pixelSize: 11; onClicked: { root.controller.setActivePlot(root.plotIndex); viewMenu.popup() } }
+        ToolButton { text: "适应"; implicitHeight: 24; font.pixelSize: 11; onClicked: { root.controller.setActivePlot(root.plotIndex); trajectory.fitView() } }
         ToolButton {
             text: "时间图"
             implicitHeight: 24
@@ -473,7 +473,7 @@ Rectangle {
     Shortcut {
         sequence: "Space"
         enabled: root.visible && trajectoryInput.containsMouse
-        onActivated: trajectory.fitView()
+        onActivated: { root.controller.setActivePlot(root.plotIndex); trajectory.fitView() }
     }
     Menu {
         id: viewMenu

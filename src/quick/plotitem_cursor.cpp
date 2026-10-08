@@ -56,6 +56,23 @@ std::optional<double> adjacentRawX(const PlotSeriesSnapshot &snapshot,
 
 } // namespace
 
+int PlotItem::activeCursorIndex() const
+{
+    QMutexLocker lock(&m_dataMutex);
+    return m_cursorMode == DoubleCursor ? m_activeCursorIndex : 1;
+}
+
+void PlotItem::setActiveCursorIndex(int index)
+{
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (index < (m_cursorMode == DoubleCursor ? 0 : 1) || index > (m_cursorMode == DoubleCursor ? 2 : 1)
+            || m_activeCursorIndex == index) return;
+        m_activeCursorIndex = index;
+    }
+    emit activeCursorChanged();
+}
+
 void PlotItem::setCursorMode(int mode)
 {
     const int normalized = qBound(static_cast<int>(NoCursor), mode, static_cast<int>(DoubleCursor));
@@ -63,6 +80,7 @@ void PlotItem::setCursorMode(int mode)
         QMutexLocker lock(&m_dataMutex);
         if (m_cursorMode == normalized) return;
         const bool wasDisabled = m_cursorMode == NoCursor;
+        const bool addingSecond = m_cursorMode == SingleCursor && normalized == DoubleCursor;
         m_cursorMode = normalized;
         if (wasDisabled && normalized != NoCursor) {
             const double span = qMax(m_xMaximum - m_xMinimum, 1e-12);
@@ -70,11 +88,21 @@ void PlotItem::setCursorMode(int mode)
             m_cursorX1 = nearestRawX(m_xMinimum + span * .25);
             m_cursorX2 = nearestRawX(m_xMinimum + span * .75);
         }
+        if (addingSecond) {
+            const double span = qMax(m_xMaximum - m_xMinimum, 1e-12);
+            // Preserve cursor 1, even off-screen; place the new cursor in this view.
+            const double fraction = m_cursorX1 > m_xMinimum + span * .5 ? .25 : .75;
+            const double target = m_xMinimum + span * fraction;
+            const double snapped = nearestRawX(target);
+            m_cursorX2 = snapped >= m_xMinimum && snapped <= m_xMaximum ? snapped : target;
+        }
+        m_activeCursorIndex = addingSecond ? 2 : 1;
 
         updateCursorValuesLocked();
         rebuildTicksLocked();
     }
     emit cursorChanged();
+    emit activeCursorChanged();
     emit cursorDeltaTChanged();
     emit cursorValuesChanged();
     update();
@@ -94,6 +122,27 @@ void PlotItem::setCursorX(double x, int cursorIndex)
     }
     emit cursorChanged(); emit cursorDeltaTChanged(); emit cursorValuesChanged(); update();
 }
+void PlotItem::moveCursorPair(double startX1, double startX2, double offset)
+{
+    if (!qIsFinite(startX1) || !qIsFinite(startX2) || !qIsFinite(offset) || offset == 0) return;
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (m_cursorMode != DoubleCursor) return;
+        const double lower = m_xMinimum - qMin(startX1, startX2);
+        const double upper = m_xMaximum - qMax(startX1, startX2);
+        const bool contained = lower <= 0 && upper >= 0;
+        if (contained) offset = qBound(lower, offset, upper);
+        offset = nearestRawX(startX1 + offset) - startX1;
+        if (contained) offset = qBound(lower, offset, upper);
+        const double x1 = startX1 + offset, x2 = startX2 + offset;
+        if (x1 == m_cursorX1 && x2 == m_cursorX2) return;
+        m_cursorX1 = x1;
+        m_cursorX2 = x2;
+        updateCursorValuesLocked();
+    }
+    emit cursorChanged(); emit cursorDeltaTChanged(); emit cursorValuesChanged(); update();
+}
+
 void PlotItem::setCursorPosition(double x, int cursorIndex)
 {
     {
@@ -123,6 +172,7 @@ void PlotItem::restoreCursorState(int mode, double x1, double x2)
         rebuildTicksLocked();
     }
     emit cursorChanged();
+    emit activeCursorChanged();
     emit cursorDeltaTChanged();
     emit cursorValuesChanged();
     update();
@@ -130,7 +180,7 @@ void PlotItem::restoreCursorState(int mode, double x1, double x2)
 
 void PlotItem::stepCursor(int direction, int cursorIndex)
 {
-    if (direction == 0 || cursorIndex < 0 || cursorIndex > 2)
+    if (direction == 0 || cursorIndex < -1 || cursorIndex > 2)
         return;
 
     bool changed = false;
@@ -138,6 +188,18 @@ void PlotItem::stepCursor(int direction, int cursorIndex)
         QMutexLocker lock(&m_dataMutex);
         if (m_cursorMode == NoCursor)
             return;
+        const bool selectedPair = cursorIndex == -1 && m_cursorMode == DoubleCursor && m_activeCursorIndex == 0;
+        if (selectedPair) {
+            const auto next = adjacentRawX(m_seriesSnapshot, m_cursorX1, direction);
+            const double offset = next ? *next - m_cursorX1
+                : (m_seriesSnapshot.series.isEmpty() ? (direction > 0 ? 1 : -1) * (m_xMaximum - m_xMinimum) / 100.0 : 0);
+            const double x1 = m_cursorX1, x2 = m_cursorX2;
+            lock.unlock();
+            moveCursorPair(x1, x2, offset);
+            return;
+        }
+        if (cursorIndex == -1)
+            cursorIndex = m_cursorMode == DoubleCursor ? m_activeCursorIndex : 1;
 
         const int lastTarget = m_cursorMode == DoubleCursor ? 2 : 1;
         for (int target = 1; target <= lastTarget; ++target) {
