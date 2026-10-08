@@ -40,14 +40,15 @@ jobs:
           if (!(Test-Path "$toolBin/clang++.exe")) { throw "LLVM-MinGW not found: $toolBin" }
           $toolBin >> $env:GITHUB_PATH
           $env:PATH = "$toolBin;$env:PATH"
-          cmake -S . -B build_ci -G Ninja `
+          $configureOutput = & cmake -S . -B build_ci -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" `
             "-DCMAKE_C_COMPILER=$toolBin/clang.exe" `
             "-DCMAKE_CXX_COMPILER=$toolBin/clang++.exe" `
             "-DCMAKE_RC_COMPILER=$toolBin/llvm-windres.exe" `
-            -DENABLE_MAT=ON -DBUILD_TESTING=ON -DENABLE_GPU_TESTS=OFF
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            -DENABLE_MAT=ON -DBUILD_TESTING=ON -DENABLE_GPU_TESTS=OFF 2>&1
+          $configureOutput | Write-Host
+          if ($LASTEXITCODE -ne 0) { throw ($configureOutput -join "`n") }
 
       - name: Build application and tests
         run: cmake --build build_ci --parallel 4
