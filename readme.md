@@ -4,6 +4,12 @@
 
 当前支持二维/三维轨迹混合子图、游标、会话保存恢复、时间偏移、信号重命名、XLSX/MAT 导入与导出。图片导出待迁移；**重放、Python API、`.mldatx` 视图文件已遗弃，不再计划实现**。
 
+## 下载 Windows 版
+
+[main 开发版下载](https://github.com/anyfan/DataInspector/releases/tag/latest) · [所有正式版本](https://github.com/anyfan/DataInspector/releases) · [自动构建状态](https://github.com/anyfan/DataInspector/actions/workflows/windows-release.yml)
+
+下载 `DataInspector-windows-x64.zip`，解压整个目录后运行 `DataInspector.exe`，无需另装 Qt。每次推送 `main` 会在构建和检查通过后更新开发版；推送 `v*` 标签发布正式版。自动发布配置见 [构建文档](docs/dev/build.md#github-自动构建与发布)。
+
 ## 文档
 
 完整文档已迁移到 **[`docs/`](docs/README.md)**：

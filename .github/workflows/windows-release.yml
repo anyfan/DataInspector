@@ -1,0 +1,139 @@
+name: Windows build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt and LLVM-MinGW
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.3'
+          arch: win64_llvm_mingw
+          modules: qtsvg
+          tools: tools_llvm_mingw1706
+          cache: true
+
+      - name: Configure Release with MAT support
+        run: |
+          $toolBin = Join-Path (Split-Path (Split-Path $env:QT_ROOT_DIR)) 'Tools/llvm-mingw1706_64/bin'
+          if (!(Test-Path "$toolBin/clang++.exe")) { throw "LLVM-MinGW not found: $toolBin" }
+          $toolBin >> $env:GITHUB_PATH
+          $env:PATH = "$toolBin;$env:PATH"
+          cmake -S . -B build_ci -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" `
+            "-DCMAKE_C_COMPILER=$toolBin/clang.exe" `
+            "-DCMAKE_CXX_COMPILER=$toolBin/clang++.exe" `
+            "-DCMAKE_RC_COMPILER=$toolBin/llvm-windres.exe" `
+            -DENABLE_MAT=ON -DBUILD_TESTING=ON -DENABLE_GPU_TESTS=OFF
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build application and tests
+        run: cmake --build build_ci --parallel 4
+
+      - name: QML lint (zero warnings)
+        run: cmake --build build_ci --target DataInspector_qmllint
+
+      - name: Run offscreen tests
+        env:
+          QT_QUICK_CONTROLS_STYLE: Fusion
+          QT_QPA_PLATFORM: offscreen
+          QT_QUICK_BACKEND: software
+        run: ctest --test-dir build_ci --output-on-failure --timeout 180 --output-junit test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-results
+          path: build_ci/test-results.xml
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Deploy portable application
+        run: |
+          ./tools/deploy_qt6.ps1 -QtDir $env:QT_ROOT_DIR -BuildDir build_ci -OutputDir dist/DataInspector
+          Copy-Item readme.md dist/DataInspector/README.md
+          Copy-Item docs dist/DataInspector/docs -Recurse
+          "Commit: $env:GITHUB_SHA`nRef: $env:GITHUB_REF`nRun: $env:GITHUB_RUN_ID" |
+            Set-Content dist/DataInspector/BUILD.txt -Encoding utf8
+
+      - name: Verify packaged application without installed Qt
+        run: ./tools/smoke_packaged_qt6.ps1 -PackageDir dist/DataInspector
+
+      - name: Create ZIP and SHA256 checksum
+        run: |
+          Compress-Archive -Path dist/DataInspector -DestinationPath dist/DataInspector-windows-x64.zip
+          $hash = (Get-FileHash dist/DataInspector-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  DataInspector-windows-x64.zip" | Set-Content dist/SHA256SUMS.txt -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DataInspector-windows-x64
+          path: |
+            dist/DataInspector-windows-x64.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: DataInspector-windows-x64
+          path: release
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              echo "Release $tag already exists; refusing to overwrite a versioned release."
+              exit 1
+            fi
+            gh release create "$tag" release/* --verify-tag --title "DataInspector $tag" --generate-notes
+          else
+            printf 'main 分支自动构建的开发版。解压整个 ZIP 后运行 DataInspector.exe。\n\nCommit: %s\nBuild: https://github.com/%s/actions/runs/%s\n\n包含 Qt 运行依赖及 MAT 支持；已通过 Release 构建、QML 静态检查、离屏测试及部署启动检查。\n' \
+              "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > release-notes.md
+            if gh release view latest >/dev/null 2>&1; then
+              gh api --method PATCH "repos/$GH_REPO/git/refs/tags/latest" -f sha="$GITHUB_SHA" -F force=true
+              gh release upload latest release/* --clobber
+              gh release edit latest --title 'DataInspector main 开发版' --notes-file release-notes.md --prerelease --latest=false
+            else
+              gh release create latest release/* --target "$GITHUB_SHA" --title 'DataInspector main 开发版' \
+                --notes-file release-notes.md --prerelease --latest=false
+            fi
+          fi

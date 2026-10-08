@@ -60,6 +60,25 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 - `plugins/imageformats`（含 `qsvg.dll`，否则工具栏 SVG 图标空白）
 - `plugins/iconengines`（含 `qsvgicon.dll`）
 
+## GitHub 自动构建与发布
+
+工作流：`.github/workflows/windows-release.yml`。
+
+- 推送 `main`：构建成功后更新 `latest` 标签对应的 **main 开发版预发布**，固定下载入口为 <https://github.com/anyfan/DataInspector/releases/tag/latest>。
+- 推送 `v*` 标签（例如 `v1.0.0`）：发布同名正式 Release，自动生成变更说明。已存在的正式 Release 不覆盖。
+- 指向 `main` 的 PR：只构建、检查和打包，不发布。
+- Actions 页面可手动运行；仅 `main` 或 `v*` 标签运行允许发布。
+
+使用标准 `windows-2022` runner，安装 Qt 6.8.3 `win64_llvm_mingw`、qtsvg 和 `tools_llvm_mingw1706`。CI 用 SDK 环境变量单独配置 `build_ci`，不依赖本机预设路径；`ENABLE_MAT=ON`，沿用仓库中的静态库。
+
+发布前依次完成 Release 应用/测试构建、`DataInspector_qmllint` 零 warning、Fusion/offscreen CTest 和部署包启动检查。GPU 测试关闭；离屏检查不等同真实 GPU 或人工 GUI 验收。
+
+产物 `DataInspector-windows-x64.zip` 包含完整 `DataInspector/` 目录、运行依赖、文档和 `BUILD.txt`；`SHA256SUMS.txt` 可用于校验。必须解压整个目录再运行 exe。Actions 构建产物及测试报告保留 7 天，Release 下载包持续保留。
+
+`tools/smoke_packaged_qt6.ps1` 临时清除进程中的 Qt/QML 搜索环境及 SDK PATH，检查平台/SVG/QML 文件，并启动包内应用等待 15 秒，捕获提前退出和 QML 加载错误；结束后恢复环境。它验证基础部署启动，不替代交互验收。
+
+无需自行创建 PAT 或配置 Secrets：发布任务使用 GitHub 自动生成的 `GITHUB_TOKEN`，仅发布任务授予 `contents: write`。公开仓库的标准 GitHub-hosted runner 编译免费；不要切换到收费的 larger runner。
+
 ## Windows 资源
 
 - `assets/DataInspector.rc`：嵌入 exe 图标和应用清单。

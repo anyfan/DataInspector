@@ -55,6 +55,8 @@
 
 ## 构建、部署与工具链
 
+- [GitHub Windows 自动构建发布（2026-10-08）](github-actions-release-2026-10-08.md)：main 开发版、版本标签正式版、MAT 支持及部署启动门槛。
+
 | 文档 | 主题 |
 | --- | --- |
 | [应用图标重绘与 exe 图标嵌入](mcp-application-icon.md) | SVG → 多分辨率 ICO，.rc 资源接入 |
