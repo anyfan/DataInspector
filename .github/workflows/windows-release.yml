@@ -36,6 +36,11 @@ jobs:
 
       - name: Configure Release with MAT support
         run: |
+          trap {
+            $message = $_.ToString().Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error::$message"
+            exit 1
+          }
           $toolBin = Join-Path (Split-Path (Split-Path $env:QT_ROOT_DIR)) 'Tools/llvm-mingw1706_64/bin'
           if (!(Test-Path "$toolBin/clang++.exe")) { throw "LLVM-MinGW not found: $toolBin" }
           $toolBin >> $env:GITHUB_PATH
@@ -48,7 +53,11 @@ jobs:
             "-DCMAKE_RC_COMPILER=$toolBin/llvm-windres.exe" `
             -DENABLE_MAT=ON -DBUILD_TESTING=ON -DENABLE_GPU_TESTS=OFF 2>&1
           $configureOutput | Write-Host
-          if ($LASTEXITCODE -ne 0) { throw ($configureOutput -join "`n") }
+          if ($LASTEXITCODE -ne 0) {
+            $message = ($configureOutput -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::error::$message"
+            exit 1
+          }
 
       - name: Build application and tests
         run: cmake --build build_ci --parallel 4
