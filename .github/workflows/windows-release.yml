@@ -23,7 +23,7 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Install Qt and LLVM-MinGW
         uses: jurplel/install-qt-action@v4
@@ -42,12 +42,14 @@ jobs:
             exit 1
           }
           $toolBin = Join-Path (Split-Path (Split-Path $env:QT_ROOT_DIR)) 'Tools/llvm-mingw1706_64/bin'
+          $toolBin = $toolBin.Replace('\', '/')
+          $qtRoot = $env:QT_ROOT_DIR.Replace('\', '/')
           if (!(Test-Path "$toolBin/clang++.exe")) { throw "LLVM-MinGW not found: $toolBin" }
           $toolBin >> $env:GITHUB_PATH
           $env:PATH = "$toolBin;$env:PATH"
           $configureOutput = & cmake -S . -B build_ci -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
-            "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR" `
+            "-DCMAKE_PREFIX_PATH=$qtRoot" `
             "-DCMAKE_C_COMPILER=$toolBin/clang.exe" `
             "-DCMAKE_CXX_COMPILER=$toolBin/clang++.exe" `
             "-DCMAKE_RC_COMPILER=$toolBin/llvm-windres.exe" `
@@ -74,7 +76,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: windows-test-results
           path: build_ci/test-results.xml
@@ -98,7 +100,7 @@ jobs:
           $hash = (Get-FileHash dist/DataInspector-windows-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
           "$hash  DataInspector-windows-x64.zip" | Set-Content dist/SHA256SUMS.txt -Encoding ascii
 
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@v6
         with:
           name: DataInspector-windows-x64
           path: |
@@ -116,7 +118,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@v6
         with:
           name: DataInspector-windows-x64
           path: release
