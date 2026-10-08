@@ -39,12 +39,20 @@ ApplicationWindow {
     property color borderColor: darkTheme ? "#3b4652" : "#d7dfe8"
     property color accentColor: "#0078d4"
     property color treeTextColor: darkTheme ? "#e6edf3" : "#202830"
+    readonly property color treeHeaderColor: darkTheme ? "#25313d" : "#edf4fb"
+    readonly property color treeHeaderTextColor: darkTheme ? "#b2c9dc" : "#4e7da2"
+    readonly property int treeHeaderHeight: 28
     property bool darkTheme: false
     property bool signalTreeVisible: true
     property int editingSignalIndex: -1
     property string pendingFileRemoval: ""
     property int pendingExportScope: 0
     property bool exportZipCompression: true
+
+    function signalGroupTitle(group) {
+        const parts = group.split("/")
+        return parts.length > 1 ? parts.slice(1).join(" / ") : group
+    }
 
     function highlightedSearchText(value) {
         function escaped(text) {
@@ -838,20 +846,16 @@ ApplicationWindow {
             SplitView.maximumWidth: Math.max(180, window.width - 320)
             color: window.panelColor
             ColumnLayout { anchors.fill: parent; anchors.margins: 10; anchors.rightMargin: 0; spacing: 8
-                RowLayout {
-                    Layout.fillWidth: true
-                    Label { text: "信号 · 子图 " + (window.appController.activePlotIndex + 1); color: window.treeTextColor; font.pixelSize: 15; font.weight: Font.DemiBold; Layout.fillWidth: true }
-                    ToolButton { text: "‹"; onClicked: window.signalTreeVisible = false; ToolTip.visible: hovered; ToolTip.text: "隐藏信号树（可从设置恢复）" }
-                }
-                Label { text: window.appController.currentFile.length > 0 ? window.appController.currentFile : "未加载文件"; color: window.treeTextColor; elide: Text.ElideMiddle; Layout.fillWidth: true; opacity: 0.78 }
                 RowLayout { Layout.fillWidth: true; spacing: 4
                     TextField { id: signalSearch; objectName: "signalSearch"; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: window.appController.filterSignals(text) }
                     ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered; ToolTip.text: "清除搜索" }
+                    ToolButton { text: "‹"; onClicked: window.signalTreeVisible = false; ToolTip.visible: hovered; ToolTip.text: "隐藏信号树（可从设置恢复）" }
                 }
                 Item { Layout.fillWidth: true; Layout.fillHeight: true
                 ListView { id: signalList; anchors.fill: parent; clip: true; model: window.appController.signalModel
                     objectName: "signalList"
                     anchors.rightMargin: 5
+                    anchors.topMargin: stickyHeader.visible ? stickyHeader.height : 0
                     // Sticky hierarchy: the file/table ancestors of the row at the
                     // top edge, but only those already scrolled out of view.
                     // Recomputed at most once per stickyTimer tick and only when
@@ -906,6 +910,7 @@ ApplicationWindow {
                     }
                     delegate: Item {
                         id: signalDelegate
+                        objectName: "signalTreeRow"
                         required property int index
                         required property string signalName
                         required property int signalIndex
@@ -919,8 +924,10 @@ ApplicationWindow {
                         required property real signalWidth
                         required property int signalLineStyle
                         property bool rowHovered: false
+                        readonly property string displayName: groupNode
+                            ? window.signalGroupTitle(groupName) : signalName
                         width: signalList.width
-                        height: groupNode ? 28 : 30
+                        height: groupNode ? window.treeHeaderHeight : 30
 
                         Rectangle {
                             anchors.fill: parent
@@ -928,15 +935,29 @@ ApplicationWindow {
                                    ? (window.darkTheme ? "#29333d" : "#d9eafa")
                                    : signalDelegate.rowHovered
                                      ? (window.darkTheme ? "#252d35" : "#eef4fa")
-                                     : window.panelColor
+                                     : signalDelegate.groupNode
+                                       ? window.treeHeaderColor
+                                       : window.panelColor
                         }
                         HoverHandler { onHoveredChanged: signalDelegate.rowHovered = hovered }
+                        ToolTip.visible: rowHovered
+                        ToolTip.delay: 600
+                        ToolTip.text: groupNode ? groupName : groupName + " / " + signalName
+
+                        Rectangle {
+                            visible: signalDelegate.groupNode
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            height: 1
+                            color: window.borderColor
+                        }
 
                         RowLayout {
                             anchors.fill: parent
-                            anchors.leftMargin: signalDelegate.nodeDepth * 14 + 4
+                            anchors.leftMargin: 12
                             anchors.rightMargin: 4
-                            spacing: 6
+                            spacing: 4
                             ToolButton {
                                 visible: signalDelegate.groupNode
                                 Layout.preferredWidth: 24
@@ -944,7 +965,7 @@ ApplicationWindow {
                                 text: signalDelegate.groupExpanded ? "▾" : "▸"
                                 palette.button: window.panelColor
                                 palette.buttonText: signalDelegate.groupNode
-                                                    ? window.accentColor
+                                                    ? window.treeHeaderTextColor
                                                     : window.treeTextColor
                                 onClicked: window.appController.signalModel.toggleGroup(signalDelegate.groupName)
                             }
@@ -967,11 +988,10 @@ ApplicationWindow {
                             }
                             Label {
                                 objectName: "signalTreeName"
-                                text: window.highlightedSearchText(signalDelegate.signalName)
+                                text: window.highlightedSearchText(signalDelegate.displayName)
                                 textFormat: Text.StyledText
-                                font.weight: signalDelegate.groupNode ? Font.DemiBold : Font.Normal
-                                color: signalDelegate.groupNode
-                                       ? window.accentColor : window.treeTextColor
+                                font.weight: Font.Normal
+                                color: signalDelegate.groupNode ? window.treeHeaderTextColor : window.treeTextColor
                                 elide: Text.ElideRight
                                 Layout.fillWidth: true
                                 MouseArea {
@@ -1060,6 +1080,7 @@ ApplicationWindow {
                         objectName: "signalScrollBar"
                         parent: signalList.parent
                         anchors.top: parent.top
+                        anchors.topMargin: signalList.anchors.topMargin
                         anchors.bottom: parent.bottom
                         anchors.right: parent.right
                         width: 5
@@ -1076,68 +1097,79 @@ ApplicationWindow {
                         background: null
                     }
                 }
-                Column {
+                Rectangle {
                     id: stickyHeader
                     objectName: "signalStickyHeader"
                     anchors.left: parent.left
                     anchors.right: parent.right
                     anchors.rightMargin: 5
                     anchors.top: parent.top
+                    height: window.treeHeaderHeight
                     visible: signalList.stickyPath.length > 0
+                    color: window.treeHeaderColor
                     z: 2
-                    Repeater {
-                        model: signalList.stickyPath
-                        delegate: Rectangle {
-                            id: stickyRow
-                            required property var modelData
-                            required property int index
-                            width: stickyHeader.width
-                            height: 26
-                            color: window.darkTheme ? "#1f272f" : "#eef3f8"
-                            Rectangle {
-                                anchors.left: parent.left; anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                height: 1
-                                color: window.darkTheme ? "#3b4652" : "#d7dfe8"
-                            }
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: stickyRow.modelData.depth * 14 + 4
-                                anchors.rightMargin: 4
-                                spacing: 6
+                    readonly property string pathText: signalList.stickyPath.map(entry => entry.name).join(" › ")
+                    function navigate(index, collapse) {
+                        const entry = signalList.stickyPath[index]
+                        if (!entry) return
+                        if (collapse) window.appController.signalModel.toggleGroup(entry.group)
+                        signalList.positionViewAtIndex(Math.min(entry.row, signalList.count - 1), ListView.Beginning)
+                        signalList.currentIndex = Math.min(entry.row, signalList.count - 1)
+                    }
+                    Rectangle {
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.bottom: parent.bottom
+                        height: 1
+                        color: window.darkTheme ? "#3b4652" : "#d7dfe8"
+                    }
+                    RowLayout {
+                        id: breadcrumb
+                        objectName: "signalBreadcrumb"
+                        anchors.fill: parent
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 8
+                        spacing: 0
+                        Repeater {
+                            model: signalList.stickyPath
+                            delegate: RowLayout {
+                                id: breadcrumbSegment
+                                required property var modelData
+                                required property int index
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: implicitWidth
+                                Layout.maximumWidth: implicitWidth
+                                Layout.minimumWidth: separator.implicitWidth
+                                spacing: 0
                                 Label {
-                                    Layout.preferredWidth: 24
-                                    horizontalAlignment: Text.AlignHCenter
-                                    text: "▾"
-                                    color: window.accentColor
-                                }
-                                Label {
+                                    objectName: "signalBreadcrumbSegment"
                                     Layout.fillWidth: true
-                                    text: window.highlightedSearchText(stickyRow.modelData.name)
+                                    Layout.minimumWidth: 0
+                                    text: window.highlightedSearchText(breadcrumbSegment.modelData.name)
                                     textFormat: Text.StyledText
-                                    font.weight: Font.DemiBold
-                                    color: window.accentColor
-                                    elide: Text.ElideRight
+                                    color: window.treeHeaderTextColor
+                                    font.weight: Font.Normal
+                                    elide: Text.ElideMiddle
+                                    TapHandler {
+                                        acceptedButtons: Qt.LeftButton
+                                        onSingleTapped: stickyHeader.navigate(breadcrumbSegment.index, false)
+                                        onDoubleTapped: stickyHeader.navigate(breadcrumbSegment.index, true)
+                                    }
                                 }
-                            }
-                            HoverHandler { id: stickyHover }
-                            ToolTip.visible: stickyHover.hovered
-                            ToolTip.delay: 600
-                            ToolTip.text: stickyRow.modelData.group + "\n单击回到该层级，双击折叠"
-                            TapHandler {
-                                acceptedButtons: Qt.LeftButton
-                                onSingleTapped: {
-                                    signalList.positionViewAtIndex(stickyRow.modelData.row, ListView.Beginning)
-                                    signalList.currentIndex = stickyRow.modelData.row
-                                }
-                                onDoubleTapped: {
-                                    const row = stickyRow.modelData.row
-                                    window.appController.signalModel.toggleGroup(stickyRow.modelData.group)
-                                    signalList.positionViewAtIndex(Math.min(row, signalList.count - 1), ListView.Beginning)
+                                Label {
+                                    id: separator
+                                    visible: breadcrumbSegment.index < signalList.stickyPath.length - 1
+                                    text: visible ? " › " : ""
+                                    color: window.treeHeaderTextColor
                                 }
                             }
                         }
+                        Item { Layout.fillWidth: true; Layout.preferredWidth: 0 }
                     }
+                    HoverHandler { id: stickyHover }
+                    ToolTip.visible: stickyHover.hovered
+                    ToolTip.delay: 600
+                    ToolTip.text: pathText + "\n单击路径回到该层级，双击折叠"
                 }
                 }
                 Label {

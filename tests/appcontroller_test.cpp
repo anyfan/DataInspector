@@ -65,6 +65,7 @@ private slots:
     void cursorBadgeDragsSelectAndMoveOneOrBoth();
     void interactingWithSubplotSelectsIt();
     void toolbarModesToggleAndRememberSelection();
+    void signalSectionsKeepNestedPathsAndAlignedNames();
     void editDialogsRememberAndResetValues();
     void realMatImportPerformanceWhenRequested();
     void realCsvImportPerformanceWhenRequested();
@@ -1562,6 +1563,110 @@ void AppControllerTest::quotedCsvFieldsAreImported()
     QCOMPARE(controller.signalName(0), QStringLiteral("Pitch,deg"));
 }
 
+void AppControllerTest::signalSectionsKeepNestedPathsAndAlignedNames()
+{
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
+    qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
+    qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
+    AppController controller;
+    controller.signalModel()->setNames({"Pitch", "Latitude", "Longitude"},
+        {"flight.mat/p1", "flight.mat/p2/navigation/position", "flight.mat/p2/navigation/position"},
+        {QColor("red"), QColor("blue"), QColor("green")});
+    QQmlEngine engine;
+    QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) {
+        for (const auto &error : errors) warnings.append(error.toString());
+    });
+    const QDir directory = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml");
+    qmlRegisterType(QUrl::fromLocalFile(directory.filePath("QuickPlot.qml")),
+                    "DataInspector", 1, 0, "QuickPlot");
+    QQmlComponent component(&engine, QUrl::fromLocalFile(directory.filePath("Main.qml")));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties(
+        {{"visible", false}, {"appController", QVariant::fromValue(&controller)}}));
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto *host = qobject_cast<QQuickWindow *>(object.get());
+    QVERIFY(host);
+    host->show();
+    QVERIFY(QTest::qWaitForWindowExposed(host));
+    const auto findRow = [&](const QString &name) -> QQuickItem * {
+        QList<QQuickItem *> pending{host->contentItem()};
+        while (!pending.isEmpty()) {
+            auto *item = pending.takeLast();
+            if (item->objectName() == "signalTreeRow"
+                && item->property("signalName").toString() == name) return item;
+            pending.append(item->childItems());
+        }
+        return nullptr;
+    };
+    QTRY_VERIFY(findRow("Pitch") && findRow("Latitude") && findRow("position"));
+    auto *pitchName = findRow("Pitch")->findChild<QQuickItem *>("signalTreeName");
+    auto *latitudeName = findRow("Latitude")->findChild<QQuickItem *>("signalTreeName");
+    auto *positionName = findRow("position")->findChild<QQuickItem *>("signalTreeName");
+    QVERIFY(pitchName && latitudeName && positionName);
+    auto *fileName = findRow("flight.mat")->findChild<QQuickItem *>("signalTreeName");
+    auto *tableName = findRow("p1")->findChild<QQuickItem *>("signalTreeName");
+    QVERIFY(fileName && tableName);
+    QCOMPARE(fileName->property("color"), tableName->property("color"));
+    QCOMPARE(fileName->property("font").value<QFont>(), tableName->property("font").value<QFont>());
+    QCOMPARE(findRow("flight.mat")->height(), findRow("p1")->height());
+    QCOMPARE(fileName->mapToScene(QPointF()).x(), tableName->mapToScene(QPointF()).x());
+    QTRY_VERIFY(pitchName->width() > 0 && latitudeName->width() > 0);
+    QCOMPARE(pitchName->mapToScene(QPointF()).x(), latitudeName->mapToScene(QPointF()).x());
+    QCOMPARE(positionName->property("text").toString(), QStringLiteral("p2 / navigation / position"));
+    QVERIFY(findRow("position")->property("groupExpanded").toBool());
+    QTest::mouseClick(host, Qt::LeftButton, Qt::NoModifier,
+        positionName->mapToScene(QPointF(positionName->width() / 2, positionName->height() / 2)).toPoint());
+    QTRY_VERIFY(!findRow("Latitude"));
+    QVERIFY(!findRow("position")->property("groupExpanded").toBool());
+    auto *search = object->findChild<QQuickItem *>("signalSearch");
+    QVERIFY(search);
+    search->setProperty("text", "Latitude");
+    QTRY_VERIFY(findRow("Latitude")); // Search reveals a collapsed group's matching child.
+    QVERIFY(!findRow("Pitch"));
+    QCOMPARE(findRow("position")->property("displayName").toString(), QStringLiteral("p2 / navigation / position"));
+    object->setProperty("darkTheme", true);
+    QCoreApplication::processEvents();
+    search->setProperty("text", "");
+    controller.signalModel()->toggleGroup("flight.mat/p2/navigation/position");
+    QStringList extraNames, extraGroups;
+    for (int i = 0; i < 60; ++i) {
+        extraNames.append(QStringLiteral("Sample%1").arg(i));
+        extraGroups.append("flight.mat/p2/navigation/position");
+    }
+    controller.signalModel()->appendNames(extraNames, extraGroups, {});
+    auto *list = object->findChild<QQuickItem *>("signalList");
+    auto *header = object->findChild<QQuickItem *>("signalStickyHeader");
+    auto *breadcrumb = object->findChild<QQuickItem *>("signalBreadcrumb");
+    QVERIFY(list && header && breadcrumb);
+    list->setProperty("contentY", 220.0);
+    QTRY_COMPARE(header->property("pathText").toString(),
+        QStringLiteral("flight.mat › p2 › navigation › position"));
+    QCOMPARE(header->height(), 28.0); // Deep paths still occupy exactly one row.
+    QCOMPARE(list->y(), header->height()); // Navigation does not cover the first signal.
+    const auto firstSegment = [&]() -> QQuickItem * {
+        QList<QQuickItem *> pending{breadcrumb};
+        while (!pending.isEmpty()) {
+            auto *item = pending.takeLast();
+            if (item->objectName() == "signalBreadcrumbSegment"
+                && item->property("text").toString() == "flight.mat") return item;
+            pending.append(item->childItems());
+        }
+        return nullptr;
+    };
+    QTRY_VERIFY(firstSegment());
+    auto *segment = firstSegment();
+    QCOMPARE(segment->property("color"), object->property("treeHeaderTextColor"));
+    QVERIFY(!segment->property("font").value<QFont>().underline());
+    QVERIFY(!segment->property("text").toString().contains("<a "));
+    QTRY_VERIFY(segment->width() > 0 && segment->height() > 0);
+    QTest::mouseClick(host, Qt::LeftButton, Qt::NoModifier,
+        segment->mapToScene(QPointF(segment->width() / 2, segment->height() / 2)).toPoint());
+    QTRY_COMPARE(list->property("currentIndex").toInt(), 0);
+    QTRY_VERIFY(!header->isVisible());
+    QCOMPARE(warnings, QStringList());
+}
+
 void AppControllerTest::toolbarModesToggleAndRememberSelection()
 {
     qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
@@ -1671,6 +1776,8 @@ void AppControllerTest::toolbarModesToggleAndRememberSelection()
     QTRY_VERIFY(bar->isVisible());
     list->setProperty("contentY", 150.0);
     QTRY_VERIFY(sticky->isVisible());
+    QCOMPARE(sticky->property("pathText").toString(), QStringLiteral("tree.csv"));
+    QCOMPARE(sticky->height(), 28.0);
     QVERIFY(sticky->x() + sticky->width() <= bar->x());
     QVERIFY(list->x() + list->width() <= bar->x());
     QCOMPARE(bar->width(), 5.0);
