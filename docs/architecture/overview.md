@@ -56,6 +56,8 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 
 ## 数据流
 
+关于页面由 `AboutDialog.qml` 展示，`AppController::aboutInfo`/`releaseNotes` 提供常量信息，`copyAboutInfo` 在 GUI 线程写入剪贴板。`appcontroller_about.cpp` 读取构建时生成的元数据和嵌入的更新记录，不在程序启动时查询 Git，也不依赖源码目录。
+
 1. `AppController` 在工作线程创建 `DataLoadWorker`，串行读取文件、解析、构建分块极值索引。
 2. 结果通过 `LoadedTable` 值类型投递给 GUI 线程，`PlotSeriesStore` 持有不可变原始序列和索引，子图只存系列 ID。
 3. 视图变化时 `PlotItem` 把请求交给 `PlotLodScheduler`（最多两个后台线程），生成结构化 LOD。

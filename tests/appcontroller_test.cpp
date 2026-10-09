@@ -5,6 +5,7 @@
 #include "xlsxwriter.h"
 
 #include <QDir>
+#include <QClipboard>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QQmlComponent>
@@ -83,6 +84,7 @@ private slots:
     void renamingSignalUpdatesModelLegendsAndExport();
     void matExportMirrorsImportLayout();
     void matExportKeepsSourceTableNumbers();
+    void aboutPageShowsBuildInfoAndReleaseNotes();
 };
 
 static void writeCsvFile(const QString &path, const QByteArray &contents)
@@ -1996,9 +1998,9 @@ void AppControllerTest::toolbarModesToggleAndRememberSelection()
     QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleCursorTool"));
     QCOMPARE(object->property("selectedCursorMode").toInt(), 0);
     QVERIFY(QMetaObject::invokeMethod(object.get(), "selectCursorMode", Q_ARG(QVariant, 1)));
-    QCOMPARE(object->property("selectedCursorMode").toInt(), 0);
-    QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleCursorTool"));
     QCOMPARE(object->property("selectedCursorMode").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleCursorTool"));
+    QCOMPARE(object->property("selectedCursorMode").toInt(), 0);
 
     auto *singleOption = object->findChild<QQuickItem *>("singleCursorOption");
     auto *doubleOption = object->findChild<QQuickItem *>("doubleCursorOption");
@@ -2014,9 +2016,11 @@ void AppControllerTest::toolbarModesToggleAndRememberSelection()
         QCoreApplication::processEvents();
     };
     chooseCursor(singleOption);
+    QCOMPARE(object->property("selectedCursorMode").toInt(), 1);
     QVERIFY(singleOption->property("checked").toBool());
     QVERIFY(!doubleOption->property("checked").toBool());
     chooseCursor(doubleOption);
+    QCOMPARE(object->property("selectedCursorMode").toInt(), 2);
     QVERIFY(doubleOption->property("checked").toBool());
     QVERIFY(!singleOption->property("checked").toBool());
     chooseCursor(doubleOption);
@@ -2033,6 +2037,8 @@ void AppControllerTest::toolbarModesToggleAndRememberSelection()
     QCOMPARE(object->property("activeZoomMode").toInt(), 0);
     QCOMPARE(object->property("selectedZoomMode").toInt(), 3);
     QVERIFY(QMetaObject::invokeMethod(object.get(), "selectZoomMode", Q_ARG(QVariant, 2)));
+    QCOMPARE(object->property("activeZoomMode").toInt(), 2);
+    QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleZoomTool"));
     QCOMPARE(object->property("activeZoomMode").toInt(), 0);
     QVERIFY(QMetaObject::invokeMethod(object.get(), "toggleZoomTool"));
     QCOMPARE(object->property("activeZoomMode").toInt(), 2);
@@ -2050,6 +2056,9 @@ void AppControllerTest::toolbarModesToggleAndRememberSelection()
     QVERIFY(highlighted.toString().contains("&amp;"));
     QVERIFY(highlighted.toString().endsWith("&lt;"));
     search->setProperty("text", "");
+    // Clearing search restores the saved scroll position after its debounce.
+    // Let that finish before this fixture establishes a new scroll position.
+    QTRY_VERIFY(!search->property("filtering").toBool());
     QTemporaryDir directory;
     const QString csv = directory.filePath("tree.csv");
     QByteArray data = "time";
@@ -2805,6 +2814,43 @@ void AppControllerTest::unchangedPensDoNotInvalidatePlots()
     controller.setSignalPen(0, color, 3, Qt::SolidLine);
     QCOMPARE(changed.size(), 1);
     QCOMPARE(controller.signalWidth(0), 3.0);
+}
+
+void AppControllerTest::aboutPageShowsBuildInfoAndReleaseNotes()
+{
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    AppController controller;
+    QQmlEngine engine;
+    QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) {
+        for (const auto &error : errors) warnings.append(error.toString());
+    });
+    const QDir qmlDirectory = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml");
+    QQmlComponent component(&engine, QUrl::fromLocalFile(qmlDirectory.filePath("Main.qml")));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({{"visible", false}, {"appController", QVariant::fromValue(&controller)}}));
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto *aboutButton = object->findChild<QObject *>("aboutMenuItem");
+    auto *aboutDialog = object->findChild<QObject *>("aboutDialog");
+    auto *aboutText = object->findChild<QObject *>("aboutBuildInfo");
+    auto *notes = object->findChild<QObject *>("aboutReleaseNotes");
+    QVERIFY(aboutButton && aboutDialog && aboutText && notes);
+    QVERIFY(!object->findChild<QObject *>("aboutButton"));
+    QVERIFY(QMetaObject::invokeMethod(aboutButton, "triggered"));
+    QTRY_VERIFY(aboutDialog->property("visible").toBool());
+    const auto info = controller.aboutInfo();
+    QVERIFY(!info.value("version").toString().isEmpty());
+    QVERIFY(info.value("buildTime").toString().endsWith(QStringLiteral(" 北京时间 (UTC+8)")));
+    QVERIFY(aboutText->property("text").toString().contains(info.value("gitHash").toString()));
+    QVERIFY(notes->property("text").toString().contains(QStringLiteral("更新记录")));
+    controller.copyAboutInfo();
+    QVERIFY(QGuiApplication::clipboard()->text().contains(info.value("buildTime").toString()));
+    QVERIFY(QMetaObject::invokeMethod(aboutDialog, "close"));
+    QTRY_VERIFY(!aboutDialog->property("visible").toBool());
+
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
 }
 
 QTEST_MAIN(AppControllerTest)

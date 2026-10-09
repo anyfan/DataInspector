@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DataInspector VERSION 0.1 LANGUAGES CXX)
+project(DataInspector VERSION 0.1.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -26,6 +26,20 @@ configure_file(qml/qmllint.ini.in "${CMAKE_SOURCE_DIR}/qml/.qmllint.ini" @ONLY)
 # Shared source lists
 # ---------------------------------------------------------------------------
 set(DI_QUICK_DIR ${CMAKE_SOURCE_DIR}/src/quick)
+
+# Capture the source identity at build time, including builds without reconfigure.
+find_package(Git QUIET)
+add_custom_target(di_build_info
+    COMMAND ${CMAKE_COMMAND}
+        "-DDI_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+        "-DDI_OUTPUT_DIR=${CMAKE_BINARY_DIR}/generated"
+        "-DDI_VERSION=${PROJECT_VERSION}"
+        "-DDI_BUILD_TYPE=$<CONFIG>"
+        "-DDI_BUILD_OPTIONS=${CMAKE_CXX_COMPILER_ID}|${CMAKE_CXX_COMPILER_VERSION}|${CMAKE_CXX_FLAGS}|${CMAKE_CXX_FLAGS_DEBUG}|${CMAKE_CXX_FLAGS_RELEASE}|${Qt6_VERSION}|${ENABLE_MAT}"
+        "-DDI_GIT_EXECUTABLE=${GIT_EXECUTABLE}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/GenerateBuildInfo.cmake"
+    BYPRODUCTS "${CMAKE_BINARY_DIR}/generated/buildinfo.h"
+    VERBATIM)
 
 set(DI_RENDER_SOURCES
     ${DI_QUICK_DIR}/render/trajectorybuilder.cpp
@@ -79,6 +93,7 @@ set(DI_MAT_SOURCES
 )
 
 set(DI_CONTROLLER_SOURCES
+    ${DI_QUICK_DIR}/appcontroller_about.cpp
     ${DI_QUICK_DIR}/qmltypes.h
     ${DI_QUICK_DIR}/sessiondocument.cpp
     ${DI_QUICK_DIR}/sessiondocument.h
@@ -126,6 +141,7 @@ set(DI_ICON_FILES
 )
 
 set(DI_QML_FILES
+    qml/AboutDialog.qml
     qml/Main.qml
     qml/QuickPlot.qml
     qml/TrajectoryPlot.qml
@@ -214,6 +230,8 @@ target_include_directories(di_plot_items PUBLIC src/quick)
 target_link_libraries(di_plot_items PUBLIC Qt6::Quick plot_render_core)
 qt_extract_metatypes(di_plot_items)
 add_library(di_app_core STATIC ${DI_APP_CORE_SOURCES})
+add_dependencies(di_app_core di_build_info)
+target_include_directories(di_app_core PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_include_directories(di_app_core PUBLIC src/quick)
 target_link_libraries(di_app_core PUBLIC Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Qml Qt6::Quick di_plot_items)
 qt_extract_metatypes(di_app_core)

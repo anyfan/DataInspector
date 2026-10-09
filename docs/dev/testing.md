@@ -79,6 +79,10 @@ GPU 测试需要真实 Scene Graph 后端。
 
 ## 验证边界
 
+`appcontroller_test::aboutPageShowsBuildInfoAndReleaseNotes` 覆盖关于按钮打开/关闭、构建信息与离线更新记录显示、构建信息复制。
+
+受限环境若默认临时目录无法写入，可将 `TEMP`/`TMP` 指向构建目录下自行创建的 `test-temp` 后运行测试。Windows 上需要捕获 Qt 测试输出时可设置 `QT_FORCE_STDERR_LOGGING=1`。
+
 - 离屏 QML 加载测试能捕获绑定错误和类型错误，但不能验证帧率、字体渲染、HiDPI 观感。
 - 百万/千万点帧率基准需要专门测试数据，默认回归不跑。
 - 部署包需在干净 Windows 环境上人工启动确认无缺失 DLL。

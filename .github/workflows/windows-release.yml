@@ -99,6 +99,7 @@ jobs:
           ./tools/deploy_qt6.ps1 -QtDir $env:QT_ROOT_DIR -BuildDir build_ci -OutputDir dist/DataInspector
           Copy-Item readme.md dist/DataInspector/README.md
           Copy-Item docs dist/DataInspector/docs -Recurse
+          Copy-Item docs/user-guide/changelog.md dist/RELEASE_NOTES.md
           "Commit: $env:GITHUB_SHA`nRef: $env:GITHUB_REF`nRun: $env:GITHUB_RUN_ID" |
             Set-Content dist/DataInspector/BUILD.txt -Encoding utf8
 
@@ -117,6 +118,7 @@ jobs:
           path: |
             dist/DataInspector-windows-x64.zip
             dist/SHA256SUMS.txt
+            dist/RELEASE_NOTES.md
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
@@ -147,16 +149,17 @@ jobs:
               echo "Release $tag already exists; refusing to overwrite a versioned release."
               exit 1
             fi
-            gh release create "$tag" release/* --verify-tag --title "DataInspector $tag" --generate-notes
+            gh release create "$tag" release/DataInspector-windows-x64.zip release/SHA256SUMS.txt \
+              --verify-tag --title "DataInspector $tag" --notes-file release/RELEASE_NOTES.md
           else
             printf 'main 分支自动构建的开发版。解压整个 ZIP 后运行 DataInspector.exe。\n\nCommit: %s\nBuild: https://github.com/%s/actions/runs/%s\n\n包含 Qt 运行依赖及 MAT 支持；已通过 Release 构建、QML 静态检查、离屏测试及部署启动检查。\n' \
               "$GITHUB_SHA" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > release-notes.md
             if gh release view latest >/dev/null 2>&1; then
               gh api --method PATCH "repos/$GH_REPO/git/refs/tags/latest" -f sha="$GITHUB_SHA" -F force=true
-              gh release upload latest release/* --clobber
+              gh release upload latest release/DataInspector-windows-x64.zip release/SHA256SUMS.txt --clobber
               gh release edit latest --title 'DataInspector main 开发版' --notes-file release-notes.md --prerelease --latest=false
             else
-              gh release create latest release/* --target "$GITHUB_SHA" --title 'DataInspector main 开发版' \
+              gh release create latest release/DataInspector-windows-x64.zip release/SHA256SUMS.txt --target "$GITHUB_SHA" --title 'DataInspector main 开发版' \
                 --notes-file release-notes.md --prerelease --latest=false
             fi
           fi

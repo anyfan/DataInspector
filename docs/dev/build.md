@@ -1,5 +1,15 @@
 # 构建
 
+## 关于页面的构建元数据
+
+时间在生成元数据时保存为 UTC，在 `AppController::aboutInfo` 中转换为北京时间（固定 UTC+8）；页面与复制文本共用该显示值，不依赖电脑当前时区。
+
+`di_build_info` 在每次构建 `di_app_core` 前执行 `cmake/GenerateBuildInfo.cmake`，生成构建目录内的 `generated/buildinfo.h`。版本来自 `PROJECT_VERSION`，UTC 时间、完整 Git hash、分支、工作区状态和 `$<CONFIG>` 在构建时采集，不需要手动重新 configure 来刷新提交信息。Git 不可用/源码包无 `.git` 时仍可构建并显示未知状态。
+
+`DI_CONTROLLER_SOURCES` 包含 `appcontroller_about.cpp`，`DI_QML_FILES` 包含 `AboutDialog.qml`。仅关于信息实现包含生成头文件；更新记录从 `docs/user-guide/changelog.md` 嵌入该头文件，发布时无需额外复制文档。维护功能摘要时编辑此 Markdown，发布版本时修改 CMake 项目版本。
+
+脚本比较源码/QML/资源/构建脚本/更新记录的 SHA256、版本、构建类型、编译器/编译选项、Qt/MAT 配置及 Git 元数据，将签名存入 `generated/buildinfo.signature`。输入不变时保留构建时间与头文件，避免无修改构建重新编译/链接；Git 检查仍运行，以便无需重新 configure 即可发现新提交或工作区状态变化。
+
 > **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联文件**：`CMakeLists.txt`、`CMakePresets.json`、`tools/deploy_qt6.ps1`、`assets/DataInspector.rc/.manifest`
 
 ## 工具链
@@ -70,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 工作流：`.github/workflows/windows-release.yml`。
 
 - 推送 `main`：构建成功后更新 `latest` 标签对应的 **main 开发版预发布**，固定下载入口为 <https://github.com/anyfan/DataInspector/releases/tag/latest>。
-- 推送 `v*` 标签（例如 `v1.0.0`）：发布同名正式 Release，自动生成变更说明。已存在的正式 Release 不覆盖。
+- 推送 `v*` 标签（例如 `v0.1.0`）：发布同名正式 Release，发布说明来自随构建保存的 `docs/user-guide/changelog.md`。已存在的正式 Release 不覆盖。
 - 指向 `main` 的 PR：只构建、检查和打包，不发布。
 - Actions 页面可手动运行；仅 `main` 或 `v*` 标签运行允许发布。
 

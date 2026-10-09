@@ -33,6 +33,8 @@ class QThread;
 class AppController : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QVariantMap aboutInfo READ aboutInfo CONSTANT)
+    Q_PROPERTY(QString releaseNotes READ releaseNotes CONSTANT)
     Q_PROPERTY(QVariantList presetColors READ presetColors CONSTANT)
     Q_PROPERTY(SignalModel *signalModel READ signalModel CONSTANT)
     Q_PROPERTY(QString status READ status NOTIFY statusChanged)
@@ -62,6 +64,9 @@ public:
     ~AppController() override;
     static const QVector<QColor> &signalPalette();
     QVariantList presetColors() const;
+    QVariantMap aboutInfo() const;
+    QString releaseNotes() const;
+    Q_INVOKABLE void copyAboutInfo() const;
 
     // Properties
     SignalModel *signalModel() const { return m_signals; }

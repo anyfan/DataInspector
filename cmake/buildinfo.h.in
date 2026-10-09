@@ -1,0 +1,10 @@
+#pragma once
+namespace BuildInfo {
+inline constexpr char version[] = R"di(@DI_VERSION@)di";
+inline constexpr char time[] = R"di(@DI_BUILD_TIME@)di";
+inline constexpr char hash[] = R"di(@DI_GIT_HASH@)di";
+inline constexpr char branch[] = R"di(@DI_GIT_BRANCH@)di";
+inline constexpr char state[] = R"di(@DI_GIT_STATE@)di";
+inline constexpr char type[] = R"di(@DI_BUILD_TYPE@)di";
+inline constexpr char notes[] = R"di(@DI_RELEASE_NOTES@)di";
+}

@@ -20,6 +20,11 @@ ApplicationWindow {
     color: window.panelColor
     onActiveChanged: if (!active) window.cancelSignalTreeDrag()
     property bool allowClose: false
+    AboutDialog {
+        id: aboutDialog
+        parent: Overlay.overlay
+        appController: window.appController
+    }
     property string pendingUnsavedAction: ""
     onClosing: close => {
         window.cancelSignalTreeDrag()
@@ -729,17 +734,17 @@ ApplicationWindow {
         selectedCursorMode = mode
     }
     function selectCursorMode(mode) {
+        if (window.appController.restoringSession) return
         preferredCursorMode = mode
-        if (selectedCursorMode !== 0) {
-            window.appController.setCursorMode(mode)
-            selectedCursorMode = mode
-        }
+        window.appController.setCursorMode(mode)
+        selectedCursorMode = mode
     }
     function toggleZoomTool() {
         zoomToolEnabled = !zoomToolEnabled
     }
     function selectZoomMode(mode) {
         selectedZoomMode = mode
+        zoomToolEnabled = true
     }
     function zoomCurrent(axis, steps) {
         if (window.appController.restoringSession) return
@@ -1000,6 +1005,7 @@ ApplicationWindow {
                 onClicked: window.toggleFullscreen()
             }
             IconTool {
+                objectName: "settingsTool"
                 icon.source: "qrc:/icons/settings.svg"
                 hint: "设置"
                 onClicked: settingsMenu.popup()
@@ -1008,6 +1014,8 @@ ApplicationWindow {
                     MenuItem { text: "显示信号树"; checkable: true; checked: window.signalTreeVisible; onTriggered: window.signalTreeVisible = !window.signalTreeVisible }
                     MenuItem { text: "深色主题"; checkable: true; checked: window.darkTheme; onTriggered: window.darkTheme = !window.darkTheme }
                     MenuItem { text: "清除所有信号"; icon.source: "qrc:/icons/clear.svg"; onTriggered: window.appController.clearAllPlotSignals() }
+                    MenuSeparator { }
+                    MenuItem { objectName: "aboutMenuItem"; text: "关于"; onTriggered: aboutDialog.open() }
                 }
             }
         }

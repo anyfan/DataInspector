@@ -2,15 +2,17 @@
 
 面向工程时间序列数据的高性能查看器。绘图区基于 Qt 6.8 Qt Quick Scene Graph：曲线用 GPU 三角带绘制，视图缩放时按屏幕宽度做 min/max 保峰值降采样，缺失值自动断线。
 
-当前支持二维/三维轨迹混合子图、游标、会话保存恢复及缺失文件重定位、时间偏移、信号重命名、XLSX/MAT 导入与导出，以及当前/全部子图 PNG 导出。**重放、Python API、`.mldatx` 视图文件已遗弃，不再计划实现**。
+当前版本 **0.1.0**。支持二维/三维轨迹混合子图、游标、会话保存恢复及缺失文件重定位、时间偏移、信号重命名、XLSX/MAT 导入与导出，以及当前/全部子图 PNG 导出。**重放、Python API、`.mldatx` 视图文件已遗弃，不再计划实现**。
 
 ## 下载 Windows 版
 
-[main 开发版下载](https://github.com/anyfan/DataInspector/releases/tag/latest) · [所有正式版本](https://github.com/anyfan/DataInspector/releases) · [自动构建状态](https://github.com/anyfan/DataInspector/actions/workflows/windows-release.yml)
+[0.1.0 正式版下载](https://github.com/anyfan/DataInspector/releases/tag/v0.1.0) · [main 开发版下载](https://github.com/anyfan/DataInspector/releases/tag/latest) · [所有正式版本](https://github.com/anyfan/DataInspector/releases) · [自动构建状态](https://github.com/anyfan/DataInspector/actions/workflows/windows-release.yml)
 
 下载 `DataInspector-windows-x64.zip`，解压整个目录后运行 `DataInspector.exe`，无需另装 Qt。每次推送 `main` 会在构建和检查通过后更新开发版；推送 `v*` 标签发布正式版。自动发布配置见 [构建文档](docs/dev/build.md#github-自动构建与发布)。
 
 ## 文档
+
+本次发布说明见 [0.1.0 更新记录](docs/user-guide/changelog.md)：新增设置菜单中的关于页面，显示版本、北京时间构建信息及 Git 信息；无修改构建不再重新编译；选择游标或缩放模式后立即启用。
 
 完整文档已迁移到 **[`docs/`](docs/README.md)**：
 
@@ -43,6 +45,9 @@ cmake --build --preset qt6-clang-debug
 - `Ctrl+Z` 回退视图操作；`Ctrl+S` 会话保存，`.disession` 版本化 JSON。
 - 导出 XLSX（多工作表、超行拆分）或 MAT（Level 5 流式写入），支持全部数据或当前子图绘制信号。
 - 浅色/深色主题；信号树可隐藏、可搜索、滚动吸顶显示层级。
+- “设置”→“关于”：版本、北京时间（UTC+8）构建时间、完整 Git hash、分支与工作区状态、Qt/架构/MAT 支持；离线更新记录与一键复制构建信息。详见 [关于](docs/user-guide/about.md)。
+- 游标与缩放下拉菜单选择模式后立即启用；主按钮可关闭/重新开启上次选择的模式。
+- 构建信息随源码、配置或 Git 变化更新；无修改重复构建保留时间和头文件，避免重新编译/链接。
 
 ## 项目结构
 

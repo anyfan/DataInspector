@@ -37,6 +37,7 @@ int main(int argc, char *argv[])
     app.setApplicationName(QStringLiteral("DataInspector"));
     app.setOrganizationName(QStringLiteral("DataInspector"));
     AppController controller;
+    app.setApplicationVersion(controller.aboutInfo().value(QStringLiteral("version")).toString());
     QQmlApplicationEngine engine;
     engine.addImportPath(QCoreApplication::applicationDirPath() + QStringLiteral("/qml"));
     QStringList qmlErrors;
