@@ -35,6 +35,17 @@ AppController::AppController(QObject *parent)
     : QObject(parent), m_signals(new SignalModel(this)),
       m_seriesStore(std::make_shared<PlotSeriesStore>())
 {
+    connect(m_signals, &QAbstractItemModel::dataChanged, this,
+        [this](const QModelIndex &, const QModelIndex &, const QList<int> &roles) {
+            if (roles.isEmpty() || roles.contains(SignalModel::NameRole) || roles.contains(SignalModel::ColorRole)
+                || roles.contains(SignalModel::WidthRole) || roles.contains(SignalModel::LineStyleRole)
+                || roles.contains(SignalModel::CheckedRole)) markSessionModified();
+        });
+    connect(this, &AppController::currentFileChanged, this, &AppController::markSessionModified);
+    connect(this, &AppController::layoutChanged, this, &AppController::markSessionModified);
+    connect(this, &AppController::activePlotChanged, this, &AppController::markSessionModified);
+    connect(this, &AppController::soloPlotChanged, this, &AppController::markSessionModified);
+    connect(this, &AppController::plotBindingsChanged, this, &AppController::markSessionModified);
     QCoreApplication::instance()->installEventFilter(this);
     m_signals->setPlotCount(1);
     qRegisterMetaType<LoadedTable>();
@@ -57,6 +68,8 @@ AppController::AppController(QObject *parent)
             Qt::QueuedConnection);
     connect(exporter, &DataExportWorker::finished, this,
             [this](const QString &path, const QString &error, bool cancelled) {
+                const bool imageExport = m_imageExporting;
+                m_imageExporting = false;
                 m_exporting = false;
                 emit exportingChanged();
                 if (cancelled) {
@@ -67,6 +80,9 @@ AppController::AppController(QObject *parent)
                     setExportProgress(100);
                     setStatus(QStringLiteral("已导出 %1：%2")
                                   .arg(m_exportKind, QFileInfo(path).fileName()));
+                }
+                if (imageExport) {
+                    emit imageExportFinished(!cancelled && error.isEmpty(), status());
                 }
             }, Qt::QueuedConnection);
     connect(m_exportThread, &QThread::finished, exporter,
@@ -79,6 +95,14 @@ AppController::~AppController()
     if (m_loadThread) { m_loadThread->requestInterruption(); m_loadThread->quit(); m_loadThread->wait(); }
     if (m_exporter) m_exporter->requestCancel();
     if (m_exportThread) { m_exportThread->quit(); m_exportThread->wait(); }
+}
+
+void AppController::markSessionModified()
+{
+    if (m_restoringSession || m_applyingSession || m_sessionModified
+        || (loadedFileCount() == 0 && m_sessionPath.isEmpty())) return;
+    m_sessionModified = true;
+    emit sessionModifiedChanged();
 }
 
 bool AppController::eventFilter(QObject *watched, QEvent *event)

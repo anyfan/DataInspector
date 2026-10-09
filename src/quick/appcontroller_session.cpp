@@ -31,6 +31,7 @@ SessionPlot AppController::capturePlotView(PlotItem *plot) const
 void AppController::cachePlotView(PlotItem *plot)
 {
     if (m_applyingSession) return; // Restored views remain authoritative until commit ends.
+    markSessionModified();
     const int index = m_plots.indexOf(plot);
     if (index >= 0) m_plotViews.insert(index, capturePlotView(plot));
 }
@@ -98,12 +99,35 @@ bool AppController::saveSession(const QVariant &filePath)
         setStatus(QStringLiteral("保存会话失败：%1").arg(error)); emit sessionError(status()); return false;
     }
     m_sessionPath = path;
+    m_sessionModified = false;
+    emit sessionModifiedChanged();
     emit sessionPathChanged();
     setStatus(QStringLiteral("已保存会话：%1").arg(QFileInfo(path).fileName()));
     return true;
 }
 
 bool AppController::restoreSession(const QVariant &filePath)
+{
+    return restoreSessionWithFiles(filePath, {});
+}
+
+QVariantList AppController::missingSessionFiles(const QVariant &filePath) const
+{
+    const QString path = localSessionPath(filePath);
+    SessionDocument state;
+    QString error;
+    QVariantList missing;
+    if (!readSessionDocument(path, &state, &error)) return missing;
+    const QDir directory(QFileInfo(path).absolutePath());
+    for (int i = 0; i < state.files.size(); ++i) {
+        const QFileInfo info(directory.absoluteFilePath(state.files[i]));
+        if (!info.isFile() || !info.isReadable())
+            missing.append(QVariantMap{{"index", i}, {"path", info.absoluteFilePath()}});
+    }
+    return missing;
+}
+
+bool AppController::restoreSessionWithFiles(const QVariant &filePath, const QVariantMap &replacements)
 {
     if (m_loading || m_exporting || m_restoringSession) {
         setStatus(QStringLiteral("加载、导出或恢复期间不能打开另一会话")); return false;
@@ -116,12 +140,20 @@ bool AppController::restoreSession(const QVariant &filePath)
         emit sessionError(status()); emit sessionRestoreFinished(false, status()); return false;
     };
     if (path.isEmpty() || !readSessionDocument(path, &state, &error)) return fail(error);
+    for (auto it = replacements.cbegin(); it != replacements.cend(); ++it) {
+        bool valid = false;
+        const int index = it.key().toInt(&valid);
+        if (!valid || QString::number(index) != it.key() || index < 0 || index >= state.files.size())
+            return fail(QStringLiteral("重新定位的文件索引无效：%1").arg(it.key()));
+    }
     QStringList sources;
     QSet<QString> uniquePaths;
     const QDir directory(QFileInfo(path).absolutePath());
     const QStringList supported{QStringLiteral("csv"), QStringLiteral("txt"), QStringLiteral("xlsx"), QStringLiteral("mat")};
-    for (const auto &reference : state.files) {
-        const QFileInfo info(directory.absoluteFilePath(reference));
+    for (int i = 0; i < state.files.size(); ++i) {
+        const QString reference = replacements.contains(QString::number(i))
+            ? localSessionPath(replacements.value(QString::number(i))) : directory.absoluteFilePath(state.files[i]);
+        const QFileInfo info(reference);
         if (!info.isFile() || !info.isReadable()) return fail(QStringLiteral("数据文件缺失或不可读：%1").arg(info.absoluteFilePath()));
         const QString source = info.canonicalFilePath();
         if (!supported.contains(info.suffix().toLower()) || uniquePaths.contains(source))
@@ -130,6 +162,7 @@ bool AppController::restoreSession(const QVariant &filePath)
     }
     // Stage all sources without changing the current model, plots or series store.
     m_pendingSession = std::move(state);
+    m_sessionRelocated = !replacements.isEmpty();
     m_pendingSessionPath = path;
     m_sessionSourcePaths = sources;
     m_stagedSessionTables.clear();
@@ -150,6 +183,10 @@ void AppController::completeSessionRestore(bool success, const QString &message)
     m_pendingSessionPath.clear(); m_loadQueue.clear(); m_pendingPaths.clear(); m_activeLoadPath.clear();
     m_applyingSession = false; m_restoringSession = false; m_loading = false;
     if (success) setLoadingProgress(100);
+    if (success) {
+        m_sessionModified = m_sessionRelocated;
+        emit sessionModifiedChanged();
+    }
     emit loadingChanged(); emit restoringSessionChanged();
     setStatus(message);
     if (!success) emit sessionError(message);

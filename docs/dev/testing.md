@@ -2,6 +2,22 @@
 
 > **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联目录**：`tests/`、`CMakeLists.txt` · **新增功能后必须跑对应套件**
 
+## CPU 性能基准
+
+`performance_benchmark` 随 `BUILD_TESTING=ON` 构建，默认不加入 CTest，避免日常回归反复运行大数据基准。以下示例在 PowerShell 中运行，需让 Qt DLL 目录位于 PATH：
+
+```powershell
+$env:PATH = 'D:/Software/Qt/6.8.3/llvm-mingw_64/bin;' + $env:PATH
+cmake --build --preset qt6-clang-release --target performance_benchmark
+./build_qt6-release/performance_benchmark.exe --samples 1000000 --signals 4 --output build_qt6-release/perf-million.json
+./build_qt6-release/performance_benchmark.exe --samples 10000000 --signals 2 --output build_qt6-release/perf-ten-million.json
+./build_qt6-release/performance_benchmark.exe --input path/to/flight.mat --output build_qt6-release/perf-real.json
+```
+
+记录原始数据生成或真实加载、Store/索引准备、20 次视窗变化的冷 LOD、缓存查找及几何构建中位数/P95、缓存命中数/字节数、10 万信号树构建/搜索，以及 Windows 工作集/峰值工作集。用 `--iterations`、`--tree-signals` 调整规模。窗口宽度固定 1200、每次视窗覆盖一半时间范围；真实数据需有非零时间跨度。合成规模最多每序列 1000 万点、总共 8000 万点。报告标记 Debug/Release，不设置机器相关耗时门槛。
+
+基准直接调用 CPU 内核，不包含事件输入延迟、SG 上传或 GPU 帧率，也不代表当前窗口实际显示效果；硬件视觉与帧率应独立验收。
+
 ## 运行
 
 ```powershell

@@ -28,6 +28,7 @@ private slots:
     void lodFiltersNonMonotonicSeriesToViewportInInputOrder();
     void lodRejectsInvalidRequests();
     void lodCacheReusesOnlyAnExactRequestKey();
+    void completedLodCacheBudgetAndSourceIdentity();
     void geometryBuildsClippedTriangleStrip();
     void geometryOmitsUndrawableSegments();
     void geometryKeepsLodSegmentsIndependent();
@@ -893,6 +894,42 @@ void RenderCoreTest::paddedRangesRemainFinite()
     }
     QVERIFY(!paddedPlotRange(-huge, huge, .02, .5));
     QVERIFY(!paddedPlotRange(qQNaN(), 1, .02, .5));
+}
+
+void RenderCoreTest::completedLodCacheBudgetAndSourceIdentity()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{0, {0., 1., 2.}, {0., 1., 0.}, QColor("red")}});
+    auto snapshot = store.snapshot({0});
+    LodRequestKey key{snapshot.generation, {0}, 0., 2., 64, 1};
+    const auto result = std::make_shared<LodResult>(PlotLodBuilder::build(snapshot, key));
+    PlotLodResultCache cache;
+    cache.insert(snapshot, result);
+    const auto cost = cache.retainedBytes();
+    QVERIFY(cost > 0);
+    QCOMPARE(cache.find(snapshot, key), result);
+    auto otherKey = key; otherKey.bucketCount = 128;
+    QVERIFY(!cache.find(snapshot, otherKey));
+    PlotSeriesStore other;
+    other.replaceSeries({{0, {0., 1., 2.}, {0., 9., 0.}, QColor("red")}});
+    QVERIFY(!cache.find(other.snapshot({0}), key)); // Equal generation does not imply equal source.
+    PlotLodResultCache bounded(cost);
+    bounded.insert(snapshot, result);
+    auto second = std::make_shared<LodResult>(*result);
+    second->key.xMinimum = .5;
+    bounded.insert(snapshot, second);
+    QVERIFY(bounded.retainedBytes() <= cost);
+    QCOMPARE(bounded.entryCount(), qsizetype(1));
+    QVERIFY(!bounded.find(snapshot, key));
+    QCOMPARE(bounded.find(snapshot, second->key), second);
+    PlotLodResultCache tiny(1);
+    tiny.insert(snapshot, result);
+    QCOMPARE(tiny.retainedBytes(), qsizetype(0));
+    store.updateSeriesPen(0, QColor("blue"), 2., Qt::SolidLine);
+    QVERIFY(!cache.find(store.snapshot({0}), key));
+    snapshot = {};
+    cache.find({}, key); // Expired raw sources prune cached LODs.
+    QCOMPARE(cache.entryCount(), qsizetype(0));
 }
 
 QTEST_GUILESS_MAIN(RenderCoreTest)

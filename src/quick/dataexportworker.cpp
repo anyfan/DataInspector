@@ -1,4 +1,17 @@
 #include "dataexportworker.h"
+#include <QSaveFile>
+
+void DataExportWorker::exportPng(const QString &path, const QImage &image)
+{
+    QSaveFile file(path);
+    QString error;
+    if (!m_cancelled.load(std::memory_order_relaxed)) {
+        if (!file.open(QIODevice::WriteOnly) || !image.save(&file, "PNG"))
+            error = file.errorString().isEmpty() ? QStringLiteral("PNG 编码失败") : file.errorString();
+        else if (!m_cancelled.load(std::memory_order_relaxed) && !file.commit()) error = file.errorString();
+    }
+    emit finished(path, error, m_cancelled.load(std::memory_order_relaxed));
+}
 
 void DataExportWorker::resetCancellation()
 {

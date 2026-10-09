@@ -85,6 +85,7 @@ set(DI_CONTROLLER_SOURCES
     ${DI_QUICK_DIR}/appcontroller_session.cpp
     ${DI_QUICK_DIR}/appcontroller.cpp
     ${DI_QUICK_DIR}/appcontroller_loading.cpp
+    ${DI_QUICK_DIR}/appcontroller_image.cpp
     ${DI_QUICK_DIR}/appcontroller_plots.cpp
     ${DI_QUICK_DIR}/appcontroller_trajectory.cpp
     ${DI_QUICK_DIR}/appcontroller.h
@@ -206,12 +207,26 @@ target_link_libraries(plot_render_core PUBLIC Qt6::Core Qt6::Gui)
 # ---------------------------------------------------------------------------
 # Application
 # ---------------------------------------------------------------------------
+set(DI_APP_CORE_SOURCES ${DI_CONTROLLER_SOURCES})
+list(REMOVE_ITEM DI_APP_CORE_SOURCES ${DI_QUICK_DIR}/qmltypes.h ${DI_PLOTITEM_SOURCES})
+add_library(di_plot_items STATIC ${DI_PLOTITEM_SOURCES})
+target_include_directories(di_plot_items PUBLIC src/quick)
+target_link_libraries(di_plot_items PUBLIC Qt6::Quick plot_render_core)
+qt_extract_metatypes(di_plot_items)
+add_library(di_app_core STATIC ${DI_APP_CORE_SOURCES})
+target_include_directories(di_app_core PUBLIC src/quick)
+target_link_libraries(di_app_core PUBLIC Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Qml Qt6::Quick di_plot_items)
+qt_extract_metatypes(di_app_core)
+if(ENABLE_MAT)
+    target_link_libraries(di_app_core PUBLIC di_mat)
+endif()
+
 qt_add_executable(DataInspector
     src/quick/main.cpp
     src/quick/qmltypes.h
-    ${DI_CONTROLLER_SOURCES}
     ${DI_WINDOWS_RESOURCES}
 )
+target_link_libraries(DataInspector PRIVATE di_app_core)
 
 foreach(qml_file IN LISTS DI_QML_FILES)
     get_filename_component(qml_alias ${qml_file} NAME)
@@ -229,7 +244,7 @@ di_add_icon_resources(DataInspector)
 target_include_directories(DataInspector PRIVATE src/quick)
 target_link_libraries(DataInspector PRIVATE
     Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Qml Qt6::Quick
-    Qt6::QuickControls2 Qt6::QuickDialogs2 plot_render_core
+    Qt6::QuickControls2 Qt6::QuickDialogs2 di_app_core
 )
 if(ENABLE_MAT)
     target_link_libraries(DataInspector PRIVATE di_mat)
@@ -237,8 +252,12 @@ endif()
 
 if(MSVC)
     target_compile_options(DataInspector PRIVATE /W4)
+    target_compile_options(di_app_core PRIVATE /W4)
+    target_compile_options(di_plot_items PRIVATE /W4)
 else()
     target_compile_options(DataInspector PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(di_app_core PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(di_plot_items PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 set_target_properties(DataInspector PROPERTIES
@@ -251,6 +270,8 @@ set_target_properties(DataInspector PROPERTIES
 # ---------------------------------------------------------------------------
 if(BUILD_TESTING)
     find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
+    add_executable(performance_benchmark tools/performance_benchmark.cpp)
+    target_link_libraries(performance_benchmark PRIVATE di_app_core)
 
     # Registers a CTest that can find the Qt DLLs; extra args are passed to the binary.
     function(di_add_test target)
@@ -281,9 +302,9 @@ if(BUILD_TESTING)
     target_link_libraries(rendercore_test PRIVATE plot_render_core Qt6::Test)
     di_add_test(rendercore_test)
 
-    add_executable(plotitem_lod_test tests/plotitem_lod_test.cpp ${DI_PLOTITEM_SOURCES})
+    add_executable(plotitem_lod_test tests/plotitem_lod_test.cpp)
     target_include_directories(plotitem_lod_test PRIVATE src/quick)
-    target_link_libraries(plotitem_lod_test PRIVATE Qt6::Core Qt6::Gui Qt6::Quick plot_render_core)
+    target_link_libraries(plotitem_lod_test PRIVATE di_plot_items)
     di_add_test(plotitem_lod_test -platform offscreen)
 
     add_executable(signalselection_test tests/signalselection_test.cpp ${DI_SIGNAL_SOURCES})
@@ -291,10 +312,10 @@ if(BUILD_TESTING)
     target_link_libraries(signalselection_test PRIVATE Qt6::Core Qt6::Gui Qt6::Test)
     di_add_test(signalselection_test)
 
-    add_executable(appcontroller_test tests/appcontroller_test.cpp ${DI_CONTROLLER_SOURCES})
+    add_executable(appcontroller_test tests/appcontroller_test.cpp)
     target_include_directories(appcontroller_test PRIVATE src/quick)
     target_link_libraries(appcontroller_test PRIVATE
-        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core
+        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test di_app_core
     )
     di_add_icon_resources(appcontroller_test)
     # The QML tests load qml/*.qml from the source tree; sibling components
@@ -307,12 +328,12 @@ if(BUILD_TESTING)
     if(ENABLE_MAT)
         target_link_libraries(appcontroller_test PRIVATE di_mat)
     endif()
-    di_add_test(appcontroller_test -platform offscreen)
+    di_add_test(appcontroller_test -platform offscreen -o -,txt)
 
-    add_executable(session_test tests/session_test.cpp ${DI_CONTROLLER_SOURCES})
+    add_executable(session_test tests/session_test.cpp)
     target_include_directories(session_test PRIVATE src/quick)
     target_link_libraries(session_test PRIVATE
-        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core)
+        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test di_app_core)
     di_add_icon_resources(session_test)
     qt_add_resources(session_test session_test_qml
         PREFIX "/qt/qml/DataInspector" BASE qml FILES ${DI_QML_FILES})
@@ -337,20 +358,20 @@ if(BUILD_TESTING)
     )
     di_add_test(xlsxwriter_test)
 
-    add_executable(startupfiles_test tests/startupfiles_test.cpp ${DI_CONTROLLER_SOURCES})
+    add_executable(startupfiles_test tests/startupfiles_test.cpp)
     target_include_directories(startupfiles_test PRIVATE src/quick)
     target_link_libraries(startupfiles_test PRIVATE
-        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core
+        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test di_app_core
     )
     if(ENABLE_MAT)
         target_link_libraries(startupfiles_test PRIVATE di_mat)
     endif()
     di_add_test(startupfiles_test -platform offscreen)
 
-    add_executable(startupdrop_test tests/startupdrop_test.cpp ${DI_CONTROLLER_SOURCES})
+    add_executable(startupdrop_test tests/startupdrop_test.cpp)
     target_include_directories(startupdrop_test PRIVATE src/quick)
     target_link_libraries(startupdrop_test PRIVATE
-        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core
+        Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test di_app_core
     )
     di_add_icon_resources(startupdrop_test)
     qt_add_resources(startupdrop_test startupdrop_test_qml
@@ -360,9 +381,9 @@ if(BUILD_TESTING)
     endif()
     di_add_test(startupdrop_test -platform offscreen)
 
-    add_executable(trajectory_test tests/trajectory_test.cpp ${DI_CONTROLLER_SOURCES})
+    add_executable(trajectory_test tests/trajectory_test.cpp)
     target_include_directories(trajectory_test PRIVATE src/quick)
-    target_link_libraries(trajectory_test PRIVATE Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test plot_render_core)
+    target_link_libraries(trajectory_test PRIVATE Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Quick Qt6::Test di_app_core)
     di_add_icon_resources(trajectory_test)
     # Exercise the same qmlcachegen bindings as the application, as well as source QML.
     qt_add_qml_module(trajectory_test
@@ -377,12 +398,15 @@ if(BUILD_TESTING)
     di_add_test(trajectory_test -platform offscreen -o -,txt)
 
     add_executable(trajectory_raster_test tests/trajectory_raster_test.cpp
-        ${DI_QUICK_DIR}/trajectoryitem.cpp ${DI_QUICK_DIR}/trajectoryitem.h)
-    target_link_libraries(trajectory_raster_test PRIVATE Qt6::Quick plot_render_core)
-    add_executable(plotitem_raster_test tests/plotitem_raster_test.cpp ${DI_PLOTITEM_SOURCES})
-    target_link_libraries(plotitem_raster_test PRIVATE Qt6::Quick plot_render_core)
-    add_executable(plotitem_blend_test tests/plotitem_blend_test.cpp ${DI_PLOTITEM_SOURCES})
-    target_link_libraries(plotitem_blend_test PRIVATE Qt6::Quick plot_render_core)
+    )
+    target_link_libraries(trajectory_raster_test PRIVATE di_plot_items)
+    add_executable(plotitem_raster_test tests/plotitem_raster_test.cpp)
+    target_link_libraries(plotitem_raster_test PRIVATE di_plot_items)
+    add_executable(plotitem_blend_test tests/plotitem_blend_test.cpp)
+    target_link_libraries(plotitem_blend_test PRIVATE di_plot_items)
+    foreach(di_controller_test appcontroller_test session_test startupfiles_test startupdrop_test trajectory_test)
+        target_sources(${di_controller_test} PRIVATE ${DI_QUICK_DIR}/qmltypes.h)
+    endforeach()
     if(ENABLE_GPU_TESTS)
         di_add_test(trajectory_raster_test)
         set_tests_properties(trajectory_raster_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)

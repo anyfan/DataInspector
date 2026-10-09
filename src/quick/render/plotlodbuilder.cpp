@@ -1,5 +1,54 @@
 #include "plotlodbuilder.h"
 
+void PlotLodResultCache::prune()
+{
+    for (qsizetype i = m_entries.size(); i-- > 0;) {
+        bool expired = false;
+        for (const auto &source : m_entries[i].sources) if (source.expired()) { expired = true; break; }
+        if (expired) { m_bytes -= m_entries[i].bytes; m_entries.removeAt(i); }
+    }
+}
+
+std::shared_ptr<const LodResult> PlotLodResultCache::find(const PlotSeriesSnapshot &snapshot, const LodRequestKey &key)
+{
+    prune();
+    for (qsizetype i = 0; i < m_entries.size(); ++i) {
+        const auto &entry = m_entries[i];
+        if (!(entry.result->key == key) || entry.sources.size() != snapshot.series.size()) continue;
+        bool matches = true;
+        for (qsizetype j = 0; j < entry.sources.size(); ++j)
+            if (entry.sources[j].lock() != snapshot.series[j]) { matches = false; break; }
+        if (!matches) continue;
+        const auto result = entry.result;
+        m_entries.move(i, 0);
+        return result;
+    }
+    return {};
+}
+
+void PlotLodResultCache::insert(const PlotSeriesSnapshot &snapshot, std::shared_ptr<const LodResult> result)
+{
+    prune();
+    if (!result || find(snapshot, result->key)) return;
+    Entry entry;
+    entry.result = std::move(result);
+    for (const auto &source : snapshot.series) entry.sources.append(source);
+    entry.bytes = sizeof(Entry) + sizeof(LodResult)
+        + entry.sources.capacity() * sizeof(std::weak_ptr<const PlotSeriesData>)
+        + entry.result->key.orderedIds.capacity() * sizeof(PlotSeriesId)
+        + entry.result->segments.capacity() * sizeof(LodSegment);
+    for (const auto &segment : entry.result->segments)
+        entry.bytes += segment.points.capacity() * sizeof(QPointF)
+            + segment.denseBuckets.capacity() * sizeof(LodDenseBucket);
+    if (entry.bytes > m_budget) return;
+    while (!m_entries.isEmpty() && (m_bytes + entry.bytes > m_budget || m_entries.size() >= 128)) {
+        m_bytes -= m_entries.last().bytes;
+        m_entries.removeLast();
+    }
+    m_bytes += entry.bytes;
+    m_entries.prepend(std::move(entry));
+}
+
 #include <QtMath>
 
 #include <algorithm>

@@ -41,6 +41,9 @@ GPU 套件包括复用 `plotitem_raster_test --dense` 的 `plotitem_dense_raster
 
 `CMakeLists.txt` 把源文件拆成共用列表，避免应用和测试目标重复罗列：
 
+- `di_app_core` 静态库供应用及五个控制器测试目标共用，控制器/加载/导出源码只编译一次；`di_plot_items` 共用 PlotItem/TrajectoryItem，GPU 和 LOD 测试也复用它。两者用 `qt_extract_metatypes` 导出元类型，供 `QML_FOREIGN` 的注册与工具元数据使用；`qmltypes.h` 仍由各 QML 使用目标独立处理。
+- `performance_benchmark` 在 `BUILD_TESTING=ON` 时构建，运行方式见 [测试](testing.md)。
+
 - `DI_PLOTITEM_SOURCES` 统一包含 `plotitem.cpp`、`plotitem_cursor.cpp`、`plotitem_interaction.cpp`、`plotitem_render.cpp` 和 `trajectoryitem.*`；应用与绘图测试共用，使用 Qt 内置材质。
 - 其他共用列表：`DI_RENDER_SOURCES`、`DI_SIGNAL_SOURCES`、`DI_XLSX_SOURCES`、`DI_MAT_SOURCES`、`DI_CONTROLLER_SOURCES`
 - `DI_QML_FILES`、`DI_ICON_FILES`
@@ -72,6 +75,8 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 - Actions 页面可手动运行；仅 `main` 或 `v*` 标签运行允许发布。
 
 使用标准 `windows-2022` runner，安装 Qt 6.8.3 `win64_llvm_mingw`、qtsvg 和 `tools_llvm_mingw1706`。CI 用 SDK 环境变量单独配置 `build_ci`，不依赖本机预设路径；`ENABLE_MAT=ON`，沿用仓库中的静态库。
+
+CI 构建步骤使用 `[Environment]::ProcessorCount` 获取 runner 的逻辑 CPU 数，并传给 `cmake --build build_ci --parallel`，日志会打印实际并行任务数。该数值取决于 runner 提供的 CPU，独立于本机的 20 核和本地构建预设。
 
 发布前依次完成 Release 应用/测试构建、`DataInspector_qmllint` 零 warning、Fusion/offscreen CTest 和部署包启动检查。GPU 测试关闭；离屏检查不等同真实 GPU 或人工 GUI 验收。
 

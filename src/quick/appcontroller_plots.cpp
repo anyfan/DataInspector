@@ -358,6 +358,7 @@ void AppController::attachPlot(QObject *plot, int index)
             });
     connect(item, &PlotItem::cursorChanged, this, [this, item]() {
         if (m_syncingCursors || sessionInteractionBlocked()) return;
+        markSessionModified();
         m_sessionCursor = {item->cursorMode(), item->cursorX1(), item->cursorX2()};
         m_haveCursorState = true;
         m_syncingCursors = true;

@@ -132,6 +132,7 @@ void AppController::attachTrajectory(QObject *object, int index)
     connect(item, &TrajectoryItem::viewInteractionStarted, this, &AppController::beginViewChange);
     connect(item, &TrajectoryItem::viewInteractionFinished, this, &AppController::endViewChange);
     connect(item, &TrajectoryItem::cameraChanged, this, [this, index, item] {
+        markSessionModified();
         m_trajectories[index].camera = item->camera();
     });
     refreshTrajectory(index);

@@ -257,6 +257,11 @@ bool AppController::exportMat(const QVariant &filePath, int scope)
 
 void AppController::cancelExport()
 {
+    if (m_imageExporting) {
+        m_imageExportCancelled = true;
+        if (m_exporter) m_exporter->requestCancel();
+        return;
+    }
     if (m_exporting && m_exporter) {
         m_exporter->requestCancel();
         setStatus(QStringLiteral("正在取消导出…"));

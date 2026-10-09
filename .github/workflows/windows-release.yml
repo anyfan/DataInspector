@@ -62,7 +62,10 @@ jobs:
           }
 
       - name: Build application and tests
-        run: cmake --build build_ci --parallel 4
+        run: |
+          $buildJobs = [Environment]::ProcessorCount
+          Write-Host "Building with $buildJobs parallel jobs (runner logical CPUs)"
+          cmake --build build_ci --parallel $buildJobs
 
       - name: QML lint (zero warnings)
         run: cmake --build build_ci --target DataInspector_qmllint

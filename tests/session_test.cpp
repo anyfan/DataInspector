@@ -25,6 +25,7 @@ private slots:
     void extremeImportedRangesRemainSaveable();
     void failuresPreserveCurrentSession();
     void relativePathsSurviveMovingTheBundle();
+    void relocatedFilesAndModifiedState();
     void schemaValidationAndAtomicSave();
     void qmlRestoresToolbarAndPlotStates();
 };
@@ -195,6 +196,53 @@ void SessionTest::relativePathsSurviveMovingTheBundle()
     QCOMPARE(restored.loadedFileCount(), 0); QVERIFY(!restored.restoringSession());
 }
 
+void SessionTest::relocatedFilesAndModifiedState()
+{
+    QTemporaryDir dir;
+    QVERIFY(QDir(dir.path()).mkpath("old"));
+    QVERIFY(QDir(dir.path()).mkpath("new"));
+    const QString original = dir.filePath("old/flight.csv");
+    const QString relocated = dir.filePath("new/flight.csv");
+    const QString session = dir.filePath("view.disession");
+    writeFile(original, "time,A\n0,1\n1,2\n");
+    AppController controller;
+    QVERIFY(!controller.sessionModified());
+    QVERIFY(controller.loadCsv(original));
+    QTRY_VERIFY(!controller.loading());
+    QVERIFY(controller.sessionModified());
+    controller.selectSignal(0);
+    QVERIFY(controller.saveSession(session));
+    QVERIFY(!controller.sessionModified());
+    controller.filterSignals("A");
+    controller.filterSignals("");
+    controller.signalModel()->toggleGroup("flight.csv");
+    QVERIFY(!controller.sessionModified());
+    QVERIFY(controller.renameSignal(0, "Renamed"));
+    QVERIFY(controller.sessionModified());
+    QVERIFY(controller.saveSession(session));
+    QVERIFY(QFile::rename(original, relocated));
+    const auto missing = controller.missingSessionFiles(session);
+    QCOMPARE(missing.size(), 1);
+    QCOMPARE(missing[0].toMap()["index"].toInt(), 0);
+    QCOMPARE(missing[0].toMap()["path"].toString(), original);
+    QVERIFY(!controller.restoreSessionWithFiles(session, {{"0", dir.filePath("absent.csv")}}));
+    QCOMPARE(controller.signalName(0), QStringLiteral("Renamed"));
+    QVERIFY(!controller.sessionModified());
+    QVERIFY(controller.restoreSessionWithFiles(session, {{"0", QUrl::fromLocalFile(relocated)}}));
+    QTRY_VERIFY(!controller.restoringSession());
+    QCOMPARE(controller.signalName(0), QStringLiteral("Renamed"));
+    QCOMPARE(controller.plotSignalRows(0), QVariantList{0});
+    QVERIFY(controller.sessionModified()); // New source paths need saving.
+    QVERIFY(controller.saveSession(session));
+    QVERIFY(controller.missingSessionFiles(session).isEmpty());
+    QVERIFY(!controller.sessionModified());
+    QVERIFY(controller.restoreSession(session));
+    QTRY_VERIFY(!controller.restoringSession());
+    QVERIFY(!controller.sessionModified());
+    controller.clear();
+    QVERIFY(controller.sessionModified());
+}
+
 void SessionTest::schemaValidationAndAtomicSave()
 {
     QTemporaryDir dir;
@@ -282,6 +330,24 @@ void SessionTest::qmlRestoresToolbarAndPlotStates()
     }
     QCoreApplication::processEvents();
     QVERIFY2(qmlWarnings.isEmpty(), qPrintable(qmlWarnings.join('\n')));
+    auto *host = qobject_cast<QQuickWindow *>(root.get());
+    QVERIFY(host);
+    host->show();
+    QVERIFY(QTest::qWaitForWindowExposed(host));
+    QVERIFY(controller.renameSignal(0, "Unsaved rename"));
+    QVERIFY(controller.sessionModified());
+    auto *prompt = root->findChild<QObject *>("unsavedSessionDialog");
+    QVERIFY(prompt);
+    host->close();
+    QTRY_VERIFY(prompt->property("visible").toBool());
+    QVERIFY(host->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(prompt, "reject"));
+    QCOMPARE(root->property("pendingUnsavedAction").toString(), QString());
+    QVERIFY(host->isVisible());
+    QVERIFY(controller.saveSession(path));
+    QVERIFY(!controller.sessionModified());
+    host->close();
+    QTRY_VERIFY(!host->isVisible());
 }
 
 void SessionTest::restoredSessionsContinuePaletteSafely()

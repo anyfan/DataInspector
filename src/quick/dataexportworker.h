@@ -4,6 +4,7 @@
 #include "xlsxwriter.h"
 
 #include <QObject>
+#include <QImage>
 
 #include <atomic>
 
@@ -19,6 +20,7 @@ public slots:
                         const QVector<XlsxExportTable> &tables,
                         bool zipCompressionEnabled);
     void exportMat(const QString &path, const QVector<DataExportTable> &tables);
+    void exportPng(const QString &path, const QImage &image);
 
 signals:
     void progress(int percentage);

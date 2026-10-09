@@ -12,6 +12,7 @@
 #include <QQmlEngine>
 #include <QSignalSpy>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
 #include <QWheelEvent>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -1207,6 +1208,40 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     plot->setXRange(0, 1);
     plot->setCursorPosition(.25, 1);
     plot->setCursorPosition(.75, 2);
+    QSignalSpy captured(&controller, &AppController::imageExportFinished);
+    const QString pngPath = directory.filePath("view.png");
+    QVERIFY(!controller.exportPlotImage(nullptr, pngPath));
+    QVERIFY(controller.exportPlotImage(item, pngPath, 2));
+    QTRY_COMPARE_WITH_TIMEOUT(captured.size(), 1, 10000);
+    QVERIFY2(captured[0][0].toBool(), qPrintable(captured[0][1].toString()));
+    const QImage image(pngPath);
+    QCOMPARE(image.size(), QSize(1600, 800));
+    QVERIFY(!image.isNull());
+    if (window.rendererInterface()->graphicsApi() != QSGRendererInterface::Software) {
+        const QPointF origin = plot->mapToItem(item, QPointF());
+        const QRect region = QRect(qCeil(origin.x() * 2), qCeil(origin.y() * 2),
+            qFloor(plot->width() * 2), qFloor(plot->height() * 2)).intersected(image.rect());
+        const QColor stroke = controller.signalColor(1);
+        int coloredPixels = 0;
+        for (int y = region.top(); y <= region.bottom(); ++y) {
+            for (int x = region.left(); x <= region.right(); ++x) {
+                const QColor pixel = image.pixelColor(x, y);
+                if (qAbs(pixel.red() - stroke.red()) < 12
+                    && qAbs(pixel.green() - stroke.green()) < 12
+                    && qAbs(pixel.blue() - stroke.blue()) < 12) ++coloredPixels;
+            }
+        }
+        QVERIFY2(coloredPixels > 10, "Exported PNG must include the rendered curve");
+    }
+    QFile png(pngPath); QVERIFY(png.open(QIODevice::ReadOnly));
+    const auto beforeCancel = png.readAll(); png.close();
+    captured.clear();
+    QVERIFY(controller.exportPlotImage(item, pngPath, 2));
+    controller.cancelExport();
+    QTRY_COMPARE_WITH_TIMEOUT(captured.size(), 1, 10000);
+    QVERIFY(!captured[0][0].toBool());
+    QVERIFY(png.open(QIODevice::ReadOnly));
+    QCOMPARE(png.readAll(), beforeCancel); png.close();
     // Clicking a cursor line selects the keyboard target without dragging it.
     const QPoint secondLine = plot->mapToScene(QPointF(plot->width() * .75, 40)).toPoint();
     QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, secondLine);
@@ -1614,6 +1649,7 @@ void AppControllerTest::signalTreeDragAddsToTargetPlot()
     auto *preview = object->findChild<QQuickItem *>("signalTreeDragPreview");
     QVERIFY(search && preview);
     search->setProperty("text", "B");
+    QTRY_COMPARE(controller.signalModel()->rowCount(), 2); // Wait for the debounced filter.
     const auto signalLabel = [&]() {
         return visualItem([](QQuickItem *item) {
             return item->objectName() == "signalTreeName"
@@ -1660,6 +1696,16 @@ void AppControllerTest::signalTreeDragAddsToTargetPlot()
     QVERIFY(!preview->isVisible());
     QVERIFY(!cursor->isVisible());
     QVERIFY(!target->property("dropHighlighted").toBool());
+    controller.setActivePlot(0);
+    startDrag();
+    QTest::mouseMove(host, destination, 40);
+    QTest::keyClick(host, Qt::Key_Escape);
+    QVERIFY(!preview->isVisible());
+    QVERIFY(!target->property("dropHighlighted").toBool());
+    QTest::mouseMove(host, destination + QPoint(10, 0), 40);
+    QVERIFY(!preview->isVisible()); // Canceled gestures cannot restart before release.
+    QTest::mouseRelease(host, Qt::LeftButton, Qt::NoModifier, destination);
+    QCOMPARE(controller.activePlotIndex(), 0);
     startDrag();
     QTest::mouseMove(host, destination, 40);
     QTest::mouseRelease(host, Qt::LeftButton, Qt::NoModifier, destination);
@@ -1704,6 +1750,24 @@ void AppControllerTest::signalTreeDragAddsToTargetPlot()
     QTest::mouseRelease(host, Qt::LeftButton, Qt::NoModifier, verticalStart + QPoint(0, 60));
     QVERIFY(!preview->isVisible());
     QCOMPARE(list->property("contentY").toDouble(), beforeDrag);
+    // Exporting the whole grid from solo mode restores the UI without changing saved state.
+    object->setProperty("subplotMaximized", true);
+    QVERIFY(controller.saveSession(temp.filePath("image.disession")));
+    QVERIFY(!controller.sessionModified());
+    object->setProperty("imageCaptureAll", true);
+    QTRY_VERIFY(target->isVisible());
+    auto *grid = object->findChild<QQuickItem *>("plotGrid");
+    QVERIFY(grid);
+    QSignalSpy imageFinished(&controller, &AppController::imageExportFinished);
+    const QString gridImage = temp.filePath("all-plots.png");
+    QVERIFY(controller.exportPlotImage(grid, gridImage, 2));
+    QTRY_COMPARE_WITH_TIMEOUT(imageFinished.size(), 1, 10000);
+    QVERIFY2(imageFinished[0][0].toBool(), qPrintable(imageFinished[0][1].toString()));
+    QCOMPARE(QImage(gridImage).size(), QSize(qCeil(grid->width() * 2), qCeil(grid->height() * 2)));
+    QVERIFY(object->property("subplotMaximized").toBool());
+    QVERIFY(!object->property("imageCaptureAll").toBool());
+    QCOMPARE(controller.soloPlotIndex(), 0);
+    QVERIFY(!controller.sessionModified());
     QCOMPARE(warnings, QStringList());
 }
 
@@ -1772,6 +1836,8 @@ void AppControllerTest::signalSectionsKeepNestedPathsAndAlignedNames()
     object->setProperty("darkTheme", true);
     QCoreApplication::processEvents();
     search->setProperty("text", "");
+    QTRY_COMPARE(controller.signalModel()->rowCount(), 6); // Wait for the debounced clear before changing groups.
+    QTRY_VERIFY(findRow("Pitch"));
     controller.signalModel()->toggleGroup("flight.mat/p2/navigation/position");
     QStringList extraNames, extraGroups;
     for (int i = 0; i < 60; ++i) {
@@ -1783,6 +1849,7 @@ void AppControllerTest::signalSectionsKeepNestedPathsAndAlignedNames()
         extraGroups.append("flight.mat/p3");
     }
     controller.signalModel()->appendNames(extraNames, extraGroups, {});
+    QCOMPARE(controller.signalModel()->rowCount(), 129);
     auto *list = object->findChild<QQuickItem *>("signalList");
     auto *header = object->findChild<QQuickItem *>("signalStickyHeader");
     auto *breadcrumb = object->findChild<QQuickItem *>("signalBreadcrumb");
@@ -1869,6 +1936,12 @@ void AppControllerTest::signalSectionsKeepNestedPathsAndAlignedNames()
     }
     QTest::mouseRelease(host, Qt::LeftButton, Qt::NoModifier, thumb + QPoint(0, 70));
     QVERIFY(lastScroll > 0);
+    const double beforeSearch = list->property("contentY").toDouble();
+    search->setProperty("text", QStringLiteral("Other"));
+    QTRY_VERIFY(controller.signalModel()->rowCount() < 129);
+    search->setProperty("text", QString());
+    QTRY_COMPARE(controller.signalModel()->rowCount(), 129);
+    QTRY_VERIFY(qAbs(list->property("contentY").toDouble() - beforeSearch) < 1);
     const QString longFile = QStringLiteral("2026-09-22_11-38-58_") + QString(100, QLatin1Char('a')) + ".mat";
     controller.signalModel()->setNames(extraNames, QStringList(extraNames.size(), longFile + "/p19"));
     QTRY_VERIFY(findRow("p19"));

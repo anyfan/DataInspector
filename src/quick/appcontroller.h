@@ -40,8 +40,10 @@ class AppController : public QObject
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
     Q_PROPERTY(bool restoringSession READ restoringSession NOTIFY restoringSessionChanged)
     Q_PROPERTY(QString sessionPath READ sessionPath NOTIFY sessionPathChanged)
+    Q_PROPERTY(bool sessionModified READ sessionModified NOTIFY sessionModifiedChanged)
     Q_PROPERTY(int loadingProgress READ loadingProgress NOTIFY loadingProgressChanged)
     Q_PROPERTY(bool exporting READ exporting NOTIFY exportingChanged)
+    Q_PROPERTY(bool imageExporting READ imageExporting NOTIFY exportingChanged)
     Q_PROPERTY(int exportProgress READ exportProgress NOTIFY exportProgressChanged)
     Q_PROPERTY(bool canUndoView READ canUndoView NOTIFY viewHistoryChanged)
     Q_PROPERTY(bool matExportSupported READ matExportSupported CONSTANT)
@@ -68,8 +70,11 @@ public:
     bool loading() const { return m_loading; }
     bool restoringSession() const { return m_restoringSession; }
     QString sessionPath() const { return m_sessionPath; }
+    bool sessionModified() const { return m_sessionModified; }
+    void markSessionModified();
     int loadingProgress() const { return m_loadingProgress; }
     bool exporting() const { return m_exporting; }
+    bool imageExporting() const { return m_imageExporting; }
     int exportProgress() const { return m_exportProgress; }
     bool matExportSupported() const;
     int loadedFileCount() const { return m_loadedFileNames.size(); }
@@ -82,6 +87,8 @@ public:
 
     Q_INVOKABLE bool saveSession(const QVariant &filePath);
     Q_INVOKABLE bool restoreSession(const QVariant &filePath);
+    Q_INVOKABLE QVariantList missingSessionFiles(const QVariant &filePath) const;
+    Q_INVOKABLE bool restoreSessionWithFiles(const QVariant &filePath, const QVariantMap &replacements);
 
     // Import / export
     Q_INVOKABLE bool loadCsv(const QString &filePath);
@@ -94,6 +101,7 @@ public:
                                 bool zipCompressionEnabled = false);
     // Writes pN / pN_title variables in the same layout the MAT loader reads.
     Q_INVOKABLE bool exportMat(const QVariant &filePath, int scope);
+    Q_INVOKABLE bool exportPlotImage(QObject *item, const QVariant &filePath, int scale = 2);
     Q_INVOKABLE void cancelExport();
 
     // Signal selection and styling
@@ -163,6 +171,7 @@ signals:
     void revealSignalRequested(int row);
     void restoringSessionChanged();
     void sessionPathChanged();
+    void sessionModifiedChanged();
     void sessionError(const QString &message);
     void sessionRestored(int cursorMode);
     void sessionRestoreFinished(bool success, const QString &message);
@@ -172,6 +181,7 @@ signals:
     void loadingProgressChanged();
     void exportingChanged();
     void exportProgressChanged();
+    void imageExportFinished(bool success, const QString &message);
     void layoutChanged();
     void plotBindingsChanged();
     void activePlotChanged();
@@ -233,6 +243,9 @@ private:
     static void syncCursorsFrom(PlotItem *source, PlotItem *target);
 
     QString m_sessionPath, m_pendingSessionPath;
+    bool m_sessionModified = false;
+    bool m_sessionRelocated = false;
+    bool m_imageExporting = false, m_imageExportCancelled = false;
     std::optional<SessionDocument> m_pendingSession;
     QStringList m_sessionSourcePaths;
     QVector<QVector<LoadedTable>> m_stagedSessionTables;

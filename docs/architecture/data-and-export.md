@@ -34,6 +34,10 @@
 
 ## 导出
 
+### PNG 图片
+
+`AppController::exportPlotImage` 接收绘图区 QQuickItem，等待当前时间图 LOD 与可见航迹任务完成后调用 `grabToImage`；QML 导出当前子图或暂时以平铺布局显示全部子图。抓取包括轴、图例、游标及航迹元素，不含工具栏和信号树。默认 2 倍尺寸，每边最多 8192 像素，超限拒绝。抓取后不可变 QImage 值副本投递给 DataExportWorker，在后台编码 PNG 并通过 `QSaveFile` 原子写入；取消保留旧文件，同一时间不允许其他导出/加载/恢复任务。捕获期间禁用绘图区和工具栏的交互，Scene Graph 抓取由 Qt 管理；单次 PNG 编码不能被中途打断，完成编码后提交前再次检查取消。
+
 `DataExportWorker` 后台调度，与加载共用工作线程队列。
 
 ### 共用结构

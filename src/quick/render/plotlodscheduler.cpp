@@ -2,6 +2,11 @@
 #include <QThreadPool>
 
 namespace {
+PlotLodResultCache &completedCache()
+{
+    static PlotLodResultCache cache;
+    return cache;
+}
 QThreadPool &lodPool()
 {
     static QThreadPool pool;
@@ -28,6 +33,12 @@ void PlotLodScheduler::request(const PlotSeriesSnapshot &snapshot, const LodRequ
     m_key = key;
     ++m_revision;
     if (dataChanged) m_result.reset();
+    if (auto cached = completedCache().find(snapshot, key)) {
+        if (m_job) m_job->cancelled = true;
+        m_result = std::move(cached);
+        emit ready();
+        return;
+    }
     if (m_job) m_job->cancelled = true;
     else start();
 }
@@ -54,8 +65,14 @@ void PlotLodScheduler::finish()
 {
     if (!m_job || !m_job->done.load(std::memory_order_acquire)) return;
     const auto job = std::move(m_job);
-    if (job->revision != m_revision) { start(); return; }
+    if (job->revision != m_revision) {
+        if (m_result && m_key && m_result->key == *m_key) { m_poll.stop(); return; }
+        start(); return;
+    }
     m_poll.stop();
-    if (!job->cancelled && job->result) m_result = job->result;
+    if (!job->cancelled && job->result) {
+        m_result = job->result;
+        completedCache().insert(m_snapshot, m_result);
+    }
     emit ready();
 }

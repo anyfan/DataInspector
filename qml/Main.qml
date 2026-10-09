@@ -15,8 +15,20 @@ ApplicationWindow {
     width: 1440
     height: 900
     visible: true
-    title: window.appController.currentFile.length > 0 ? "DataInspector · " + window.appController.currentFile : "DataInspector"
+    title: (window.appController.currentFile.length > 0 ? "DataInspector · " + window.appController.currentFile : "DataInspector")
+        + (window.appController.sessionModified ? " *" : "")
     color: window.panelColor
+    onActiveChanged: if (!active) window.cancelSignalTreeDrag()
+    property bool allowClose: false
+    property string pendingUnsavedAction: ""
+    onClosing: close => {
+        window.cancelSignalTreeDrag()
+        if (!allowClose && window.appController.sessionModified) {
+            close.accepted = false
+            pendingUnsavedAction = "close"
+            unsavedSessionDialog.open()
+        }
+    }
     // Keep every Fusion control in the app theme, independent of the OS theme.
     palette.window: panelColor
     palette.windowText: treeTextColor
@@ -51,8 +63,10 @@ ApplicationWindow {
 
     property var signalDragDestination: null
     property int signalDragRow: -1
+    property int signalDragRevision: 0
     readonly property bool signalTreeDragging: signalTreeDragPreview.visible
     function cancelSignalTreeDrag() {
+        ++signalDragRevision
         if (signalDragDestination) signalDragDestination.dropHighlighted = false
         signalDragDestination = null
         signalDragRow = -1
@@ -429,6 +443,50 @@ ApplicationWindow {
     }
 
     property url pendingSessionUrl: ""
+    property var missingSources: []
+    property var relocatedSources: ({})
+    property int missingSourceIndex: 0
+    function beginSessionRestore() {
+        missingSources = window.appController.missingSessionFiles(pendingSessionUrl)
+        relocatedSources = ({})
+        missingSourceIndex = 0
+        locateNextSource()
+    }
+    function locateNextSource() {
+        if (missingSourceIndex < missingSources.length) {
+            relocateFileDialog.title = "重新定位：" + missingSources[missingSourceIndex].path
+            relocateFileDialog.open()
+        } else window.appController.restoreSessionWithFiles(pendingSessionUrl, relocatedSources)
+    }
+    FileDialog {
+        id: relocateFileDialog
+        objectName: "relocateFileDialog"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["数据文件 (*.csv *.txt *.xlsx *.mat)"]
+        onAccepted: {
+            window.relocatedSources[String(window.missingSources[window.missingSourceIndex].index)] = selectedFile
+            ++window.missingSourceIndex
+            window.locateNextSource()
+        }
+    }
+    function continueUnsavedAction() {
+        const action = pendingUnsavedAction
+        pendingUnsavedAction = ""
+        if (action === "close") { allowClose = true; window.close() }
+        else if (action === "restore") window.beginSessionRestore()
+    }
+    Dialog {
+        id: unsavedSessionDialog
+        objectName: "unsavedSessionDialog"
+        title: "当前会话尚未保存"
+        modal: true
+        anchors.centerIn: parent
+        standardButtons: Dialog.Save | Dialog.Discard | Dialog.Cancel
+        Label { text: "是否保存当前的信号绑定、样式和视图？\n会话文件不包含原始数据。" }
+        onAccepted: saveSessionDialog.open()
+        onDiscarded: window.continueUnsavedAction()
+        onRejected: window.pendingUnsavedAction = ""
+    }
     FileDialog {
         id: saveSessionDialog
         objectName: "saveSessionDialog"
@@ -436,7 +494,10 @@ ApplicationWindow {
         nameFilters: ["DataInspector 会话 (*.disession)", "JSON 文件 (*.json)"]
         fileMode: FileDialog.SaveFile
         defaultSuffix: "disession"
-        onAccepted: window.appController.saveSession(selectedFile)
+        onAccepted: {
+            if (window.appController.saveSession(selectedFile)) window.continueUnsavedAction()
+        }
+        onRejected: window.pendingUnsavedAction = ""
     }
     FileDialog {
         id: openSessionDialog
@@ -446,8 +507,11 @@ ApplicationWindow {
         fileMode: FileDialog.OpenFile
         onAccepted: {
             window.pendingSessionUrl = selectedFile
-            if (window.appController.loadedFileCount > 0) replaceSessionDialog.open()
-            else window.appController.restoreSession(selectedFile)
+            if (window.appController.sessionModified) {
+                window.pendingUnsavedAction = "restore"
+                unsavedSessionDialog.open()
+            } else if (window.appController.loadedFileCount > 0) replaceSessionDialog.open()
+            else window.beginSessionRestore()
         }
     }
     Dialog {
@@ -458,7 +522,7 @@ ApplicationWindow {
         anchors.centerIn: parent
         standardButtons: Dialog.Ok | Dialog.Cancel
         Label { text: "恢复成功后将替换当前会话。\n如需保留当前视图，请先保存会话。\n文件缺失或恢复失败时，当前会话不变。" }
-        onAccepted: window.appController.restoreSession(window.pendingSessionUrl)
+        onAccepted: window.beginSessionRestore()
     }
     Dialog {
         id: sessionErrorDialog
@@ -508,6 +572,36 @@ ApplicationWindow {
         fileMode: FileDialog.SaveFile
         defaultSuffix: "mat"
         onAccepted: window.appController.exportMat(selectedFile, window.pendingExportScope)
+    }
+
+    property bool exportImageAll: false
+    property bool imageCaptureAll: false
+    property url imageExportUrl: ""
+    FileDialog {
+        id: exportImageDialog
+        objectName: "exportImageDialog"
+        title: "导出 PNG（2 倍分辨率）"
+        nameFilters: ["PNG 图片 (*.png)"]
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "png"
+        onAccepted: {
+            window.imageExportUrl = selectedFile
+            window.imageCaptureAll = window.exportImageAll
+            imageCaptureTimer.restart()
+        }
+    }
+    Timer {
+        id: imageCaptureTimer
+        interval: 60
+        onTriggered: {
+            const target = window.exportImageAll ? plotGrid
+                : plotRepeater.itemAt(window.appController.activePlotIndex)
+            if (!window.appController.exportPlotImage(target, window.imageExportUrl, 2)) {
+                window.imageCaptureAll = false
+                sessionErrorDialog.message = "无法导出当前绘图区，请确认视图可见、没有其他加载或导出任务。"
+                sessionErrorDialog.open()
+            }
+        }
     }
 
     Dialog {
@@ -565,9 +659,15 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Alt+Shift+Y"; onActivated: window.appController.fitPlots(false, true, true) }
     Connections {
         target: window.appController
-        function onLayoutChanged() { window.subplotMaximized = false }
+        function onLayoutChanged() { window.cancelSignalTreeDrag(); window.subplotMaximized = false }
+        function onImageExportFinished(success, message) {
+            window.imageCaptureAll = false
+            if (!success) { sessionErrorDialog.message = message; sessionErrorDialog.open() }
+        }
         function onSessionRestored(cursorMode) {
             signalSearch.clear()
+            searchTimer.stop()
+            signalSearch.filtering = false
             window.selectedCursorMode = cursorMode
             if (cursorMode !== 0) window.preferredCursorMode = cursorMode
             window.subplotMaximized = window.appController.soloPlotIndex >= 0
@@ -578,6 +678,8 @@ ApplicationWindow {
         }
         function onRevealSignalRequested(row) {
             signalSearch.clear()
+            searchTimer.stop()
+            signalSearch.filtering = false
             const modelRow = window.appController.signalModel.revealSignal(row)
             signalList.currentIndex = modelRow
             signalList.positionViewAtIndex(modelRow, ListView.Center)
@@ -608,9 +710,10 @@ ApplicationWindow {
     Shortcut {
         sequence: "Escape"
         enabled: !window.appController.restoringSession
-                 && (window.visibility === Window.FullScreen || window.subplotMaximized)
+                 && (window.signalTreeDragging || window.visibility === Window.FullScreen || window.subplotMaximized)
         onActivated: {
-            if (window.visibility === Window.FullScreen) window.toggleFullscreen()
+            if (window.signalTreeDragging) window.cancelSignalTreeDrag()
+            else if (window.visibility === Window.FullScreen) window.toggleFullscreen()
             else window.subplotMaximized = false
         }
     }
@@ -715,7 +818,7 @@ ApplicationWindow {
         }
     }
     header: ToolBar {
-        enabled: !window.appController.restoringSession
+        enabled: !window.appController.restoringSession && !window.appController.imageExporting
         height: 48
         background: Rectangle { color: window.panelColor; border.color: window.borderColor }
         RowLayout {
@@ -745,6 +848,15 @@ ApplicationWindow {
                 onClicked: exportMenu.popup()
                 Menu {
                     id: exportMenu
+                    MenuItem {
+                        text: "PNG · 当前子图"
+                        onTriggered: { window.exportImageAll = false; exportImageDialog.open() }
+                    }
+                    MenuItem {
+                        text: "PNG · 全部子图"
+                        onTriggered: { window.exportImageAll = true; exportImageDialog.open() }
+                    }
+                    MenuSeparator { }
                     MenuItem {
                         text: "Excel · 全部已加载数据"
                         onTriggered: {
@@ -918,12 +1030,40 @@ ApplicationWindow {
             color: window.panelColor
             ColumnLayout { anchors.fill: parent; anchors.margins: 10; anchors.rightMargin: 0; spacing: 8
                 RowLayout { Layout.fillWidth: true; spacing: 4
-                    TextField { id: signalSearch; objectName: "signalSearch"; Layout.fillWidth: true; placeholderText: "搜索信号…"; onTextChanged: window.appController.filterSignals(text) }
+                    TextField {
+                        id: signalSearch
+                        objectName: "signalSearch"
+                        Layout.fillWidth: true
+                        placeholderText: "搜索信号…"
+                        property bool filtering: false
+                        property real previousContentY: 0
+                        onTextChanged: {
+                            if (!filtering && text.trim().length > 0) {
+                                previousContentY = signalList.contentY
+                                filtering = true
+                            }
+                            searchTimer.restart()
+                        }
+                        Timer {
+                            id: searchTimer
+                            interval: 150
+                            onTriggered: {
+                                window.appController.filterSignals(signalSearch.text)
+                                if (signalSearch.filtering && signalSearch.text.trim().length === 0) {
+                                    signalList.forceLayout()
+                                    signalList.contentY = Math.max(signalList.originY,
+                                        Math.min(signalList.originY + Math.max(0, signalList.contentHeight - signalList.height),
+                                            signalSearch.previousContentY))
+                                    signalSearch.filtering = false
+                                }
+                            }
+                        }
+                    }
                     ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered && !window.signalTreeDragging; ToolTip.text: "清除搜索" }
                     ToolButton { text: "‹"; onClicked: window.signalTreeVisible = false; ToolTip.visible: hovered && !window.signalTreeDragging; ToolTip.text: "隐藏信号树（可从设置恢复）" }
                 }
                 Item { Layout.fillWidth: true; Layout.fillHeight: true
-                ListView { id: signalList; anchors.fill: parent; clip: true; model: window.appController.signalModel
+                ListView { id: signalList; enabled: !window.appController.imageExporting; anchors.fill: parent; clip: true; model: window.appController.signalModel
                     objectName: "signalList"
                     anchors.rightMargin: 5
                     // Overlay navigation must never resize the viewport or thumb.
@@ -1106,6 +1246,7 @@ ApplicationWindow {
                                     property point namePressPoint
                                     property bool moving: false
                                     property bool canceledDrag: false
+                                    property int gestureRevision: -1
                                     preventStealing: !signalDelegate.groupNode
                                     cursorShape: moving ? Qt.BlankCursor : Qt.ArrowCursor
                                     onPressed: mouse => {
@@ -1113,9 +1254,11 @@ ApplicationWindow {
                                         namePressPoint = mapToItem(signalNameLabel, mouse.x, mouse.y)
                                         moving = false
                                         canceledDrag = false
+                                        gestureRevision = window.signalDragRevision
                                     }
                                     onPositionChanged: mouse => {
-                                        if (signalDelegate.groupNode || !(pressedButtons & Qt.LeftButton) || canceledDrag) return
+                                        if (signalDelegate.groupNode || !(pressedButtons & Qt.LeftButton) || canceledDrag
+                                            || gestureRevision !== window.signalDragRevision) return
                                         if (!moving && Math.hypot(mouse.x - pressPoint.x, mouse.y - pressPoint.y) < 8) return
                                         moving = true
                                         const point = mapToItem(signalNameLabel, mouse.x, mouse.y)
@@ -1341,12 +1484,12 @@ ApplicationWindow {
                 }
                 if (widest !== sharedAxisLeft) sharedAxisLeft = widest
             }
-            GridLayout { anchors.fill: parent; rows: window.subplotMaximized ? 1 : window.appController.plotRows; columns: window.subplotMaximized ? 1 : window.appController.plotColumns; columnSpacing: 0; rowSpacing: 0; uniformCellWidths: true; uniformCellHeights: true
+            GridLayout { id: plotGrid; objectName: "plotGrid"; enabled: !window.appController.imageExporting; anchors.fill: parent; rows: window.subplotMaximized && !window.imageCaptureAll ? 1 : window.appController.plotRows; columns: window.subplotMaximized && !window.imageCaptureAll ? 1 : window.appController.plotColumns; columnSpacing: 0; rowSpacing: 0; uniformCellWidths: true; uniformCellHeights: true
                 Repeater { id: plotRepeater; model: window.appController.plotRows * window.appController.plotColumns
                     delegate: QuickPlot {
                         required property int index
                         plotIndex: index
-                        visible: !window.subplotMaximized || index === window.appController.activePlotIndex
+                        visible: window.imageCaptureAll || !window.subplotMaximized || index === window.appController.activePlotIndex
                         controller: window.appController
                         sharedAxisLeft: plotPanel.sharedAxisLeft
                         onMeasuredAxisLeftChanged: plotPanel.updateSharedAxisLeft()

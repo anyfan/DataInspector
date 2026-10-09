@@ -69,18 +69,13 @@ void SignalModel::setNames(const QStringList &names, const QStringList &groups,
     m_originalNames = names;
     m_groups = groups;
     m_groups.resize(names.size());
+    m_groupIndexDirty = true;
     m_colors = colors;
     if (m_colors.size() < names.size()) m_colors.resize(names.size());
     m_widths.fill(2.0, names.size());
     m_lineStyles.fill(Qt::SolidLine, names.size());
-    m_expandedGroups.clear();
-    for (const QString &group : std::as_const(m_groups)) {
-        QString prefix;
-        for (const QString &part : group.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
-            prefix = prefix.isEmpty() ? part : prefix + QLatin1Char('/') + part;
-            m_expandedGroups.insert(prefix);
-        }
-    }
+    rebuildGroupIndex();
+    m_expandedGroups = m_groupPrefixes;
     rebuildVisibleNodes();
     for (QSet<int> &rows : m_plotRows) rows.clear();
     m_selectionOverride.reset();
@@ -100,6 +95,7 @@ void SignalModel::appendNames(const QStringList &names, const QStringList &group
     QStringList appendedGroups = groups;
     appendedGroups.resize(names.size());
     m_groups.append(appendedGroups);
+    m_groupIndexDirty = true;
 
     m_colors.resize(oldSize + names.size());
     m_widths.resize(oldSize + names.size());
@@ -111,7 +107,8 @@ void SignalModel::appendNames(const QStringList &names, const QStringList &group
         m_widths[row] = 2.0;
         m_lineStyles[row] = Qt::SolidLine;
     }
-    for (const QString &group : std::as_const(appendedGroups)) {
+    const QSet<QString> newGroups(appendedGroups.cbegin(), appendedGroups.cend());
+    for (const QString &group : newGroups) {
         QString prefix;
         for (const QString &part : group.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
             prefix = prefix.isEmpty() ? part : prefix + QLatin1Char('/') + part;
@@ -216,6 +213,7 @@ QVector<int> SignalModel::removeFile(const QString &fileName)
     m_names = std::move(names);
     m_originalNames = std::move(originalNames);
     m_groups = std::move(groups);
+    m_groupIndexDirty = true;
     m_colors = std::move(colors);
     m_widths = std::move(widths);
     m_lineStyles = std::move(lineStyles);
@@ -365,27 +363,55 @@ bool SignalModel::renameSignal(int row, const QString &name)
     return true;
 }
 
+void SignalModel::rebuildGroupIndex()
+{
+    if (!m_groupIndexDirty) return;
+    m_orderedGroups.clear(); m_groupPrefixes.clear();
+    m_groupSourceRows.clear(); m_groupAncestors.clear();
+    for (int row = 0; row < m_groups.size(); ++row) {
+        const QString &group = m_groups[row];
+        if (!m_groupSourceRows.contains(group)) {
+            QString prefix;
+            QStringList ancestors;
+            for (const QString &part : group.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
+                prefix = prefix.isEmpty() ? part : prefix + QLatin1Char('/') + part;
+                ancestors.append(prefix);
+                if (!m_groupPrefixes.contains(prefix)) {
+                    m_groupPrefixes.insert(prefix);
+                    m_orderedGroups.append(prefix);
+                }
+            }
+            m_groupAncestors.insert(group, ancestors);
+        }
+        m_groupSourceRows[group].append(row);
+    }
+    m_groupIndexDirty = false;
+}
+
 void SignalModel::rebuildVisibleNodes()
 {
+    rebuildGroupIndex();
     m_visibleNodes.clear();
     m_groupRows.clear();
-    QStringList orderedGroups;
-    for (const QString &group : std::as_const(m_groups)) {
-        QString prefix;
-        for (const QString &part : group.split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
-            prefix = prefix.isEmpty() ? part : prefix + QLatin1Char('/') + part;
-            if (!orderedGroups.contains(prefix)) orderedGroups.append(prefix);
+    QSet<QString> matchingGroups;
+    QHash<QString, QVector<int>> matchingRowsByGroup;
+    if (m_filter.isEmpty()) matchingRowsByGroup = m_groupSourceRows;
+    else {
+        for (auto it = m_groupSourceRows.cbegin(); it != m_groupSourceRows.cend(); ++it) {
+            QVector<int> matches;
+            const bool groupMatches = it.key().contains(m_filter, Qt::CaseInsensitive);
+            for (int row : it.value()) {
+                if (groupMatches || m_names.at(row).contains(m_filter, Qt::CaseInsensitive)) matches.append(row);
+            }
+            if (!matches.isEmpty()) {
+                matchingRowsByGroup.insert(it.key(), matches);
+                for (const QString &prefix : m_groupAncestors.value(it.key())) matchingGroups.insert(prefix);
+            }
         }
     }
+    for (int row : matchingRowsByGroup.value(QString())) m_visibleNodes.append({false, row, {}, 0});
 
-    for (int row = 0; row < m_names.size(); ++row) {
-        if (!m_groups.value(row).isEmpty()) continue;
-        if (m_filter.isEmpty()
-            || m_names.at(row).contains(m_filter, Qt::CaseInsensitive))
-            m_visibleNodes.append({false, row, {}, 0});
-    }
-
-    for (const QString &group : std::as_const(orderedGroups)) {
+    for (const QString &group : std::as_const(m_orderedGroups)) {
         const QString parent = group.section(QLatin1Char('/'), 0, -2);
         if (m_filter.isEmpty() && !parent.isEmpty()) {
             QString prefix;
@@ -396,38 +422,22 @@ void SignalModel::rebuildVisibleNodes()
             }
             if (!visible) continue;
         }
-        QVector<int> matchingRows;
-        bool hasSignalMatch = false;
-        for (int row = 0; row < m_names.size(); ++row) {
-            const QString signalGroup = m_groups.value(row);
-            if (signalGroup != group
-                && !signalGroup.startsWith(group + QLatin1Char('/'))) continue;
-            const bool signalMatches = m_filter.isEmpty()
-                || m_names.at(row).contains(m_filter, Qt::CaseInsensitive)
-                || signalGroup.contains(m_filter, Qt::CaseInsensitive);
-            if (signalMatches && signalGroup == group)
-                matchingRows.append(row);
-            if (signalMatches) hasSignalMatch = true;
-        }
         const bool groupMatches = group.contains(m_filter, Qt::CaseInsensitive);
-        if (!m_filter.isEmpty() && !groupMatches && !hasSignalMatch) continue;
+        if (!m_filter.isEmpty() && !groupMatches && !matchingGroups.contains(group)) continue;
         const int depth = group.count(QLatin1Char('/'));
         m_groupRows.insert(group, m_visibleNodes.size());
         m_visibleNodes.append({true, -1, group, depth});
         const bool showChildren = !m_filter.isEmpty()
             || m_expandedGroups.contains(group);
         if (showChildren)
-            for (int row : std::as_const(matchingRows))
+            for (int row : matchingRowsByGroup.value(group))
                 m_visibleNodes.append({false, row, group, depth + 1});
     }
 }
 
 bool SignalModel::groupExists(const QString &group) const
 {
-    for (const QString &signalGroup : m_groups)
-        if (signalGroup == group
-            || signalGroup.startsWith(group + QLatin1Char('/'))) return true;
-    return false;
+    return m_groupPrefixes.contains(group);
 }
 
 int SignalModel::visibleModelRow(int sourceRow) const

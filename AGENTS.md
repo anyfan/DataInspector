@@ -92,7 +92,7 @@ ctest --test-dir build_qt6-debug --output-on-failure
 4. **QML 类型注册**走 `src/quick/qmltypes.h`（`QML_FOREIGN`），`Main.qml` 用 `required property AppController appController` 接收，不要用隐式上下文变量，也不要手工 `qmlRegisterType`。
 5. **QML 文件显式 `pragma ComponentBehavior: Bound`**；qmllint 必须零 warning。
 6. **新增功能同步更新文档**：功能 → `docs/user-guide/`，设计/内核 → `docs/architecture/`，构建/工具链 → `docs/dev/`；开发过程记录追加到 `docs/dev-log/`。
-7. **已遗弃功能不要实现**：重放、Python API、`.mldatx` 视图文件。图片导出仍待迁移。
+7. **已遗弃功能不要实现**：重放、Python API、`.mldatx` 视图文件。PNG 图片导出现已迁移，见 `docs/user-guide/image-export.md`。
 8. **会话文件是版本化 JSON，结构校验严格**：改动格式必须同步 `sessiondocument.*` 与 `docs/user-guide/session.md`。
 9. **数值解析统一 C locale**：CSV 数值不接受千位分组符；导出前校验同表信号时间基。
 

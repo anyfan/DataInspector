@@ -74,11 +74,17 @@ private:
         int depth = 0;
     };
     void rebuildVisibleNodes();
+    void rebuildGroupIndex();
     int visibleModelRow(int sourceRow) const;
     bool groupExists(const QString &group) const;
     QStringList m_names;
     QStringList m_originalNames;
     QStringList m_groups;
+    QStringList m_orderedGroups;
+    QSet<QString> m_groupPrefixes;
+    QHash<QString, QVector<int>> m_groupSourceRows;
+    QHash<QString, QStringList> m_groupAncestors;
+    bool m_groupIndexDirty = true;
     QVector<QColor> m_colors;
     QVector<double> m_widths;
     QVector<Qt::PenStyle> m_lineStyles;

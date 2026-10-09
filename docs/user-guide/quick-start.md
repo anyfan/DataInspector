@@ -35,7 +35,7 @@ cmake -S . -B build_qt6 -G Ninja `
   -DCMAKE_BUILD_TYPE=Release `
   -DENABLE_MAT=ON
 
-cmake --build build_qt6 --parallel 4
+cmake --build build_qt6 --parallel ([Environment]::ProcessorCount)
 ```
 
 > 如果 `cmake --build` 时报 `windres: preprocessing failed.`，见 [工具链排错](../dev/toolchain-troubleshooting.md)。

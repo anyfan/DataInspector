@@ -60,3 +60,26 @@ private:
     std::optional<LodResult> m_result;
     quint64 m_rebuildCount = 0;
 };
+
+// GUI-owned LRU of immutable completed results. Weak source identities avoid
+// retaining raw data after a file is removed or a session is replaced.
+class PlotLodResultCache final
+{
+public:
+    explicit PlotLodResultCache(qsizetype budget = 64 * 1024 * 1024) : m_budget(qMax(qsizetype(0), budget)) {}
+    std::shared_ptr<const LodResult> find(const PlotSeriesSnapshot &snapshot, const LodRequestKey &key);
+    void insert(const PlotSeriesSnapshot &snapshot, std::shared_ptr<const LodResult> result);
+    qsizetype retainedBytes() const { return m_bytes; }
+    qsizetype entryCount() const { return m_entries.size(); }
+    void clear() { m_entries.clear(); m_bytes = 0; }
+private:
+    struct Entry {
+        std::shared_ptr<const LodResult> result;
+        QVector<std::weak_ptr<const PlotSeriesData>> sources;
+        qsizetype bytes = 0;
+    };
+    void prune();
+    QVector<Entry> m_entries; // Most recently used first; at most 128 entries.
+    qsizetype m_budget;
+    qsizetype m_bytes = 0;
+};
