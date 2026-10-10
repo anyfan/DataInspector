@@ -195,11 +195,56 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
     return true;
 }
 
+namespace {
+QJsonObject calculationKey(const ObjectRule &rule)
+{
+    QJsonArray outputs;
+    for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"series", output.series}});
+    return {{"operation", rule.operation}, {"expression", rule.expression},
+        {"inputs", QJsonArray::fromStringList(rule.inputs)}, {"outputs", outputs},
+        {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
+        {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}};
+}
+bool sameSamples(const PlotSeriesDataPtr &a, const PlotSeriesDataPtr &b)
+{
+    if (!a || !b) return a == b;
+    return a->id == b->id && a->timeOffset == b->timeOffset
+        && a->time.constData() == b->time.constData() && a->values.constData() == b->values.constData()
+        && a->points.constData() == b->points.constData();
+}
+}
+QSet<QString> invalidatedObjectRules(const QVector<DataObject> &objects,
+    const PlotSeriesSnapshot &snapshot, const QHash<QString, ObjectRuleState> &states)
+{
+    QHash<int, PlotSeriesDataPtr> sources;
+    for (const auto &data : snapshot.series) sources.insert(data->id, data);
+    QSet<QString> dirty;
+    for (const auto &object : objects) {
+        QHash<QString, PlotSeriesDataPtr> bindings;
+        QSet<QString> changedInputs;
+        for (const auto &field : object.fields) bindings.insert(field.id, sources.value(field.series));
+        for (const auto &rule : object.rules) {
+            const auto previous = states.constFind(rule.id);
+            bool changed = previous == states.cend() || previous->definition != calculationKey(rule)
+                || previous->inputs.size() != rule.inputs.size();
+            for (int i = 0; !changed && i < rule.inputs.size(); ++i)
+                changed = changedInputs.contains(rule.inputs[i]) || !sameSamples(previous->inputs[i], bindings.value(rule.inputs[i]));
+            for (const auto &output : rule.outputs) if (!sources.contains(output.series)) changed = true;
+            if (changed) dirty.insert(rule.id);
+            for (const auto &output : rule.outputs) {
+                bindings.insert(output.id, sources.value(output.series));
+                if (changed) changedInputs.insert(output.id);
+            }
+        }
+    }
+    return dirty;
+}
+
 ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotSeriesSnapshot &snapshot,
-                                 const std::atomic_bool &cancelled)
+                                 const std::atomic_bool &cancelled, qsizetype retainedValues,
+                                 const QSet<QString> *rulesToEvaluate)
 {
     ObjectEvaluation result; QHash<int, PlotSeriesDataPtr> sources;
-    qsizetype retainedValues = 0;
     for (const auto &s : snapshot.series) sources.insert(s->id, s);
     for (const auto &object : objects) {
         QHash<QString, PlotSeriesDataPtr> bindings;
@@ -207,16 +252,22 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
         for (int ruleIndex = 0; ruleIndex < object.rules.size(); ++ruleIndex) {
             if (cancelled.load()) return {};
             const auto &rule = object.rules[ruleIndex]; QVector<PlotSeriesDataPtr> inputs;
+            if (rulesToEvaluate && !rulesToEvaluate->contains(rule.id)) {
+                for (const auto &output : rule.outputs) bindings.insert(output.id, sources.value(output.series));
+                continue;
+            }
             QString error; qsizetype count = 0;
             for (const auto &id : rule.inputs) {
                 const auto source = bindings.value(id);
-                if (!source || source->sampleCount() == 0) { error = QStringLiteral("缺少有效来源"); break; }
-                if (inputs.isEmpty()) count = source->sampleCount();
-                if (source->sampleCount() != count) { error = QStringLiteral("输入样本数不同，要求相同时间基"); break; }
+                if (!source || source->sampleCount() == 0) error = QStringLiteral("缺少有效来源");
+                if (inputs.isEmpty() && source) count = source->sampleCount();
+                if (source && source->sampleCount() != count) error = QStringLiteral("输入样本数不同，要求相同时间基");
                 inputs.append(source);
             }
-            if (count > (512 * 1024 * 1024 - retainedValues) / (8 * qMax(1, int(rule.outputs.size()))))
+            if (count > (512 * 1024 * 1024 - retainedValues) / (8 * qMax(1, int(rule.outputs.size())))) {
                 error = QStringLiteral("派生结果超过 512 MiB 值缓存上限，请减少输出或数据规模");
+                result.budgetLimitedRules.insert(rule.id);
+            }
             if (error.isEmpty()) retainedValues += count * 8 * rule.outputs.size();
             Expression expression; const int root = rule.operation == "expression" ? expression.compile(rule.expression, inputs.size()) : -1;
             QVector<std::shared_ptr<PlotSeriesData>> outputs;
@@ -272,6 +323,7 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
             }
             if (invalid && error.isEmpty()) result.errors.insert(rule.id, QStringLiteral("%1 个无效样本已留空").arg(invalid));
             if (!error.isEmpty()) result.errors.insert(rule.id, error);
+            if (!result.budgetLimitedRules.contains(rule.id)) result.states.insert(rule.id, {calculationKey(rule), inputs});
             for (int k = 0; k < outputs.size(); ++k) {
                 if (!error.isEmpty()) { outputs[k]->time.clear(); outputs[k]->values.clear(); }
                 outputs[k]->rangeIndex = PlotRangeIndex::build(*outputs[k], [&] { return cancelled.load(); });

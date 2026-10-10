@@ -25,6 +25,16 @@ PlotLodScheduler::~PlotLodScheduler()
 {
     if (m_job) m_job->cancelled = true;
 }
+void PlotLodScheduler::cancel()
+{
+    if (m_job) m_job->cancelled = true;
+    m_job.reset();
+    m_poll.stop();
+    m_snapshot = {};
+    m_key.reset();
+    m_result.reset();
+    ++m_revision;
+}
 void PlotLodScheduler::request(const PlotSeriesSnapshot &snapshot, const LodRequestKey &key)
 {
     if (m_key && *m_key == key && m_snapshot.series == snapshot.series) return;

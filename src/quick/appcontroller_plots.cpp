@@ -278,10 +278,10 @@ bool AppController::unbindPlotSignals(int plotIndex)
     const QVector<int> rows = m_signals->plotRows(plotIndex);
     bool trajectoryChanged = false;
     auto &trajectory = m_trajectories[plotIndex];
-    if (trajectory.enabled && (!trajectory.signalIds.isEmpty() || trajectory.axes != std::array<int, 3>{{-1, -1, -1}})) {
+    if (trajectory.enabled && (!trajectory.signalIds.isEmpty() || trajectory.activeEntry().axes != std::array<int, 3>{{-1, -1, -1}})) {
         auto tracks = trajectory.entries();
         for (auto &track : tracks) { track.axes = {{-1, -1, -1}}; track.attitude.sources.fill(-1); }
-        trajectory.tracks = tracks; static_cast<SessionTrajectoryEntry &>(trajectory) = tracks[trajectory.active];
+        trajectory.tracks = tracks;
         trajectory.signalIds.clear(); trajectoryChanged = true;
     }
     if (trajectory.enabled ? !trajectoryChanged : rows.isEmpty()) return false;
@@ -524,6 +524,7 @@ void AppController::refreshPlot(int index, bool fitY)
     refreshTrajectory(index);
     if (index < 0 || index >= m_plots.size() || !m_plots.at(index)) return;
     PlotItem *plot = m_plots.at(index);
+    if (m_trajectories.value(index).enabled) plot->setCurveRenderingEnabled(false);
     QVector<int> sortedRows = m_signals->plotRows(index);
     if (m_trajectories.value(index).enabled) {
         sortedRows.clear();
@@ -538,6 +539,7 @@ void AppController::refreshPlot(int index, bool fitY)
         if (row >= 0 && row < m_signalColors.size()) visibleIds.append(row);
     plot->setVisibleSeries(visibleIds);
     if (m_trajectories.value(index).enabled) return;
+    plot->setCurveRenderingEnabled(true);
     if (fitY && !m_initialSignalFitDone && !visibleIds.isEmpty() && !m_applyingSession) {
         m_initialSignalFitDone = true;
         // fitView emits rangeChanged, synchronizing the first time fit to all plots.

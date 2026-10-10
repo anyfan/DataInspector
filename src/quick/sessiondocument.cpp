@@ -1,4 +1,5 @@
 #include "sessiondocument.h"
+#include "jsonvalidation.h"
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -9,78 +10,12 @@
 namespace {
 constexpr qint64 maxBytes = 16 * 1024 * 1024;
 constexpr int maxSignals = 100000;
-bool integer(const QJsonValue &value, int minimum, int maximum, int *out)
-{
-    if (!value.isDouble()) return false;
-    const double number = value.toDouble();
-    if (!qIsFinite(number) || number < minimum || number > maximum || qFloor(number) != number)
-        return false;
-    *out = int(number);
-    return true;
-}
-bool number(const QJsonValue &value, double *out)
-{
-    if (!value.isDouble() || !qIsFinite(value.toDouble())) return false;
-    *out = value.toDouble();
-    return true;
-}
-bool range(const QJsonValue &value, double *minimum, double *maximum)
-{
-    const auto array = value.toArray();
-    return value.isArray() && array.size() == 2
-        && number(array[0], minimum) && number(array[1], maximum)
-        && *minimum < *maximum && qIsFinite(*maximum - *minimum);
-}
-bool text(const QJsonValue &value, QString *out, bool allowEmpty = false)
-{
-    if (!value.isString() || value.toString().size() > 32768) return false;
-    *out = value.toString();
-    return !out->contains(QChar::Null) && (allowEmpty || !out->trimmed().isEmpty());
-}
-QJsonObject trackToJson(const SessionTrajectoryEntry &track)
-{
-    QJsonArray sources; for (int id : track.attitude.sources) sources.append(id);
-    return {{"id", track.id}, {"objectId", track.objectId}, {"name", track.name}, {"visible", track.visible}, {"geographic", track.geographic},
-        {"color", track.color.name(QColor::HexArgb)}, {"width", track.width},
-        {"axes", QJsonArray{track.axes[0], track.axes[1], track.axes[2]}},
-        {"attitude", QJsonObject{{"mode", track.attitude.mode}, {"sources", sources},
-            {"radians", track.attitude.radians}, {"order", track.attitude.order},
-            {"scalarLast", track.attitude.scalarLast}, {"navigationToBody", track.attitude.navigationToBody}}}};
-}
-bool readTrack(const QJsonValue &value, int signalCount, SessionTrajectoryEntry *track)
-{
-    if (!value.isObject()) return false;
-    const auto obj = value.toObject(); QString color;
-    if (obj.contains("objectId") && !text(obj.value("objectId"), &track->objectId, true)) return false;
-    if (!text(obj.value("id"), &track->id) || track->id.size() > 128
-        || !text(obj.value("name"), &track->name) || track->name.size() > 256
-        || !obj.value("visible").isBool() || !obj.value("geographic").isBool()
-        || !text(obj.value("color"), &color) || !(track->color = QColor(color)).isValid()
-        || !number(obj.value("width"), &track->width) || track->width < 1 || track->width > 12) return false;
-    track->visible = obj.value("visible").toBool(); track->geographic = obj.value("geographic").toBool();
-    const auto axes = obj.value("axes").toArray(); QSet<int> used;
-    if (axes.size() != 3) return false;
-    for (int a = 0; a < 3; ++a) {
-        if (!integer(axes[a], -1, signalCount - 1, &track->axes[a])) return false;
-        if (track->axes[a] >= 0) { if (used.contains(track->axes[a])) return false; used.insert(track->axes[a]); }
-    }
-    if (!obj.value("attitude").isObject()) return false;
-    const auto attitude = obj.value("attitude").toObject(); auto &config = track->attitude;
-    if (!integer(attitude.value("mode"), 0, 2, &config.mode) || !integer(attitude.value("order"), 0, 1, &config.order)
-        || !attitude.value("radians").isBool() || !attitude.value("scalarLast").isBool()
-        || !attitude.value("navigationToBody").isBool()) return false;
-    config.radians = attitude.value("radians").toBool(); config.scalarLast = attitude.value("scalarLast").toBool();
-    config.navigationToBody = attitude.value("navigationToBody").toBool();
-    const auto sources = attitude.value("sources").toArray(); if (sources.size() != 4) return false;
-    for (int a = 0; a < 4; ++a) if (!integer(sources[a], -1, signalCount - 1, &config.sources[a])) return false;
-    return true;
-}
-
+using namespace JsonValidation;
 }
 
 QJsonObject sessionToJson(const SessionDocument &s)
 {
-    QJsonArray files, series, plots;
+    QJsonArray files, series;
     for (const auto &path : s.files) files.append(QJsonObject{{"path", path}});
     for (const auto &signal : s.series) {
         series.append(QJsonObject{{"file", signal.file}, {"table", signal.table},
@@ -90,36 +25,12 @@ QJsonObject sessionToJson(const SessionDocument &s)
             {"color", signal.color.name(QColor::HexArgb)}, {"width", signal.width},
             {"style", signal.style}, {"timeOffset", signal.timeOffset}});
     }
-    for (const auto &plot : s.plots) {
-        QJsonArray bindings;
-        QJsonArray rotation;
-        QJsonArray available;
-        QJsonArray tracks; for (const auto &track : plot.trajectory.entries()) tracks.append(trackToJson(track));
-        for (int id : plot.trajectory.signalIds) available.append(id);
-        if (plot.trajectory.camera.freeRotation)
-            for (double component : plot.trajectory.camera.rotation) rotation.append(component);
-        for (int signal : plot.seriesIds) bindings.append(signal);
-        plots.append(QJsonObject{{"signals", bindings},
-            {"yRange", QJsonArray{plot.yMinimum, plot.yMaximum}},
-            {"normalizeY", plot.normalizeY}, {"lineWidth", plot.lineWidth},
-            {"trajectory", QJsonObject{{"enabled", plot.trajectory.enabled},
-                {"geographic", plot.trajectory.geographic},
-                {"tracks", tracks}, {"active", plot.trajectory.active},
-                {"signals", available},
-                {"rotation", rotation}, {"viewScale", plot.trajectory.camera.viewScale},
-                {"panDepth", plot.trajectory.camera.panDepth},
-                {"axes", QJsonArray{plot.trajectory.axes[0], plot.trajectory.axes[1], plot.trajectory.axes[2]}},
-                {"camera", QJsonArray{plot.trajectory.camera.azimuth, plot.trajectory.camera.elevation,
-                    plot.trajectory.camera.zoom, plot.trajectory.camera.panX, plot.trajectory.camera.panY}}}}});
-    }
-    return {{"format", "DataInspectorSession"}, {"version", SessionDocument::version},
-        {"files", files}, {"signals", series}, {"plots", plots}, {"objects", objectsToJson(s.objects)},
-        {"layout", QJsonObject{{"rows", s.rows}, {"columns", s.columns},
-            {"active", s.active}, {"solo", s.solo}}},
-        {"xRange", QJsonArray{s.xMinimum, s.xMaximum}},
-        {"cursor", QJsonObject{{"mode", s.cursor.mode}, {"x1", s.cursor.x1}, {"x2", s.cursor.x2}}}};
+    auto root = viewConfigurationToJson(s);
+    root.insert("format", "DataInspectorSession"); root.insert("version", SessionDocument::version);
+    root.insert("files", files); root.insert("signals", series); root.insert("objects", objectsToJson(s.objects));
+    root.insert("cursor", QJsonObject{{"mode", s.cursor.mode}, {"x1", s.cursor.x1}, {"x2", s.cursor.x2}});
+    return root;
 }
-
 bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString *error)
 {
     auto fail = [&](const QString &field) {
@@ -129,13 +40,6 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
     if (root.value("format").toString() != QStringLiteral("DataInspectorSession")
         || !integer(root.value("version"), 1, SessionDocument::version, &version)) return fail("format/version");
     SessionDocument parsed;
-    const auto layout = root.value("layout").toObject();
-    if (!integer(layout.value("rows"), 1, 8, &parsed.rows)
-        || !integer(layout.value("columns"), 1, 8, &parsed.columns)
-        || !integer(layout.value("active"), 0, parsed.rows * parsed.columns - 1, &parsed.active)
-        || !integer(layout.value("solo"), -1, parsed.rows * parsed.columns - 1, &parsed.solo)
-        || (parsed.solo >= 0 && parsed.solo != parsed.active)) return fail("layout");
-    if (!range(root.value("xRange"), &parsed.xMinimum, &parsed.xMaximum)) return fail("xRange");
     const auto cursor = root.value("cursor").toObject();
     if (!integer(cursor.value("mode"), 0, 2, &parsed.cursor.mode)
         || !number(cursor.value("x1"), &parsed.cursor.x1)
@@ -187,103 +91,11 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
         for (int i = 0; i < parsed.series.size(); ++i)
             if (!parsed.series[i].objectId.isEmpty() && !owned.contains(i)) return fail("orphan derived signal");
     }
-    if (!root.value("plots").isArray()
-        || root.value("plots").toArray().size() != parsed.rows * parsed.columns) return fail("plots");
-    parsed.plots.clear();
-    for (const auto &entry : root.value("plots").toArray()) {
-        const auto obj = entry.toObject();
-        SessionPlot plot;
-        if (!range(obj.value("yRange"), &plot.yMinimum, &plot.yMaximum)
-            || !obj.value("normalizeY").isBool()
-            || !number(obj.value("lineWidth"), &plot.lineWidth) || plot.lineWidth < 1 || plot.lineWidth > 12
-            || !obj.value("signals").isArray()
-            || obj.value("signals").toArray().size() > maxSignals) return fail("plots[]");
-        plot.normalizeY = obj.value("normalizeY").toBool();
-        QSet<int> used;
-        for (const auto &binding : obj.value("signals").toArray()) {
-            int signal = -1;
-            if (!integer(binding, 0, parsed.series.size() - 1, &signal) || used.contains(signal))
-                return fail("plots.signals");
-            used.insert(signal); plot.seriesIds.append(signal);
-        }
-        if (version >= 2) {
-            const auto trajectory = obj.value("trajectory").toObject();
-            if (version >= 6) {
-                const auto tracks = trajectory.value("tracks").toArray();
-                if (tracks.isEmpty() || tracks.size() > 64 || !integer(trajectory.value("active"), 0, tracks.size() - 1, &plot.trajectory.active)) return fail("trajectory.tracks/active");
-                plot.trajectory.tracks.clear(); QSet<QString> ids;
-                for (const auto &entry : tracks) {
-                    SessionTrajectoryEntry track;
-                    if (!readTrack(entry, parsed.series.size(), &track) || ids.contains(track.id)) return fail("trajectory.tracks[]");
-                    ids.insert(track.id); plot.trajectory.tracks.append(track);
-                }
-                static_cast<SessionTrajectoryEntry &>(plot.trajectory) = plot.trajectory.tracks[plot.trajectory.active];
-                const auto activeTrack = trackToJson(plot.trajectory);
-                if (trajectory.value("axes") != activeTrack.value("axes") || trajectory.value("geographic") != activeTrack.value("geographic")) return fail("trajectory.active fields");
-            }
-            const auto axes = trajectory.value("axes").toArray();
-            const auto camera = trajectory.value("camera").toArray();
-            if (!trajectory.value("enabled").isBool() || axes.size() != 3 || camera.size() != 5)
-                return fail("plots.trajectory");
-            plot.trajectory.enabled = trajectory.value("enabled").toBool();
-            if (version < 3) plot.trajectory.geographic = false;
-            if (version >= 3) {
-                if (!trajectory.value("geographic").isBool()) return fail("plots.trajectory.geographic");
-                plot.trajectory.geographic = trajectory.value("geographic").toBool();
-            }
-            for (int axis = 0; axis < 3; ++axis)
-                if (!integer(axes[axis], -1, parsed.series.size() - 1, &plot.trajectory.axes[axis]))
-                    return fail("plots.trajectory.axes");
-            if (version >= 5) {
-                if (!trajectory.value("signals").isArray() || trajectory.value("signals").toArray().size() > maxSignals)
-                    return fail("plots.trajectory.signals");
-                QSet<int> available;
-                for (const auto &entry : trajectory.value("signals").toArray()) {
-                    int id = -1;
-                    if (!integer(entry, 0, parsed.series.size() - 1, &id) || available.contains(id))
-                        return fail("plots.trajectory.signals");
-                    available.insert(id); plot.trajectory.signalIds.append(id);
-                }
-                for (int id : plot.trajectory.axes) if (id >= 0 && !available.contains(id))
-                    return fail("plots.trajectory.axes");
-                if (version >= 6) {
-                    std::optional<bool> geographic;
-                    for (const auto &track : plot.trajectory.entries()) {
-                        for (int id : track.axes) if (id >= 0 && !available.contains(id)) return fail("trajectory.tracks.axes");
-                        for (int id : track.attitude.sources) if (id >= 0 && !available.contains(id)) return fail("trajectory.attitude.sources");
-                        if (std::any_of(track.axes.cbegin(), track.axes.cend(), [](int id) { return id >= 0; })) {
-                            if (geographic && *geographic != track.geographic) return fail("trajectory.mixed coordinates");
-                            geographic = track.geographic;
-                        }
-                    }
-                }
-            } else {
-                for (int id : plot.trajectory.axes) if (id >= 0 && !plot.trajectory.signalIds.contains(id))
-                    plot.trajectory.signalIds.append(id);
-            }
-            auto &view = plot.trajectory.camera;
-            if (!number(camera[0], &view.azimuth) || !number(camera[1], &view.elevation)
-                || !number(camera[2], &view.zoom) || !number(camera[3], &view.panX)
-                || !number(camera[4], &view.panY) || !view.valid()) return fail("plots.trajectory.camera");
-            if (version >= 4) {
-                if (!trajectory.value("rotation").isArray()) return fail("plots.trajectory.rotation");
-                const auto rotation = trajectory.value("rotation").toArray();
-                if (!rotation.isEmpty() && rotation.size() != 4) return fail("plots.trajectory.rotation");
-                view.freeRotation = !rotation.isEmpty();
-                for (int i = 0; i < rotation.size(); ++i)
-                    if (!number(rotation[i], &view.rotation[i])) return fail("plots.trajectory.rotation");
-                if (!number(trajectory.value("viewScale"), &view.viewScale)
-                    || !number(trajectory.value("panDepth"), &view.panDepth) || !view.valid())
-                    return fail("plots.trajectory.camera");
-            }
-        }
-        if (version < 6) {
-            plot.trajectory.tracks = {static_cast<const SessionTrajectoryEntry &>(plot.trajectory)};
-            // Legacy trajectory colour came from its first time source.
-            for (int id : plot.trajectory.axes) if (id >= 0) { plot.trajectory.color = parsed.series[id].color; break; }
-        }
-        parsed.plots.append(plot);
-    }
+    QVector<QColor> colors;
+    for (const auto &signal : parsed.series) colors.append(signal.color);
+    ViewConfiguration view;
+    if (!viewConfigurationFromJson(root, parsed.series.size(), &view, error, version, colors)) return false;
+    static_cast<ViewConfiguration &>(parsed) = view;
     if (version >= 7) {
         if (version == 7) for (const auto &plot : parsed.plots) for (const auto &track : plot.trajectory.entries())
             for (auto &object : parsed.objects) if (object.id == track.objectId) { object.type = "aircraft"; if (!ensureAircraftFields(object)) return fail("aircraft fields"); }
@@ -326,41 +138,6 @@ bool writeSessionDocument(const QString &path, const SessionDocument &session, Q
     if (!sessionFromJson(root, &validated, error)) return false;
     const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (bytes.size() > maxBytes) { *error = QStringLiteral("会话文件超过 16 MiB 上限"); return false; }
-    QSaveFile file(path);
-    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
-        *error = file.errorString(); return false;
-    }
-    return true;
-}
-
-bool readViewTemplate(const QString &path, SessionDocument *session, QString *error)
-{
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly)) { *error = file.errorString(); return false; }
-    if (file.size() > maxBytes) { *error = QStringLiteral("视图模板超过 16 MiB 上限"); return false; }
-    QJsonParseError parse;
-    const auto document = QJsonDocument::fromJson(file.read(maxBytes + 1), &parse);
-    const auto root = document.object();
-    if (parse.error != QJsonParseError::NoError || !document.isObject()
-        || root.value("format").toString() != QStringLiteral("DataInspectorViewTemplate")
-        || root.value("version") != QJsonValue(1) || !root.value("view").isObject()
-        || root.size() != 3) {
-        *error = QStringLiteral("无效的视图模板格式或版本"); return false;
-    }
-    return sessionFromJson(root.value("view").toObject(), session, error);
-}
-
-bool writeViewTemplate(const QString &path, const SessionDocument &session, QString *error)
-{
-    for (const auto &signal : session.series) if (!signal.color.isValid()) {
-        *error = QStringLiteral("视图模板包含无效信号颜色"); return false;
-    }
-    const auto view = sessionToJson(session);
-    SessionDocument validated;
-    if (!sessionFromJson(view, &validated, error)) return false;
-    const QJsonObject root{{"format", "DataInspectorViewTemplate"}, {"version", 1}, {"view", view}};
-    const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
-    if (bytes.size() > maxBytes) { *error = QStringLiteral("视图模板超过 16 MiB 上限"); return false; }
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
         *error = file.errorString(); return false;

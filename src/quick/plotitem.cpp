@@ -21,6 +21,7 @@ PlotItem::PlotItem(QQuickItem *parent) : QQuickItem(parent)
 }
 void PlotItem::requestLod()
 {
+    if (!m_curveRenderingEnabled) return;
     PlotSeriesSnapshot snapshot;
     LodRequestKey key;
     {
@@ -32,6 +33,18 @@ void PlotItem::requestLod()
     m_lodScheduler->request(snapshot, key);
     { QMutexLocker lock(&m_dataMutex); m_lodResult = m_lodScheduler->result(); }
     emit lodChanged();
+}
+void PlotItem::setCurveRenderingEnabled(bool enabled)
+{
+    if (m_curveRenderingEnabled == enabled) return;
+    m_curveRenderingEnabled = enabled;
+    if (enabled) requestLod();
+    else {
+        m_lodScheduler->cancel();
+        { QMutexLocker lock(&m_dataMutex); m_lodResult.reset(); }
+        emit lodChanged();
+    }
+    update();
 }
 int PlotItem::highlightedSeries() const
 {

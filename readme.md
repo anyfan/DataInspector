@@ -56,7 +56,9 @@ cmake --build --preset qt6-clang-debug
 
 ```text
 qml/
-  Main.qml                 主窗口、工具栏、信号树、子图网格
+  Main.qml                 主窗口、工具栏、拖拽协调、子图网格
+  SignalBrowser.qml        信号树、搜索、导航和拖拽请求
+  SessionDialogs.qml       会话/模板文件选择、匹配和保存提示
   TrajectoryPlot.qml       二维/三维航迹控制、坐标标签与位置标记
   QuickPlot.qml            单个子图：坐标轴、游标、右键菜单
   PlotLegend.qml           图例换行、拖拽跨图、右键菜单
@@ -66,6 +68,10 @@ src/quick/
   main.cpp                 入口、Splash→Main 加载顺序
   appcontroller.*          控制器（按职责拆分 loading/plots/trajectory/session）
   sessiondocument.*        会话 JSON 校验与原子读写
+  viewconfiguration.*      会话/模板共用视图配置
+  viewtemplatedocument.*   独立模板格式与旧版迁移
+  appcontroller_templates.cpp  模板匹配、应用和撤销
+  appcontroller_objectevaluation.cpp  规则增量计算调度
   signalmodel.*            QML 信号树模型
   signalmetadata.*         信号元数据
   startupfiles.*           命令行参数解析

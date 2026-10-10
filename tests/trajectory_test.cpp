@@ -760,7 +760,7 @@ void TrajectoryTest::sessionRoundTripAndLegacyAndInvalidCamera()
     item.setCamera(view); const auto path = dir.filePath("scene.disession"); QVERIFY(source.saveSession(path));
     SessionDocument document; QString error; QVERIFY(readSessionDocument(path, &document, &error));
     QVERIFY(document.plots[0].trajectory.camera == view);
-    QVERIFY(document.plots[0].trajectory.geographic);
+    QVERIFY(document.plots[0].trajectory.activeEntry().geographic);
     AppController restored; QVERIFY(restored.restoreSession(path)); QTRY_VERIFY(!restored.restoringSession());
     QVERIFY(restored.trajectoryState(0)["enabled"].toBool());
     QVERIFY(restored.trajectoryState(0)["geographic"].toBool());
@@ -773,7 +773,7 @@ void TrajectoryTest::sessionRoundTripAndLegacyAndInvalidCamera()
     auto v2plots = v2["plots"].toArray(); auto v2plot = v2plots[0].toObject();
     auto v2trajectory = v2plot["trajectory"].toObject(); v2trajectory.remove("geographic");
     v2plot["trajectory"] = v2trajectory; v2plots[0] = v2plot; v2["plots"] = v2plots;
-    QVERIFY(sessionFromJson(v2, &parsed, &error)); QVERIFY(!parsed.plots[0].trajectory.geographic);
+    QVERIFY(sessionFromJson(v2, &parsed, &error)); QVERIFY(!parsed.plots[0].trajectory.activeEntry().geographic);
     auto v3 = sessionToJson(document); v3["version"] = 3;
     QVERIFY(sessionFromJson(v3, &parsed, &error)); QVERIFY(!parsed.plots[0].trajectory.camera.freeRotation);
     auto v4 = sessionToJson(document); v4["version"] = 4;
@@ -1275,7 +1275,7 @@ void TrajectoryTest::multiControllerSessionRemapAndExport()
         auto legacy = base; legacy["version"] = version; SessionDocument parsed;
         QVERIFY2(sessionFromJson(legacy, &parsed, &error), qPrintable(error));
         QCOMPARE(parsed.plots[0].trajectory.entries().size(), 1);
-        QCOMPARE(parsed.plots[0].trajectory.attitude.mode, 0);
+        QCOMPARE(parsed.plots[0].trajectory.activeEntry().attitude.mode, 0);
     }
 }
 void TrajectoryTest::multiTrajectoryCost()

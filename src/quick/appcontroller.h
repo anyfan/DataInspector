@@ -13,6 +13,7 @@
 #include "render/plotseriesstore.h"
 #include "signalmodel.h"
 #include "sessiondocument.h"
+#include "viewtemplatedocument.h"
 #include <optional>
 
 class DataExportWorker;
@@ -225,14 +226,18 @@ signals:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 private:
+    static QString localSessionPath(const QVariant &value);
     struct ObjectJob;
     QVector<DataObject> m_objects;
     QHash<QString, QString> m_objectErrors;
     std::shared_ptr<ObjectJob> m_objectJob;
+    QHash<QString, ObjectRuleState> m_objectEvaluationStates;
+    bool m_batchObjectChanges = false;
     void scheduleObjectEvaluation();
     void pollObjectEvaluation();
+    void refreshComputedPlots(const QVector<PlotSeriesDataPtr> &series);
     void cancelObjectEvaluation();
-    void remapObjectRows(const QVector<int> &removed);
+    void remapSignalReferences(const QVector<int> &removed);
     void syncObjectTrajectories();
     void removeObjectSeries(const QSet<int> &rows);
     bool isObjectOutput(int row) const;
@@ -284,7 +289,6 @@ private:
     void refreshPlot(int index, bool fitY = true);
     void refreshTrajectory(int index);
     void syncTrajectoryCursors();
-    void remapTrajectoryAxes(const QVector<int> &removed);
     bool unbindPlotSignals(int plotIndex);
     PlotItem *plotAt(int index) const;
     QSet<PlotSeriesId> timeOffsetRows(int scope, int row, const QString &group) const;

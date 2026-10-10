@@ -46,6 +46,8 @@ public:
     int highlightedSeries() const;
     void setHighlightedSeries(int id);
     bool lodPending() const { return m_lodScheduler->pending(); }
+    // GUI-thread switch: retain raw-sample cursor state without generating curves.
+    void setCurveRenderingEnabled(bool enabled);
     double xMinimum() const;
     double xMaximum() const;
     double yMinimum() const;
@@ -112,6 +114,7 @@ protected:
     void mouseUngrabEvent() override;
     void wheelEvent(QWheelEvent *event) override;
 private:
+    bool m_curveRenderingEnabled = true;
     double nearestRawX(double x) const;
     void updateCursorValuesLocked();
     void rebuildTicksLocked();

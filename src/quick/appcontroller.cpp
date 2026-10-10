@@ -129,12 +129,12 @@ void AppController::clear()
         return;
     }
     clearViewHistory();
-    cancelObjectEvaluation(); m_objects.clear(); m_objectErrors.clear(); emit objectsChanged();
+    cancelObjectEvaluation(); m_objects.clear(); m_objectErrors.clear(); m_objectEvaluationStates.clear(); emit objectsChanged();
     m_seriesStore->clear();
     for (auto &state : m_trajectories) {
         auto tracks = state.entries();
         for (auto &track : tracks) { track.axes.fill(-1); track.attitude.sources.fill(-1); }
-        state.tracks = tracks; static_cast<SessionTrajectoryEntry &>(state) = tracks[state.active]; state.signalIds.clear();
+        state.tracks = tracks; state.signalIds.clear();
     }
     for (int i = 0; i < m_trajectoryPlots.size(); ++i) refreshTrajectory(i);
     m_initialSignalFitDone = false;

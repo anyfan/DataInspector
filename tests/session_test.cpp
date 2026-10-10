@@ -20,6 +20,7 @@ class SessionTest final : public QObject
 {
     Q_OBJECT
 private slots:
+    void trajectorySelectionKeepsSingleState();
     void roundTripWithDuplicateNamesAndLateDelegates();
     void restoredSessionsContinuePaletteSafely();
     void extremeImportedRangesRemainSaveable();
@@ -29,7 +30,34 @@ private slots:
     void schemaValidationAndAtomicSave();
     void qmlRestoresToolbarAndPlotStates();
     void viewTemplatesMatchRemapAndUndo();
+    void viewTemplateSchemaIsIndependentAndMigratesLegacy();
 };
+
+void SessionTest::trajectorySelectionKeepsSingleState()
+{
+    SessionDocument document;
+    auto &state = document.plots[0].trajectory;
+    state.tracks.append(SessionTrajectoryEntry{});
+    state.tracks[1].id = "second";
+    state.activeEntry().name = "first edit";
+    state.select(1);
+    state.activeEntry().name = "second edit";
+    state.select(0);
+    QCOMPARE(state.activeEntry().name, QString("first edit"));
+    // Editing an inactive list item must survive selecting it and serialization.
+    state.tracks[1].name = "inactive edit";
+    state.select(1);
+    QCOMPARE(state.activeEntry().name, QString("inactive edit"));
+    SessionDocument restored; QString error;
+    QVERIFY2(sessionFromJson(sessionToJson(document), &restored, &error), qPrintable(error));
+    QCOMPARE(restored.plots[0].trajectory.active, 1);
+    QCOMPARE(restored.plots[0].trajectory.tracks[0].name, QString("first edit"));
+    QCOMPARE(restored.plots[0].trajectory.activeEntry().name, QString("inactive edit"));
+    QHash<int, SessionTrajectory> stored; stored.insert(0, state);
+    QStringList names;
+    for (const auto &entry : stored.value(0).entries()) names.append(entry.name);
+    QCOMPARE(names, (QStringList{"first edit", "inactive edit"}));
+}
 
 static void writeFile(const QString &path, const QByteArray &bytes)
 {
@@ -447,9 +475,10 @@ void SessionTest::viewTemplatesMatchRemapAndUndo()
     a.setXRange(2, 8); a.setYRange(-50, 50);
     QVERIFY(source.saveViewTemplate(view));
     QVERIFY(source.sessionPath().isEmpty());
-    SessionDocument doc; QString error;
+    ViewTemplateDocument doc; QString error;
     QVERIFY2(readViewTemplate(view, &doc, &error), qPrintable(error));
-    QVERIFY(!readSessionDocument(view, &doc, &error));
+    SessionDocument sessionDoc;
+    QVERIFY(!readSessionDocument(view, &sessionDoc, &error));
 
     AppController target;
     PlotItem plot;
@@ -516,6 +545,49 @@ void SessionTest::viewTemplatesMatchRemapAndUndo()
     doc.series[0].color = QColor();
     QVERIFY(!writeViewTemplate(view, doc, &error));
     QVERIFY(original.open(QIODevice::ReadOnly)); QCOMPARE(original.readAll(), bytes);
+}
+void SessionTest::viewTemplateSchemaIsIndependentAndMigratesLegacy()
+{
+    auto session = documentFor("D:/private/flight/old.csv");
+    session.series[0].timeOffset = 123;
+    auto unused = session.series[0]; unused.column = 1; unused.originalName = "Unused";
+    session.series.append(unused);
+    const auto view = viewTemplateFromSession(session);
+    const auto json = viewTemplateToJson(view);
+    const auto bytes = QJsonDocument(json).toJson();
+    QCOMPARE(json["version"].toInt(), 2);
+    QCOMPARE(json["signals"].toArray().size(), 1);
+    QVERIFY(!bytes.contains("D:/private"));
+    QVERIFY(!bytes.contains("timeOffset")); QVERIFY(!bytes.contains("Unused"));
+    QVERIFY(!json["view"].toObject().contains("files"));
+    QVERIFY(!json["view"].toObject().contains("objects"));
+    QVERIFY(!json["view"].toObject().contains("cursor"));
+    ViewTemplateDocument restored; QString error;
+    QVERIFY2(viewTemplateFromJson(json, &restored, &error), qPrintable(error));
+    QCOMPARE(restored.series[0].sourceName, QString("old.csv"));
+    const QJsonObject legacy{{"format", "DataInspectorViewTemplate"}, {"version", 1}, {"view", sessionToJson(session)}};
+    QVERIFY2(viewTemplateFromJson(legacy, &restored, &error), qPrintable(error));
+    QCOMPARE(viewTemplateToJson(restored), json);
+    auto wrong = json; wrong["files"] = QJsonArray{};
+    QVERIFY(!viewTemplateFromJson(wrong, &restored, &error));
+    wrong = json; auto signalRows = wrong["signals"].toArray(); signalRows.append(signalRows.first()); wrong["signals"] = signalRows;
+    QVERIFY(!viewTemplateFromJson(wrong, &restored, &error));
+    wrong = json; wrong["signals"] = QJsonArray{};
+    QVERIFY(!viewTemplateFromJson(wrong, &restored, &error));
+    wrong = json; signalRows = wrong["signals"].toArray(); auto signal = signalRows[0].toObject();
+    signal["timeOffset"] = 1; signalRows[0] = signal; wrong["signals"] = signalRows;
+    QVERIFY(!viewTemplateFromJson(wrong, &restored, &error));
+    wrong = json; auto config = wrong["view"].toObject(); auto plots = config["plots"].toArray();
+    auto plot = plots[0].toObject(); plot["signals"] = QJsonArray{1}; plots[0] = plot; config["plots"] = plots; wrong["view"] = config;
+    QVERIFY(!viewTemplateFromJson(wrong, &restored, &error));
+    QCOMPARE(viewTemplateToJson(restored), json); // Failed reads never replace the last valid template.
+    QTemporaryDir dir;
+    const auto path = dir.filePath("legacy.diview");
+    writeFile(path, QJsonDocument(legacy).toJson());
+    QVERIFY(readViewTemplate(path, &restored, &error));
+    QVERIFY(writeViewTemplate(path, restored, &error));
+    QFile updated(path); QVERIFY(updated.open(QIODevice::ReadOnly));
+    QCOMPARE(QJsonDocument::fromJson(updated.readAll()).object()["version"].toInt(), 2);
 }
 QTEST_MAIN(SessionTest)
 #include "session_test.moc"

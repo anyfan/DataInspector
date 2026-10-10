@@ -115,3 +115,7 @@ CI 构建步骤使用 `[Environment]::ProcessorCount` 获取 runner 的逻辑 CP
 GPU 套件另注册 `plotitem_zoomed_raster_test` 和 `plotitem_zoomed_compressed_raster_test`，覆盖中间缩放的跨桶振荡。
 
 GPU 套件注册 `plotitem_selected_dense_raster_test`，覆盖重复采样的毫秒锯齿波选中加粗显示。
+
+## 状态与界面职责拆分
+
+DI_CONTROLLER_SOURCES 纳入 appcontroller_objectevaluation.cpp（规则调度）、appcontroller_templates.cpp（模板匹配/应用/撤销）、viewconfiguration.*（共用视图配置）、viewtemplatedocument.*（独立模板格式）和 jsonvalidation.h（JSON 数值/文本校验）。会话读写仍由 sessiondocument.* 负责。DI_QML_FILES 纳入 SignalBrowser.qml 和 SessionDialogs.qml；应用、源码 QML 测试及编译 QML 测试复用同一列表。

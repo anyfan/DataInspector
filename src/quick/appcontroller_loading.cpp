@@ -123,8 +123,7 @@ bool AppController::removeFile(const QString &fileName)
     if (removedRows.isEmpty()) return false;
 
     m_seriesStore->removeSeries(QSet<int>(removedRows.cbegin(), removedRows.cend()));
-    remapTrajectoryAxes(removedRows);
-    remapObjectRows(removedRows);
+    remapSignalReferences(removedRows);
     for (auto it = removedRows.crbegin(); it != removedRows.crend(); ++it)
         if (*it >= 0 && *it < m_signalColors.size())
             m_signalColors.removeAt(*it);

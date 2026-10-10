@@ -5,7 +5,6 @@ import QtQuick.Controls
 import QtQuick.Controls.Basic as Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
-import QtQuick.Shapes
 import DataInspector
 
 ApplicationWindow {
@@ -25,14 +24,10 @@ ApplicationWindow {
         parent: Overlay.overlay
         appController: window.appController
     }
-    property string pendingUnsavedAction: ""
+    property alias pendingUnsavedAction: sessionDialogs.pendingUnsavedAction
     onClosing: close => {
         window.cancelSignalTreeDrag()
-        if (!allowClose && window.appController.sessionModified) {
-            close.accepted = false
-            pendingUnsavedAction = "close"
-            unsavedSessionDialog.open()
-        }
+        if (!allowClose && !sessionDialogs.requestClose()) close.accepted = false
     }
     // Keep every Fusion control in the app theme, independent of the OS theme.
     palette.window: panelColor
@@ -69,11 +64,6 @@ ApplicationWindow {
     property var signalDragDestination: null
     property int signalDragRow: -1
     property int signalDragRevision: 0
-    readonly property var activeTrajectoryObject: {
-        const revision = window.appController.plotStateRevision
-        const state = window.appController.trajectoryState(window.appController.activePlotIndex)
-        return state.enabled ? window.appController.dataObjects.find(object => object.id === state.objectId) || null : null
-    }
     readonly property bool signalTreeDragging: signalTreeDragPreview.visible
     function cancelSignalTreeDrag() {
         objectManager.dropFieldId = ""
@@ -161,30 +151,7 @@ ApplicationWindow {
         cursorShape: Qt.BlankCursor
     }
 
-    function signalGroupTitle(group) {
-        const parts = group.split("/")
-        return parts.length > 1 ? parts.slice(1).join(" / ") : group
-    }
-
-    function highlightedSearchText(value) {
-        function escaped(text) {
-            return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-        }
-        const query = signalSearch.text.trim()
-        if (!query.length) return escaped(value)
-        const lower = value.toLowerCase()
-        const needle = query.toLowerCase()
-        const color = window.darkTheme ? "#ffca70" : "#a34700"
-        let result = "", offset = 0, match = lower.indexOf(needle)
-        while (match >= 0) {
-            result += escaped(value.slice(offset, match))
-                    + '<font color="' + color + '"><b>'
-                    + escaped(value.slice(match, match + query.length)) + '</b></font>'
-            offset = match + query.length
-            match = lower.indexOf(needle, offset)
-        }
-        return result + escaped(value.slice(offset))
-    }
+    function highlightedSearchText(value) { return signalBrowser.highlightedSearchText(value) }
 
     ListModel {
         id: lineStyleModel
@@ -477,227 +444,14 @@ ApplicationWindow {
         renameSignalDialog.open()
     }
 
-    property url pendingSessionUrl: ""
-    property var missingSources: []
-    property var relocatedSources: ({})
-    property int missingSourceIndex: 0
-    function beginSessionRestore() {
-        missingSources = window.appController.missingSessionFiles(pendingSessionUrl)
-        relocatedSources = ({})
-        missingSourceIndex = 0
-        locateNextSource()
+    SessionDialogs {
+        id: sessionDialogs
+        anchors.fill: parent
+        appController: window.appController
+        hostWidth: window.width
+        hostHeight: window.height
+        onCloseRequested: { window.allowClose = true; window.close() }
     }
-    function locateNextSource() {
-        if (missingSourceIndex < missingSources.length) {
-            relocateFileDialog.title = "重新定位：" + missingSources[missingSourceIndex].path
-            relocateFileDialog.open()
-        } else window.appController.restoreSessionWithFiles(pendingSessionUrl, relocatedSources)
-    }
-    FileDialog {
-        id: relocateFileDialog
-        objectName: "relocateFileDialog"
-        fileMode: FileDialog.OpenFile
-        nameFilters: ["数据文件 (*.csv *.txt *.xlsx *.mat)"]
-        onAccepted: {
-            window.relocatedSources[String(window.missingSources[window.missingSourceIndex].index)] = selectedFile
-            ++window.missingSourceIndex
-            window.locateNextSource()
-        }
-    }
-    function continueUnsavedAction() {
-        const action = pendingUnsavedAction
-        pendingUnsavedAction = ""
-        if (action === "close") { allowClose = true; window.close() }
-        else if (action === "restore") window.beginSessionRestore()
-    }
-    Dialog {
-        id: unsavedSessionDialog
-        objectName: "unsavedSessionDialog"
-        title: "当前会话尚未保存"
-        modal: true
-        anchors.centerIn: parent
-        standardButtons: Dialog.Save | Dialog.Discard | Dialog.Cancel
-        Label { text: "是否保存当前的信号绑定、样式和视图？\n会话文件不包含原始数据。" }
-        onAccepted: saveSessionDialog.open()
-        onDiscarded: window.continueUnsavedAction()
-        onRejected: window.pendingUnsavedAction = ""
-    }
-    FileDialog {
-        id: saveSessionDialog
-        objectName: "saveSessionDialog"
-        title: "保存会话（不包含原始数据）"
-        nameFilters: ["DataInspector 会话 (*.disession)", "JSON 文件 (*.json)"]
-        fileMode: FileDialog.SaveFile
-        defaultSuffix: "disession"
-        onAccepted: {
-            if (window.appController.saveSession(selectedFile)) window.continueUnsavedAction()
-        }
-        onRejected: window.pendingUnsavedAction = ""
-    }
-
-    FileDialog {
-        id: saveViewTemplateDialog
-        objectName: "saveViewTemplateDialog"
-        title: "保存视图模板"
-        fileMode: FileDialog.SaveFile
-        defaultSuffix: "diview"
-        nameFilters: ["DataInspector 视图模板 (*.diview)"]
-        onAccepted: {
-            if (!window.appController.saveViewTemplate(selectedFile)) {
-                sessionErrorDialog.message = window.appController.status
-                sessionErrorDialog.open()
-            }
-        }
-    }
-    FileDialog {
-        id: openViewTemplateDialog
-        objectName: "openViewTemplateDialog"
-        title: "应用视图模板"
-        fileMode: FileDialog.OpenFile
-        nameFilters: ["DataInspector 视图模板 (*.diview)"]
-        onAccepted: {
-            const preview = window.appController.previewViewTemplate(selectedFile)
-            if (preview.error.length > 0) {
-                sessionErrorDialog.message = preview.error
-                sessionErrorDialog.open()
-                return
-            }
-            viewTemplateDialog.file = selectedFile
-            viewTemplateDialog.preview = preview
-            const mapping = {}
-            for (const row of preview.rows) mapping[String(row.id)] = row.match
-            viewTemplateDialog.mapping = mapping
-            viewTemplateDialog.errorText = ""
-            fixedTemplateRanges.checked = false
-            viewTemplateDialog.open()
-        }
-    }
-    Dialog {
-        id: viewTemplateDialog
-        objectName: "viewTemplateDialog"
-        anchors.centerIn: parent
-        modal: true
-        width: Math.min(780, window.width - 40)
-        height: Math.min(560, window.height - 40)
-        title: "应用视图模板 · 确认信号匹配"
-        property url file
-        property var preview: ({ rows: [], options: [], plotCount: 0 })
-        property var mapping: ({})
-        property string errorText: ""
-        readonly property bool complete: {
-            const assigned = new Set()
-            for (const row of preview.rows) {
-                const value = Number(mapping[String(row.id)])
-                if (!Number.isInteger(value) || value < 0 || assigned.has(value)) return false
-                assigned.add(value)
-            }
-            return true
-        }
-        function assign(id, value) {
-            const next = Object.assign({}, mapping)
-            next[String(id)] = value
-            mapping = next
-        }
-        function apply() {
-            if (!complete) { errorText = "请补齐匹配，同一信号不能重复分配。"; return }
-            if (!window.appController.applyViewTemplate(file, mapping, fixedTemplateRanges.checked)) {
-                errorText = window.appController.status
-                return
-            }
-            close()
-        }
-        contentItem: ColumnLayout {
-            Label {
-                text: "将替换为 " + viewTemplateDialog.preview.plotCount + " 个子图。请核对每项来源；缺失或重名信号需手动指定。"
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-            }
-            ListView {
-                objectName: "viewTemplateMatches"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                clip: true
-                model: viewTemplateDialog.preview.rows
-                ScrollBar.vertical: ScrollBar {}
-                delegate: ColumnLayout {
-                    id: templateMatchRow
-                    required property var modelData
-                    width: ListView.view.width
-                    height: 72
-                    spacing: 2
-                    Label { text: templateMatchRow.modelData.label + " · " + templateMatchRow.modelData.hint; Layout.fillWidth: true; elide: Text.ElideMiddle }
-                    ComboBox {
-                        objectName: "viewTemplateMatch" + templateMatchRow.modelData.id
-                        Layout.fillWidth: true
-                        model: viewTemplateDialog.preview.options
-                        textRole: "label"
-                        valueRole: "id"
-                        currentIndex: {
-                            const selected = Number(viewTemplateDialog.mapping[String(templateMatchRow.modelData.id)])
-                            const options = viewTemplateDialog.preview.options
-                            for (let i = 0; i < options.length; ++i) if (Number(options[i].id) === selected) return i
-                            return 0
-                        }
-                        onActivated: function(index) { viewTemplateDialog.assign(templateMatchRow.modelData.id, Number(viewTemplateDialog.preview.options[index].id)) }
-                    }
-                }
-            }
-            CheckBox { id: fixedTemplateRanges; objectName: "fixedTemplateRanges"; text: "使用模板中的固定坐标范围（默认适应新数据）" }
-            Label { text: "保留当前时间偏移；游标重新定位。应用后可从会话菜单撤销一次。"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-            Label { text: viewTemplateDialog.errorText; visible: text.length > 0; color: "#df4652"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-        }
-        footer: DialogButtonBox {
-            Button { text: "应用"; enabled: viewTemplateDialog.complete; onClicked: viewTemplateDialog.apply() }
-            Button { text: "取消"; onClicked: viewTemplateDialog.close() }
-        }
-    }
-    FileDialog {
-        id: openSessionDialog
-        objectName: "openSessionDialog"
-        title: "恢复会话"
-        nameFilters: ["DataInspector 会话 (*.disession *.json)"]
-        fileMode: FileDialog.OpenFile
-        onAccepted: {
-            window.pendingSessionUrl = selectedFile
-            if (window.appController.sessionModified) {
-                window.pendingUnsavedAction = "restore"
-                unsavedSessionDialog.open()
-            } else if (window.appController.loadedFileCount > 0) replaceSessionDialog.open()
-            else window.beginSessionRestore()
-        }
-    }
-    Dialog {
-        id: replaceSessionDialog
-        objectName: "replaceSessionDialog"
-        title: "恢复会话"
-        modal: true
-        anchors.centerIn: parent
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        Label { text: "恢复成功后将替换当前会话。\n如需保留当前视图，请先保存会话。\n文件缺失或恢复失败时，当前会话不变。" }
-        onAccepted: window.beginSessionRestore()
-    }
-    Dialog {
-        id: sessionErrorDialog
-        objectName: "sessionErrorDialog"
-        property string message: ""
-        title: "会话操作未完成"
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(580, window.width - 40)
-        standardButtons: Dialog.Ok
-        Label { width: parent.width; text: sessionErrorDialog.message; wrapMode: Text.WrapAnywhere }
-    }
-    Shortcut {
-        sequence: "Ctrl+S"
-        enabled: !window.appController.loading && !window.appController.exporting
-        onActivated: saveSessionDialog.open()
-    }
-    Shortcut {
-        sequence: "Ctrl+Shift+O"
-        enabled: !window.appController.loading && !window.appController.exporting
-        onActivated: openSessionDialog.open()
-    }
-
     FileDialog {
         id: fileDialog
         title: "打开数据文件"
@@ -751,8 +505,7 @@ ApplicationWindow {
                 : plotRepeater.itemAt(window.appController.activePlotIndex)
             if (!window.appController.exportPlotImage(target, window.imageExportUrl, 2)) {
                 window.imageCaptureAll = false
-                sessionErrorDialog.message = "无法导出当前绘图区，请确认视图可见、没有其他加载或导出任务。"
-                sessionErrorDialog.open()
+                sessionDialogs.showError("无法导出当前绘图区，请确认视图可见、没有其他加载或导出任务。")
             }
         }
     }
@@ -815,27 +568,20 @@ ApplicationWindow {
         function onLayoutChanged() { window.cancelSignalTreeDrag(); window.subplotMaximized = false }
         function onImageExportFinished(success, message) {
             window.imageCaptureAll = false
-            if (!success) { sessionErrorDialog.message = message; sessionErrorDialog.open() }
+            if (!success) { sessionDialogs.showError(message) }
         }
         function onSessionRestored(cursorMode) {
-            signalSearch.clear()
-            searchTimer.stop()
-            signalSearch.filtering = false
+            signalBrowser.clearSearch()
             window.selectedCursorMode = cursorMode
             if (cursorMode !== 0) window.preferredCursorMode = cursorMode
             window.subplotMaximized = window.appController.soloPlotIndex >= 0
         }
         function onSessionError(message) {
-            sessionErrorDialog.message = message
-            sessionErrorDialog.open()
+            sessionDialogs.showError(message)
         }
         function onRevealSignalRequested(row) {
-            signalSearch.clear()
-            searchTimer.stop()
-            signalSearch.filtering = false
-            const modelRow = window.appController.signalModel.revealSignal(row)
-            signalList.currentIndex = modelRow
-            signalList.positionViewAtIndex(modelRow, ListView.Center)
+            signalBrowser.clearSearch()
+            signalBrowser.revealSignal(row)
         }
     }
 
@@ -989,11 +735,11 @@ ApplicationWindow {
                 onClicked: sessionMenu.popup()
                 Menu {
                     id: sessionMenu
-                    MenuItem { text: "保存会话…  Ctrl+S"; onTriggered: saveSessionDialog.open() }
-                    MenuItem { text: "恢复会话…  Ctrl+Shift+O"; onTriggered: openSessionDialog.open() }
+                    MenuItem { text: "保存会话…  Ctrl+S"; onTriggered: sessionDialogs.saveSession() }
+                    MenuItem { text: "恢复会话…  Ctrl+Shift+O"; onTriggered: sessionDialogs.openSession() }
                     MenuSeparator {}
-                    MenuItem { objectName: "saveViewTemplateMenu"; text: "保存为视图模板…"; enabled: window.appController.signalCount > 0; onTriggered: saveViewTemplateDialog.open() }
-                    MenuItem { objectName: "applyViewTemplateMenu"; text: "应用视图模板…"; enabled: window.appController.signalCount > 0; onTriggered: openViewTemplateDialog.open() }
+                    MenuItem { objectName: "saveViewTemplateMenu"; text: "保存为视图模板…"; enabled: window.appController.signalCount > 0; onTriggered: sessionDialogs.saveTemplate() }
+                    MenuItem { objectName: "applyViewTemplateMenu"; text: "应用视图模板…"; enabled: window.appController.signalCount > 0; onTriggered: sessionDialogs.openTemplate() }
                     MenuItem { text: "撤销上次模板应用"; enabled: window.appController.canUndoViewTemplate; onTriggered: window.appController.undoViewTemplate() }
                 }
             }
@@ -1182,463 +928,32 @@ ApplicationWindow {
             color: SplitHandle.pressed ? window.accentColor : SplitHandle.hovered ? "#a9cbed" : window.borderColor
             HoverHandler { cursorShape: Qt.SplitHCursor }
         }
-        Rectangle {
+        SignalBrowser {
+            id: signalBrowser
             visible: window.signalTreeVisible
-            SplitView.preferredWidth: 280
-            SplitView.minimumWidth: 180
-            SplitView.maximumWidth: Math.max(180, window.width - 320)
-            color: window.panelColor
-            ColumnLayout { anchors.fill: parent; anchors.margins: 10; anchors.rightMargin: 0; spacing: 8
-                Button { objectName: "objectManagerButton"; text: "对象与派生数据…"; Layout.fillWidth: true; enabled: !window.appController.restoringSession && !window.appController.imageExporting; onClicked: objectManager.open() }
-                RowLayout { Layout.fillWidth: true; spacing: 4
-                    TextField {
-                        id: signalSearch
-                        objectName: "signalSearch"
-                        Layout.fillWidth: true
-                        placeholderText: "搜索信号…"
-                        property bool filtering: false
-                        property real previousContentY: 0
-                        onTextChanged: {
-                            if (!filtering && text.trim().length > 0) {
-                                previousContentY = signalList.contentY
-                                filtering = true
-                            }
-                            searchTimer.restart()
-                        }
-                        Timer {
-                            id: searchTimer
-                            interval: 150
-                            onTriggered: {
-                                window.appController.filterSignals(signalSearch.text)
-                                if (signalSearch.filtering && signalSearch.text.trim().length === 0) {
-                                    signalList.forceLayout()
-                                    signalList.contentY = Math.max(signalList.originY,
-                                        Math.min(signalList.originY + Math.max(0, signalList.contentHeight - signalList.height),
-                                            signalSearch.previousContentY))
-                                    signalSearch.filtering = false
-                                }
-                            }
-                        }
-                    }
-                    ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered && !window.signalTreeDragging; ToolTip.text: "清除搜索" }
-                    ToolButton { text: "‹"; onClicked: window.signalTreeVisible = false; ToolTip.visible: hovered && !window.signalTreeDragging; ToolTip.text: "隐藏信号树（可从设置恢复）" }
-                }
-                Item { Layout.fillWidth: true; Layout.fillHeight: true
-                ListView { id: signalList; enabled: !window.appController.imageExporting; anchors.fill: parent; clip: true; model: window.appController.signalModel
-                    objectName: "signalList"
-                    anchors.rightMargin: 5
-                    // Overlay navigation must never resize the viewport or thumb.
-                    boundsBehavior: Flickable.StopAtBounds
-                    // Sticky hierarchy: the file/table ancestors of the row at the
-                    // top edge, but only those already scrolled out of view.
-                    // Recomputed at most once per stickyTimer tick and only when
-                    // the top row actually changes, so flicking stays cheap.
-                    property var stickyPath: []
-                    property int stickyTopRow: -1
-                    property string stickyKey: ""
-                    cacheBuffer: 600
-                    Timer {
-                        id: stickyTimer
-                        interval: 40
-                        onTriggered: signalList.updateStickyPath()
-                    }
-                    function scheduleStickyPath() {
-                        if (!stickyTimer.running) stickyTimer.start()
-                    }
-                    function resetStickyPath() {
-                        stickyTopRow = -1
-                        stickyKey = ""
-                        stickyPath = []
-                        scheduleStickyPath()
-                    }
-                    function toggleGroup(group, row) {
-                        cancelFlick()
-                        const item = itemAtIndex(row)
-                        const offset = item ? item.y - contentY : 0
-                        model.toggleGroup(group)
-                        forceLayout()
-                        if (item) {
-                            positionViewAtIndex(row, ListView.Beginning)
-                            forceLayout()
-                            const anchor = itemAtIndex(row)
-                            if (anchor) {
-                                const end = Math.max(originY, originY + contentHeight - height)
-                                contentY = Math.max(originY, Math.min(end, anchor.y - offset))
-                            }
-                        }
-                        stickyTopRow = -1
-                        updateStickyPath()
-                    }
-                    function navigationPath(row, item) {
-                        const path = model.ancestorPath(row)
-                        if (item && item.groupNode && !item.fileNode)
-                            path.push({name: item.signalName, group: item.groupName,
-                                       depth: item.nodeDepth, row: row})
-                        return path
-                    }
-                    function updateStickyPath() {
-                        if (count === 0 || !model) {
-                            stickyTopRow = -1
-                            if (stickyKey !== "") { stickyKey = ""; stickyPath = [] }
-                            return
-                        }
-                        const topRow = indexAt(1, contentY + 1)
-                        // No delegate under the top edge yet (still flicking);
-                        // keep the previous header and try again shortly.
-                        if (topRow < 0) { scheduleStickyPath(); return }
-                        if (topRow === stickyTopRow) return
-                        stickyTopRow = topRow
-                        // A group aligned at the top is covered by the navigation;
-                        // include it so jumping to pN keeps pN in the path.
-                        const path = navigationPath(topRow, itemAtIndex(topRow))
-                        const hidden = []
-                        let key = ""
-                        for (let i = 0; i < path.length; ++i)
-                            if (path[i].row >= 0 && path[i].row <= topRow) {
-                                hidden.push(path[i])
-                                key += path[i].row + ":" + path[i].group + "|"
-                            }
-                        if (key !== stickyKey) { stickyKey = key; stickyPath = hidden }
-                    }
-                    onContentYChanged: scheduleStickyPath()
-                    onMovementEnded: updateStickyPath()
-                    onCountChanged: { stickyTopRow = -1; scheduleStickyPath() }
-                    onHeightChanged: scheduleStickyPath()
-                    Connections {
-                        target: signalList.model
-                        function onModelReset() { window.cancelSignalTreeDrag(); signalList.resetStickyPath() }
-                    }
-                    delegate: Item {
-                        id: signalDelegate
-                        objectName: "signalTreeRow"
-                        required property int index
-                        required property string signalName
-                        required property int signalIndex
-                        required property bool signalChecked
-                        required property color signalColor
-                        required property string groupName
-                        required property bool groupNode
-                        required property bool fileNode
-                        required property bool groupExpanded
-                        required property int nodeDepth
-                        required property real signalWidth
-                        required property int signalLineStyle
-                        property bool rowHovered: false
-                        readonly property string displayName: groupNode
-                            ? window.signalGroupTitle(groupName) : signalName
-                        width: signalList.width
-                        height: groupNode ? window.treeHeaderHeight : 30
-
-                        Rectangle {
-                            anchors.fill: parent
-                            color: signalDelegate.index === signalList.currentIndex
-                                   ? (window.darkTheme ? "#29333d" : "#d9eafa")
-                                   : signalDelegate.rowHovered
-                                     ? (window.darkTheme ? "#252d35" : "#eef4fa")
-                                     : signalDelegate.groupNode
-                                       ? window.treeHeaderColor
-                                       : window.panelColor
-                        }
-                        HoverHandler { onHoveredChanged: signalDelegate.rowHovered = hovered }
-                        ToolTip.visible: rowHovered && !window.signalTreeDragging
-                        ToolTip.delay: 600
-                        ToolTip.text: groupNode ? groupName : groupName + " / " + signalName
-
-                        Rectangle {
-                            visible: signalDelegate.groupNode
-                            anchors.left: parent.left
-                            anchors.right: parent.right
-                            anchors.bottom: parent.bottom
-                            height: 1
-                            color: window.borderColor
-                        }
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 12
-                            id: signalRowLayout
-                            anchors.rightMargin: 4
-                            spacing: 4
-                            ToolButton {
-                                visible: signalDelegate.groupNode
-                                Layout.preferredWidth: 24
-                                Layout.preferredHeight: 24
-                                text: signalDelegate.groupExpanded ? "▾" : "▸"
-                                palette.button: window.panelColor
-                                palette.buttonText: signalDelegate.groupNode
-                                                    ? window.treeHeaderTextColor
-                                                    : window.treeTextColor
-                                onClicked: signalList.toggleGroup(signalDelegate.groupName, signalDelegate.index)
-                            }
-                            CheckBox {
-                                id: signalCheck
-                                objectName: "signalTreeCheck"
-                                readonly property int sourceRow: signalDelegate.signalIndex
-                                visible: !signalDelegate.groupNode
-                                checked: objectManager.visible ? objectManager.sourceChecked(signalDelegate.signalIndex) : window.activeTrajectoryObject ? window.activeTrajectoryObject.fields.some(field => field.series === signalDelegate.signalIndex) : signalDelegate.signalChecked
-                                Layout.preferredWidth: 24
-                                Layout.preferredHeight: 24
-                                palette.window: window.panelColor
-                                palette.base: window.panelColor
-                                palette.text: window.treeTextColor
-                                palette.buttonText: window.treeTextColor
-                                palette.highlight: window.accentColor
-                                palette.highlightedText: "#ffffff"
-                                onClicked: {
-                                    signalList.currentIndex = signalDelegate.index
-                                    if (objectManager.visible) objectManager.selectSource(signalDelegate.signalIndex)
-                                    else if (window.appController.trajectoryState(window.appController.activePlotIndex).enabled) {
-                                        if (window.activeTrajectoryObject) objectManager.selectedId = window.activeTrajectoryObject.id
-                                        objectManager.open()
-                                        objectManager.selectSource(signalDelegate.signalIndex)
-                                    }
-                                    else window.appController.toggleSignal(signalDelegate.signalIndex)
-                                }
-                            }
-                            Label {
-                                id: signalNameLabel
-                                objectName: "signalTreeName"
-                                text: window.highlightedSearchText(signalDelegate.displayName)
-                                textFormat: Text.StyledText
-                                font.weight: Font.Normal
-                                color: signalDelegate.groupNode ? window.treeHeaderTextColor : window.treeTextColor
-                                elide: Text.ElideRight
-                                Layout.fillWidth: true
-                                MouseArea {
-                                    id: signalNameMouse
-                                    parent: signalDelegate.groupNode ? signalNameLabel : signalDelegate
-                                    anchors.fill: parent
-                                    anchors.leftMargin: signalDelegate.groupNode ? 0
-                                        : signalRowLayout.x + signalCheck.x + signalCheck.width
-                                    z: 1
-                                    property point pressPoint
-                                    property point namePressPoint
-                                    property bool moving: false
-                                    property bool canceledDrag: false
-                                    property int gestureRevision: -1
-                                    preventStealing: !signalDelegate.groupNode
-                                    cursorShape: moving ? Qt.BlankCursor : Qt.ArrowCursor
-                                    onPressed: mouse => {
-                                        pressPoint = Qt.point(mouse.x, mouse.y)
-                                        namePressPoint = mapToItem(signalNameLabel, mouse.x, mouse.y)
-                                        moving = false
-                                        canceledDrag = false
-                                        gestureRevision = window.signalDragRevision
-                                    }
-                                    onPositionChanged: mouse => {
-                                        if (signalDelegate.groupNode || !(pressedButtons & Qt.LeftButton) || canceledDrag
-                                            || gestureRevision !== window.signalDragRevision) return
-                                        if (!moving && Math.hypot(mouse.x - pressPoint.x, mouse.y - pressPoint.y) < 8) return
-                                        moving = true
-                                        const point = mapToItem(signalNameLabel, mouse.x, mouse.y)
-                                        window.updateSignalTreeDrag(signalNameLabel, point.x, point.y,
-                                            signalDelegate, namePressPoint)
-                                    }
-                                    onReleased: {
-                                        if (moving && !canceledDrag) window.finishSignalTreeDrag()
-                                        canceledDrag = canceledDrag || moving
-                                        moving = false
-                                    }
-                                    onCanceled: { canceledDrag = true; moving = false; window.cancelSignalTreeDrag() }
-                                    Component.onDestruction: { if (moving) window.cancelSignalTreeDrag() }
-                                    onClicked: mouse => {
-                                        if (moving || canceledDrag) return
-                                        signalList.currentIndex = signalDelegate.index
-                                        if (signalDelegate.groupNode)
-                                            signalList.toggleGroup(signalDelegate.groupName, signalDelegate.index)
-                                        else if (mapToItem(penPreview, mouse.x, mouse.y).x >= 0)
-                                            window.editSignalPen(signalDelegate.signalIndex)
-                                    }
-                                }
-                            }
-                            ToolButton {
-                                visible: signalDelegate.fileNode
-                                Layout.preferredWidth: 26
-                                Layout.preferredHeight: 24
-                                text: "×"
-                                palette.button: window.panelColor
-                                palette.buttonText: window.treeTextColor
-                                onClicked: window.requestRemoveFile(
-                                               signalDelegate.groupName)
-                                ToolTip.visible: hovered && !window.signalTreeDragging
-                                ToolTip.text: "移除文件"
-                            }
-                            // Scene-graph stroke instead of a Canvas: no per-row
-                            // FBO/threaded repaint, so flicking stays smooth and
-                            // rows never flash blank while a paint is pending.
-                            Item {
-                                id: penPreview
-                                visible: !signalDelegate.groupNode
-                                Layout.preferredWidth: 42
-                                Layout.preferredHeight: 24
-                                Shape {
-                                    anchors.fill: parent
-                                    ShapePath {
-                                        strokeColor: signalDelegate.signalColor
-                                        strokeWidth: signalDelegate.signalWidth
-                                        fillColor: "transparent"
-                                        capStyle: ShapePath.FlatCap
-                                        strokeStyle: signalDelegate.signalLineStyle >= 2 && signalDelegate.signalLineStyle <= 5
-                                                     ? ShapePath.DashLine : ShapePath.SolidLine
-                                        // Dash lengths are in units of strokeWidth.
-                                        dashPattern: {
-                                            const w = Math.max(1, signalDelegate.signalWidth)
-                                            switch (signalDelegate.signalLineStyle) {
-                                            case 2: return [8 / w, 4 / w]
-                                            case 3: return [2 / w, 4 / w]
-                                            case 4: return [8 / w, 4 / w, 2 / w, 4 / w]
-                                            case 5: return [8 / w, 4 / w, 2 / w, 4 / w, 2 / w, 4 / w]
-                                            default: return [4, 2]
-                                            }
-                                        }
-                                        startX: 3; startY: penPreview.height / 2
-                                        PathLine { x: penPreview.width - 3; y: penPreview.height / 2 }
-                                    }
-                                }
-                                MouseArea {
-                                    anchors.fill: parent
-                                    acceptedButtons: Qt.LeftButton
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: {
-                                        signalList.currentIndex = signalDelegate.index
-                                        window.editSignalPen(signalDelegate.signalIndex)
-                                    }
-                                }
-                            }
-                        }
-                        TapHandler {
-                            acceptedButtons: Qt.RightButton
-                            onTapped: {
-                                signalList.currentIndex = signalDelegate.index
-                                if (signalDelegate.fileNode) {
-                                    fileContextMenu.fileName = signalDelegate.groupName
-                                    fileContextMenu.popup()
-                                } else if (signalDelegate.groupNode) {
-                                    groupContextMenu.groupName = signalDelegate.groupName
-                                    groupContextMenu.popup()
-                                } else {
-                                    signalContextMenu.signalIndex = signalDelegate.signalIndex
-                                    signalContextMenu.popup()
-                                }
-                            }
-                        }
-                    }
-                    ScrollBar.vertical: Basic.ScrollBar {
-                        id: signalScrollBar
-                        objectName: "signalScrollBar"
-                        parent: signalList.parent
-                        anchors.top: parent.top
-                        anchors.bottom: parent.bottom
-                        anchors.right: parent.right
-                        width: 5
-                        padding: 0
-                        minimumSize: 0.05
-                        policy: ScrollBar.AsNeeded
-                        contentItem: Rectangle {
-                            implicitWidth: 5
-                            radius: 2
-                            color: signalScrollBar.pressed ? window.accentColor
-                                   : signalScrollBar.hovered ? (window.darkTheme ? "#a4a4a4" : "#929292")
-                                   : (window.darkTheme ? "#777777" : "#b8b8b8")
-                        }
-                        background: null
-                    }
-                }
-                Rectangle {
-                    id: stickyHeader
-                    objectName: "signalStickyHeader"
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.rightMargin: 5
-                    anchors.top: parent.top
-                    height: window.treeHeaderHeight
-                    visible: signalList.stickyPath.length > 0
-                    color: window.treeHeaderColor
-                    z: 2
-                    readonly property string pathText: signalList.stickyPath.map(entry => entry.name).join(" › ")
-                    function navigate(index, collapse) {
-                        const entry = signalList.stickyPath[index]
-                        if (!entry) return
-                        if (collapse) signalList.toggleGroup(entry.group, entry.row)
-                        signalList.positionViewAtIndex(Math.min(entry.row, signalList.count - 1), ListView.Beginning)
-                        signalList.currentIndex = Math.min(entry.row, signalList.count - 1)
-                    }
-                    Rectangle {
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        height: 1
-                        color: window.darkTheme ? "#3b4652" : "#d7dfe8"
-                    }
-                    MouseArea {
-                        anchors.fill: parent
-                        acceptedButtons: Qt.LeftButton | Qt.RightButton
-                        preventStealing: true
-                    }
-                    RowLayout {
-                        id: breadcrumb
-                        objectName: "signalBreadcrumb"
-                        anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 8
-                        spacing: 0
-                        Repeater {
-                            model: signalList.stickyPath
-                            delegate: RowLayout {
-                                id: breadcrumbSegment
-                                required property var modelData
-                                required property int index
-                                readonly property real segmentWidth: index === 0 ? implicitWidth
-                                    : Math.min(implicitWidth, Math.max(20,
-                                        (breadcrumb.width - 40) / Math.max(1, signalList.stickyPath.length - 1)))
-                                Layout.fillWidth: index === 0
-                                Layout.preferredWidth: segmentWidth
-                                Layout.maximumWidth: segmentWidth
-                                Layout.minimumWidth: index === 0 ? Math.min(implicitWidth, 40) : segmentWidth
-                                spacing: 0
-                                Label {
-                                    objectName: "signalBreadcrumbSegment"
-                                    Layout.fillWidth: true
-                                    Layout.minimumWidth: 0
-                                    text: window.highlightedSearchText(breadcrumbSegment.modelData.name)
-                                    textFormat: Text.StyledText
-                                    color: window.treeHeaderTextColor
-                                    font.weight: Font.Normal
-                                    elide: Text.ElideMiddle
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        acceptedButtons: Qt.LeftButton
-                                        preventStealing: true
-                                        onClicked: stickyHeader.navigate(breadcrumbSegment.index, false)
-                                        onDoubleClicked: stickyHeader.navigate(breadcrumbSegment.index, true)
-                                    }
-                                }
-                                Label {
-                                    id: separator
-                                    visible: breadcrumbSegment.index < signalList.stickyPath.length - 1
-                                    text: visible ? " › " : ""
-                                    color: window.treeHeaderTextColor
-                                }
-                            }
-                        }
-                        Item { Layout.fillWidth: true; Layout.preferredWidth: 0 }
-                    }
-                    HoverHandler { id: stickyHover }
-                    ToolTip.visible: stickyHover.hovered && !window.signalTreeDragging
-                    ToolTip.delay: 600
-                    ToolTip.text: pathText + "\n单击路径回到该层级，双击折叠"
-                }
-                }
-                Label {
-                    Layout.fillWidth: true
-                    text: window.appController.status
-                    color: window.treeTextColor
-                    font.pixelSize: 11
-                    elide: Text.ElideRight
-                    ToolTip.visible: statusHover.hovered && !window.signalTreeDragging
-                    ToolTip.text: text
-                    HoverHandler { id: statusHover }
-                }
+            appController: window.appController
+            objectEditor: objectManager
+            panelColor: window.panelColor
+            borderColor: window.borderColor
+            accentColor: window.accentColor
+            treeTextColor: window.treeTextColor
+            treeHeaderColor: window.treeHeaderColor
+            treeHeaderTextColor: window.treeHeaderTextColor
+            treeHeaderHeight: window.treeHeaderHeight
+            darkTheme: window.darkTheme
+            hostWidth: window.width
+            signalTreeDragging: window.signalTreeDragging
+            signalDragRevision: window.signalDragRevision
+            onDragCancelRequested: window.cancelSignalTreeDrag()
+            onDragFinishRequested: window.finishSignalTreeDrag()
+            onDragUpdateRequested: (source, x, y, rowItem, pressPoint) => window.updateSignalTreeDrag(source, x, y, rowItem, pressPoint)
+            onEditSignalRequested: row => window.editSignalPen(row)
+            onRemoveFileRequested: group => window.requestRemoveFile(group)
+            onHideRequested: window.signalTreeVisible = false
+            onContextRequested: (kind, row, group) => {
+                if (kind === 2) { fileContextMenu.fileName = group; fileContextMenu.popup() }
+                else if (kind === 1) { groupContextMenu.groupName = group; groupContextMenu.popup() }
+                else { signalContextMenu.signalIndex = row; signalContextMenu.popup() }
             }
         }
         Rectangle { id: plotPanel; SplitView.fillWidth: true; SplitView.minimumWidth: 280; color: window.darkTheme ? "#14181d" : "#ffffff"; clip: true

@@ -1,7 +1,7 @@
 #include "appcontroller.h"
 #include "plotitem.h"
-#include <QThreadPool>
-#include <QTimer>
+
+
 #include <QUuid>
 #include <algorithm>
 #include <cmath>
@@ -10,12 +10,22 @@
 namespace {
 QString newId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 bool validName(const QString &name) { return !name.trimmed().isEmpty() && name.size() <= 256 && !name.contains(QChar::Null); }
+void resolveObjectMeasurements(const DataObject &object, SessionTrajectoryEntry &track)
+{
+    QHash<QString, int> fields;
+    for (const auto &field : object.fields) fields.insert(field.role, field.series);
+    track.name = object.name;
+    track.geographic = object.geographic;
+    const auto positions = object.geographic ? QStringList{"latitude", "longitude", "height"} : QStringList{"x", "y", "z"};
+    for (int i = 0; i < 3; ++i) track.axes[i] = fields.value(positions[i], -1);
+    track.attitude = object.attitude;
+    track.attitude.sources.fill(-1);
+    const auto roles = track.attitude.mode == 1 ? QStringList{"roll", "pitch", "yaw"}
+        : track.attitude.mode == 2 ? (track.attitude.scalarLast ? QStringList{"qx", "qy", "qz", "qw"} : QStringList{"qw", "qx", "qy", "qz"})
+        : QStringList{};
+    for (int i = 0; i < roles.size(); ++i) track.attitude.sources[i] = fields.value(roles[i], -1);
 }
-struct AppController::ObjectJob {
-    std::atomic_bool cancelled{false}, done{false};
-    ObjectEvaluation result;
-};
-
+}
 bool AppController::deriving() const { return bool(m_objectJob); }
 QString AppController::objectOutputGroup(const DataObject &object) const
 {
@@ -248,18 +258,10 @@ bool AppController::editObjectRule(const QString &objectId, const QString &ruleI
     m_objects = next; markSessionModified(); scheduleObjectEvaluation(); return true;
 }
 
-void AppController::remapObjectRows(const QVector<int> &removed)
-{
-    auto remap = [&](int row) { return row < 0 || removed.contains(row) ? -1 : row - int(std::lower_bound(removed.begin(), removed.end(), row) - removed.begin()); };
-    for (auto &object : m_objects) {
-        for (auto &field : object.fields) field.series = remap(field.series);
-        for (auto &rule : object.rules) for (auto &output : rule.outputs) output.series = remap(output.series);
-    }
-}
 void AppController::removeObjectSeries(const QSet<int> &rows)
 {
     const auto removed = m_signals->removeRowsById(rows);
-    m_seriesStore->removeSeries(rows); remapTrajectoryAxes(removed); remapObjectRows(removed);
+    m_seriesStore->removeSeries(rows); remapSignalReferences(removed);
     for (auto it = removed.crbegin(); it != removed.crend(); ++it) m_signalColors.removeAt(*it);
     for (int i = 0; i < m_plots.size(); ++i) refreshPlot(i, false);
     notifyPlotBindingsChanged(); emit currentFileChanged();
@@ -294,6 +296,7 @@ QString AppController::duplicateDataObject(const QString &id)
     DataObject source; for (const auto &object : m_objects) if (object.id == id) source = object;
     if (source.id.isEmpty()) return {};
     const QString target = createDataObject(source.name + QStringLiteral(" 副本"), source.type); if (target.isEmpty()) return {};
+    QScopedValueRollback<bool> batch(m_batchObjectChanges, true);
     QHash<QString, QString> mapping;
     m_objects.last().fields.clear();
     for (const auto &field : source.fields) {
@@ -310,10 +313,17 @@ QString AppController::duplicateDataObject(const QString &id)
         const QString created = addObjectRule(target, {{"name", rule.name}, {"operation", rule.operation}, {"inputs", inputs},
             {"expression", rule.expression}, {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
             {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"outputNames", names}});
-        if (created.isEmpty()) { removeDataObject(target); return {}; }
+        if (created.isEmpty()) {
+            removeDataObject(target);
+            m_batchObjectChanges = false;
+            scheduleObjectEvaluation();
+            return {};
+        }
         const auto &copy = m_objects.last().rules.last();
         for (int k = 0; k < rule.outputs.size(); ++k) mapping.insert(rule.outputs[k].id, copy.outputs[k].id);
     }
+    m_batchObjectChanges = false;
+    scheduleObjectEvaluation();
     return target;
 }
 bool AppController::showObjectTrajectory(const QString &id, int plotIndex)
@@ -321,10 +331,10 @@ bool AppController::showObjectTrajectory(const QString &id, int plotIndex)
     if (m_loading || m_exporting || sessionInteractionBlocked() || plotIndex < 0 || plotIndex >= m_plotRows * m_plotColumns) return false;
     for (const auto &object : m_objects) if (object.id == id) {
         if (object.type != "aircraft") { setStatus(QStringLiteral("仅飞机对象支持航迹显示")); return false; }
-        QHash<QString, int> fields; for (const auto &field : object.fields) fields.insert(field.role, field.series);
-        const auto positionRoles = object.geographic ? QStringList{"latitude", "longitude", "height"} : QStringList{"x", "y", "z"};
-        int boundAxes = 0; for (const auto &role : positionRoles) if (fields.value(role, -1) >= 0) ++boundAxes;
-        if ((object.geographic && (fields.value("latitude", -1) < 0 || fields.value("longitude", -1) < 0)) || boundAxes < 2) {
+        SessionTrajectoryEntry measurement;
+        resolveObjectMeasurements(object, measurement);
+        const int boundAxes = std::count_if(measurement.axes.cbegin(), measurement.axes.cend(), [](int row) { return row >= 0; });
+        if ((object.geographic && (measurement.axes[0] < 0 || measurement.axes[1] < 0)) || boundAxes < 2) {
             setStatus(object.geographic ? QStringLiteral("请绑定飞机的纬度和经度") : QStringLiteral("请至少绑定飞机 XYZ 中的两个参数")); return false;
         }
         const auto current = m_trajectories.value(plotIndex).entries(); int existing = -1;
@@ -332,16 +342,16 @@ bool AppController::showObjectTrajectory(const QString &id, int plotIndex)
         if (existing >= 0) selectTrajectory(plotIndex, existing);
         else {
             const auto state = m_trajectories.value(plotIndex);
-            if (std::any_of(state.axes.cbegin(), state.axes.cend(), [](int row) { return row >= 0; }) && !addTrajectory(plotIndex)) return false;
+            if (std::any_of(state.activeEntry().axes.cbegin(), state.activeEntry().axes.cend(), [](int row) { return row >= 0; }) && !addTrajectory(plotIndex)) return false;
         }
-        if (!configureTrajectory(plotIndex, true, fields.value(positionRoles[0]), fields.value(positionRoles[1]), fields.value(positionRoles[2], -1), object.geographic)) return false;
+        if (!configureTrajectory(plotIndex, true, measurement.axes[0], measurement.axes[1], measurement.axes[2], object.geographic)) return false;
         styleTrajectory(plotIndex, object.name, QColor("#0072bd"), 2, true);
         auto &state = m_trajectories[plotIndex];
-        for (const auto &role : aircraftFieldRoles()) {
-            const int row = fields.value(role, -1);
+        for (const auto &field : object.fields) if (aircraftFieldRoles().contains(field.role)) {
+            const int row = field.series;
             if (row >= 0 && !state.signalIds.contains(row)) state.signalIds.append(row);
         }
-        m_trajectories[plotIndex].objectId = id;
+        m_trajectories[plotIndex].activeEntry().objectId = id;
         syncObjectTrajectories(); setActivePlot(plotIndex);
         return true;
     }
@@ -350,75 +360,23 @@ bool AppController::showObjectTrajectory(const QString &id, int plotIndex)
 void AppController::syncObjectTrajectories()
 {
     for (auto it = m_trajectories.begin(); it != m_trajectories.end(); ++it) {
-        auto &state = it.value(); auto tracks = state.entries(); bool changed = false;
-        for (auto &track : tracks) {
+        auto &state = it.value(); bool changed = false;
+        for (auto &track : state.tracks) {
             if (track.objectId.isEmpty()) continue;
-            changed = true; const DataObject *object = nullptr;
+            const auto previous = track;
+            const DataObject *object = nullptr;
             for (const auto &candidate : m_objects) if (candidate.id == track.objectId) object = &candidate;
             track.axes.fill(-1); track.attitude.sources.fill(-1);
-            if (!object) { track.objectId.clear(); track.attitude.mode = 0; continue; }
-            QHash<QString, int> fields; for (const auto &field : object->fields) fields.insert(field.role, field.series);
-            track.name = object->name; track.geographic = object->geographic;
-            const auto positionRoles = object->geographic ? QStringList{"latitude", "longitude", "height"} : QStringList{"x", "y", "z"};
-            track.axes = {{fields.value(positionRoles[0], -1), fields.value(positionRoles[1], -1), fields.value(positionRoles[2], -1)}};
-            track.attitude = object->attitude;
-            if (track.attitude.mode == 1) track.attitude.sources = {{fields.value("roll", -1), fields.value("pitch", -1), fields.value("yaw", -1), -1}};
-            else if (track.attitude.mode == 2) {
-                const auto roles = track.attitude.scalarLast ? QStringList{"qx", "qy", "qz", "qw"} : QStringList{"qw", "qx", "qy", "qz"};
-                for (int i = 0; i < 4; ++i) track.attitude.sources[i] = fields.value(roles[i], -1);
-            } else track.attitude.sources.fill(-1);
+            if (!object) { track.objectId.clear(); track.attitude.mode = 0; }
+            else resolveObjectMeasurements(*object, track);
+            changed |= track.objectId != previous.objectId || track.axes != previous.axes
+                || !(track.attitude == previous.attitude) || track.name != previous.name || track.geographic != previous.geographic;
             for (int row : track.axes) if (row >= 0 && !state.signalIds.contains(row)) state.signalIds.append(row);
             for (int row : track.attitude.sources) if (row >= 0 && !state.signalIds.contains(row)) state.signalIds.append(row);
         }
         if (changed) {
-            state.tracks = tracks; static_cast<SessionTrajectoryEntry &>(state) = tracks[state.active];
             refreshPlot(it.key(), false);
         }
     }
     notifyPlotBindingsChanged();
-}
-void AppController::cancelObjectEvaluation()
-{
-    if (m_objectJob) m_objectJob->cancelled = true;
-    m_objectJob.reset();
-}
-void AppController::scheduleObjectEvaluation()
-{
-    // Publishing calculated samples is not a user edit. Callers mark definition changes.
-    QScopedValueRollback<bool> publishing(m_applyingSession, true);
-    cancelObjectEvaluation();
-    syncObjectTrajectories();
-    QVector<int> ids; bool haveRules = false;
-    for (const auto &object : m_objects) { for (const auto &field : object.fields) if (field.series >= 0) ids.append(field.series); haveRules |= !object.rules.isEmpty(); }
-    // Invalidate results before starting a replacement, never display stale values.
-    QVector<PlotSeriesDataPtr> empty;
-    for (const auto &object : m_objects) for (const auto &rule : object.rules) for (const auto &output : rule.outputs) {
-        const auto current = m_seriesStore->snapshot({output.series});
-        if (current.series.isEmpty()) continue;
-        auto data = std::make_shared<PlotSeriesData>(*current.series.first());
-        data->time.clear(); data->values.clear(); data->points.clear(); data->rangeIndex.reset(); empty.append(data);
-    }
-    m_seriesStore->publishComputed(empty); m_objectErrors.clear();
-    for (int i = 0; i < m_plots.size(); ++i) refreshPlot(i, false);
-    if (!haveRules) { emit objectsChanged(); return; }
-    const auto job = std::make_shared<ObjectJob>(); m_objectJob = job;
-    const auto snapshot = m_seriesStore->snapshot(ids); const auto objects = m_objects;
-    QThreadPool::globalInstance()->start([job, objects, snapshot] {
-        job->result = evaluateObjects(objects, snapshot, job->cancelled);
-        job->done.store(true, std::memory_order_release);
-    });
-    emit objectsChanged(); QTimer::singleShot(20, this, [this, job] { if (m_objectJob == job) pollObjectEvaluation(); });
-}
-void AppController::pollObjectEvaluation()
-{
-    if (!m_objectJob) return;
-    if (!m_objectJob->done.load(std::memory_order_acquire)) {
-        const auto job = m_objectJob;
-        QTimer::singleShot(20, this, [this, job] { if (m_objectJob == job) pollObjectEvaluation(); }); return;
-    }
-    const auto result = m_objectJob->result; m_objectJob.reset();
-    QScopedValueRollback<bool> publishing(m_applyingSession, true);
-    m_seriesStore->publishComputed(result.series); m_objectErrors = result.errors;
-    for (int i = 0; i < m_plots.size(); ++i) refreshPlot(i, false);
-    notifyPlotBindingsChanged(); emit objectsChanged();
 }

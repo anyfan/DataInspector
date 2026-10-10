@@ -9,7 +9,7 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 ```
 ┌──────────────────────────────────────────────────────────┐
 │  QML 界面层                                               │
-│  qml/Main.qml         主窗口、工具栏、信号树、子图网格     │
+│  qml/Main.qml         主窗口、工具栏、拖拽协调、子图网格     │
 │  qml/QuickPlot.qml    单个子图：坐标轴、游标、右键菜单     │
 │  qml/PlotLegend.qml   图例 Flow、拖拽、菜单                │
 │  qml/PlotAxisArea.qml 轴留白区悬停/框选/滚轮              │
@@ -56,7 +56,7 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 
 ## 数据流
 
-对象定义见 `objectdefinition.*`，GUI 管理由 `appcontroller_objects.cpp` 和 `ObjectManager.qml` 提供。规则必须拥有对象，只引用本对象字段或此前输出。后台捕获对象值配置和不可变 Store 原始快照，生成计算样本及索引；GUI 接收完成结果，通过 `publishComputed` 整体替换输出快照，绘图复用现有 Scene Graph。对象操作或原始偏移/移除取消旧任务并清空旧值；过期结果不发布。会话 v10 保存对象类型、飞机配置、对象/输出身份和定义，恢复原始来源后重新计算；旧版本转换为空对象列表。
+对象定义见 `objectdefinition.*`，GUI 管理由 `appcontroller_objects.cpp` 和 `ObjectManager.qml` 提供。规则必须拥有对象，只引用本对象字段或此前输出。后台捕获对象值配置和不可变 Store 原始快照，生成计算样本及索引；GUI 接收完成结果，通过 `publishComputed` 整体替换输出快照，绘图复用现有 Scene Graph。字段来源、计算参数或原始偏移/移除取消旧任务并只清空失效规则及其下游的旧值；过期结果不发布。会话 v10 保存对象类型、飞机配置、对象/输出身份和定义，恢复原始来源后重新计算；旧版本转换为空对象列表。
 
 关于页面由 `AboutDialog.qml` 展示，`AppController::aboutInfo`/`releaseNotes` 提供常量信息，`copyAboutInfo` 在 GUI 线程写入剪贴板。`appcontroller_about.cpp` 读取构建时生成的元数据和嵌入的更新记录，不在程序启动时查询 Git，也不依赖源码目录。
 
@@ -92,7 +92,7 @@ SignalModel 的组展开/折叠使用局部行增删及展开角色通知，保�
 ## 二维/三维航迹子图
 
 - `AppController::m_trajectories` 独立保存每个子图的模式、航迹列表、活动项、子图共用候选与相机状态；`appcontroller_trajectory.cpp` 负责生命周期、信号行号重映射和时间游标联动。
-- `TrajectoryPlot.qml` 在航迹模式下由 Loader 创建，覆盖原时间序列视图。隐藏的 PlotItem 仍接收共享时间范围及原始 XYZ 系列，作为时间游标/键盘步进端点；原时间图绑定单独保留。
+- `TrajectoryPlot.qml` 在航迹模式下由 Loader 创建，覆盖原时间序列视图。隐藏的 PlotItem 仍接收共享时间范围及原始位置/姿态系列，作为时间游标/键盘步进端点，但暂停时间曲线 LOD 并取消在途请求；切回时间图后按最新来源和视窗恢复。原时间图绑定单独保留。
 - `render/trajectorybuilder.*` 验证已选两/三轴的时间基、提取有效样本段，缓存归一化位置和多级空间简化索引。预览按当前投影范围适应画布，复用索引和每请求一次的投影矩阵；缺口必须断线，游标仍访问原始样本。
 - `trajectoryitem.*` 使用最多两个轨迹工作线程生成不可变预览，GUI 线程只提交相机状态；渲染线程复用 QSG 节点。
 - SessionPlot 保存轨迹来源、相机和坐标类型；v6 保存独立航迹及姿态绑定、样式和子图共用相机，兼容 v1–v5 单航迹。来源 ID 在会话恢复及删除文件时重映射。
@@ -103,7 +103,7 @@ SignalModel 的组展开/折叠使用局部行增删及展开角色通知，保�
 
 ### 多航迹与姿态数据流
 
-SessionTrajectoryEntry 是每条航迹的值配置；SessionTrajectory 管理列表、活动项、共用候选和相机。继承的单项字段作为兼容现有 QML/controller 入口的活动编辑状态，entries() 在发布快照时覆盖活动项，select() 先提交编辑状态再切换。读写、重映射和清空均同步所有列表项，稳定字符串 id 不随信号行号改变。
+SessionTrajectoryEntry 是每条航迹的值配置；SessionTrajectory 管理列表、活动项、共用候选和相机。列表是唯一状态来源，activeEntry() 直接访问活动列表项，select() 只切换索引；entries() 返回只读列表，不维护活动副本。读写、重映射和清空均同步所有列表项，稳定字符串 id 不随信号行号改变。
 
 TrajectoryItem::setSources 接收全部不可变 Store 来源。TrajectoryBuilder::buildFrame 独立验证每条路径，共用首有效地理原点，汇总可见有效路径的范围。TrajectoryFrame 保存路径与姿态原始段索引和仅含元数据的公共 bounds。原点一致时复用已准备路径；删除原点所属项必须用 localOrigin 校验再决定复用，防止沿用已删除航迹的旧原点。帧内重复坐标来源可共享同一缓存。
 
@@ -117,10 +117,23 @@ TrajectoryItem::setSources 接收全部不可变 Store 来源。TrajectoryBuilde
 
 航迹配置折叠为 GUI 偏好，AppController 按子图保存运行期展开状态，TrajectoryPlot 根据状态调整画布顶部边距。它不改变信号绑定、Store 或会话 schema。
 
-视图模板的独立 v1 JSON 封装复用 sessiondocument 的 v6 校验。AppController 共享 captureSession 收集配置，预览只匹配被配置引用的来源，applyViewTemplate 在全部映射、数值范围和 schema 校验通过后应用到当前 Store。样式整体替换不可变快照；不读取模板数据路径、不应用旧时间偏移。默认范围和游标由当前原始数据计算；延迟创建的子图通过缓存的 SessionPlot 获得完整配置。撤销保存此前配置及 Store 身份/代际，数据来源或样式变更后拒绝过期撤销。
+视图模板的独立 v1 JSON 封装复用 sessiondocument 的当前版本校验（v10，读取兼容旧版本）。AppController 共享 captureSession 收集配置，预览只匹配被配置引用的来源，applyViewTemplate 在全部映射、数值范围和 schema 校验通过后应用到当前 Store。样式整体替换不可变快照；不读取模板数据路径、不应用旧时间偏移。默认范围和游标由当前原始数据计算；延迟创建的子图通过缓存的 SessionPlot 获得完整配置。撤销保存此前配置及 Store 身份/代际，数据来源或样式变更后拒绝过期撤销。
 
 对象编辑页面嵌入右侧绘图区，与曲线网格互斥显示但保留子图实例。编辑时信号树勾选状态显示当前对象的全部来源，切换对象立即刷新；取消勾选只解除本对象的对应绑定。拖放通过字段列表命中具体字段，预览高亮该字段，松开直接绑定，不依赖预先选择字段。退出编辑恢复子图选择状态。常规和飞机对象均可派生，飞机固定预置经纬高/XYZ/欧拉角/四元数字段并支持关联航迹，类型校验由控制器与会话解析共同执行。
 
 飞机预置用途与删除保护由控制器和对象校验共同执行。新数值字段自动命名，字段重命名仅改变显示名；固定参数按飞机坐标/姿态配置过滤显示，绑定不因隐藏而清除。关联航迹从对象配置映射位置和姿态来源，使用现有 TrajectoryAttitude 约定。选中对象、字段和页签显式指定可读文字与背景，避免 Basic 默认高亮文字与浅色选中背景冲突。
 
 飞机预置字段按启用的坐标与姿态模式补建，默认仅经纬高。类型切换保留 role 元数据，常规模式仍按数值使用；复制和会话往返保留名称、绑定及规则身份。预置角色按固定顺序置顶。v10 校验活动参数完整性，允许未启用参数尚未创建；v9 及之前的稳定预置 ID 可恢复旧常规字段的角色。
+
+## 状态维护与局部计算
+
+删除信号后由 AppController::remapSignalReferences 一次建立旧行号到新行号的映射，更新对象字段/输出、所有航迹的位置/姿态来源及候选列表；调用者完成所有状态更新后刷新视图，避免中途发布不完整引用。行号仍是运行期信号身份，尚未迁移为稳定系列 ID。
+
+对象派生按对象定义和不可变原始数组身份/时间偏移判定失效。仅清空、重算受影响对象及刷新引用其输出的子图；未受影响对象的结果与错误保留。被取消任务尚未发布的对象没有有效计算记录，下一任务会合并重算。复制对象先组装完整配置，再启动一次计算。值数组的 512 MiB 预算包含保留的其他对象结果；预算失败对象不缓存为完成状态，以便释放预算后重试。规则内部仍顺序全量计算，尚未实现按规则依赖局部重算。
+
+飞机对象到航迹测量来源的解析集中在 resolveObjectMeasurements；仅绑定、名称或坐标/姿态配置实际变化时刷新关联航迹。直接绑轴入口仍保留给旧会话、视图模板与内核测试，未删除普通二维航迹能力。
+## 共用视图与模板边界
+
+viewconfiguration.* 定义布局、子图、航迹及范围值配置，SessionDocument 和 ViewTemplateDocument 共用同一 JSON 视图校验。sessiondocument.* 保留来源/对象/游标的版本迁移与事务读写；viewtemplatedocument.* 独立校验模板 v2，只包含被引用来源的匹配提示和样式，旧 v1 通过会话读取器转换。appcontroller_session.cpp 负责完整会话恢复，appcontroller_templates.cpp 负责模板匹配、应用和撤销。运行期来源仍使用集中重映射的行号，本批未迁移为稳定系列 ID。
+
+SignalBrowser.qml 管理搜索、列表、树手势及导航，向 Main.qml 发送拖拽/菜单/编辑请求；Main.qml 保留跨子图命中和窗口协调。SessionDialogs.qml 管理会话/模板文件选择、匹配、重定位与保存提示，通过显式控制器和窗口尺寸属性接收依赖。appcontroller_objects.cpp 管理对象定义；appcontroller_objectevaluation.cpp 管理规则增量计算的取消、快照捕获和结果提交。

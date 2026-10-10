@@ -113,3 +113,6 @@ multiTrajectoryCost 使用 8 条各 100000 点合成地理路径，记录准备�
 对象与航迹来源交互：`objectdata_test::objectManagerQml` 检查对象自动命名、真实双击重命名、切换对象后的信号树勾选隔离、真实鼠标拖到字段绑定（无需预选字段），以及展开的下拉选项在浅色/深色模式下可见。设置 `DI_OBJECT_UI_CAPTURE_DIR` 可保存离屏 software 截图。`trajectory_test::qmlModeSwitchAndSignalDialog` 在源码和编译 QML 下检查飞机对象选择、对象来源与名称更新、添加多对象航迹和样式配置。旧航迹直接来源 API 仍有控制器和内核覆盖，当前 UI 的位置及姿态来源统一通过对象编辑。
 
 `appcontroller_test::preciseCursorInputSnapsSynchronizesAndCancels` 检查原始样本吸附、ΔT、无效输入、真实双击示数/Enter/Esc 与视窗外定位。`session_test::viewTemplatesMatchRemapAndUndo` 检查换文件/换列序、仅匹配引用信号、重复/非整数映射拒绝、航迹映射、固定/自适应范围及一次撤销；现有 Main QML 用例检查匹配对话框的完成状态与应用。`trajectory_test::qmlModeSwitchAndSignalDialog` 在源码和 qmlcachegen 两种模式下检查配置折叠、画布尺寸、子图偏好隔离及游标输入。
+
+状态收敛回归：session_test::trajectorySelectionKeepsSingleState 检查活动/非活动航迹编辑、切换及 JSON 往返；objectdata_test::editsPreserveUnrelatedResultsAndMergePendingObjects 检查无关结果和错误保留、连续编辑取消后的对象合并重算；表达式用例检查保留值数组仍计入预算。plotitem_lod_test 检查取消在途 LOD 后继续原始样本吸附/读数，以及恢复曲线后的视窗几何。既有文件移除、派生输出删除和会话恢复用例覆盖统一引用重映射。
+规则依赖回归：objectdata_test::dependencyPlanPreservesIndependentBranches 覆盖同对象独立分支、下游传播、仅子规则参数失效、取消不安装状态、显示名称/画笔不重算及保留分支预算。session_test::viewTemplateSchemaIsIndependentAndMigratesLegacy 覆盖精简模板 v2、旧 v1 迁移、未引用来源剔除、重复/缺失引用和未知字段拒绝；现有模板匹配/撤销、会话迁移与实际 QML 鼠标事件用例验证拆分后的行为。

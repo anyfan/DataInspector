@@ -38,6 +38,20 @@ int main(int argc, char *argv[])
     plot.setVisibleSeries({7});
     plot.setXRange(0.4, 0.6);
 
+    plot.setCurveRenderingEnabled(false);
+    plot.setVisibleSeries({7});
+    plot.setXRange(0.0, 1.0);
+    plot.setCursorMode(1);
+    plot.setCursorX(0.8, 1);
+    if (plot.lodPending() || plot.cursorX1() != 1.0 || plot.cursorReadouts().isEmpty()) {
+        std::cerr << "Suspended curves must preserve original-sample cursors without LOD work\n";
+        return 1;
+    }
+    // Resume with the latest sources and viewport after cancellation.
+    plot.setCurveRenderingEnabled(true);
+    plot.setCursorMode(0);
+    plot.setXRange(0.4, 0.6);
+
     QSGNode *root = plot.paint();
     auto *lineNode = dynamic_cast<QSGGeometryNode *>(root->firstChild());
     const int vertexCount = lineNode && lineNode->geometry()

@@ -100,3 +100,7 @@
 1. **不要把归档计划当成待办**：`superpowers/plans/` 里的 checkbox 任务是历史实施清单，均已执行完毕，不要据此重复实现。
 2. **旧路径引用已失效**：归档中的 `src/plot/*`、`src/core/*` 等旧 QWidget/QCustomPlot 路径已在提交 `8d2b6bb` 后移除；现行源码在 `src/quick/` 与 `qml/`。
 3. **描述以现行文档为准**：例如 `refactoring-status.md` 中的"后续阶段"（图片导出、重放、Python API）并非当前计划——重放/Python API/`.mldatx` 已正式遗弃，见根 `readme.md`。
+
+- [状态与计算债务清理（第一批，2026-10-10）](state-debt-cleanup-2026-10-10.md)：航迹唯一状态、统一引用更新、对象局部计算及隐藏时间图 LOD 暂停；包含尚未实施项和验证边界。
+
+- [状态与计算债务清理（剩余三项，2026-10-10）](state-debt-cleanup-completion-2026-10-10.md)：规则依赖增量计算、独立模板 v2 与旧版迁移、QML/控制器拆分和完整回归。

@@ -12,6 +12,7 @@ public:
     explicit PlotLodScheduler(QObject *parent = nullptr);
     ~PlotLodScheduler() override;
     void request(const PlotSeriesSnapshot &snapshot, const LodRequestKey &key);
+    void cancel();
     bool pending() const { return bool(m_job); }
     std::shared_ptr<const LodResult> result() const { return m_result; }
 signals:

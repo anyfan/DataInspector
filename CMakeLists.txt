@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DataInspector VERSION 0.1.0 LANGUAGES CXX)
+project(DataInspector VERSION 0.2.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -97,8 +97,15 @@ set(DI_CONTROLLER_SOURCES
     ${DI_QUICK_DIR}/qmltypes.h
     ${DI_QUICK_DIR}/sessiondocument.cpp
     ${DI_QUICK_DIR}/sessiondocument.h
+    ${DI_QUICK_DIR}/jsonvalidation.h
+    ${DI_QUICK_DIR}/viewconfiguration.cpp
+    ${DI_QUICK_DIR}/viewconfiguration.h
+    ${DI_QUICK_DIR}/viewtemplatedocument.cpp
+    ${DI_QUICK_DIR}/viewtemplatedocument.h
     ${DI_QUICK_DIR}/appcontroller_session.cpp
+    ${DI_QUICK_DIR}/appcontroller_templates.cpp
     ${DI_QUICK_DIR}/appcontroller_objects.cpp
+    ${DI_QUICK_DIR}/appcontroller_objectevaluation.cpp
     ${DI_QUICK_DIR}/objectdefinition.cpp
     ${DI_QUICK_DIR}/objectdefinition.h
     ${DI_QUICK_DIR}/appcontroller.cpp
@@ -144,6 +151,8 @@ set(DI_ICON_FILES
 )
 
 set(DI_QML_FILES
+    qml/SignalBrowser.qml
+    qml/SessionDialogs.qml
     qml/AboutDialog.qml
     qml/ObjectManager.qml
     qml/ThemedComboBox.qml

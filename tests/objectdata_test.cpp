@@ -20,9 +20,11 @@ class ObjectDataTest : public QObject {
     Q_OBJECT
 private slots:
     void bitsAndSignedFields();
+    void dependencyPlanPreservesIndependentBranches();
     void expressionsAndTimeBases();
     void ownershipAndSchema();
     void controllerLifecycleAndRestore();
+    void editsPreserveUnrelatedResultsAndMergePendingObjects();
     void linkedTrajectoriesAndRuleEdits();
     void staircaseKeepsPulse();
     void objectManagerQml();
@@ -40,6 +42,68 @@ static PlotSeriesSnapshot rawSnapshot(QVector<double> values)
     PlotSeriesInput input; input.id = 0; input.values = values;
     for (qsizetype i = 0; i < values.size(); ++i) input.time.append(double(i));
     PlotSeriesStore store; store.appendSeries({input}); return store.snapshot({0});
+}
+void ObjectDataTest::dependencyPlanPreservesIndependentBranches()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{0, {0, 1}, {2, 3}}, {1, {0, 1}, {20, 30}},
+        {2, {}, {}}, {3, {}, {}}, {4, {}, {}}, {5, {}, {}}});
+    DataObject object{"object", "device", {{"x", "X", "scalar", 0}, {"y", "Y", "scalar", 1}}, {}};
+    auto rule = [](QString id, QString input, QString output, int row, double factor) {
+        ObjectRule r; r.id = id; r.name = id; r.inputs = {input}; r.factor = factor; r.outputs = {{output, output, row}}; return r;
+    };
+    object.rules = {rule("a", "x", "a-out", 2, 2), rule("a-child", "a-out", "a-child-out", 3, 10),
+        rule("b", "y", "b-out", 4, 3), rule("b-child", "b-out", "b-child-out", 5, 10)};
+    const QVector<int> ids{0, 1, 2, 3, 4, 5}; std::atomic_bool cancel{false};
+    auto initial = evaluateObjects({object}, store.snapshot(ids), cancel);
+    store.publishComputed(initial.series);
+    auto states = initial.states;
+    QVERIFY(invalidatedObjectRules({object}, store.snapshot(ids), states).isEmpty());
+    store.updateSeriesPen(0, Qt::red, 4, Qt::DashLine);
+    object.name = "renamed"; object.rules[0].name = "renamed rule";
+    QVERIFY(invalidatedObjectRules({object}, store.snapshot(ids), states).isEmpty());
+    const auto preserved = store.snapshot({4, 5}).series;
+    object.fields[0].series = 1;
+    auto dirty = invalidatedObjectRules({object}, store.snapshot(ids), states);
+    QCOMPARE(dirty, (QSet<QString>{"a", "a-child"}));
+    const auto partial = evaluateObjects({object}, store.snapshot(ids), cancel, 32, &dirty);
+    QCOMPARE(partial.series.size(), 2);
+    QCOMPARE(partial.series[0]->values, QVector<double>({40, 60}));
+    QCOMPARE(partial.series[1]->values, QVector<double>({400, 600}));
+    store.publishComputed(partial.series);
+    for (auto it = partial.states.cbegin(); it != partial.states.cend(); ++it) states.insert(it.key(), it.value());
+    QCOMPARE(store.snapshot({4, 5}).series, preserved);
+    QVERIFY(invalidatedObjectRules({object}, store.snapshot(ids), states).isEmpty());
+    object.rules[1].factor = 5;
+    dirty = invalidatedObjectRules({object}, store.snapshot(ids), states);
+    QCOMPARE(dirty, (QSet<QString>{"a-child"}));
+    cancel = true;
+    const auto cancelled = evaluateObjects({object}, store.snapshot(ids), cancel, 0, &dirty);
+    QVERIFY(cancelled.series.isEmpty()); QVERIFY(cancelled.states.isEmpty());
+    cancel = false;
+    const auto edited = evaluateObjects({object}, store.snapshot(ids), cancel, 0, &dirty);
+    QCOMPARE(edited.series[0]->values, QVector<double>({200, 300}));
+
+    QTemporaryDir dir; QFile file(dir.filePath("branches.csv"));
+    QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,X,Y\n0,2,20\n1,3,30\n"); file.close();
+    AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+    const auto owner = controller.createDataObject("branches");
+    const auto x = controller.bindObjectField(owner, {}, "X", "scalar", 0);
+    const auto y = controller.bindObjectField(owner, {}, "Y", "scalar", 1);
+    QVERIFY(!controller.addObjectRule(owner, {{"name", "left"}, {"operation", "scale"}, {"inputs", QVariantList{x}}, {"factor", 2}}).isEmpty());
+    QVERIFY(!controller.addObjectRule(owner, {{"name", "right"}, {"operation", "scale"}, {"inputs", QVariantList{y}}, {"factor", 3}}).isEmpty());
+    QTRY_VERIFY(!controller.deriving());
+    auto rules = controller.dataObjects()[0].toMap()["rules"].toList();
+    const auto leftOutput = rules[0].toMap()["outputs"].toList()[0].toMap()["id"].toString();
+    QVERIFY(!controller.addObjectRule(owner, {{"name", "downstream"}, {"operation", "scale"}, {"inputs", QVariantList{leftOutput}}, {"factor", 10}}).isEmpty());
+    QTRY_VERIFY(!controller.deriving());
+    QVERIFY(!controller.bindObjectField(owner, x, "X", "scalar", 1).isEmpty());
+    rules = controller.dataObjects()[0].toMap()["rules"].toList();
+    QCOMPARE(rules[1].toMap()["outputs"].toList()[0].toMap()["preview"].toString(), QString("60 / 90"));
+    QTRY_VERIFY(!controller.deriving());
+    rules = controller.dataObjects()[0].toMap()["rules"].toList();
+    QCOMPARE(rules[0].toMap()["outputs"].toList()[0].toMap()["preview"].toString(), QString("40 / 60"));
+    QCOMPARE(rules[2].toMap()["outputs"].toList()[0].toMap()["preview"].toString(), QString("400 / 600"));
 }
 void ObjectDataTest::bitsAndSignedFields()
 {
@@ -71,6 +135,9 @@ void ObjectDataTest::expressionsAndTimeBases()
     rule.inputs = {"source"}; rule.expression = "max(abs(-x), 2) + 3*4"; rule.outputs = {{"value", "value", 1}};
     object.rules = {rule}; std::atomic_bool cancel{false};
     auto result = evaluateObjects({object}, rawSnapshot({-5, 1, qQNaN()}), cancel);
+    const auto limited = evaluateObjects({object}, rawSnapshot({3, 4, -2}), cancel, 512 * 1024 * 1024 - 8);
+    QVERIFY(limited.budgetLimitedRules.contains(object.rules[0].id));
+    QVERIFY(limited.series.first()->values.isEmpty());
     QCOMPARE(result.series.first()->pointAt(0).y(), 17.0);
     QCOMPARE(result.series.first()->pointAt(1).y(), 14.0);
     QVERIFY(std::isnan(result.series.first()->pointAt(2).y()));
@@ -151,6 +218,43 @@ void ObjectDataTest::controllerLifecycleAndRestore()
     QVERIFY(restored.saveSession(dir.filePath("without-source.disession")));
     QVERIFY(restored.removeDataObject(objectId)); QCOMPARE(restored.signalCount(), 0);
 }
+void ObjectDataTest::editsPreserveUnrelatedResultsAndMergePendingObjects()
+{
+    QTemporaryDir dir; QFile file(dir.filePath("objects.csv"));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("time,A,B\n0,2,20\n1,3,30\n"); file.close();
+    AppController controller; PlotItem plot; plot.setWidth(600); plot.setHeight(300);
+    controller.attachPlot(&plot); QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+    const auto a = controller.createDataObject("A"), b = controller.createDataObject("B");
+    const auto fa = controller.bindObjectField(a, {}, "input", "scalar", 0);
+    const auto fb = controller.bindObjectField(b, {}, "input", "scalar", 1);
+    const auto ruleA = controller.addObjectRule(a, {{"name", "A output"}, {"operation", "scale"}, {"inputs", QVariantList{fa}}, {"factor", 2}});
+    const auto ruleB = controller.addObjectRule(b, {{"name", "B output"}, {"operation", "scale"}, {"inputs", QVariantList{fb}}, {"factor", 3}});
+    QVERIFY(!ruleA.isEmpty() && !ruleB.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    const auto output = [&](int object) {
+        return controller.dataObjects()[object].toMap()["rules"].toList()[0].toMap()["outputs"].toList()[0].toMap();
+    };
+    const auto previewB = output(1)["preview"].toString();
+    QCOMPARE(previewB, QString("60 / 90"));
+    controller.selectSignal(output(1)["series"].toInt()); plot.setCursorMode(1); plot.setCursorX(0, 1);
+    QVERIFY(!controller.bindObjectField(a, fa, "input", "scalar", 1).isEmpty());
+    QCOMPARE(output(1)["preview"].toString(), previewB);
+    QVERIFY(!plot.cursorReadouts().isEmpty());
+    QCOMPARE(plot.cursorReadouts()[0].toMap()["y"].toDouble(), 60.0);
+    QVERIFY(!controller.bindObjectField(b, fb, "input", "scalar", 0).isEmpty());
+    // The second edit cancels the first task; both dirty objects must be retried.
+    QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(output(0)["preview"].toString(), QString("40 / 60"));
+    QCOMPARE(output(1)["preview"].toString(), QString("6 / 9"));
+    QVERIFY(!controller.bindObjectField(a, fa, "input", "scalar", -1).isEmpty());
+    QTRY_VERIFY(!controller.deriving());
+    const auto errorA = controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap()["error"].toString();
+    QVERIFY(!errorA.isEmpty());
+    QVERIFY(controller.editObjectRule(b, ruleB, {{"name", "B output"}, {"operation", "scale"}, {"inputs", QVariantList{fb}}, {"factor", 4}}));
+    QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap()["error"].toString(), errorA);
+    QCOMPARE(output(1)["preview"].toString(), QString("8 / 12"));
+}
 void ObjectDataTest::linkedTrajectoriesAndRuleEdits()
 {
     QTemporaryDir dir; const auto path = dir.filePath("flight.csv"); QFile file(path);
@@ -178,9 +282,9 @@ void ObjectDataTest::linkedTrajectoriesAndRuleEdits()
     QVERIFY(!controller.editObjectRule(object, rule, {{"name", "cycle"}, {"operation", "scale"}, {"inputs", QVariantList{outputId}}}));
     const auto session = dir.filePath("plane.disession"); QVERIFY(controller.saveSession(session));
     SessionDocument saved; QString error; QVERIFY(readSessionDocument(session, &saved, &error));
-    QCOMPARE(saved.plots[0].trajectory.objectId, object); QCOMPARE(saved.plots[0].trajectory.axes[0], 6);
-    QCOMPARE(saved.plots[0].trajectory.name, QString("plane updated")); QCOMPARE(saved.plots[0].trajectory.attitude.mode, 1);
-    QVERIFY(saved.plots[0].trajectory.attitude.radians); QCOMPARE(saved.plots[0].trajectory.attitude.order, 1); QVERIFY(saved.plots[0].trajectory.attitude.navigationToBody);
+    QCOMPARE(saved.plots[0].trajectory.activeEntry().objectId, object); QCOMPARE(saved.plots[0].trajectory.activeEntry().axes[0], 6);
+    QCOMPARE(saved.plots[0].trajectory.activeEntry().name, QString("plane updated")); QCOMPARE(saved.plots[0].trajectory.activeEntry().attitude.mode, 1);
+    QVERIFY(saved.plots[0].trajectory.activeEntry().attitude.radians); QCOMPARE(saved.plots[0].trajectory.activeEntry().attitude.order, 1); QVERIFY(saved.plots[0].trajectory.activeEntry().attitude.navigationToBody);
     AppController restored; QVERIFY(restored.restoreSession(session)); QTRY_VERIFY(!restored.loading() && !restored.deriving());
     QVERIFY(restored.dataObjects().first().toMap()["radians"].toBool());
     QVERIFY(restored.configureDataObjectAircraft(object, {{"geographic", false}, {"attitudeMode", 2}, {"radians", false}, {"order", 0}, {"scalarLast", true}, {"navigationToBody", false}}));
@@ -194,13 +298,13 @@ void ObjectDataTest::linkedTrajectoriesAndRuleEdits()
     QTRY_VERIFY(!restored.deriving());
     const auto quaternionSession = dir.filePath("quaternion.disession"); QVERIFY(restored.saveSession(quaternionSession));
     QVERIFY(readSessionDocument(quaternionSession, &saved, &error));
-    QVERIFY(!saved.plots[0].trajectory.geographic); QCOMPARE(saved.plots[0].trajectory.attitude.mode, 2);
-    QCOMPARE(saved.plots[0].trajectory.axes, (std::array<int, 3>{{0, 1, 2}}));
-    QCOMPARE(saved.plots[0].trajectory.attitude.sources, (std::array<int, 4>{{4, 5, 6, 3}}));
+    QVERIFY(!saved.plots[0].trajectory.activeEntry().geographic); QCOMPARE(saved.plots[0].trajectory.activeEntry().attitude.mode, 2);
+    QCOMPARE(saved.plots[0].trajectory.activeEntry().axes, (std::array<int, 3>{{0, 1, 2}}));
+    QCOMPARE(saved.plots[0].trajectory.activeEntry().attitude.sources, (std::array<int, 4>{{4, 5, 6, 3}}));
     QVERIFY(restored.removeDataObject(object)); QCOMPARE(restored.signalCount(), 7);
     const auto removed = dir.filePath("removed.disession"); QVERIFY(restored.saveSession(removed));
-    QVERIFY(readSessionDocument(removed, &saved, &error)); QVERIFY(saved.plots[0].trajectory.objectId.isEmpty());
-    QCOMPARE(saved.plots[0].trajectory.axes[0], -1);
+    QVERIFY(readSessionDocument(removed, &saved, &error)); QVERIFY(saved.plots[0].trajectory.activeEntry().objectId.isEmpty());
+    QCOMPARE(saved.plots[0].trajectory.activeEntry().axes[0], -1);
 }
 
 void ObjectDataTest::staircaseKeepsPulse()
