@@ -92,6 +92,7 @@ AppController::AppController(QObject *parent)
 
 AppController::~AppController()
 {
+    cancelObjectEvaluation();
     if (m_loadThread) { m_loadThread->requestInterruption(); m_loadThread->quit(); m_loadThread->wait(); }
     if (m_exporter) m_exporter->requestCancel();
     if (m_exportThread) { m_exportThread->quit(); m_exportThread->wait(); }
@@ -100,7 +101,7 @@ AppController::~AppController()
 void AppController::markSessionModified()
 {
     if (m_restoringSession || m_applyingSession || m_sessionModified
-        || (loadedFileCount() == 0 && m_sessionPath.isEmpty())) return;
+        || (loadedFileCount() == 0 && m_sessionPath.isEmpty() && m_objects.isEmpty())) return;
     m_sessionModified = true;
     emit sessionModifiedChanged();
 }
@@ -128,6 +129,7 @@ void AppController::clear()
         return;
     }
     clearViewHistory();
+    cancelObjectEvaluation(); m_objects.clear(); m_objectErrors.clear(); emit objectsChanged();
     m_seriesStore->clear();
     for (auto &state : m_trajectories) {
         auto tracks = state.entries();

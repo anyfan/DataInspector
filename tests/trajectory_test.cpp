@@ -845,28 +845,18 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     auto *menu = object->findChild<QObject *>("trajectoryModeMenuItem"); QVERIFY(menu);
     QVERIFY(QMetaObject::invokeMethod(menu, "triggered"));
     auto *dialog = object->findChild<QObject *>("trajectoryAxesDialog"); QVERIFY(dialog);
-    QTRY_VERIFY(object->property("trajectoryMode").toBool());
-    QVERIFY(!dialog->property("visible").toBool());
+    QTRY_VERIFY(dialog->property("visible").toBool());
+    QVERIFY(!object->property("trajectoryMode").toBool());
     QCOMPARE(c.signalModel()->checkedCount(), 0);
-    QVERIFY(c.trajectoryState(0)["geographic"].toBool());
-    c.toggleSignal(0); QCOMPARE(c.trajectoryState(0)["x"].toInt(), 0);
-    c.toggleSignal(1); QVERIFY(c.bindTrajectoryAxis(0, 0, 0)); QVERIFY(c.bindTrajectoryAxis(0, 1, 1));
-    QVERIFY(c.trajectoryState(0)["planar"].toBool());
-    QCOMPARE(c.signalModel()->checkedCount(), 2);
-    c.selectSignal(2); QCOMPARE(c.trajectoryState(0)["z"].toInt(), 2);
-    QVERIFY(c.bindTrajectoryAxis(0, 2, 2));
-    QVERIFY(!c.trajectoryState(0)["planar"].toBool());
-    auto *axesButton = object->findChild<QObject *>("trajectoryAxesButton"); QVERIFY(axesButton);
-    QVERIFY(QMetaObject::invokeMethod(axesButton, "clicked")); QTRY_VERIFY(dialog->property("visible").toBool());
-    auto *mode = object->findChild<QObject *>("trajectoryCoordinateMode"); QVERIFY(mode); mode->setProperty("currentIndex", 1);
+    const auto plane = c.addDataObject("aircraft"); QVERIFY(!plane.isEmpty());
+    const auto planeFields = c.dataObjects().first().toMap()["fields"].toList();
+    for (int i = 0; i < 3; ++i) {
+        const auto field = planeFields[i].toMap();
+        QVERIFY(!c.bindObjectField(plane, field["id"].toString(), field["name"].toString(), field["role"].toString(), i).isEmpty());
+    }
+    auto *choice = object->findChild<QObject *>("trajectoryObjectChoice"); QVERIFY(choice); choice->setProperty("currentIndex", 0);
     QTRY_VERIFY(dialog->property("height").toDouble() <= window.height());
-    if (QGuiApplication::platformName() != "offscreen") {
-        QTest::qWait(100);
-        QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-geographic-dialog.png")));
-    }
-    for (const auto &entry : QList<QPair<QString, int>>{{"trajectoryAxisX", 1}, {"trajectoryAxisY", 2}, {"trajectoryAxisZ", 3}}) {
-        auto *combo = object->findChild<QObject *>(entry.first); QVERIFY(combo); combo->setProperty("currentIndex", entry.second);
-    }
+    QVERIFY(!object->findChild<QObject *>("trajectoryAxisX"));
     auto *confirm = object->findChild<QObject *>("trajectoryConfirmButton"); QVERIFY(confirm);
     QVERIFY(QMetaObject::invokeMethod(confirm, "clicked"));
     QTRY_VERIFY(!dialog->property("visible").toBool());
@@ -874,6 +864,7 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QVERIFY(c.trajectoryState(0)["geographic"].toBool());
     QTRY_VERIFY(object->findChild<TrajectoryItem *>("trajectoryItem"));
     auto *item = object->findChild<TrajectoryItem *>("trajectoryItem");
+    auto *axesButton = object->findChild<QObject *>("trajectoryAxesButton"); QVERIFY(axesButton);
     QTRY_VERIFY_WITH_TIMEOUT(!item->pending(), 5000); QVERIFY(item->error().isEmpty());
     QVERIFY(item->height() >= 480 - 80); QVERIFY(item->width() >= 640 - 12);
     // Deliver real window events through QML, rather than invoking the C++ handlers directly.
@@ -983,88 +974,28 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QVERIFY(std::abs(item->camera().panX - (.25 - 1.15 * (.25 - beforeWheel.panX))) < 1e-6);
     QVERIFY(std::abs(item->camera().panY - (-.25 - 1.15 * (-.25 - beforeWheel.panY))) < 1e-6);
     QTRY_VERIFY(!item->pending());
-    // Repeater delegates belong to the visual tree, not necessarily QObject's ownership tree.
-    QQuickItem *bindingX = nullptr;
-    QVector<QQuickItem *> search{quick};
-    while (!search.isEmpty()) {
-        auto *candidate = search.takeLast();
-        if (candidate->objectName() == "trajectoryBindingAxis0") { bindingX = candidate; break; }
-        for (auto *child : candidate->childItems()) search.append(child);
-    }
     auto *configurationToggle = object->findChild<QQuickItem *>("trajectoryConfigurationToggle");
     auto *configurationRow = object->findChild<QQuickItem *>("trajectoryConfigurationRow");
-    QVERIFY(configurationToggle && configurationRow);
-    QVERIFY(!configurationRow->isVisible());
+    QVERIFY(configurationToggle && configurationRow); QVERIFY(!configurationRow->isVisible());
     const double collapsedHeight = item->height();
     QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier,
         configurationToggle->mapToScene(QPointF(configurationToggle->width() / 2, configurationToggle->height() / 2)).toPoint());
-    QTRY_VERIFY(configurationRow->isVisible());
-    QTRY_VERIFY(item->height() < collapsedHeight);
-    QVERIFY(c.trajectoryConfigurationExpanded(0));
-    QVERIFY(!c.trajectoryConfigurationExpanded(1));
-    QVERIFY(bindingX); QVERIFY(bindingX->width() >= 28); QVERIFY(bindingX->isVisible());
-    QCOMPARE(bindingX->property("count").toInt(), 4);
-    QCOMPARE(bindingX->property("sourceId").toInt(), 0);
-    QCOMPARE(bindingX->property("sourceName").toString(), QString("latitude"));
-    QCOMPARE(bindingX->property("currentIndex").toInt(), 1);
+    QTRY_VERIFY(configurationRow->isVisible()); QTRY_VERIFY(item->height() < collapsedHeight);
+    auto *objectSelector = object->findChild<QObject *>("trajectoryObjectSelector"); QVERIFY(objectSelector);
+    QCOMPARE(objectSelector->property("currentText").toString(), QStringLiteral("对象 1"));
+    QVERIFY(c.renameDataObject(plane, "Flight A"));
+    QTRY_COMPARE(objectSelector->property("currentText").toString(), QStringLiteral("Flight A"));
+    QCOMPARE(c.trajectoryState(0)["objectId"].toString(), plane);
     QVERIFY(c.renameSignal(0, QStringLiteral("纬度 latitude updated")));
-    QCOMPARE(bindingX->property("sourceName").toString(), QStringLiteral("纬度 latitude updated"));
-    QCOMPARE(bindingX->property("currentIndex").toInt(), 1);
-    QVERIFY(c.renameSignal(0, QStringLiteral("latitude")));
-    QCOMPARE(bindingX->property("sourceName").toString(), QStringLiteral("latitude"));
-    const auto choosePopupRow = [&](int row) {
-        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier,
-                         bindingX->mapToScene(QPointF(bindingX->width() / 2, bindingX->height() / 2)).toPoint());
-        auto *popup = bindingX->property("popup").value<QObject *>(); QVERIFY(popup);
-        QTRY_VERIFY(popup->property("visible").toBool());
-        auto *list = popup->property("contentItem").value<QQuickItem *>(); QVERIFY(list);
-        QQuickItem *chosen = nullptr;
-        QTRY_VERIFY(([&] {
-            QVector<QQuickItem *> pending{list};
-            QSet<int> rows;
-            while (!pending.isEmpty()) {
-                auto *entry = pending.takeLast();
-                if (entry->property("text").isValid() && entry->property("index").isValid()) {
-                    const int option = entry->property("index").toInt();
-                    if (option >= 0 && option < 4) {
-                        const auto expected = c.trajectorySignalOptions(0)[option].toMap()["label"].toString();
-                        if (entry->property("text").toString() != expected) return false;
-                        rows.insert(option); if (option == row) chosen = entry;
-                    }
-                }
-                for (auto *child : entry->childItems()) pending.append(child);
-            }
-            return rows.size() == 4 && chosen;
-        })());
-        if (compiled && row == 2 && QGuiApplication::platformName() != "offscreen") {
-            QTest::qWait(100);
-            QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-binding-popup-ui.png")));
-        }
-        QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier,
-                         chosen->mapToScene(QPointF(chosen->width() / 2, chosen->height() / 2)).toPoint());
-        QTRY_VERIFY(!popup->property("visible").toBool());
-    };
-    choosePopupRow(2); // Actual popup selection swaps X/Y, including the displayed names and indices.
-    QCOMPARE(c.trajectoryState(0)["x"].toInt(), 1);
-    QCOMPARE(c.trajectoryState(0)["y"].toInt(), 0);
-    QCOMPARE(bindingX->property("sourceName").toString(), QString("longitude"));
-    QCOMPARE(bindingX->property("currentIndex").toInt(), 2);
-    choosePopupRow(1);
-    QCOMPARE(c.trajectoryState(0)["x"].toInt(), 0);
-    QCOMPARE(bindingX->property("sourceName").toString(), QString("latitude"));
-    QVERIFY(QMetaObject::invokeMethod(bindingX, "activated", Q_ARG(int, 0)));
-    QCOMPARE(c.trajectoryState(0)["x"].toInt(), -1); QCOMPARE(c.signalModel()->checkedCount(), 3);
-    QVERIFY(QMetaObject::invokeMethod(bindingX, "activated", Q_ARG(int, 1)));
-    QCOMPARE(c.trajectoryState(0)["x"].toInt(), 0); QTRY_VERIFY(!item->pending());
+    QVERIFY(object->findChild<QObject *>("trajectoryView")->property("sourceDescription").toString().contains("updated"));
     if (QQuickWindow::graphicsApi() != QSGRendererInterface::Software
         && QGuiApplication::platformName() != "offscreen") {
         QTest::qWait(100);
         const auto image = window.grabWindow(); QVERIFY(!image.isNull());
         QVERIFY(image.save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-geographic-ui.png")));
     }
-    QVERIFY(QMetaObject::invokeMethod(axesButton, "clicked")); QTRY_VERIFY(dialog->property("visible").toBool());
-    auto *heightAxis = object->findChild<QObject *>("trajectoryAxisZ"); QVERIFY(heightAxis); heightAxis->setProperty("currentIndex", 0);
-    QVERIFY(QMetaObject::invokeMethod(confirm, "clicked")); QTRY_VERIFY(!dialog->property("visible").toBool());
+    const auto heightField = planeFields[2].toMap();
+    QVERIFY(!c.bindObjectField(plane, heightField["id"].toString(), heightField["name"].toString(), "height", -1).isEmpty());
     QTRY_VERIFY(!item->pending()); QVERIFY(item->planar()); QVERIFY(item->orientationRect().isEmpty());
     quick->setWidth(320); quick->setHeight(240); window.resize(320, 240);
     QTRY_VERIFY(!item->pending()); QVERIFY(item->height() >= 160); QVERIFY(item->width() >= 308);
@@ -1078,62 +1009,23 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     quick->setWidth(900); quick->setHeight(600); window.resize(900, 600);
     csv(dir.filePath("wing.csv"), "t,lat,lon,height,roll,pitch,yaw\n0,40.87,109.57,1325,0,0,0\n180,40.88,109.58,1505,20,10,90\n");
     QVERIFY(c.loadCsv(dir.filePath("wing.csv"))); QTRY_VERIFY(!c.loading());
-    auto *add = object->findChild<QObject *>("trajectoryAdd"); QVERIFY(add);
-    QVERIFY(QMetaObject::invokeMethod(add, "clicked")); QCOMPARE(c.trajectoryState(0)["active"].toInt(), 1);
-    for (int row = 3; row < 9; ++row) c.selectSignal(row);
+    const auto wing = c.addDataObject("aircraft");
+    QVERIFY(c.configureDataObjectAircraft(wing, {{"geographic", true}, {"attitudeMode", 1}, {"radians", false}, {"order", 0}, {"scalarLast", false}, {"navigationToBody", false}}));
+    const auto wingFields = c.dataObjects().last().toMap()["fields"].toList();
+    for (int i = 0; i < 6; ++i) {
+        const auto field = wingFields[i].toMap();
+        QVERIFY(!c.bindObjectField(wing, field["id"].toString(), field["name"].toString(), field["role"].toString(), 3 + i).isEmpty());
+    }
+    QVERIFY(c.showObjectTrajectory(wing, 0)); QCOMPARE(c.trajectoryState(0)["active"].toInt(), 1);
     auto *propertiesButton = object->findChild<QObject *>("trajectoryProperties"); QVERIFY(propertiesButton);
     QVERIFY(QMetaObject::invokeMethod(propertiesButton, "clicked"));
     auto *properties = object->findChild<QObject *>("trajectoryPropertiesDialog"); QVERIFY(properties);
     QTRY_VERIFY(properties->property("visible").toBool());
     auto *name = object->findChild<QObject *>("trajectoryName"); QVERIFY(name); name->setProperty("text", "Wing UI");
-    auto *attitudeMode = object->findChild<QObject *>("trajectoryAttitudeMode"); QVERIFY(attitudeMode); attitudeMode->setProperty("currentIndex", 1);
-    properties->setProperty("selectedSources", QVariantList{6, 7, 8, -1});
+    QVERIFY(!object->findChild<QObject *>("trajectoryAttitudeMode"));
     auto *form = object->findChild<QQuickItem *>("trajectoryPropertiesForm"); QVERIFY(form);
     auto *flick = object->findChild<QQuickItem *>("trajectoryPropertiesFlick"); QVERIFY(flick);
-    auto *order = object->findChild<QQuickItem *>("trajectoryEulerOrder"); QVERIFY(order);
-    QTRY_VERIFY(form->width() <= flick->width());
-    QTRY_VERIFY(form->implicitHeight() > 0);
-    // Reach the lower settings through the actual scroll viewport, then inspect
-    // rendered delegate text for BOTH string-model entries (the first was blank).
-    QTest::qWait(50); // allow the mode-dependent rows to finish layout first
-    auto *scrollBar = object->findChild<QQuickItem *>("trajectoryPropertiesScrollBar"); QVERIFY(scrollBar);
-    const double bottom = qMax(0., flick->property("contentHeight").toDouble() - flick->height());
-    if (bottom > 1) QTRY_VERIFY(scrollBar->isVisible());
-    flick->setProperty("contentY", bottom);
-    QTest::qWait(50);
-    auto *orderPopup = order->property("popup").value<QObject *>(); QVERIFY(orderPopup);
-    QVERIFY(QMetaObject::invokeMethod(orderPopup, "open")); QTRY_VERIFY(orderPopup->property("visible").toBool());
-    QQuickItem *orderList = orderPopup->property("contentItem").value<QQuickItem *>(); QVERIFY(orderList);
-    const auto hasText = [&](const QString &text) {
-        QList<QQuickItem *> pending{orderList};
-        while (!pending.isEmpty()) {
-            auto *entry = pending.takeLast();
-            if (entry->property("text").toString() == text) return true;
-            pending.append(entry->childItems());
-        }
-        return false;
-    };
-    QTRY_VERIFY(hasText(QStringLiteral("Rz(航向) · Ry(俯仰) · Rx(滚转)")));
-    QTRY_VERIFY(hasText(QStringLiteral("Rx(滚转) · Ry(俯仰) · Rz(航向)")));
-    if (QGuiApplication::platformName() != "offscreen") {
-        QTest::qWait(100); QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-properties-order-ui.png")));
-    }
-    QVERIFY(QMetaObject::invokeMethod(orderPopup, "close"));
-    // The direction selector remains in the scroll content and reopening starts
-    // at the name field, rather than retaining an old scroll position.
-    auto *direction = object->findChild<QQuickItem *>("trajectoryInverseDirection"); QVERIFY(direction);
-    QVERIFY(direction->y() + direction->height() <= flick->property("contentHeight").toDouble());
-    const auto directionPosition = direction->mapToItem(flick, QPointF(0, direction->height()));
-    QVERIFY(directionPosition.y() <= flick->height() + 1 && directionPosition.y() >= 0);
-    QVERIFY(QMetaObject::invokeMethod(properties, "close"));
-    QTRY_VERIFY(!properties->property("visible").toBool());
-    QVERIFY(QMetaObject::invokeMethod(propertiesButton, "clicked")); QTRY_VERIFY(properties->property("visible").toBool());
-    QTRY_COMPARE(flick->property("contentY").toDouble(), 0.);
-    name->setProperty("text", "Wing UI"); attitudeMode->setProperty("currentIndex", 1);
-    properties->setProperty("selectedSources", QVariantList{6, 7, 8, -1});
-    if (QGuiApplication::platformName() != "offscreen") {
-        QTest::qWait(100); QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-properties-form-ui.png")));
-    }
+    QTRY_VERIFY(form->width() <= flick->width()); QTRY_VERIFY(form->implicitHeight() > 0);
     QVERIFY(QMetaObject::invokeMethod(properties, "accepted")); QVERIFY(QMetaObject::invokeMethod(properties, "close"));
     QCOMPARE(c.trajectoryState(0)["name"].toString(), QString("Wing UI"));
     QCOMPARE(c.trajectoryState(0)["attitudeMode"].toInt(), 1);

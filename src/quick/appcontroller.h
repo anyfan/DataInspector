@@ -55,6 +55,8 @@ class AppController : public QObject
     Q_PROPERTY(int plotColumns READ plotColumns NOTIFY layoutChanged)
     Q_PROPERTY(int activePlotIndex READ activePlotIndex NOTIFY activePlotChanged)
     Q_PROPERTY(int plotStateRevision READ plotStateRevision NOTIFY plotBindingsChanged)
+    Q_PROPERTY(QVariantList dataObjects READ dataObjects NOTIFY objectsChanged)
+    Q_PROPERTY(bool deriving READ deriving NOTIFY objectsChanged)
     // >= 0 while a single subplot is shown maximized; -1 while tiled.
     Q_PROPERTY(int soloPlotIndex READ soloPlotIndex WRITE setSoloPlot NOTIFY soloPlotChanged)
 public:
@@ -67,6 +69,26 @@ public:
     QVariantMap aboutInfo() const;
     QString releaseNotes() const;
     Q_INVOKABLE void copyAboutInfo() const;
+    QVariantList dataObjects() const;
+    bool deriving() const;
+    Q_INVOKABLE bool isDerivedSignal(int row) const { return isObjectOutput(row); }
+    Q_INVOKABLE QVariantList objectSourceOptions() const;
+    Q_INVOKABLE QString createDataObject(const QString &name, const QString &type = QStringLiteral("general"));
+    Q_INVOKABLE QString addDataObject(const QString &type = QStringLiteral("general"));
+    Q_INVOKABLE bool setDataObjectType(const QString &id, const QString &type);
+    Q_INVOKABLE QString addDataObjectField(const QString &id);
+    Q_INVOKABLE bool renameDataObjectField(const QString &id, const QString &fieldId, const QString &name);
+    Q_INVOKABLE bool configureDataObjectAircraft(const QString &id, const QVariantMap &config);
+    Q_INVOKABLE bool renameDataObject(const QString &id, const QString &name);
+    Q_INVOKABLE bool removeDataObject(const QString &id);
+    Q_INVOKABLE QString bindObjectField(const QString &objectId, const QString &fieldId,
+                                       const QString &name, const QString &role, int series);
+    Q_INVOKABLE bool removeObjectField(const QString &objectId, const QString &fieldId);
+    Q_INVOKABLE QString addObjectRule(const QString &objectId, const QVariantMap &config);
+    Q_INVOKABLE bool editObjectRule(const QString &objectId, const QString &ruleId, const QVariantMap &config);
+    Q_INVOKABLE bool removeObjectRule(const QString &objectId, const QString &ruleId);
+    Q_INVOKABLE QString duplicateDataObject(const QString &objectId);
+    Q_INVOKABLE bool showObjectTrajectory(const QString &objectId, int plotIndex);
 
     // Properties
     SignalModel *signalModel() const { return m_signals; }
@@ -180,6 +202,7 @@ public:
     // Drops every loaded file and signal. Use clearAllPlotSignals() to keep data.
     Q_INVOKABLE void clear();
 signals:
+    void objectsChanged();
     void viewHistoryChanged();
     void revealSignalRequested(int row);
     void restoringSessionChanged();
@@ -202,6 +225,18 @@ signals:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 private:
+    struct ObjectJob;
+    QVector<DataObject> m_objects;
+    QHash<QString, QString> m_objectErrors;
+    std::shared_ptr<ObjectJob> m_objectJob;
+    void scheduleObjectEvaluation();
+    void pollObjectEvaluation();
+    void cancelObjectEvaluation();
+    void remapObjectRows(const QVector<int> &removed);
+    void syncObjectTrajectories();
+    void removeObjectSeries(const QSet<int> &rows);
+    bool isObjectOutput(int row) const;
+    QString objectOutputGroup(const DataObject &object) const;
     void recordViewChange();
     void clearViewHistory();
     struct ViewRange {

@@ -40,7 +40,7 @@ bool text(const QJsonValue &value, QString *out, bool allowEmpty = false)
 QJsonObject trackToJson(const SessionTrajectoryEntry &track)
 {
     QJsonArray sources; for (int id : track.attitude.sources) sources.append(id);
-    return {{"id", track.id}, {"name", track.name}, {"visible", track.visible}, {"geographic", track.geographic},
+    return {{"id", track.id}, {"objectId", track.objectId}, {"name", track.name}, {"visible", track.visible}, {"geographic", track.geographic},
         {"color", track.color.name(QColor::HexArgb)}, {"width", track.width},
         {"axes", QJsonArray{track.axes[0], track.axes[1], track.axes[2]}},
         {"attitude", QJsonObject{{"mode", track.attitude.mode}, {"sources", sources},
@@ -51,6 +51,7 @@ bool readTrack(const QJsonValue &value, int signalCount, SessionTrajectoryEntry 
 {
     if (!value.isObject()) return false;
     const auto obj = value.toObject(); QString color;
+    if (obj.contains("objectId") && !text(obj.value("objectId"), &track->objectId, true)) return false;
     if (!text(obj.value("id"), &track->id) || track->id.size() > 128
         || !text(obj.value("name"), &track->name) || track->name.size() > 256
         || !obj.value("visible").isBool() || !obj.value("geographic").isBool()
@@ -84,6 +85,7 @@ QJsonObject sessionToJson(const SessionDocument &s)
     for (const auto &signal : s.series) {
         series.append(QJsonObject{{"file", signal.file}, {"table", signal.table},
             {"column", signal.column}, {"tableName", signal.tableName},
+            {"objectId", signal.objectId}, {"outputId", signal.outputId},
             {"originalName", signal.originalName}, {"name", signal.name},
             {"color", signal.color.name(QColor::HexArgb)}, {"width", signal.width},
             {"style", signal.style}, {"timeOffset", signal.timeOffset}});
@@ -111,7 +113,7 @@ QJsonObject sessionToJson(const SessionDocument &s)
                     plot.trajectory.camera.zoom, plot.trajectory.camera.panX, plot.trajectory.camera.panY}}}}});
     }
     return {{"format", "DataInspectorSession"}, {"version", SessionDocument::version},
-        {"files", files}, {"signals", series}, {"plots", plots},
+        {"files", files}, {"signals", series}, {"plots", plots}, {"objects", objectsToJson(s.objects)},
         {"layout", QJsonObject{{"rows", s.rows}, {"columns", s.columns},
             {"active", s.active}, {"solo", s.solo}}},
         {"xRange", QJsonArray{s.xMinimum, s.xMaximum}},
@@ -152,7 +154,11 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
         const auto obj = entry.toObject();
         SessionSignal signal;
         QString color;
-        if (!integer(obj.value("file"), 0, parsed.files.size() - 1, &signal.file)
+        if (version >= 7 && (!text(obj.value("objectId"), &signal.objectId, true)
+            || !text(obj.value("outputId"), &signal.outputId, true))) return fail("signals.objectId/outputId");
+        const bool derived = !signal.objectId.isEmpty();
+        if (derived != !signal.outputId.isEmpty()) return fail("signals.objectId/outputId");
+        if (!integer(obj.value("file"), derived ? -1 : 0, derived ? -1 : parsed.files.size() - 1, &signal.file)
             || !integer(obj.value("table"), 0, maxSignals, &signal.table)
             || !integer(obj.value("column"), 0, maxSignals, &signal.column)
             || !text(obj.value("tableName"), &signal.tableName, true)
@@ -163,10 +169,23 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
             || !number(obj.value("width"), &signal.width) || signal.width < 1 || signal.width > 20
             || !integer(obj.value("style"), 1, 5, &signal.style)
             || !number(obj.value("timeOffset"), &signal.timeOffset)) return fail("signals[]");
-        const QString key = QStringLiteral("%1:%2:%3").arg(signal.file).arg(signal.table).arg(signal.column);
+        const QString key = derived ? QStringLiteral("object:%1:%2").arg(signal.objectId, signal.outputId)
+            : QStringLiteral("%1:%2:%3").arg(signal.file).arg(signal.table).arg(signal.column);
         if (identities.contains(key)) return fail("duplicate signal identity");
         identities.insert(key);
         parsed.series.append(signal);
+    }
+    if (version >= 7) {
+        QString why;
+        if (!objectsFromJson(root.value("objects"), parsed.series.size(), &parsed.objects, &why, version)) return fail("objects: " + why);
+        QSet<int> owned;
+        for (const auto &object : parsed.objects) for (const auto &rule : object.rules) for (const auto &output : rule.outputs) {
+            const auto &signal = parsed.series[output.series];
+            if (signal.objectId != object.id || signal.outputId != output.id) return fail("objects.output ownership");
+            owned.insert(output.series);
+        }
+        for (int i = 0; i < parsed.series.size(); ++i)
+            if (!parsed.series[i].objectId.isEmpty() && !owned.contains(i)) return fail("orphan derived signal");
     }
     if (!root.value("plots").isArray()
         || root.value("plots").toArray().size() != parsed.rows * parsed.columns) return fail("plots");
@@ -264,6 +283,21 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
             for (int id : plot.trajectory.axes) if (id >= 0) { plot.trajectory.color = parsed.series[id].color; break; }
         }
         parsed.plots.append(plot);
+    }
+    if (version >= 7) {
+        if (version == 7) for (const auto &plot : parsed.plots) for (const auto &track : plot.trajectory.entries())
+            for (auto &object : parsed.objects) if (object.id == track.objectId) { object.type = "aircraft"; if (!ensureAircraftFields(object)) return fail("aircraft fields"); }
+        if (version < 9) {
+            QSet<QString> migrated;
+            for (const auto &plot : parsed.plots) for (const auto &track : plot.trajectory.entries()) if (!track.objectId.isEmpty() && !migrated.contains(track.objectId)) {
+                for (auto &object : parsed.objects) if (object.id == track.objectId) { object.geographic = track.geographic; object.attitude = track.attitude; }
+                migrated.insert(track.objectId);
+            }
+            for (auto &object : parsed.objects) if (object.type == "aircraft" && !ensureAircraftFields(object)) return fail("aircraft fields");
+        }
+        QSet<QString> objectIds; for (const auto &object : parsed.objects) if (object.type == "aircraft") objectIds.insert(object.id);
+        for (const auto &plot : parsed.plots) for (const auto &track : plot.trajectory.entries())
+            if (!track.objectId.isEmpty() && !objectIds.contains(track.objectId)) return fail("trajectory.objectId");
     }
     *session = std::move(parsed);
     return true;

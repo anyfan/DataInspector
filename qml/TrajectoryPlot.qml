@@ -13,6 +13,10 @@ Rectangle {
     required property color axisColor
     required property real graphLineWidth
     signal editAxesRequested()
+    signal editObjectRequested(string objectId)
+    property bool darkTheme: false
+    component TrackCombo: ThemedComboBox { darkTheme: root.darkTheme }
+    readonly property var aircraftObjects: root.controller.dataObjects.filter(object => object.type === 'aircraft')
     enabled: !root.controller.restoringSession
     color: plotColor
     clip: true
@@ -34,10 +38,7 @@ Rectangle {
         target: root.controller
         function onPlotBindingsChanged() { root.refreshBindings() }
     }
-    readonly property string selectionHint: root.configuration.signalCount === 0
-        ? "从信号树依次勾选" + (root.configuration.geographic ? "纬度、经度、高度" : "X、Y、Z")
-            + "，自动填入空轴；顶部下拉框可调整来源"
-        : "已加入 " + root.configuration.signalCount + " 个信号；新选信号自动填入空轴，顶部下拉框可调整来源"
+    readonly property string selectionHint: "通过飞机对象配置位置和姿态来源；点击对象配置管理绑定。"
     readonly property string sourceDescription: {
         const state = root.configuration
         const labels = state.geographic ? ["纬度", "经度", "高度"] : ["X", "Y", "Z"]
@@ -187,7 +188,7 @@ Rectangle {
         anchors.margins: 3
         height: 24
         spacing: 2
-        ComboBox {
+        TrackCombo {
             id: trackSelector
             objectName: "trajectorySelector"
             Layout.fillWidth: true
@@ -198,7 +199,7 @@ Rectangle {
             currentIndex: root.configuration.active
             onActivated: function(index) { root.controller.selectTrajectory(root.plotIndex, index) }
         }
-        ToolButton { visible: root.configurationExpanded; objectName: "trajectoryAdd"; text: "+"; implicitHeight: 24; onClicked: root.controller.addTrajectory(root.plotIndex) }
+        ToolButton { visible: root.configurationExpanded; objectName: "trajectoryAdd"; text: "+"; implicitHeight: 24; onClicked: root.editAxesRequested() }
         ToolButton { visible: root.configurationExpanded; objectName: "trajectoryRemove"; text: "−"; implicitHeight: 24; onClicked: root.controller.removeTrajectory(root.plotIndex, root.configuration.active) }
         CheckBox {
             objectName: "trajectoryVisible"
@@ -207,7 +208,7 @@ Rectangle {
             implicitHeight: 24
             onClicked: root.controller.styleTrajectory(root.plotIndex, root.configuration.name, root.configuration.color, root.configuration.width, checked)
         }
-        ToolButton { visible: root.configurationExpanded; objectName: "trajectoryProperties"; text: "样式 / 姿态"; implicitHeight: 24; onClicked: properties.open() }
+        ToolButton { visible: root.configurationExpanded; objectName: "trajectoryProperties"; text: "样式"; implicitHeight: 24; onClicked: properties.open() }
         ToolButton {
             objectName: "trajectoryConfigurationToggle"
             text: root.configurationExpanded ? "收起 ▴" : "配置 ▾"
@@ -243,86 +244,18 @@ Rectangle {
             color: root.textColor
             font.pixelSize: 11
         }
-        Repeater {
-            model: 3
-            delegate: ComboBox {
-                id: axisBinding
-                required property int index
-                readonly property int sourceId: [root.configuration.x, root.configuration.y, root.configuration.z][axisBinding.index]
-                readonly property string roleLabel: (root.configuration.geographic ? ["纬", "经", "高"] : ["X", "Y", "Z"])[axisBinding.index]
-                readonly property string sourceName: {
-                    const options = root.availableSources
-                    for (const option of options) if (option.id === axisBinding.sourceId && option.id >= 0) return option.name
-                    return "未绑定"
-                }
-                objectName: "trajectoryBindingAxis" + index
-                Layout.fillWidth: true
-                Layout.minimumWidth: 40
-                Layout.preferredWidth: 100
-                implicitHeight: 24
-                leftPadding: 3
-                rightPadding: 14
-                topPadding: 0
-                bottomPadding: 0
-                spacing: 2
-                indicator: Label {
-                    x: axisBinding.width - width - 2
-                    y: (axisBinding.height - height) / 2
-                    width: 10
-                    height: 14
-                    text: "▾"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                    color: root.textColor
-                    font.pixelSize: 10
-                }
-                model: root.availableSources
-                textRole: "label"
-                valueRole: "id"
-                delegate: ItemDelegate {
-                    id: sourceOption
-                    required property var modelData
-                    required property int index
-                    width: axisBinding.width
-                    height: 30
-                    text: modelData.label
-                    highlighted: axisBinding.highlightedIndex === sourceOption.index
-                    contentItem: Label {
-                        text: sourceOption.text
-                        elide: Text.ElideMiddle
-                        verticalAlignment: Text.AlignVCenter
-                        color: root.textColor
-                        font.pixelSize: 11
-                    }
-                    ToolTip.visible: hovered
-                    ToolTip.text: text
-                }
-                currentIndex: {
-                    const options = root.availableSources
-                    for (let i = 0; i < options.length; ++i) if (options[i].id === axisBinding.sourceId) return i
-                    return 0
-                }
-                contentItem: Label {
-                    text: axisBinding.roleLabel + ": " + axisBinding.sourceName
-                    elide: Text.ElideRight
-                    verticalAlignment: Text.AlignVCenter
-                    color: root.textColor
-                    font.pixelSize: 10
-                }
-                onActivated: function(optionIndex) {
-                    root.controller.bindTrajectoryAxis(root.plotIndex, axisBinding.index, Number(root.availableSources[optionIndex].id))
-                }
-                ToolTip.visible: axisBinding.hovered && !axisBinding.popup.visible
-                ToolTip.text: roleLabel + ": " + sourceName + "\n从本子图已加入的信号中选择来源；右键取消绑定"
-                MouseArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.RightButton
-                    onClicked: root.controller.bindTrajectoryAxis(root.plotIndex, axisBinding.index, -1)
-                }
-            }
+        TrackCombo {
+            objectName: "trajectoryObjectSelector"
+            Layout.fillWidth: true
+            Layout.minimumWidth: 40
+            implicitHeight: 24
+            model: root.aircraftObjects
+            textRole: "name"
+            currentIndex: root.aircraftObjects.findIndex(object => object.id === root.configuration.objectId)
+            displayText: currentIndex >= 0 ? currentText : "选择飞机对象"
+            onActivated: function(index) { root.controller.showObjectTrajectory(root.aircraftObjects[index].id, root.plotIndex) }
         }
-
-        ToolButton { text: "坐标"; implicitHeight: 24; font.pixelSize: 11; objectName: "trajectoryAxesButton"; onClicked: { root.controller.setActivePlot(root.plotIndex); root.editAxesRequested() } }
+        ToolButton { text: "选择对象"; implicitHeight: 24; font.pixelSize: 11; objectName: "trajectoryAxesButton"; onClicked: { root.controller.setActivePlot(root.plotIndex); root.editAxesRequested() } }
         ToolButton { text: "视角"; visible: !root.planarMode; implicitHeight: 24; font.pixelSize: 11; onClicked: { root.controller.setActivePlot(root.plotIndex); viewMenu.popup() } }
         ToolButton { text: "适应"; implicitHeight: 24; font.pixelSize: 11; onClicked: { root.controller.setActivePlot(root.plotIndex); trajectory.fitView() } }
 
@@ -355,45 +288,10 @@ Rectangle {
         ToolTip.visible: detailsHover.hovered
         ToolTip.text: root.sourceDescription + "\n" + trajectory.referenceOrigin + "\n" + trajectory.error + "\n" + trajectory.attitudeStatus + "\n" + trajectory.markers.map(value => value.details).join("\n") + "\n" + root.gestureHint
     }
-    // Explicit delegates avoid blank string-model entries and keep long source
-    // labels inside the popup, in both source and compiled Bound QML.
-    component PropertiesCombo: ComboBox {
-        id: control
-        Layout.fillWidth: true
-        Layout.minimumWidth: 0
-        implicitHeight: 30
-        contentItem: Label {
-            text: control.displayText
-            color: root.textColor
-            font.pixelSize: 12
-            elide: Text.ElideMiddle
-            verticalAlignment: Text.AlignVCenter
-        }
-        delegate: ItemDelegate {
-            id: option
-            required property var modelData
-            required property int index
-            width: control.width
-            height: 32
-            text: control.textRole.length > 0 ? String(modelData[control.textRole]) : String(modelData)
-            highlighted: control.highlightedIndex === option.index
-            contentItem: Label {
-                text: option.text
-                color: root.textColor
-                font.pixelSize: 12
-                elide: Text.ElideMiddle
-                verticalAlignment: Text.AlignVCenter
-            }
-            ToolTip.visible: hovered
-            ToolTip.text: text
-        }
-        ToolTip.visible: hovered && !popup.visible
-        ToolTip.text: displayText
-    }
     Dialog {
         id: properties
         objectName: "trajectoryPropertiesDialog"
-        title: "活动航迹：样式与测量姿态"
+        title: "活动航迹：样式"
         parent: Overlay.overlay
         anchors.centerIn: parent
         width: Math.max(1, Math.min(600, root.Window.width - 24))
@@ -406,17 +304,9 @@ Rectangle {
             trackName.text = root.configuration.name
             trackColor.text = root.configuration.color.toString()
             trackWidth.value = root.configuration.width
-            attitudeMode.currentIndex = root.configuration.attitudeMode
-            radians.checked = root.configuration.radians
-            eulerOrder.currentIndex = root.configuration.order
-            scalarLast.checked = root.configuration.scalarLast
-            inverseDirection.checked = root.configuration.navigationToBody
-            properties.selectedSources = root.configuration.attitudeSources.slice()
         }
         onAccepted: {
             root.controller.styleTrajectory(root.plotIndex, trackName.text, trackColor.text, trackWidth.value, root.configuration.visible)
-            const ids = properties.selectedSources
-            root.controller.configureAttitude(root.plotIndex, attitudeMode.currentIndex, ids[0], ids[1], ids[2], ids[3], radians.checked, eulerOrder.currentIndex, scalarLast.checked, inverseDirection.checked)
         }
         contentItem: ScrollView {
             id: propertiesScroll
@@ -452,40 +342,8 @@ Rectangle {
                         Label { text: "线宽"; color: root.textColor }
                         SpinBox { id: trackWidth; from: 1; to: 12; implicitHeight: 30 }
                     }
-                    Label { text: "测量姿态"; font.bold: true; color: root.textColor }
-                    Label { text: "导航 NED：北 / 东 / 下；机体 FRD：前 / 右 / 下\n零姿态：机头北、右翼东、机腹下。XYZ 输入使用同一 NED 坐标系（米）。"; wrapMode: Text.Wrap; Layout.fillWidth: true; color: root.textColor; font.pixelSize: 12 }
-                    PropertiesCombo { id: attitudeMode; objectName: "trajectoryAttitudeMode"; model: ["关闭姿态", "滚转 / 俯仰 / 航向", "四元数"] }
-                    Repeater {
-                        model: 4
-                        delegate: RowLayout {
-                            id: attitudeBinding
-                            required property int index
-                            visible: attitudeMode.currentIndex > 0 && (attitudeMode.currentIndex === 2 || index < 3)
-                            Layout.fillWidth: true
-                            Label { text: attitudeMode.currentIndex === 1 ? ["滚转", "俯仰", "航向", ""][attitudeBinding.index] : (scalarLast.checked ? ["x", "y", "z", "w"] : ["w", "x", "y", "z"])[attitudeBinding.index]; Layout.preferredWidth: 46; color: root.textColor }
-                            PropertiesCombo {
-                                objectName: "trajectoryAttitudeSource" + attitudeBinding.index
-                                model: root.availableSources
-                                textRole: "label"
-                                currentIndex: {
-                                    const id = properties.selectedSources[attitudeBinding.index]
-                                    for (let i = 0; i < root.availableSources.length; ++i) if (root.availableSources[i].id === id) return i
-                                    return 0
-                                }
-                                onActivated: function(index) {
-                                    const ids = properties.selectedSources.slice()
-                                    ids[attitudeBinding.index] = root.availableSources[index].id
-                                    properties.selectedSources = ids
-                                }
-                            }
-                        }
-                    }
-                    CheckBox { id: radians; text: "角度单位为弧度（默认度）"; visible: attitudeMode.currentIndex === 1; font.pixelSize: 12 }
-                    Label { text: "欧拉旋转顺序"; visible: attitudeMode.currentIndex === 1; color: root.textColor }
-                    PropertiesCombo { id: eulerOrder; objectName: "trajectoryEulerOrder"; model: ["Rz(航向) · Ry(俯仰) · Rx(滚转)", "Rx(滚转) · Ry(俯仰) · Rz(航向)"]; visible: attitudeMode.currentIndex === 1 }
-                    CheckBox { id: scalarLast; text: "四元数输入顺序 xyzw（默认 wxyz）"; visible: attitudeMode.currentIndex === 2; font.pixelSize: 12 }
-                    CheckBox { id: inverseDirection; objectName: "trajectoryInverseDirection"; text: "输入为导航→机体（默认机体→导航）"; font.pixelSize: 12 }
-                    Label { text: "姿态随时间游标显示；位置与姿态各取最近原始样本，不插值、不跨缺口。读数显示两者时间差。"; wrapMode: Text.Wrap; Layout.fillWidth: true; color: root.textColor; font.pixelSize: 12 }
+                    Label { text: "位置与测量姿态使用飞机对象中的配置。"; wrapMode: Text.Wrap; Layout.fillWidth: true; color: root.textColor }
+                    Button { text: "对象配置…"; onClicked: { properties.close(); root.editObjectRequested(root.configuration.objectId) } }
                     Label { text: trajectory.referenceOrigin; wrapMode: Text.Wrap; Layout.fillWidth: true; color: root.textColor; font.pixelSize: 12 }
                 }
             }
@@ -505,7 +363,7 @@ Rectangle {
     }
     Menu {
         id: contextMenu
-        MenuItem { text: "选择坐标与信号…"; onTriggered: root.editAxesRequested() }
+        MenuItem { text: "选择飞机对象…"; onTriggered: root.editAxesRequested() }
         MenuItem { text: "适应轨迹"; onTriggered: trajectory.fitView() }
         MenuItem { text: "等轴测视角"; visible: !root.planarMode; onTriggered: trajectory.presetView(0) }
         MenuItem { text: "俯视 XY"; visible: !root.planarMode; onTriggered: trajectory.presetView(1) }

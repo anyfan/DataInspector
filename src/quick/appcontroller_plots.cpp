@@ -126,6 +126,7 @@ bool AppController::renameSignal(int row, const QString &name)
     notifyPlotBindingsChanged();
     setStatus(QStringLiteral("已重命名信号：%1 → %2")
                   .arg(previous, m_signals->nameAt(row)));
+    emit objectsChanged();
     return true;
 }
 
@@ -145,6 +146,7 @@ QSet<PlotSeriesId> AppController::timeOffsetRows(int scope, int row, const QStri
     QSet<PlotSeriesId> ids;
     for (int id = 0; id < m_signals->sourceCount(); ++id) {
         const QString candidate = m_signals->groupAt(id);
+        if (isObjectOutput(id)) continue; // Derived clocks follow their inputs.
         if ((scope == 0 && id == row)
             || (scope == 1 && !group.isEmpty() && candidate == group)
             || (scope == 2 && !group.isEmpty()
@@ -188,6 +190,7 @@ bool AppController::applyTimeOffset(int scope, int row, const QString &group, do
     setStatus((absolute ? QStringLiteral("已将 %1 个信号的时间偏移设置为 %2 秒")
                         : QStringLiteral("已对 %1 个信号累加时间偏移 %2 秒"))
                   .arg(ids.size()).arg(seconds, 0, 'g', 15));
+    scheduleObjectEvaluation();
     return true;
 }
 

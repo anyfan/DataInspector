@@ -118,12 +118,13 @@ int AppController::loadFiles(const QVariant &filePaths)
 
 bool AppController::removeFile(const QString &fileName)
 {
-    if (m_loading || m_exporting || fileName.isEmpty()) return false;
+    if (m_loading || m_exporting || fileName.isEmpty() || !m_sourcePathsByGroup.contains(fileName)) return false;
     const QVector<int> removedRows = m_signals->removeFile(fileName);
     if (removedRows.isEmpty()) return false;
 
     m_seriesStore->removeSeries(QSet<int>(removedRows.cbegin(), removedRows.cend()));
     remapTrajectoryAxes(removedRows);
+    remapObjectRows(removedRows);
     for (auto it = removedRows.crbegin(); it != removedRows.crend(); ++it)
         if (*it >= 0 && *it < m_signalColors.size())
             m_signalColors.removeAt(*it);
@@ -134,6 +135,7 @@ bool AppController::removeFile(const QString &fileName)
         refreshPlot(index);
     notifyPlotBindingsChanged();
     setStatus(QStringLiteral("已移除文件：%1").arg(fileName));
+    scheduleObjectEvaluation();
     return true;
 }
 
@@ -210,7 +212,7 @@ void AppController::beginExport(const QString &kind)
 bool AppController::exportXlsx(const QVariant &filePath, int scope,
                                bool zipCompressionEnabled)
 {
-    if (!m_exporter || m_exporting || m_loading || signalCount() == 0)
+    if (!m_exporter || m_exporting || m_loading || deriving() || signalCount() == 0)
         return false;
     QString path = localPathFrom(filePath);
     if (path.isEmpty()) return false;
@@ -232,7 +234,7 @@ bool AppController::exportXlsx(const QVariant &filePath, int scope,
 
 bool AppController::exportMat(const QVariant &filePath, int scope)
 {
-    if (!m_exporter || m_exporting || m_loading || signalCount() == 0)
+    if (!m_exporter || m_exporting || m_loading || deriving() || signalCount() == 0)
         return false;
     if (!matExportSupported()) {
         setStatus(QStringLiteral("当前版本未启用 MAT 支持"));
@@ -403,4 +405,5 @@ void AppController::appendLoadedTables(const QString &path, const QVector<Loaded
     }
     for (int index = 0; index < m_plots.size(); ++index)
         refreshPlot(index);
+    emit objectsChanged();
 }

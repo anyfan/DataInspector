@@ -10,6 +10,7 @@ Rectangle {
 
     required property int plotIndex
     required property AppController controller
+    signal editObjectRequested(string objectId)
     property real graphLineWidth: 2
     property int graphCursorMode: 0
     // 0: disabled, 1: X/Y region, 2: X only, 3: Y only.
@@ -738,6 +739,8 @@ Rectangle {
                 textColor: root.textColor
                 axisColor: root.axisColor
                 graphLineWidth: root.graphLineWidth
+                darkTheme: root.darkTheme
+                onEditObjectRequested: objectId => root.editObjectRequested(objectId)
                 onEditAxesRequested: trajectoryDialog.open()
             }
         }
@@ -745,75 +748,43 @@ Rectangle {
     Dialog {
         id: trajectoryDialog
         objectName: "trajectoryAxesDialog"
-        title: "选择三维轨迹的坐标与信号"
+        title: "选择飞机对象"
         modal: true
         anchors.centerIn: parent
         width: Math.max(240, Math.min(500, parent ? parent.width - 24 : root.width))
-        height: Math.min(implicitHeight, Math.max(160, parent ? parent.height - 24 : implicitHeight))
         parent: Overlay.overlay
-        property var options: []
+        palette.text: root.textColor
+        palette.windowText: root.textColor
+        palette.buttonText: root.textColor
+        palette.base: root.darkTheme ? "#171c22" : "#ffffff"
         property string selectionError: ""
+        readonly property var options: root.controller.dataObjects.filter(object => object.type === "aircraft")
         onOpened: {
-            options = root.controller.trajectorySignalOptions(root.plotIndex)
             selectionError = ""
-            const state = root.controller.trajectoryState(root.plotIndex)
-            coordinateMode.currentIndex = state.geographic ? 1 : 0
-            for (const pair of [[axisX, state.x], [axisY, state.y], [axisZ, state.z]]) {
-                pair[0].currentIndex = Math.max(0, pair[0].indexOfValue(pair[1]))
-            }
+            const id = root.controller.trajectoryState(root.plotIndex).objectId
+            objectChoice.currentIndex = Math.max(0, options.findIndex(object => object.id === id))
+        }
+        contentItem: Column {
+            spacing: 10
+            Label { text: "位置、姿态和数据来源使用飞机对象的配置。"; width: parent.width; wrapMode: Text.WordWrap }
+            ThemedComboBox { id: objectChoice; objectName: "trajectoryObjectChoice"; width: parent.width; darkTheme: root.darkTheme; model: trajectoryDialog.options; textRole: "name"; valueRole: "id"; displayText: count > 0 ? currentText : "尚无飞机对象" }
+            Button { text: "管理对象…"; onClicked: { trajectoryDialog.close(); root.editObjectRequested(String(objectChoice.currentValue || "")) } }
+            Label { text: trajectoryDialog.selectionError; color: root.darkTheme ? "#ff8892" : "#b52634"; visible: text.length > 0; width: parent.width; wrapMode: Text.WordWrap }
         }
         footer: DialogButtonBox {
             Button {
-                text: "确定"
-                objectName: "trajectoryConfirmButton"
+                text: "确定"; objectName: "trajectoryConfirmButton"
+                enabled: objectChoice.count > 0
                 DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
-                onClicked: {
-                    if (root.controller.configureTrajectory(root.plotIndex, true,
-                            Number(axisX.currentValue), Number(axisY.currentValue), Number(axisZ.currentValue),
-                            coordinateMode.currentIndex === 1))
-                        trajectoryDialog.close()
-                    else trajectoryDialog.selectionError = root.controller.status
-                }
+                onClicked: { if (root.controller.showObjectTrajectory(String(objectChoice.currentValue), root.plotIndex)) trajectoryDialog.close(); else trajectoryDialog.selectionError = root.controller.status }
             }
             Button { text: "取消"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole; onClicked: trajectoryDialog.close() }
-        }
-        contentItem: ScrollView {
-            implicitHeight: coordinateFields.implicitHeight
-            contentWidth: availableWidth
-            clip: true
-            Column {
-                id: coordinateFields
-                width: trajectoryDialog.availableWidth
-                spacing: 8
-                Label { text: "坐标类型" }
-                ComboBox {
-                    id: coordinateMode
-                    objectName: "trajectoryCoordinateMode"
-                    width: parent.width
-                    model: ["空间 XYZ（相同长度单位）", "经纬度 / 高度（飞机位置）"]
-                }
-                Label {
-                    width: parent.width
-                    wrapMode: Text.Wrap
-                    text: coordinateMode.currentIndex === 1
-                        ? "纬度/经度为度，高度为米。高度留空时显示二维水平航迹；选择高度后显示三维航迹。X 向东、Y 向北、Z 向上。"
-                        : "任选两个坐标自动显示二维航迹，选三个坐标显示三维航迹。X 横向、Y 纵向、Z 垂直；飞机经纬度请选择经纬度模式。"
-                }
-                Label { text: "三个信号须具有相同时间基（包含时间偏移）"; wrapMode: Text.Wrap; width: parent.width }
-                Label { text: coordinateMode.currentIndex === 1 ? "纬度（°）" : "X 坐标（横向）" }
-                ComboBox { id: axisX; objectName: "trajectoryAxisX"; width: parent.width; model: trajectoryDialog.options; textRole: "label"; valueRole: "id" }
-                Label { text: coordinateMode.currentIndex === 1 ? "经度（°）" : "Y 坐标（纵向 / 前后）" }
-                ComboBox { id: axisY; objectName: "trajectoryAxisY"; width: parent.width; model: trajectoryDialog.options; textRole: "label"; valueRole: "id" }
-                Label { text: coordinateMode.currentIndex === 1 ? "高度（m，可选）" : "Z 坐标（垂直 / 高度）" }
-                ComboBox { id: axisZ; objectName: "trajectoryAxisZ"; width: parent.width; model: trajectoryDialog.options; textRole: "label"; valueRole: "id" }
-                Label { text: trajectoryDialog.selectionError; visible: text.length > 0 }
-            }
         }
     }
     Menu {
         id: plotContextMenu
         objectName: "plotContextMenu"
-        MenuItem { text: "切换为航迹视图"; objectName: "trajectoryModeMenuItem"; onTriggered: root.controller.enterTrajectoryMode(root.plotIndex) }
+        MenuItem { text: "切换为航迹视图"; objectName: "trajectoryModeMenuItem"; onTriggered: trajectoryDialog.open() }
         MenuSeparator { }
         MenuItem {
             text: "自适应当前 Y 轴"

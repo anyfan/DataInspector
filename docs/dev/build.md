@@ -1,5 +1,7 @@
 # 构建
 
+对象派生实现 `appcontroller_objects.cpp`、`objectdefinition.*` 纳入 `DI_CONTROLLER_SOURCES`，`ObjectManager.qml`、`ThemedComboBox.qml` 纳入 `DI_QML_FILES`。后者为对象和航迹配置统一提供可读的下拉选中项。`objectdata_test` 链接现有控制器/绘图内核并包含同一 QML 资源；QML_FOREIGN 注册头也纳入测试 MOC。
+
 ## 关于页面的构建元数据
 
 时间在生成元数据时保存为 UTC，在 `AppController::aboutInfo` 中转换为北京时间（固定 UTC+8）；页面与复制文本共用该显示值，不依赖电脑当前时区。

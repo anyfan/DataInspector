@@ -177,6 +177,21 @@ void SignalModel::toggleGroup(const QString &group)
 QVector<int> SignalModel::removeFile(const QString &fileName)
 {
     if (fileName.isEmpty()) return {};
+    QSet<int> ids;
+    for (int row = 0; row < m_names.size(); ++row)
+        if (m_groups.value(row).section(QLatin1Char('/'), 0, 0) == fileName) ids.insert(row);
+    return removeRowsById(ids);
+}
+
+void SignalModel::setSignalGroup(int row, const QString &group)
+{
+    if (row < 0 || row >= m_groups.size() || m_groups[row] == group) return;
+    beginResetModel(); m_groups[row] = group; m_groupIndexDirty = true;
+    rebuildVisibleNodes(); endResetModel();
+}
+
+QVector<int> SignalModel::removeRowsById(const QSet<int> &ids)
+{
 
     QVector<int> removedRows;
     QVector<int> oldToNew(m_names.size(), -1);
@@ -193,9 +208,7 @@ QVector<int> SignalModel::removeFile(const QString &fileName)
     lineStyles.reserve(m_lineStyles.size());
 
     for (int row = 0; row < m_names.size(); ++row) {
-        const QString topLevelGroup = m_groups.value(row).section(
-            QLatin1Char('/'), 0, 0);
-        if (topLevelGroup == fileName) {
+        if (ids.contains(row)) {
             removedRows.append(row);
             continue;
         }
@@ -228,7 +241,7 @@ QVector<int> SignalModel::removeFile(const QString &fileName)
     };
     for (QSet<int> &rows : m_plotRows) remapRows(rows);
     for (auto it = m_expandedGroups.begin(); it != m_expandedGroups.end();) {
-        if (*it == fileName || it->startsWith(fileName + QLatin1Char('/')))
+        if (!groupExists(*it))
             it = m_expandedGroups.erase(it);
         else
             ++it;

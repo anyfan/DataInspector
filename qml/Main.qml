@@ -69,8 +69,14 @@ ApplicationWindow {
     property var signalDragDestination: null
     property int signalDragRow: -1
     property int signalDragRevision: 0
+    readonly property var activeTrajectoryObject: {
+        const revision = window.appController.plotStateRevision
+        const state = window.appController.trajectoryState(window.appController.activePlotIndex)
+        return state.enabled ? window.appController.dataObjects.find(object => object.id === state.objectId) || null : null
+    }
     readonly property bool signalTreeDragging: signalTreeDragPreview.visible
     function cancelSignalTreeDrag() {
+        objectManager.dropFieldId = ""
         ++signalDragRevision
         if (signalDragDestination) signalDragDestination.dropHighlighted = false
         signalDragDestination = null
@@ -87,6 +93,16 @@ ApplicationWindow {
         signalTreeDragPreview.x = point.x - pressPoint.x - 22
         signalTreeDragPreview.y = point.y - pressPoint.y - 6
         signalTreeDragPreview.visible = true
+        if (objectManager.visible) {
+            const position = source.mapToItem(objectManager, x, y)
+            const fieldId = objectManager.fieldAt(position.x, position.y)
+            objectManager.dropFieldId = fieldId
+            if (fieldId.length > 0) {
+                signalDragDestination = objectManager
+                objectManager.dropHighlighted = true
+            }
+            return
+        }
         for (let i = 0; i < plotRepeater.count; ++i) {
             const plot = (plotRepeater.itemAt(i) as QuickPlot)
             if (!plot || !plot.visible) continue
@@ -101,8 +117,14 @@ ApplicationWindow {
     function finishSignalTreeDrag() {
         const destination = signalDragDestination
         const row = signalDragRow
+        const fieldId = objectManager.dropFieldId
         cancelSignalTreeDrag()
-        if (destination) window.appController.addSignalToPlot(destination.plotIndex, row)
+        if (destination === objectManager) objectManager.dropSource(row, fieldId)
+        else if (destination) {
+            const state = window.appController.trajectoryState(destination.plotIndex)
+            if (state.enabled) { window.appController.setActivePlot(destination.plotIndex); if (state.objectId.length > 0) objectManager.selectedId = state.objectId; objectManager.open() }
+            else window.appController.addSignalToPlot(destination.plotIndex, row)
+        }
     }
     Rectangle {
         id: signalTreeDragPreview
@@ -264,8 +286,16 @@ ApplicationWindow {
         id: signalContextMenu
         property int signalIndex: -1
         MenuItem {
-            text: "时间偏移…"
+            text: window.appController.isDerivedSignal(signalContextMenu.signalIndex) ? "管理所属对象…" : "绑定到对象…"
             enabled: !window.appController.loading && !window.appController.exporting
+            onTriggered: {
+                if (window.appController.isDerivedSignal(signalContextMenu.signalIndex)) objectManager.revealOutput(signalContextMenu.signalIndex)
+                else objectManager.bindSource(signalContextMenu.signalIndex)
+            }
+        }
+        MenuItem {
+            text: "时间偏移…"
+            enabled: !window.appController.loading && !window.appController.exporting && !window.appController.isDerivedSignal(signalContextMenu.signalIndex)
             onTriggered: window.requestTimeOffset(0, signalContextMenu.signalIndex, "")
         }
         MenuItem {
@@ -708,6 +738,7 @@ ApplicationWindow {
         defaultSuffix: "png"
         onAccepted: {
             window.imageExportUrl = selectedFile
+            objectManager.close()
             window.imageCaptureAll = window.exportImageAll
             imageCaptureTimer.restart()
         }
@@ -1158,6 +1189,7 @@ ApplicationWindow {
             SplitView.maximumWidth: Math.max(180, window.width - 320)
             color: window.panelColor
             ColumnLayout { anchors.fill: parent; anchors.margins: 10; anchors.rightMargin: 0; spacing: 8
+                Button { objectName: "objectManagerButton"; text: "对象与派生数据…"; Layout.fillWidth: true; enabled: !window.appController.restoringSession && !window.appController.imageExporting; onClicked: objectManager.open() }
                 RowLayout { Layout.fillWidth: true; spacing: 4
                     TextField {
                         id: signalSearch
@@ -1340,8 +1372,10 @@ ApplicationWindow {
                             }
                             CheckBox {
                                 id: signalCheck
+                                objectName: "signalTreeCheck"
+                                readonly property int sourceRow: signalDelegate.signalIndex
                                 visible: !signalDelegate.groupNode
-                                checked: signalDelegate.signalChecked
+                                checked: objectManager.visible ? objectManager.sourceChecked(signalDelegate.signalIndex) : window.activeTrajectoryObject ? window.activeTrajectoryObject.fields.some(field => field.series === signalDelegate.signalIndex) : signalDelegate.signalChecked
                                 Layout.preferredWidth: 24
                                 Layout.preferredHeight: 24
                                 palette.window: window.panelColor
@@ -1352,7 +1386,13 @@ ApplicationWindow {
                                 palette.highlightedText: "#ffffff"
                                 onClicked: {
                                     signalList.currentIndex = signalDelegate.index
-                                    window.appController.toggleSignal(signalDelegate.signalIndex)
+                                    if (objectManager.visible) objectManager.selectSource(signalDelegate.signalIndex)
+                                    else if (window.appController.trajectoryState(window.appController.activePlotIndex).enabled) {
+                                        if (window.activeTrajectoryObject) objectManager.selectedId = window.activeTrajectoryObject.id
+                                        objectManager.open()
+                                        objectManager.selectSource(signalDelegate.signalIndex)
+                                    }
+                                    else window.appController.toggleSignal(signalDelegate.signalIndex)
                                 }
                             }
                             Label {
@@ -1602,6 +1642,7 @@ ApplicationWindow {
             }
         }
         Rectangle { id: plotPanel; SplitView.fillWidth: true; SplitView.minimumWidth: 280; color: window.darkTheme ? "#14181d" : "#ffffff"; clip: true
+            ObjectManager { id: objectManager; anchors.fill: parent; appController: window.appController; darkTheme: window.darkTheme }
             // Shared Y gutter: every visible subplot uses the widest measured
             // tick-label width so their X axes line up column by column.
             property real sharedAxisLeft: 0
@@ -1613,13 +1654,14 @@ ApplicationWindow {
                 }
                 if (widest !== sharedAxisLeft) sharedAxisLeft = widest
             }
-            GridLayout { id: plotGrid; objectName: "plotGrid"; enabled: !window.appController.imageExporting; anchors.fill: parent; rows: window.subplotMaximized && !window.imageCaptureAll ? 1 : window.appController.plotRows; columns: window.subplotMaximized && !window.imageCaptureAll ? 1 : window.appController.plotColumns; columnSpacing: 0; rowSpacing: 0; uniformCellWidths: true; uniformCellHeights: true
+            GridLayout { id: plotGrid; objectName: "plotGrid"; visible: !objectManager.visible; enabled: !window.appController.imageExporting; anchors.fill: parent; rows: window.subplotMaximized && !window.imageCaptureAll ? 1 : window.appController.plotRows; columns: window.subplotMaximized && !window.imageCaptureAll ? 1 : window.appController.plotColumns; columnSpacing: 0; rowSpacing: 0; uniformCellWidths: true; uniformCellHeights: true
                 Repeater { id: plotRepeater; model: window.appController.plotRows * window.appController.plotColumns
                     delegate: QuickPlot {
                         required property int index
                         plotIndex: index
                         visible: window.imageCaptureAll || !window.subplotMaximized || index === window.appController.activePlotIndex
                         controller: window.appController
+                        onEditObjectRequested: objectId => { if (objectId.length > 0) objectManager.selectedId = objectId; objectManager.open() }
                         sharedAxisLeft: plotPanel.sharedAxisLeft
                         onMeasuredAxisLeftChanged: plotPanel.updateSharedAxisLeft()
                         onVisibleChanged: plotPanel.updateSharedAxisLeft()

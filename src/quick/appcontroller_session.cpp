@@ -55,6 +55,7 @@ SessionDocument AppController::captureSession(const QString &path) const
 {
     const QDir directory(QFileInfo(path).absolutePath());
     SessionDocument state;
+    state.objects = m_objects;
     QHash<QString, int> fileIndices;
     for (const auto &label : m_loadedFileNames) {
         const QString source = m_sourcePathsByGroup.value(label);
@@ -73,6 +74,8 @@ SessionDocument AppController::captureSession(const QString &path) const
         signal.name = m_signals->nameAt(data->id);
         signal.color = data->color; signal.width = data->lineWidth;
         signal.style = int(data->lineStyle); signal.timeOffset = data->timeOffset;
+        for (const auto &object : m_objects) for (const auto &rule : object.rules) for (const auto &output : rule.outputs)
+            if (output.series == data->id) { signal.objectId = object.id; signal.outputId = output.id; }
         state.series.append(signal);
     }
     state.rows = m_plotRows; state.columns = m_plotColumns;
@@ -211,6 +214,7 @@ void AppController::finishSessionRestore()
     std::map<std::tuple<int, int, int>, int> savedByIdentity;
     for (int i = 0; i < state.series.size(); ++i) {
         const auto &s = state.series.at(i);
+        if (!s.objectId.isEmpty()) continue;
         savedByIdentity.emplace(std::make_tuple(s.file, s.table, s.column), i);
     }
     QVector<PlotSeriesInput> inputs;
@@ -254,6 +258,20 @@ void AppController::finishSessionRestore()
             }
         }
     }
+    if (inputs.size() != qsizetype(savedByIdentity.size())) { schemaFailure(m_pendingSessionPath); return; }
+    auto objects = state.objects;
+    for (auto &object : objects) {
+        for (auto &field : object.fields) if (field.series >= 0) field.series = savedToCurrent.at(field.series);
+        for (int r = 0; r < object.rules.size(); ++r) for (int k = 0; k < object.rules[r].outputs.size(); ++k) {
+            auto &output = object.rules[r].outputs[k]; const auto &s = state.series[output.series];
+            PlotSeriesInput input; input.id = inputs.size(); input.sourceFile = "object:" + object.id;
+            input.sourceTable = r; input.sourceColumn = k; input.sourceTableName = object.name + "/" + object.rules[r].name;
+            input.color = s.color; input.lineWidth = s.width; input.lineStyle = Qt::PenStyle(s.style);
+            input.step = object.rules[r].operation == "bits" || object.rules[r].operation == "bitfield";
+            savedToCurrent[output.series] = input.id; output.series = input.id;
+            inputs.append(input); colors.append(s.color); originalNames.append(s.originalName); groups.append(objectOutputGroup(object));
+        }
+    }
     if (inputs.size() != state.series.size() || savedToCurrent.contains(-1)) { schemaFailure(m_pendingSessionPath); return; }
     auto store = std::make_shared<PlotSeriesStore>();
     store->replaceSeries(inputs);
@@ -265,6 +283,7 @@ void AppController::finishSessionRestore()
     QScopedValueRollback<bool> cursors(m_syncingCursors, true);
     QScopedValueRollback<bool> ranges(m_syncingRanges, true);
     m_seriesStore = std::move(store);
+    cancelObjectEvaluation(); m_objects = objects; m_objectErrors.clear();
     m_signalColors = colors; m_nextColorIndex = colors.size() % signalPalette().size();
     m_loadedPaths = QSet<QString>(m_sessionSourcePaths.cbegin(), m_sessionSourcePaths.cend());
     m_loadedFileNames = labels; m_sourcePathsByGroup = pathsByGroup;
@@ -308,6 +327,7 @@ void AppController::finishSessionRestore()
     m_sessionPath = m_pendingSessionPath; emit sessionPathChanged();
     completeSessionRestore(true, QStringLiteral("已恢复会话：%1（%2 个文件，%3 个信号）")
                            .arg(QFileInfo(m_sessionPath).fileName()).arg(m_loadedFileNames.size()).arg(signalCount()));
+    scheduleObjectEvaluation();
 }
 
 namespace {
@@ -453,6 +473,7 @@ bool AppController::applyViewTemplate(const QVariant &filePath, const QVariantMa
         for (int &id : trajectory.signalIds) id = remap[id];
         auto tracks = trajectory.entries();
         for (auto &track : tracks) {
+            track.objectId.clear(); // A view template maps sources, never creates an object.
             for (int &id : track.axes) if (id >= 0) { id = remap[id]; if (trajectory.enabled && track.visible) visible.insert(id); }
             for (int &id : track.attitude.sources) if (id >= 0) {
                 id = remap[id];

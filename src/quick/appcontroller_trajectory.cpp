@@ -12,7 +12,7 @@ QVariantMap AppController::trajectoryState(int index) const
     QVariantList tracks;
     for (const auto &entry : state.entries()) tracks.append(QVariantMap{{"id", entry.id}, {"name", entry.name}, {"visible", entry.visible}, {"color", entry.color}});
     const auto &attitude = state.attitude;
-    return {{"tracks", tracks}, {"active", state.active}, {"name", state.name}, {"color", state.color}, {"width", state.width}, {"visible", state.visible},
+    return {{"tracks", tracks}, {"active", state.active}, {"objectId", state.objectId}, {"name", state.name}, {"color", state.color}, {"width", state.width}, {"visible", state.visible},
             {"attitudeMode", attitude.mode}, {"attitudeSources", QVariantList{attitude.sources[0], attitude.sources[1], attitude.sources[2], attitude.sources[3]}},
             {"radians", attitude.radians}, {"order", attitude.order}, {"scalarLast", attitude.scalarLast}, {"navigationToBody", attitude.navigationToBody},
             {"enabled", state.enabled}, {"geographic", state.geographic},
@@ -42,6 +42,7 @@ bool AppController::configureTrajectory(int index, bool enabled, int x, int y, i
         const auto &other = state.tracks[i];
         if (other.geographic != geographic && std::any_of(other.axes.cbegin(), other.axes.cend(), [](int id) { return id >= 0; })) return false;
     }
+    if (state.axes != axes || state.geographic != geographic) state.objectId.clear();
     state.enabled = enabled; state.axes = axes; state.geographic = geographic;
     for (int id : axes) if (id >= 0 && !state.signalIds.contains(id)) state.signalIds.append(id);
     m_trajectories.insert(index, state);
@@ -240,6 +241,8 @@ bool AppController::configureAttitude(int index, int mode, int a, int b, int c, 
     auto &state = m_trajectories[index];
     const std::array<int, 4> sources{{a, b, c, d}};
     for (int id : sources) if (id < -1 || (id >= 0 && !state.signalIds.contains(id))) return false;
-    state.attitude = {mode, sources, radians, scalarLast, navigationToBody, order};
+    const TrajectoryAttitude configured{mode, sources, radians, scalarLast, navigationToBody, order};
+    if (!(state.attitude == configured)) state.objectId.clear();
+    state.attitude = configured;
     refreshPlot(index, false); notifyPlotBindingsChanged(); return true;
 }

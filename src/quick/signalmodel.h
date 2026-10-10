@@ -45,6 +45,8 @@ public:
     // node (-1 when not visible). Drives the sticky hierarchy header.
     Q_INVOKABLE QVariantList ancestorPath(int modelRow) const;
     QVector<int> removeFile(const QString &fileName);
+    QVector<int> removeRowsById(const QSet<int> &ids);
+    void setSignalGroup(int row, const QString &group);
     int checkedCount() const;
     QColor signalColor(int row) const;
     double signalWidth(int row) const;

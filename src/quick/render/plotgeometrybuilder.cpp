@@ -220,6 +220,8 @@ GeometryResult PlotGeometryBuilder::build(const LodResult &lod,
                 projected.clear();
                 continue;
             }
+            if (lodSegment.step && !projected.isEmpty())
+                projected.append(QPointF(mapped.x(), projected.last().y()));
             projected.append(mapped);
         }
         emitProjected(projected);

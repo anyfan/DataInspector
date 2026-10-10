@@ -32,9 +32,11 @@ ctest --test-dir build_qt6-debug --output-on-failure
 
 ## CTest 套件
 
+`objectdata_test` 验证拆位/符号位段、表达式与时间基、对象归属和会话校验、来源重新绑定/移除、后台结果、保存恢复、阶梯短脉冲和对象管理 QML（选中名称可见、信号树绑定、自动命名、真实鼠标双击重命名、固定飞机参数保护与坐标/姿态配置）。设置 DI_OBJECT_UI_CAPTURE_DIR 可输出浅色、深色、飞机页面的离屏截图；截图需与所用 Scene Graph 后端一同记录。
+
 | 套件 | 覆盖范围 |
 | --- | --- |
-| `trajectory_test` | 时间基、缺失断线、空间简化误差/尖峰、百万点旋转成本、连续请求帧更新、投影比例/精度、经纬度投影及零定位只排除自适应、双参数航迹、屏幕方向旋转与画面中心、指针缩放（含连续放大至上限、超过四视口偏移和立即拖动）、四向平移、窗口事件路由、显示帧快照、子图可用信号隔离与局部下拉绑定/交换/解绑、小坐标轴左键旋转、原始读数、小子图布局、v1–v5 会话（含大平移往返）及源码/编译 QML 直接进入、坐标配置、真实下拉点击及绑定名称刷新 |
+| `trajectory_test` | 时间基、缺失断线、空间简化误差/尖峰、百万点旋转成本、连续请求帧更新、投影比例/精度、经纬度投影及零定位只排除自适应、双参数航迹、屏幕方向旋转与画面中心、指针缩放（含连续放大至上限、超过四视口偏移和立即拖动）、四向平移、窗口事件路由、显示帧快照、控制器来源隔离及飞机对象绑定联动、小坐标轴左键旋转、原始读数、小子图布局、v1–v5 会话（含大平移往返）及源码/编译 QML 选择飞机对象、配置折叠、对象名称及来源刷新 |
 | `trajectory_raster_test` | D3D11 等轴测/俯视/自由旋转轨迹像素与视角变化（GPU） |
 | `rendercore_test` | LOD 构建、极值索引、范围查询、几何生成、浮点桶边界 |
 | `plotitem_lod_test` | PlotItem LOD 调度、视窗投影 |
@@ -105,5 +107,9 @@ multiTrajectoryCost 使用 8 条各 100000 点合成地理路径，记录准备�
 选中加粗回归：`plotitem_selected_dense_raster_test` 使用 `--dense --narrow --selected --stepped-millis`，模拟 40 ms 采样、100 ms 平台保持的毫秒锯齿波，在 2600–3100 秒范围检查选中后的四像素线宽。`--dense-csv hmillisec.csv --narrow --selected` 对用户 p3 H_milliSec 原始列运行同一检查；`--compressed` 可同时检查共享大范围 Y 轴。CPU `denseEnvelopeUsesEffectiveStrokeWidth` 覆盖多尺度候选及两档实际线宽，要求原折线顶点完整保留。
 
 ## UI 配置复用回归
+
+飞机字段生命周期回归检查默认仅经纬高、按启用配置创建 XYZ/姿态字段、飞机→常规→飞机不增字段且名称/身份保留、常规副本恢复飞机、预置参数置顶及删除保护、关闭/重启配置复用已有字段、v10 常规预置角色会话往返。规则窗口检查 footer 只有两个按钮，避免标准按钮和自定义按钮同时出现。
+
+对象与航迹来源交互：`objectdata_test::objectManagerQml` 检查对象自动命名、真实双击重命名、切换对象后的信号树勾选隔离、真实鼠标拖到字段绑定（无需预选字段），以及展开的下拉选项在浅色/深色模式下可见。设置 `DI_OBJECT_UI_CAPTURE_DIR` 可保存离屏 software 截图。`trajectory_test::qmlModeSwitchAndSignalDialog` 在源码和编译 QML 下检查飞机对象选择、对象来源与名称更新、添加多对象航迹和样式配置。旧航迹直接来源 API 仍有控制器和内核覆盖，当前 UI 的位置及姿态来源统一通过对象编辑。
 
 `appcontroller_test::preciseCursorInputSnapsSynchronizesAndCancels` 检查原始样本吸附、ΔT、无效输入、真实双击示数/Enter/Esc 与视窗外定位。`session_test::viewTemplatesMatchRemapAndUndo` 检查换文件/换列序、仅匹配引用信号、重复/非整数映射拒绝、航迹映射、固定/自适应范围及一次撤销；现有 Main QML 用例检查匹配对话框的完成状态与应用。`trajectory_test::qmlModeSwitchAndSignalDialog` 在源码和 qmlcachegen 两种模式下检查配置折叠、画布尺寸、子图偏好隔离及游标输入。

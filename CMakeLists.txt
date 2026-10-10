@@ -98,6 +98,9 @@ set(DI_CONTROLLER_SOURCES
     ${DI_QUICK_DIR}/sessiondocument.cpp
     ${DI_QUICK_DIR}/sessiondocument.h
     ${DI_QUICK_DIR}/appcontroller_session.cpp
+    ${DI_QUICK_DIR}/appcontroller_objects.cpp
+    ${DI_QUICK_DIR}/objectdefinition.cpp
+    ${DI_QUICK_DIR}/objectdefinition.h
     ${DI_QUICK_DIR}/appcontroller.cpp
     ${DI_QUICK_DIR}/appcontroller_loading.cpp
     ${DI_QUICK_DIR}/appcontroller_image.cpp
@@ -142,6 +145,8 @@ set(DI_ICON_FILES
 
 set(DI_QML_FILES
     qml/AboutDialog.qml
+    qml/ObjectManager.qml
+    qml/ThemedComboBox.qml
     qml/Main.qml
     qml/QuickPlot.qml
     qml/TrajectoryPlot.qml
@@ -359,6 +364,16 @@ if(BUILD_TESTING)
         target_link_libraries(session_test PRIVATE di_mat)
     endif()
     di_add_test(session_test -platform offscreen)
+    add_executable(objectdata_test tests/objectdata_test.cpp)
+    target_include_directories(objectdata_test PRIVATE src/quick)
+    target_compile_definitions(objectdata_test PRIVATE DI_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    target_link_libraries(objectdata_test PRIVATE Qt6::Core Qt6::Gui Qt6::Quick Qt6::Test di_app_core)
+    di_add_icon_resources(objectdata_test)
+    qt_add_resources(objectdata_test objectdata_test_qml PREFIX "/qt/qml/DataInspector" BASE qml FILES ${DI_QML_FILES})
+    if(ENABLE_MAT)
+        target_link_libraries(objectdata_test PRIVATE di_mat)
+    endif()
+    di_add_test(objectdata_test -platform offscreen)
 
     add_executable(matwriter_test tests/matwriter_test.cpp
         ${DI_MAT_SOURCES} ${DI_QUICK_DIR}/exportvalidation.cpp)
@@ -422,7 +437,7 @@ if(BUILD_TESTING)
     target_link_libraries(plotitem_raster_test PRIVATE di_plot_items)
     add_executable(plotitem_blend_test tests/plotitem_blend_test.cpp)
     target_link_libraries(plotitem_blend_test PRIVATE di_plot_items)
-    foreach(di_controller_test appcontroller_test session_test startupfiles_test startupdrop_test trajectory_test)
+    foreach(di_controller_test appcontroller_test session_test objectdata_test startupfiles_test startupdrop_test trajectory_test)
         target_sources(${di_controller_test} PRIVATE ${DI_QUICK_DIR}/qmltypes.h)
     endforeach()
     if(ENABLE_GPU_TESTS)

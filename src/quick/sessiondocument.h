@@ -4,11 +4,13 @@
 #include <QStringList>
 #include <QVector>
 #include "render/trajectorybuilder.h"
+#include "objectdefinition.h"
 
 struct SessionSignal
 {
     int file = -1, table = -1, column = -1;
     QString tableName, originalName, name;
+    QString objectId, outputId; // Empty for a raw file column.
     QColor color;
     double width = 2.0, timeOffset = 0.0;
     int style = 1;
@@ -21,6 +23,7 @@ struct SessionCursor
 struct SessionTrajectoryEntry
 {
     QString id = QStringLiteral("trajectory-1"), name = QStringLiteral("航迹 1");
+    QString objectId; // Linked object owns the measurement bindings.
     bool geographic = true, visible = true;
     QColor color = QColor("#0072bd");
     double width = 2;
@@ -54,9 +57,10 @@ struct SessionPlot
 };
 struct SessionDocument
 {
-    static constexpr int version = 6;
+    static constexpr int version = 10;
     QStringList files; // Relative to the session document, or absolute.
     QVector<SessionSignal> series;
+    QVector<DataObject> objects;
     QVector<SessionPlot> plots{SessionPlot{}};
     int rows = 1, columns = 1, active = 0, solo = -1;
     double xMinimum = 0.0, xMaximum = 1.0;

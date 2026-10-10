@@ -130,6 +130,7 @@ static void appendSeriesLod(const PlotSeriesData &series,
     int currentBucket = -1;
     std::optional<IndexedPoint> minimum;
     std::optional<IndexedPoint> maximum;
+    std::optional<IndexedPoint> stepFirst, stepLast;
     qsizetype bucketSamples = 0;
     double firstX = 0.0, lastX = 0.0;
     double lastY = 0.0;
@@ -152,7 +153,16 @@ static void appendSeriesLod(const PlotSeriesData &series,
                 buckets.append({{firstX, lastX, current.points.size()},
                                 minimum->point.y(), maximum->point.y(), firstY, lastY,
                                 totalVariation, bucketSamples, firstDirection, direction, reversals});
-            appendReducedBucket(current.points, *minimum, *maximum);
+            if (series.step) {
+                QVector<IndexedPoint> kept{*stepFirst, *minimum, *maximum, *stepLast};
+                for (const auto &point : {*minimum, *maximum}) {
+                    if (point.index > stepFirst->index) kept.append({series.pointAt(point.index - 1), point.index - 1});
+                    if (point.index < stepLast->index) kept.append({series.pointAt(point.index + 1), point.index + 1});
+                }
+                std::sort(kept.begin(), kept.end(), [](const auto &a, const auto &b) { return a.index < b.index; });
+                qsizetype previous = -1;
+                for (const auto &point : kept) if (point.index != previous) { current.points.append(point.point); previous = point.index; }
+            } else appendReducedBucket(current.points, *minimum, *maximum);
         }
         bucketSamples = 0;
         direction = 0;
@@ -161,13 +171,14 @@ static void appendSeriesLod(const PlotSeriesData &series,
         totalVariation = 0.0;
         minimum.reset();
         maximum.reset();
+        stepFirst.reset(); stepLast.reset();
     };
     auto flushSegment = [&]() {
         flushBucket();
         // A cycle can straddle pixel buckets at intermediate zoom. Classify
         // oscillation at several bounded neighborhood sizes, then supplement
         // each bucket with its own extrema (never spread neighboring peaks).
-        for (qsizetype i = 0; i < buckets.size(); ++i) {
+        for (qsizetype i = 0; !series.step && i < buckets.size(); ++i) {
             if ((i & 1023) == 0 && cancelled && cancelled->load()) return;
             const auto &candidate = buckets[i];
             if (candidate.minimum == candidate.maximum
@@ -240,6 +251,8 @@ static void appendSeriesLod(const PlotSeriesData &series,
         }
 
         const IndexedPoint candidate{point, index};
+        if (!stepFirst) stepFirst = candidate;
+        stepLast = candidate;
         if (bucketSamples > 0 && point.y() != lastY) {
             totalVariation += qAbs(point.y() - lastY);
             const int nextDirection = point.y() > lastY ? 1 : -1;
@@ -277,9 +290,12 @@ LodResult PlotLodBuilder::build(const PlotSeriesSnapshot &snapshot,
         || key.bucketCount <= 0)
         return result;
 
-    for (const PlotSeriesDataPtr &series : snapshot.series)
-        if (series)
-            appendSeriesLod(*series, key, result.segments, cancelled);
+    for (const PlotSeriesDataPtr &series : snapshot.series) {
+        if (!series) continue;
+        const qsizetype first = result.segments.size();
+        appendSeriesLod(*series, key, result.segments, cancelled);
+        for (qsizetype i = first; i < result.segments.size(); ++i) result.segments[i].step = series->step;
+    }
     return result;
 }
 

@@ -33,6 +33,7 @@ struct LodSegment
     double lineWidth = 0.0;
     Qt::PenStyle lineStyle = Qt::SolidLine;
     QVector<LodDenseBucket> denseBuckets;
+    bool step = false;
 };
 
 struct LodResult

@@ -30,6 +30,7 @@ struct PlotSeriesInput
     int sourceTable = -1;
     int sourceColumn = -1;
     QString sourceTableName;
+    bool step = false;
     PlotRangeIndexPtr rangeIndex;
 };
 
@@ -49,6 +50,7 @@ struct PlotSeriesData
     int sourceTable = -1;
     int sourceColumn = -1;
     QString sourceTableName;
+    bool step = false;
     PlotRangeIndexPtr rangeIndex;
 
     qsizetype sampleCount() const;
@@ -77,6 +79,8 @@ class PlotSeriesStore final
 public:
     void replaceSeries(const QVector<PlotSeriesInput> &inputs);
     void appendSeries(const QVector<PlotSeriesInput> &inputs);
+    // Pre-indexed immutable computed samples; preserve current GUI pen settings.
+    void publishComputed(const QVector<PlotSeriesDataPtr> &series);
     void updateSeriesPen(PlotSeriesId id, const QColor &color,
                          double lineWidth, Qt::PenStyle lineStyle);
     void removeSeries(const QSet<PlotSeriesId> &ids);

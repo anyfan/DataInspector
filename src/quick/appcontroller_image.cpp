@@ -14,7 +14,7 @@ bool AppController::exportPlotImage(QObject *object, const QVariant &filePath, i
     auto *item = qobject_cast<QQuickItem *>(object);
     const QUrl url = filePath.toUrl();
     QString path = url.isLocalFile() ? url.toLocalFile() : filePath.toString();
-    if (m_loading || m_exporting || m_restoringSession || !m_exporter || !item || !item->window()
+    if (m_loading || m_exporting || m_restoringSession || deriving() || !m_exporter || !item || !item->window()
         || !item->isVisible() || item->width() <= 0 || item->height() <= 0 || path.isEmpty()
         || scale < 1 || scale > 4) return false;
     if (!path.endsWith(".png", Qt::CaseInsensitive)) path += QStringLiteral(".png");

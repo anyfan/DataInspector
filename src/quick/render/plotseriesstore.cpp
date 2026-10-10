@@ -19,6 +19,7 @@ PlotSeriesDataPtr makeSeriesData(const PlotSeriesInput &input, quint64 version)
     data->sourceTable = input.sourceTable;
     data->sourceColumn = input.sourceColumn;
     data->sourceTableName = input.sourceTableName;
+    data->step = input.step;
     data->timeOffset = input.timeOffset;
 
     if (!input.points.isEmpty()) {
@@ -126,6 +127,21 @@ void PlotSeriesStore::appendSeries(const QVector<PlotSeriesInput> &inputs)
     m_series = std::move(appended);
     rebuildPositions();
     m_generation = nextGeneration;
+}
+
+void PlotSeriesStore::publishComputed(const QVector<PlotSeriesDataPtr> &series)
+{
+    if (series.isEmpty()) return;
+    ++m_generation;
+    for (const auto &source : series) {
+        const auto position = m_positions.constFind(source->id);
+        if (position == m_positions.cend()) continue;
+        const auto current = m_series[*position];
+        auto data = std::make_shared<PlotSeriesData>(*source);
+        data->version = m_generation;
+        data->color = current->color; data->lineWidth = current->lineWidth; data->lineStyle = current->lineStyle;
+        m_series[*position] = std::move(data);
+    }
 }
 
 void PlotSeriesStore::updateSeriesPen(PlotSeriesId id, const QColor &color,
