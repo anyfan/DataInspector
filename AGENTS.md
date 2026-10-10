@@ -105,5 +105,7 @@ ctest --test-dir build_qt6-debug --output-on-failure
 
 ## 验证边界（诚实声明）
 
+- **已评估并撤回的优化**：渲染锁外快照及多级冷 LOD 摘要试验见 [撤回决定与基准](docs/dev-log/render-lock-cold-lod-2026-10-09.md)，原始数据见 [JSON](docs/dev-log/render-lod-benchmark-2026-10-09.json)。局部视窗约慢 13%，增加索引内存/准备成本，整体交互收益不稳定；用户决定撤回。后续提出相同方向前必须先读记录，说明如何解决已测退化并提供新的对比证据，不要把它当作尚未尝试的优化建议，也不要仅凭全局冷 LOD 收益恢复实现。此结论针对该试验，不代表所有优化方向无效。
+
 - 离屏测试/离屏启动 ≠ 真实 GPU 视觉回归；需要时用 `-DENABLE_GPU_TESTS=ON` 且需硬件 Scene Graph 后端。
 - `docs/dev-log/` 里的开发记录与历史归档计划均为历史，勿据此判断现状。

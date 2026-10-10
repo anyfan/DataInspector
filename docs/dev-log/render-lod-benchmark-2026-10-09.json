@@ -1,0 +1,749 @@
+{
+  "date": "2026-10-09",
+  "baseline_revision": "20a345269216c74c87cb111295262c49e4867d68",
+  "branch": "codex/render-snapshot-index-lod",
+  "qt": "6.8.3",
+  "compiler": "LLVM-MinGW Clang 17.0.6",
+  "config": "Release -O3 -DNDEBUG",
+  "logical_cpus": 20,
+  "processor_identifier": "Intel64 Family 6 Model 186 Stepping 2, GenuineIntel",
+  "notes": [
+    "CPU: one signal, 1200 buckets, 40 direct requests, result-cache cold, resident arrays/index; work counters collected outside timing.",
+    "Matched CPU baseline uses original range/LOD algorithms with diagnostic signature adapters and empty current bookkeeping fields; no summary tree.",
+    "Initial baseline index bytes used size rather than capacity; matched measurements use capacity.",
+    "Index preparation includes a background-thread launch; one observation per process. Timing median is upper middle, P95 nearest rank.",
+    "Lock: four signals, normalization/amplitude sorting, 1200x600, 64 Y-only paints, existing LOD reused. Mutex competition and window GUI dispatch are distinct.",
+    "Window sync is CPU scheduling, not physical input-to-present latency or GPU frame time. graphics_api=4 means D3D11."
+  ],
+  "initial_cpu_baseline": {
+    "1000000-1": {
+      "build": "Release",
+      "cache_bytes": 98536,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0001,
+        "p95_ms": 0.0002
+      },
+      "geometry": {
+        "median_ms": 1.382,
+        "p95_ms": 1.6216
+      },
+      "index_bytes": 229400,
+      "lod_cold": {
+        "median_ms": 19.354,
+        "p95_ms": 21.8579
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 34516992,
+      "qt_version": "6.8.3",
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 16.3215,
+      "synthetic_generation_ms": 21.5066,
+      "total_samples": 1000000,
+      "tree_build_ms": 0.1403,
+      "tree_search": {
+        "median_ms": 0.0015,
+        "p95_ms": 0.0022
+      },
+      "tree_signals": 1,
+      "view_fraction": 1,
+      "working_set_bytes": 33906688
+    },
+    "1000000-0.01": {
+      "build": "Release",
+      "cache_bytes": 2632000,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0007,
+        "p95_ms": 0.0008
+      },
+      "geometry": {
+        "median_ms": 1.1735,
+        "p95_ms": 2.5388
+      },
+      "index_bytes": 229400,
+      "lod_cold": {
+        "median_ms": 0.3053,
+        "p95_ms": 0.5972
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 35823616,
+      "qt_version": "6.8.3",
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 23.6073,
+      "synthetic_generation_ms": 42.4948,
+      "total_samples": 1000000,
+      "tree_build_ms": 0.1061,
+      "tree_search": {
+        "median_ms": 0.0022,
+        "p95_ms": 0.0031
+      },
+      "tree_signals": 1,
+      "view_fraction": 0.01,
+      "working_set_bytes": 35364864
+    },
+    "10000000-1": {
+      "build": "Release",
+      "cache_bytes": 98536,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0001,
+        "p95_ms": 0.0001
+      },
+      "geometry": {
+        "median_ms": 1.4613,
+        "p95_ms": 1.7985
+      },
+      "index_bytes": 3670040,
+      "lod_cold": {
+        "median_ms": 190.4471,
+        "p95_ms": 218.5258
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 182116352,
+      "qt_version": "6.8.3",
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 217.7818,
+      "synthetic_generation_ms": 239.5854,
+      "total_samples": 10000000,
+      "tree_build_ms": 0.0946,
+      "tree_search": {
+        "median_ms": 0.0015,
+        "p95_ms": 0.002
+      },
+      "tree_signals": 1,
+      "view_fraction": 1,
+      "working_set_bytes": 181260288
+    },
+    "10000000-0.01": {
+      "build": "Release",
+      "cache_bytes": 2632000,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0007,
+        "p95_ms": 0.0009
+      },
+      "geometry": {
+        "median_ms": 1.1073,
+        "p95_ms": 1.5673
+      },
+      "index_bytes": 3670040,
+      "lod_cold": {
+        "median_ms": 1.9979,
+        "p95_ms": 2.7202
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 183173120,
+      "qt_version": "6.8.3",
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 161.049,
+      "synthetic_generation_ms": 241.7837,
+      "total_samples": 10000000,
+      "tree_build_ms": 0.0997,
+      "tree_search": {
+        "median_ms": 0.0022,
+        "p95_ms": 0.0031
+      },
+      "tree_signals": 1,
+      "view_fraction": 0.01,
+      "working_set_bytes": 182882304
+    }
+  },
+  "matched_cpu_baseline": {
+    "1000000-1": {
+      "build": "Release",
+      "cache_bytes": 98536,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0001,
+        "p95_ms": 0.0002
+      },
+      "geometry": {
+        "median_ms": 1.6021,
+        "p95_ms": 3.6914
+      },
+      "index_bytes": 262200,
+      "index_prepare_ms": 16.1686,
+      "lod_cold": {
+        "median_ms": 25.2565,
+        "p95_ms": 42.1025
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 34758656,
+      "qt_version": "6.8.3",
+      "raw_samples_per_request": 1000000,
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 5.0093,
+      "summaries_per_request": 0,
+      "synthetic_generation_ms": 25.6083,
+      "total_samples": 1000000,
+      "tree_build_ms": 0.1225,
+      "tree_search": {
+        "median_ms": 0.0016,
+        "p95_ms": 0.0021
+      },
+      "tree_signals": 1,
+      "view_fraction": 1,
+      "working_set_bytes": 34000896
+    },
+    "1000000-0.01": {
+      "build": "Release",
+      "cache_bytes": 2632000,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0007,
+        "p95_ms": 0.0009
+      },
+      "geometry": {
+        "median_ms": 1.0812,
+        "p95_ms": 1.3781
+      },
+      "index_bytes": 262200,
+      "index_prepare_ms": 18.2083,
+      "lod_cold": {
+        "median_ms": 0.2929,
+        "p95_ms": 0.4415
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 35897344,
+      "qt_version": "6.8.3",
+      "raw_samples_per_request": 10001.975,
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 4.4079,
+      "summaries_per_request": 0,
+      "synthetic_generation_ms": 30.6354,
+      "total_samples": 1000000,
+      "tree_build_ms": 0.1001,
+      "tree_search": {
+        "median_ms": 0.0021,
+        "p95_ms": 0.0031
+      },
+      "tree_signals": 1,
+      "view_fraction": 0.01,
+      "working_set_bytes": 35586048
+    },
+    "10000000-1": {
+      "build": "Release",
+      "cache_bytes": 98536,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0003,
+        "p95_ms": 0.0003
+      },
+      "geometry": {
+        "median_ms": 2.7178,
+        "p95_ms": 4.5872
+      },
+      "index_bytes": 4194408,
+      "index_prepare_ms": 171.6894,
+      "lod_cold": {
+        "median_ms": 383.9226,
+        "p95_ms": 562.1715
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 182263808,
+      "qt_version": "6.8.3",
+      "raw_samples_per_request": 10000000,
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 40.4984,
+      "summaries_per_request": 0,
+      "synthetic_generation_ms": 270.1947,
+      "total_samples": 10000000,
+      "tree_build_ms": 0.2272,
+      "tree_search": {
+        "median_ms": 0.003,
+        "p95_ms": 0.0038
+      },
+      "tree_signals": 1,
+      "view_fraction": 1,
+      "working_set_bytes": 181432320
+    },
+    "10000000-0.01": {
+      "build": "Release",
+      "cache_bytes": 2632000,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0007,
+        "p95_ms": 0.0009
+      },
+      "geometry": {
+        "median_ms": 1.0401,
+        "p95_ms": 1.6507
+      },
+      "index_bytes": 4194408,
+      "index_prepare_ms": 143.4531,
+      "lod_cold": {
+        "median_ms": 2.1664,
+        "p95_ms": 3.0314
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 183435264,
+      "qt_version": "6.8.3",
+      "raw_samples_per_request": 100001.975,
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 37.4983,
+      "summaries_per_request": 0,
+      "synthetic_generation_ms": 296.4104,
+      "total_samples": 10000000,
+      "tree_build_ms": 0.1106,
+      "tree_search": {
+        "median_ms": 0.0021,
+        "p95_ms": 0.0031
+      },
+      "tree_signals": 1,
+      "view_fraction": 0.01,
+      "working_set_bytes": 183091200
+    }
+  },
+  "optimized_cpu": {
+    "1000000-1": {
+      "build": "Release",
+      "cache_bytes": 98536,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0001,
+        "p95_ms": 0.0001
+      },
+      "geometry": {
+        "median_ms": 1.4719,
+        "p95_ms": 1.8849
+      },
+      "index_bytes": 1572920,
+      "index_prepare_ms": 24.0473,
+      "lod_cold": {
+        "median_ms": 3.5772,
+        "p95_ms": 4.5613
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 36102144,
+      "qt_version": "6.8.3",
+      "raw_samples_per_request": 155155,
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 4.0214,
+      "summaries_per_request": 3155,
+      "synthetic_generation_ms": 20.1284,
+      "total_samples": 1000000,
+      "tree_build_ms": 0.1075,
+      "tree_search": {
+        "median_ms": 0.0016,
+        "p95_ms": 0.0019
+      },
+      "tree_signals": 1,
+      "view_fraction": 1,
+      "working_set_bytes": 35295232
+    },
+    "1000000-0.01": {
+      "build": "Release",
+      "cache_bytes": 2632000,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0009,
+        "p95_ms": 0.0011
+      },
+      "geometry": {
+        "median_ms": 1.2457,
+        "p95_ms": 1.4853
+      },
+      "index_bytes": 1572920,
+      "index_prepare_ms": 24.1621,
+      "lod_cold": {
+        "median_ms": 0.3297,
+        "p95_ms": 0.4467
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 37285888,
+      "qt_version": "6.8.3",
+      "raw_samples_per_request": 10001.975,
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 3.6435,
+      "summaries_per_request": 0,
+      "synthetic_generation_ms": 20.5747,
+      "total_samples": 1000000,
+      "tree_build_ms": 0.1141,
+      "tree_search": {
+        "median_ms": 0.0026,
+        "p95_ms": 0.0037
+      },
+      "tree_signals": 1,
+      "view_fraction": 0.01,
+      "working_set_bytes": 36925440
+    },
+    "10000000-1": {
+      "build": "Release",
+      "cache_bytes": 98536,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0002,
+        "p95_ms": 0.0002
+      },
+      "geometry": {
+        "median_ms": 2.618,
+        "p95_ms": 3.1965
+      },
+      "index_bytes": 25165928,
+      "index_prepare_ms": 245.7664,
+      "lod_cold": {
+        "median_ms": 10.954,
+        "p95_ms": 12.7345
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 203243520,
+      "qt_version": "6.8.3",
+      "raw_samples_per_request": 157621,
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 46.8905,
+      "summaries_per_request": 7221,
+      "synthetic_generation_ms": 241.3103,
+      "total_samples": 10000000,
+      "tree_build_ms": 0.2157,
+      "tree_search": {
+        "median_ms": 0.0032,
+        "p95_ms": 0.0042
+      },
+      "tree_signals": 1,
+      "view_fraction": 1,
+      "working_set_bytes": 202403840
+    },
+    "10000000-0.01": {
+      "build": "Release",
+      "cache_bytes": 2632000,
+      "cache_hits": 40,
+      "cache_lookup": {
+        "median_ms": 0.0011,
+        "p95_ms": 0.0013
+      },
+      "geometry": {
+        "median_ms": 1.3441,
+        "p95_ms": 1.6676
+      },
+      "index_bytes": 25165928,
+      "index_prepare_ms": 246.7895,
+      "lod_cold": {
+        "median_ms": 2.448,
+        "p95_ms": 3.126
+      },
+      "logical_cpus": 20,
+      "peak_working_set_bytes": 204316672,
+      "qt_version": "6.8.3",
+      "raw_samples_per_request": 100001.975,
+      "scope": "CPU timings; no GPU frame-rate measurement",
+      "series": 1,
+      "store_index_ms": 35.3367,
+      "summaries_per_request": 0,
+      "synthetic_generation_ms": 311.7131,
+      "total_samples": 10000000,
+      "tree_build_ms": 0.1151,
+      "tree_search": {
+        "median_ms": 0.0022,
+        "p95_ms": 0.0032
+      },
+      "tree_signals": 1,
+      "view_fraction": 0.01,
+      "working_set_bytes": 204066816
+    }
+  },
+  "stage1_lock_baseline": {
+    "1000000": {
+      "geometry": {
+        "median_ms": 5.2459,
+        "observations": 64,
+        "p95_ms": 8.1193
+      },
+      "mutex_access_wait": {
+        "median_ms": 6.0284,
+        "observations": 64,
+        "p95_ms": 9.5732
+      },
+      "render_cpu": {
+        "median_ms": 6.0332,
+        "observations": 64,
+        "p95_ms": 9.8568
+      },
+      "render_lock": {
+        "median_ms": 6.0102,
+        "observations": 64,
+        "p95_ms": 9.7735
+      },
+      "samples_per_series": 1000000,
+      "scope": "Synthetic mutex contention; CPU QSG submission, no event-loop latency or GPU timing",
+      "series": 4
+    },
+    "10000000": {
+      "geometry": {
+        "median_ms": 6.8877,
+        "observations": 64,
+        "p95_ms": 8.2934
+      },
+      "mutex_access_wait": {
+        "median_ms": 7.9981,
+        "observations": 64,
+        "p95_ms": 9.5518
+      },
+      "render_cpu": {
+        "median_ms": 8.0055,
+        "observations": 64,
+        "p95_ms": 9.8378
+      },
+      "render_lock": {
+        "median_ms": 7.9455,
+        "observations": 64,
+        "p95_ms": 9.7568
+      },
+      "samples_per_series": 10000000,
+      "scope": "Synthetic mutex contention; CPU QSG submission, no event-loop latency or GPU timing",
+      "series": 4
+    }
+  },
+  "stage1_snapshot_only": {
+    "1000000": {
+      "geometry": {
+        "median_ms": 7.8687,
+        "observations": 64,
+        "p95_ms": 12.6183
+      },
+      "mutex_access_wait": {
+        "median_ms": 0.0004,
+        "observations": 64,
+        "p95_ms": 0.0009
+      },
+      "render_cpu": {
+        "median_ms": 9.1012,
+        "observations": 64,
+        "p95_ms": 14.3756
+      },
+      "render_lock": {
+        "median_ms": 0.0015,
+        "observations": 64,
+        "p95_ms": 0.0025
+      },
+      "samples_per_series": 1000000,
+      "scope": "Synthetic mutex contention; CPU QSG submission, no event-loop latency or GPU timing",
+      "series": 4
+    },
+    "10000000": {
+      "geometry": {
+        "median_ms": 7.0445,
+        "observations": 64,
+        "p95_ms": 12.0313
+      },
+      "mutex_access_wait": {
+        "median_ms": 0.0003,
+        "observations": 64,
+        "p95_ms": 0.001
+      },
+      "render_cpu": {
+        "median_ms": 8.3471,
+        "observations": 64,
+        "p95_ms": 14.1438
+      },
+      "render_lock": {
+        "median_ms": 0.0013,
+        "observations": 64,
+        "p95_ms": 0.0024
+      },
+      "samples_per_series": 10000000,
+      "scope": "Synthetic mutex contention; CPU QSG submission, no event-loop latency or GPU timing",
+      "series": 4
+    }
+  },
+  "window_lock_baseline": {
+    "1000000": {
+      "geometry": {
+        "median_ms": 5.5606,
+        "observations": 64,
+        "p95_ms": 6.8197
+      },
+      "graphics_api": 4,
+      "gui_dispatch_wait": {
+        "median_ms": 17.3371,
+        "observations": 64,
+        "p95_ms": 26.4971
+      },
+      "mutex_access_wait": {
+        "median_ms": 6.3655,
+        "observations": 64,
+        "p95_ms": 7.9324
+      },
+      "render_cpu": {
+        "median_ms": 6.4923,
+        "observations": 64,
+        "p95_ms": 7.9726
+      },
+      "render_lock": {
+        "median_ms": 6.3344,
+        "observations": 64,
+        "p95_ms": 7.8727
+      },
+      "samples_per_series": 1000000,
+      "scope": "Synthetic mutex contention; CPU QSG submission, no event-loop latency or GPU timing",
+      "series": 4,
+      "window_geometry": {
+        "median_ms": 6.6287,
+        "observations": 64,
+        "p95_ms": 9.5049
+      },
+      "window_render_lock": {
+        "median_ms": 7.9353,
+        "observations": 64,
+        "p95_ms": 10.9974
+      },
+      "window_scope": "Queued GUI access during real QQuickWindow sync; not device-input-to-present latency"
+    },
+    "10000000": {
+      "geometry": {
+        "median_ms": 9.9867,
+        "observations": 64,
+        "p95_ms": 12.7169
+      },
+      "graphics_api": 4,
+      "gui_dispatch_wait": {
+        "median_ms": 21.7509,
+        "observations": 64,
+        "p95_ms": 32.3331
+      },
+      "mutex_access_wait": {
+        "median_ms": 11.5726,
+        "observations": 64,
+        "p95_ms": 14.3448
+      },
+      "render_cpu": {
+        "median_ms": 11.6163,
+        "observations": 64,
+        "p95_ms": 14.467
+      },
+      "render_lock": {
+        "median_ms": 11.5031,
+        "observations": 64,
+        "p95_ms": 14.3547
+      },
+      "samples_per_series": 10000000,
+      "scope": "Synthetic mutex contention; CPU QSG submission, no event-loop latency or GPU timing",
+      "series": 4,
+      "window_geometry": {
+        "median_ms": 9.6621,
+        "observations": 64,
+        "p95_ms": 13.1573
+      },
+      "window_render_lock": {
+        "median_ms": 11.1604,
+        "observations": 64,
+        "p95_ms": 15.8501
+      },
+      "window_scope": "Queued GUI access during real QQuickWindow sync; not device-input-to-present latency"
+    }
+  },
+  "final_lock": {
+    "1000000": {
+      "geometry": {
+        "median_ms": 4.7844,
+        "observations": 64,
+        "p95_ms": 9.7674
+      },
+      "graphics_api": 4,
+      "gui_dispatch_wait": {
+        "median_ms": 11.6022,
+        "observations": 64,
+        "p95_ms": 26.4831
+      },
+      "mutex_access_wait": {
+        "median_ms": 0.0003,
+        "observations": 64,
+        "p95_ms": 0.0007
+      },
+      "render_cpu": {
+        "median_ms": 5.5604,
+        "observations": 64,
+        "p95_ms": 11.2786
+      },
+      "render_lock": {
+        "median_ms": 0.0007,
+        "observations": 64,
+        "p95_ms": 0.002
+      },
+      "samples_per_series": 1000000,
+      "scope": "Synthetic mutex contention; CPU QSG submission, no event-loop latency or GPU timing",
+      "series": 4,
+      "window_geometry": {
+        "median_ms": 6.2733,
+        "observations": 64,
+        "p95_ms": 8.8678
+      },
+      "window_render_lock": {
+        "median_ms": 0.0008,
+        "observations": 64,
+        "p95_ms": 0.002
+      },
+      "window_scope": "Queued GUI access during real QQuickWindow sync; not device-input-to-present latency"
+    },
+    "10000000": {
+      "geometry": {
+        "median_ms": 10.1888,
+        "observations": 64,
+        "p95_ms": 17.9376
+      },
+      "graphics_api": 4,
+      "gui_dispatch_wait": {
+        "median_ms": 26.5178,
+        "observations": 64,
+        "p95_ms": 27.5584
+      },
+      "mutex_access_wait": {
+        "median_ms": 0.0004,
+        "observations": 64,
+        "p95_ms": 0.0007
+      },
+      "render_cpu": {
+        "median_ms": 11.7155,
+        "observations": 64,
+        "p95_ms": 19.7203
+      },
+      "render_lock": {
+        "median_ms": 0.0016,
+        "observations": 64,
+        "p95_ms": 0.0022
+      },
+      "samples_per_series": 10000000,
+      "scope": "Synthetic mutex contention; CPU QSG submission, no event-loop latency or GPU timing",
+      "series": 4,
+      "window_geometry": {
+        "median_ms": 9.0405,
+        "observations": 64,
+        "p95_ms": 14.3769
+      },
+      "window_render_lock": {
+        "median_ms": 0.0012,
+        "observations": 64,
+        "p95_ms": 0.0019
+      },
+      "window_scope": "Queued GUI access during real QQuickWindow sync; not device-input-to-present latency"
+    }
+  },
+  "validation": {
+    "gpu_dense_edges": "0/0 all 10 phases",
+    "release_ctest": "12/12 passed, 76.55s",
+    "gpu_adapter": "Intel Iris Xe, vendor 0x8086, device 0xA7A0",
+    "debug_ctest": "12/12 passed, 90.21s",
+    "gpu_backend": "D3D11, threaded, MSAA 4",
+    "gpu_exit_codes": {
+      "dense": 0,
+      "blend": 0,
+      "raster": 0,
+      "compressed": 0
+    },
+    "debug_qmllint": "zero warnings",
+    "baseline_ctest": "11/11 passed after writable TEMP/TMP, 67.90s",
+    "release_qmllint": "zero warnings",
+    "final_guard_targeted": "Release/Debug rendercore, render_snapshot, plotitem_lod: 3/3 passed, 7.93/14.23s; rebuilt and qmllint zero warnings"
+  }
+}
