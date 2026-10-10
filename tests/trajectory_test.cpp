@@ -1,13 +1,13 @@
-#include "appcontroller.h"
-#include "plotitem.h"
-#include "trajectoryitem.h"
+#include "controller/appcontroller.h"
+#include "items/plotitem.h"
+#include "items/trajectoryitem.h"
 #include "qmltypes.h"
 #include <QtTest>
 #include <QTemporaryDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
-#include "dataloadworker.h"
+#include "io/dataloadworker.h"
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQuickWindow>

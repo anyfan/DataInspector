@@ -1,5 +1,5 @@
-#include "signalmetadata.h"
-#include "signalmodel.h"
+#include "models/signalmetadata.h"
+#include "models/signalmodel.h"
 
 #include <QtTest>
 #include <QAbstractItemModelTester>

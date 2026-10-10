@@ -54,6 +54,8 @@ cmake --build --preset qt6-clang-debug
 
 ## 项目结构
 
+详细目录职责与本地文件约定见[工程目录](docs/dev/project-layout.md)，第三方 MAT 依赖见[依赖清单](third_libs/README.md)。
+
 ```text
 qml/
   Main.qml                 主窗口、工具栏、拖拽协调、子图网格
@@ -65,40 +67,39 @@ qml/
   PlotAxisArea.qml         X/Y 轴留白区悬停/框选/滚轮
   Splash.qml               启动画面
 src/quick/
-  main.cpp                 入口、Splash→Main 加载顺序
-  appcontroller.*          控制器（按职责拆分 loading/plots/trajectory/session）
-  sessiondocument.*        会话 JSON 校验与原子读写
-  viewconfiguration.*      会话/模板共用视图配置
-  viewtemplatedocument.*   独立模板格式与旧版迁移
-  appcontroller_templates.cpp  模板匹配、应用和撤销
-  appcontroller_objectevaluation.cpp  规则增量计算调度
-  signalmodel.*            QML 信号树模型
-  signalmetadata.*         信号元数据
-  startupfiles.*           命令行参数解析
-  dataloadworker.*         后台 CSV/TXT/MAT 解析
-  xlsxreader.*             XLSX 解析
-  dataexportworker.*       后台导出调度
-  xlsxwriter.*             XLSX 写入
-  matwriter.* / mat5streamwriter.*  MAT5 流式写入
-  exporttable.h / exportvalidation.cpp  导出共用结构与时间基校验
-  plotitem.*               Scene Graph 曲线项、视图交互、节点提交
-  plotitem_cursor.cpp      原始样本游标导航、读数
-  plotitem_interaction.cpp 拾取、平移、滚轮与拖动
-  plotitem_render.cpp      QSG 节点、几何上传、曲线层级
-  trajectoryitem.*         后台轨迹投影、Scene Graph 绘制与相机交互
-  appcontroller_trajectory.cpp  轨迹绑定与时间联动
-  qmltypes.h               QML_FOREIGN 类型声明
-  render/
-    trajectorybuilder.*    时间基校验、经纬度投影、空间 LOD 与相机投影
-    plotseriesstore.*      不可变原始序列 Store、代际号
-    plotrangeindex.*       512 样本分块极值 + 线段树
-    plotlodbuilder.*       视窗/屏幕桶 min/max LOD
-    plotlodscheduler.*     后台 LOD 调度（最多 2 线程）
-    plotgeometrybuilder.*  LOD → 屏幕空间三角带
-    plotaxisutils.*        浮点刻度生成、适应边距
+  main.cpp                    入口、Splash → Main 加载顺序
+  startupfiles.*              启动参数解析
+  qmltypes.h                  QML_FOREIGN 类型注册
+  controller/                 AppController 按职责拆分的实现
+    appcontroller.*           生命周期与公共接口
+    appcontroller_loading.cpp 加载/移除与导出入口
+    appcontroller_plots.cpp   子图、布局、自适应
+    appcontroller_trajectory.cpp  航迹绑定与时间联动
+    appcontroller_session.cpp 完整会话恢复
+    appcontroller_templates.cpp  模板匹配、应用、撤销
+    appcontroller_objects.cpp 对象定义操作
+    appcontroller_objectevaluation.cpp  规则增量计算调度
+    appcontroller_image.cpp / appcontroller_about.cpp  图片与关于信息
+  io/                         后台加载/导出、CSV/TXT/MAT/XLSX 读写
+    dataloadworker.* / dataexportworker.*  工作线程调度
+    xlsxreader.* / xlsxwriter.*  XLSX 读写
+    matwriter.* / mat5streamwriter.*  MAT 流式写入
+    loadedtable.h / exporttable.h / exportvalidation.cpp  共用数据与校验
+  models/                     信号树、元数据、对象定义与派生规则
+    signalmodel.* / signalmetadata.* / objectdefinition.*
+  state/                      会话与模板值配置、JSON 校验和原子读写
+    sessiondocument.* / viewconfiguration.* / viewtemplatedocument.*
+    jsonvalidation.h
+  items/                      Qt Quick Scene Graph 项及交互
+    plotitem.* / plotitem_cursor.cpp / plotitem_interaction.cpp / plotitem_render.cpp
+    trajectoryitem.*
+  render/                     无 QQuickItem 依赖的绘图内核
+    plotseriesstore.* / plotrangeindex.* / plotlodbuilder.* / plotlodscheduler.*
+    plotgeometrybuilder.* / plotaxisutils.* / trajectorybuilder.*
 tests/                     CTest 套件（详见 docs/dev/testing.md）
 tools/deploy_qt6.ps1       Windows 部署脚本
-assets/                    图标、.rc、.manifest
+assets/                    当前图标、.rc、.manifest
+third_libs/                MAT 依赖与 README 清单
 docs/                      Wiki（本文件的详细内容都在这里）
 ```
 

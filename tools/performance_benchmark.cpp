@@ -1,5 +1,5 @@
-#include "dataloadworker.h"
-#include "signalmodel.h"
+#include "io/dataloadworker.h"
+#include "models/signalmodel.h"
 #include "render/plotgeometrybuilder.h"
 #include <QCoreApplication>
 #include <QCommandLineParser>

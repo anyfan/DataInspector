@@ -1,4 +1,4 @@
-#include "appcontroller.h"
+#include "controller/appcontroller.h"
 #include "startupfiles.h"
 
 #include <QDir>

@@ -106,3 +106,7 @@
 - [状态与计算债务清理（剩余三项，2026-10-10）](state-debt-cleanup-completion-2026-10-10.md)：规则依赖增量计算、独立模板 v2 与旧版迁移、QML/控制器拆分和完整回归。
 
 - [v0.2.0 发布验证](release-v0.2.0-2026-10-10.md)：Release 构建、静态检查、离屏回归及发布边界。
+
+- [工程目录整理（2026-10-10）](project-directory-cleanup-2026-10-10.md)：清理无调用方依赖/资源、本机工具及旧包归档、目录导航和忽略规则。
+
+- [C++ 源码按职责整理（2026-10-10）](src-layout-cleanup-2026-10-10.md)：controller/io/models/state/items 分组、显式头文件路径、CMake 与导航同步。

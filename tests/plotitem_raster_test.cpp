@@ -1,4 +1,4 @@
-#include "plotitem.h"
+#include "items/plotitem.h"
 #include <QGuiApplication>
 #include <QQuickWindow>
 #include <QTimer>

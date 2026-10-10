@@ -1,8 +1,8 @@
-#include "appcontroller.h"
-#include "plotitem.h"
+#include "controller/appcontroller.h"
+#include "items/plotitem.h"
 #include "qmltypes.h"
-#include "xlsxreader.h"
-#include "xlsxwriter.h"
+#include "io/xlsxreader.h"
+#include "io/xlsxwriter.h"
 
 #include <QDir>
 #include <QClipboard>

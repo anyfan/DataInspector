@@ -1,10 +1,10 @@
 #pragma once
 
 #include <QtQml/qqmlregistration.h>
-#include "appcontroller.h"
-#include "plotitem.h"
-#include "trajectoryitem.h"
-#include "signalmodel.h"
+#include "controller/appcontroller.h"
+#include "items/plotitem.h"
+#include "items/trajectoryitem.h"
+#include "models/signalmodel.h"
 
 // Keep QML registration and tooling metadata together without coupling the
 // controller/model headers (also used by non-QML tests) to QtQml.

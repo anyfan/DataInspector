@@ -7,7 +7,7 @@
 #include <QTimer>
 #include <QTextStream>
 #include <QQuickWindow>
-#include "appcontroller.h"
+#include "controller/appcontroller.h"
 
 static int writeStartupError(QQmlApplicationEngine &engine,
                              const QStringList &qmlErrors,

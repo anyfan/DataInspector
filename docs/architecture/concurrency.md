@@ -1,6 +1,6 @@
 # 并发与线程安全
 
-> **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联代码**：`src/quick/plotitem.*`、`render/`、`appcontroller_*.cpp` · **改动任何跨线程共享数据前必读**
+> **状态**：现行 · **读者**：AI 代理 / 开发者 · **关联代码**：`src/quick/items/plotitem.*`、`render/`、`appcontroller_*.cpp` · **改动任何跨线程共享数据前必读**
 
 ## 线程划分
 

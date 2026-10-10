@@ -48,6 +48,7 @@ DataInspector 是面向工程时间序列数据的高性能查看器，基于 Qt
 
 | 文档 | 内容 |
 | --- | --- |
+| [工程目录](dev/project-layout.md) | 源码职责、第三方依赖、本地数据与产物归档 |
 | [构建](dev/build.md) | 工具链、CMake 预设、部署脚本 |
 | [工具链排错](dev/toolchain-troubleshooting.md) | windres、UAC/manifest、SVG 插件、图标等常见坑 |
 | [QML 工具与静态检查](dev/qml-tooling.md) | qmllint、qmltypes、编辑器导入路径 |

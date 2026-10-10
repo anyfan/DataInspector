@@ -1,7 +1,7 @@
-#include "appcontroller.h"
-#include "plotitem.h"
+#include "controller/appcontroller.h"
+#include "items/plotitem.h"
 #include "qmltypes.h"
-#include "sessiondocument.h"
+#include "state/sessiondocument.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>

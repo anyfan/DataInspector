@@ -1,4 +1,4 @@
-#include "trajectoryitem.h"
+#include "items/trajectoryitem.h"
 #include <QGuiApplication>
 #include <QQuickWindow>
 #include <QTimer>

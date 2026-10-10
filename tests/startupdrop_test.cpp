@@ -1,9 +1,9 @@
 // Reproduces: after files are imported from the command line at startup,
 // dragging further files onto the window must still import them.
-#include "appcontroller.h"
-#include "plotitem.h"
+#include "controller/appcontroller.h"
+#include "items/plotitem.h"
 #include "qmltypes.h"
-#include "signalmodel.h"
+#include "models/signalmodel.h"
 
 #include <QDir>
 #include <QDragEnterEvent>

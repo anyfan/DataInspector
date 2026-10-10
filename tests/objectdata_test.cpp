@@ -1,8 +1,8 @@
-#include "appcontroller.h"
-#include "plotitem.h"
-#include "objectdefinition.h"
+#include "controller/appcontroller.h"
+#include "items/plotitem.h"
+#include "models/objectdefinition.h"
 #include "qmltypes.h"
-#include "xlsxreader.h"
+#include "io/xlsxreader.h"
 #include "render/plotgeometrybuilder.h"
 #include <QFile>
 #include <QDir>

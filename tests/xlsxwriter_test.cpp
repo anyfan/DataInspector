@@ -1,5 +1,5 @@
-#include "xlsxreader.h"
-#include "xlsxwriter.h"
+#include "io/xlsxreader.h"
+#include "io/xlsxwriter.h"
 
 #include <QFile>
 #include <QElapsedTimer>

@@ -59,67 +59,67 @@ set(DI_RENDER_SOURCES
 )
 
 set(DI_PLOTITEM_SOURCES
-    ${DI_QUICK_DIR}/trajectoryitem.cpp
-    ${DI_QUICK_DIR}/trajectoryitem.h
-    ${DI_QUICK_DIR}/plotitem.cpp
-    ${DI_QUICK_DIR}/plotitem.h
-    ${DI_QUICK_DIR}/plotitem_cursor.cpp
-    ${DI_QUICK_DIR}/plotitem_interaction.cpp
-    ${DI_QUICK_DIR}/plotitem_render.cpp
+    ${DI_QUICK_DIR}/items/trajectoryitem.cpp
+    ${DI_QUICK_DIR}/items/trajectoryitem.h
+    ${DI_QUICK_DIR}/items/plotitem.cpp
+    ${DI_QUICK_DIR}/items/plotitem.h
+    ${DI_QUICK_DIR}/items/plotitem_cursor.cpp
+    ${DI_QUICK_DIR}/items/plotitem_interaction.cpp
+    ${DI_QUICK_DIR}/items/plotitem_render.cpp
 )
 
 set(DI_SIGNAL_SOURCES
-    ${DI_QUICK_DIR}/signalmetadata.cpp
-    ${DI_QUICK_DIR}/signalmetadata.h
-    ${DI_QUICK_DIR}/signalmodel.cpp
-    ${DI_QUICK_DIR}/signalmodel.h
+    ${DI_QUICK_DIR}/models/signalmetadata.cpp
+    ${DI_QUICK_DIR}/models/signalmetadata.h
+    ${DI_QUICK_DIR}/models/signalmodel.cpp
+    ${DI_QUICK_DIR}/models/signalmodel.h
 )
 
 set(DI_XLSX_SOURCES
-    ${DI_QUICK_DIR}/xlsxreader.cpp
-    ${DI_QUICK_DIR}/xlsxreader.h
-    ${DI_QUICK_DIR}/xlsxwriter.cpp
-    ${DI_QUICK_DIR}/xlsxwriter.h
-    ${DI_QUICK_DIR}/exporttable.h
-    ${DI_QUICK_DIR}/exportvalidation.cpp
-    ${DI_QUICK_DIR}/loadedtable.h
+    ${DI_QUICK_DIR}/io/xlsxreader.cpp
+    ${DI_QUICK_DIR}/io/xlsxreader.h
+    ${DI_QUICK_DIR}/io/xlsxwriter.cpp
+    ${DI_QUICK_DIR}/io/xlsxwriter.h
+    ${DI_QUICK_DIR}/io/exporttable.h
+    ${DI_QUICK_DIR}/io/exportvalidation.cpp
+    ${DI_QUICK_DIR}/io/loadedtable.h
 )
 
 set(DI_MAT_SOURCES
-    ${DI_QUICK_DIR}/mat5streamwriter.cpp
-    ${DI_QUICK_DIR}/mat5streamwriter.h
-    ${DI_QUICK_DIR}/matwriter.cpp
-    ${DI_QUICK_DIR}/matwriter.h
+    ${DI_QUICK_DIR}/io/mat5streamwriter.cpp
+    ${DI_QUICK_DIR}/io/mat5streamwriter.h
+    ${DI_QUICK_DIR}/io/matwriter.cpp
+    ${DI_QUICK_DIR}/io/matwriter.h
 )
 
 set(DI_CONTROLLER_SOURCES
-    ${DI_QUICK_DIR}/appcontroller_about.cpp
+    ${DI_QUICK_DIR}/controller/appcontroller_about.cpp
     ${DI_QUICK_DIR}/qmltypes.h
-    ${DI_QUICK_DIR}/sessiondocument.cpp
-    ${DI_QUICK_DIR}/sessiondocument.h
-    ${DI_QUICK_DIR}/jsonvalidation.h
-    ${DI_QUICK_DIR}/viewconfiguration.cpp
-    ${DI_QUICK_DIR}/viewconfiguration.h
-    ${DI_QUICK_DIR}/viewtemplatedocument.cpp
-    ${DI_QUICK_DIR}/viewtemplatedocument.h
-    ${DI_QUICK_DIR}/appcontroller_session.cpp
-    ${DI_QUICK_DIR}/appcontroller_templates.cpp
-    ${DI_QUICK_DIR}/appcontroller_objects.cpp
-    ${DI_QUICK_DIR}/appcontroller_objectevaluation.cpp
-    ${DI_QUICK_DIR}/objectdefinition.cpp
-    ${DI_QUICK_DIR}/objectdefinition.h
-    ${DI_QUICK_DIR}/appcontroller.cpp
-    ${DI_QUICK_DIR}/appcontroller_loading.cpp
-    ${DI_QUICK_DIR}/appcontroller_image.cpp
-    ${DI_QUICK_DIR}/appcontroller_plots.cpp
-    ${DI_QUICK_DIR}/appcontroller_trajectory.cpp
-    ${DI_QUICK_DIR}/appcontroller.h
+    ${DI_QUICK_DIR}/state/sessiondocument.cpp
+    ${DI_QUICK_DIR}/state/sessiondocument.h
+    ${DI_QUICK_DIR}/state/jsonvalidation.h
+    ${DI_QUICK_DIR}/state/viewconfiguration.cpp
+    ${DI_QUICK_DIR}/state/viewconfiguration.h
+    ${DI_QUICK_DIR}/state/viewtemplatedocument.cpp
+    ${DI_QUICK_DIR}/state/viewtemplatedocument.h
+    ${DI_QUICK_DIR}/controller/appcontroller_session.cpp
+    ${DI_QUICK_DIR}/controller/appcontroller_templates.cpp
+    ${DI_QUICK_DIR}/controller/appcontroller_objects.cpp
+    ${DI_QUICK_DIR}/controller/appcontroller_objectevaluation.cpp
+    ${DI_QUICK_DIR}/models/objectdefinition.cpp
+    ${DI_QUICK_DIR}/models/objectdefinition.h
+    ${DI_QUICK_DIR}/controller/appcontroller.cpp
+    ${DI_QUICK_DIR}/controller/appcontroller_loading.cpp
+    ${DI_QUICK_DIR}/controller/appcontroller_image.cpp
+    ${DI_QUICK_DIR}/controller/appcontroller_plots.cpp
+    ${DI_QUICK_DIR}/controller/appcontroller_trajectory.cpp
+    ${DI_QUICK_DIR}/controller/appcontroller.h
     ${DI_QUICK_DIR}/startupfiles.cpp
     ${DI_QUICK_DIR}/startupfiles.h
-    ${DI_QUICK_DIR}/dataloadworker.cpp
-    ${DI_QUICK_DIR}/dataloadworker.h
-    ${DI_QUICK_DIR}/dataexportworker.cpp
-    ${DI_QUICK_DIR}/dataexportworker.h
+    ${DI_QUICK_DIR}/io/dataloadworker.cpp
+    ${DI_QUICK_DIR}/io/dataloadworker.h
+    ${DI_QUICK_DIR}/io/dataexportworker.cpp
+    ${DI_QUICK_DIR}/io/dataexportworker.h
     ${DI_XLSX_SOURCES}
     ${DI_MAT_SOURCES}
     ${DI_PLOTITEM_SOURCES}
@@ -316,10 +316,10 @@ if(BUILD_TESTING)
 
     add_executable(dataloadworker_test
         tests/dataloadworker_test.cpp
-        ${DI_QUICK_DIR}/dataloadworker.cpp
-        ${DI_QUICK_DIR}/dataloadworker.h
-        ${DI_QUICK_DIR}/signalmetadata.cpp
-        ${DI_QUICK_DIR}/xlsxreader.cpp
+        ${DI_QUICK_DIR}/io/dataloadworker.cpp
+        ${DI_QUICK_DIR}/io/dataloadworker.h
+        ${DI_QUICK_DIR}/models/signalmetadata.cpp
+        ${DI_QUICK_DIR}/io/xlsxreader.cpp
     )
     target_include_directories(dataloadworker_test PRIVATE src/quick)
     target_link_libraries(dataloadworker_test PRIVATE
@@ -385,7 +385,7 @@ if(BUILD_TESTING)
     di_add_test(objectdata_test -platform offscreen)
 
     add_executable(matwriter_test tests/matwriter_test.cpp
-        ${DI_MAT_SOURCES} ${DI_QUICK_DIR}/exportvalidation.cpp)
+        ${DI_MAT_SOURCES} ${DI_QUICK_DIR}/io/exportvalidation.cpp)
     target_include_directories(matwriter_test PRIVATE src/quick)
     target_link_libraries(matwriter_test PRIVATE Qt6::Core Qt6::Gui Qt6::Test plot_render_core)
     if(ENABLE_MAT)

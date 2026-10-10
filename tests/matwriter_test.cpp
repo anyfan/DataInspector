@@ -1,4 +1,4 @@
-#include "matwriter.h"
+#include "io/matwriter.h"
 #include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>

@@ -119,3 +119,7 @@ GPU 套件注册 `plotitem_selected_dense_raster_test`，覆盖重复采样的�
 ## 状态与界面职责拆分
 
 DI_CONTROLLER_SOURCES 纳入 appcontroller_objectevaluation.cpp（规则调度）、appcontroller_templates.cpp（模板匹配/应用/撤销）、viewconfiguration.*（共用视图配置）、viewtemplatedocument.*（独立模板格式）和 jsonvalidation.h（JSON 数值/文本校验）。会话读写仍由 sessiondocument.* 负责。DI_QML_FILES 纳入 SignalBrowser.qml 和 SessionDialogs.qml；应用、源码 QML 测试及编译 QML 测试复用同一列表。
+
+工程目录和本地产物约定见[工程目录](project-layout.md)，MAT 依赖清单见[第三方依赖](../../third_libs/README.md)。构建树保持原路径，本机 CI 辅助工具归入 .local/，不再占用 build_ci/。旧 resources.qrc 已停用并移除，图标由 DI_ICON_FILES 统一管理。
+
+源码按 controller/io/models/state/items/render 子目录组织。CMake 共用源文件列表引用真实新路径；头文件搜索根仍为 src/quick，同目录包含本地文件名，跨目录显式使用模块路径，不增设旧路径转发头或依赖隐式搜索顺序。QML_FOREIGN 注册入口仍为 src/quick/qmltypes.h。
