@@ -68,3 +68,5 @@ QJsonObject sessionToJson(const SessionDocument &session);
 bool sessionFromJson(const QJsonObject &json, SessionDocument *session, QString *error);
 bool readSessionDocument(const QString &path, SessionDocument *session, QString *error);
 bool writeSessionDocument(const QString &path, const SessionDocument &session, QString *error);
+bool readViewTemplate(const QString &path, SessionDocument *session, QString *error);
+bool writeViewTemplate(const QString &path, const SessionDocument &session, QString *error);

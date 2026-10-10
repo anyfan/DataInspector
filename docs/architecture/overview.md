@@ -108,3 +108,11 @@ TrajectoryItem::setSources 接收全部不可变 Store 来源。TrajectoryBuilde
 欧拉/四元数测量由 buildAttitude 校验各分量时间基并建立有效 runs；attitudeSample 在 runs 内调用 PlotSeriesStore 的原始最近样本查询，与位置独立。GUI 按共享游标计算读数和固定像素姿态几何，整体发布不可变 GeometryResult；SG 不查询原始 Store、不读 GUI 可变状态。观察相机、实际机体姿态分别变换，只有投影使用公共相机。
 
 隐藏 PlotItem 接收全部可见航迹的位置和已启用姿态来源去重，支持原始时间游标步进；导出同样收集去重来源，不导出投影/模型派生值。时间图自身绑定保持独立。
+
+## 游标编辑、航迹折叠与视图模板
+
+游标精确输入由 QuickPlot 的示数双击打开编辑器，PlotItem::editCursorTime 在 m_dataMutex 下读取不可变 Store 快照、吸附原始时间并原子更新位置，现有 cursorChanged 继续驱动跨子图同步。T1/T2 分别编辑，ΔT 固定 T1 调整 T2，不增加保持间隔选项。
+
+航迹配置折叠为 GUI 偏好，AppController 按子图保存运行期展开状态，TrajectoryPlot 根据状态调整画布顶部边距。它不改变信号绑定、Store 或会话 schema。
+
+视图模板的独立 v1 JSON 封装复用 sessiondocument 的 v6 校验。AppController 共享 captureSession 收集配置，预览只匹配被配置引用的来源，applyViewTemplate 在全部映射、数值范围和 schema 校验通过后应用到当前 Store。样式整体替换不可变快照；不读取模板数据路径、不应用旧时间偏移。默认范围和游标由当前原始数据计算；延迟创建的子图通过缓存的 SessionPlot 获得完整配置。撤销保存此前配置及 Store 身份/代际，数据来源或样式变更后拒绝过期撤销。

@@ -19,6 +19,7 @@ Rectangle {
     objectName: "trajectoryView"
 
     property var configuration: root.controller.trajectoryState(root.plotIndex)
+    property bool configurationExpanded: root.controller.trajectoryConfigurationExpanded(root.plotIndex)
     readonly property bool planarMode: trajectory.planar
     property var availableSources: root.controller.trajectorySignalOptions(root.plotIndex)
     // Explicit notification survives qmlcachegen eliminating unused revision reads.
@@ -56,7 +57,7 @@ Rectangle {
         id: viewport
         objectName: "trajectoryViewport"
         anchors.fill: parent
-        anchors.topMargin: 56
+        anchors.topMargin: root.configurationExpanded ? 56 : 30
         anchors.bottomMargin: 18
         clip: true
         TrajectoryItem {
@@ -197,8 +198,8 @@ Rectangle {
             currentIndex: root.configuration.active
             onActivated: function(index) { root.controller.selectTrajectory(root.plotIndex, index) }
         }
-        ToolButton { objectName: "trajectoryAdd"; text: "+"; implicitHeight: 24; onClicked: root.controller.addTrajectory(root.plotIndex) }
-        ToolButton { objectName: "trajectoryRemove"; text: "−"; implicitHeight: 24; onClicked: root.controller.removeTrajectory(root.plotIndex, root.configuration.active) }
+        ToolButton { visible: root.configurationExpanded; objectName: "trajectoryAdd"; text: "+"; implicitHeight: 24; onClicked: root.controller.addTrajectory(root.plotIndex) }
+        ToolButton { visible: root.configurationExpanded; objectName: "trajectoryRemove"; text: "−"; implicitHeight: 24; onClicked: root.controller.removeTrajectory(root.plotIndex, root.configuration.active) }
         CheckBox {
             objectName: "trajectoryVisible"
             text: "显示"
@@ -206,9 +207,30 @@ Rectangle {
             implicitHeight: 24
             onClicked: root.controller.styleTrajectory(root.plotIndex, root.configuration.name, root.configuration.color, root.configuration.width, checked)
         }
-        ToolButton { objectName: "trajectoryProperties"; text: "样式 / 姿态"; implicitHeight: 24; onClicked: properties.open() }
+        ToolButton { visible: root.configurationExpanded; objectName: "trajectoryProperties"; text: "样式 / 姿态"; implicitHeight: 24; onClicked: properties.open() }
+        ToolButton {
+            objectName: "trajectoryConfigurationToggle"
+            text: root.configurationExpanded ? "收起 ▴" : "配置 ▾"
+            implicitHeight: 24
+            onClicked: {
+                root.configurationExpanded = !root.configurationExpanded
+                root.controller.setTrajectoryConfigurationExpanded(root.plotIndex, root.configurationExpanded)
+            }
+        }
+        ToolButton {
+            text: "时间图"
+            implicitHeight: 24
+            font.pixelSize: 11
+            objectName: "trajectory2DButton"
+            onClicked: {
+                const state = root.configuration
+                root.controller.configureTrajectory(root.plotIndex, false, state.x, state.y, state.z, state.geographic)
+            }
+        }
     }
     RowLayout {
+        objectName: "trajectoryConfigurationRow"
+        visible: root.configurationExpanded
         anchors.top: management.bottom
         anchors.left: parent.left
         anchors.right: parent.right
@@ -303,16 +325,7 @@ Rectangle {
         ToolButton { text: "坐标"; implicitHeight: 24; font.pixelSize: 11; objectName: "trajectoryAxesButton"; onClicked: { root.controller.setActivePlot(root.plotIndex); root.editAxesRequested() } }
         ToolButton { text: "视角"; visible: !root.planarMode; implicitHeight: 24; font.pixelSize: 11; onClicked: { root.controller.setActivePlot(root.plotIndex); viewMenu.popup() } }
         ToolButton { text: "适应"; implicitHeight: 24; font.pixelSize: 11; onClicked: { root.controller.setActivePlot(root.plotIndex); trajectory.fitView() } }
-        ToolButton {
-            text: "时间图"
-            implicitHeight: 24
-            font.pixelSize: 11
-            objectName: "trajectory2DButton"
-            onClicked: {
-                const state = root.configuration
-                root.controller.configureTrajectory(root.plotIndex, false, state.x, state.y, state.z, state.geographic)
-            }
-        }
+
     }
     Label {
         anchors.bottom: parent.bottom
@@ -331,6 +344,14 @@ Rectangle {
                 : values.length > 0 ? values[values.length - 1].details : root.sourceDescription
         }
         HoverHandler { id: detailsHover }
+        MouseArea {
+            anchors.fill: parent
+            enabled: trajectory.error.length > 0 || trajectory.attitudeStatus.length > 0
+            onClicked: {
+                root.configurationExpanded = true
+                root.controller.setTrajectoryConfigurationExpanded(root.plotIndex, true)
+            }
+        }
         ToolTip.visible: detailsHover.hovered
         ToolTip.text: root.sourceDescription + "\n" + trajectory.referenceOrigin + "\n" + trajectory.error + "\n" + trajectory.attitudeStatus + "\n" + trajectory.markers.map(value => value.details).join("\n") + "\n" + root.gestureHint
     }

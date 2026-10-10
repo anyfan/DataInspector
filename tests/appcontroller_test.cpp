@@ -66,6 +66,7 @@ private slots:
     void quickPlotLoadsWithLegendAndCursors();
     void cursorBadgesInitializeCenteredWithDelta();
     void cursorBadgeDragsSelectAndMoveOneOrBoth();
+    void preciseCursorInputSnapsSynchronizesAndCancels();
     void interactingWithSubplotSelectsIt();
     void toolbarModesToggleAndRememberSelection();
     void signalSectionsKeepNestedPathsAndAlignedNames();
@@ -976,6 +977,62 @@ void AppControllerTest::cursorBadgesInitializeCenteredWithDelta()
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
 }
 
+void AppControllerTest::preciseCursorInputSnapsSynchronizesAndCancels()
+{
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, AppControllerQmlRegistration,
+        SignalModelQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
+    AppController controller;
+    controller.setLayout(1, 2);
+    QTemporaryDir directory;
+    const QString csv = directory.filePath("cursor.csv");
+    writeCsvFile(csv, "time,A\n0,1\n10,2\n20,3\n30,4\n40,5\n50,6\n100,7\n");
+    QVERIFY(controller.loadCsv(csv)); QTRY_VERIFY(!controller.loading());
+    controller.selectSignal(0);
+    PlotItem other;
+    controller.attachPlot(&other, 1);
+    QQmlEngine engine;
+    const QString path = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml/QuickPlot.qml");
+    QQmlComponent component(&engine, QUrl::fromLocalFile(path));
+    std::unique_ptr<QObject> object(component.createWithInitialProperties({
+        {"plotIndex", 0}, {"controller", QVariant::fromValue(&controller)},
+        {"width", 800}, {"height", 400}, {"graphCursorMode", 2}}));
+    QVERIFY2(object, qPrintable(component.errorString()));
+    auto *root = qobject_cast<QQuickItem *>(object.get());
+    auto *plot = object->findChild<PlotItem *>(); QVERIFY(root && plot);
+    plot->setXRange(0, 50); plot->restoreCursorState(2, 10, 30);
+    QVERIFY(plot->editCursorTime(18, 1));
+    QCOMPARE(plot->cursorX1(), 20.0); QCOMPARE(other.cursorX1(), 20.0);
+    QVERIFY(plot->editCursorTime(19, 0)); // T1 fixed; T2 snaps to 40.
+    QCOMPARE(plot->cursorX1(), 20.0); QCOMPARE(plot->cursorX2(), 40.0);
+    QVERIFY(plot->editCursorTime(31, 2));
+    QCOMPARE(plot->cursorX1(), 20.0); QCOMPARE(plot->cursorX2(), 30.0);
+    QVERIFY(!plot->editCursorTime(std::numeric_limits<double>::infinity(), 1));
+    QVERIFY(!plot->editCursorTime(5, 3));
+    QCOMPARE(plot->cursorX1(), 20.0);
+    plot->restoreCursorState(2, 10, 30);
+    QQuickWindow window; window.resize(800, 400); root->setParentItem(window.contentItem());
+    window.show(); QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QQuickItem *badge = nullptr;
+    for (auto *child : root->childItems()) if (child->objectName() == "cursorTimeLabel" && child->property("index").toInt() == 0) badge = child;
+    QVERIFY(badge);
+    QTest::mouseDClick(&window, Qt::LeftButton, Qt::NoModifier,
+        badge->mapToScene(QPointF(badge->width() / 2, badge->height() / 2)).toPoint());
+    auto *editor = object->findChild<QObject *>("cursorTimeEditor");
+    auto *input = object->findChild<QQuickItem *>("cursorTimeInput");
+    QVERIFY(editor && input); QTRY_VERIFY(editor->property("visible").toBool());
+    input->setProperty("text", "NaN");
+    QTest::keyClick(&window, Qt::Key_Return);
+    QVERIFY(editor->property("visible").toBool()); QCOMPARE(plot->cursorX1(), 10.0);
+    input->setProperty("text", "1e2");
+    QTest::keyClick(&window, Qt::Key_Return);
+    QTRY_VERIFY(!editor->property("visible").toBool());
+    QCOMPARE(plot->cursorX1(), 100.0); QCOMPARE(other.cursorX1(), 100.0);
+    QVERIFY(plot->xMinimum() <= 100 && plot->xMaximum() >= 100);
+    QVERIFY(QMetaObject::invokeMethod(root, "openCursorEditor", Q_ARG(QVariant, 1)));
+    input->setProperty("text", "20");
+    QTest::keyClick(&window, Qt::Key_Escape);
+    QTRY_VERIFY(!editor->property("visible").toBool()); QCOMPARE(plot->cursorX1(), 100.0);
+}
 void AppControllerTest::cursorBadgeDragsSelectAndMoveOneOrBoth()
 {
     qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);

@@ -91,6 +91,14 @@ public:
     int soloPlotIndex() const { return m_soloPlotIndex; }
 
     Q_INVOKABLE bool saveSession(const QVariant &filePath);
+    Q_INVOKABLE bool saveViewTemplate(const QVariant &filePath);
+    Q_INVOKABLE QVariantMap previewViewTemplate(const QVariant &filePath) const;
+    Q_INVOKABLE bool applyViewTemplate(const QVariant &filePath, const QVariantMap &mapping, bool fixedRanges = false);
+    Q_INVOKABLE bool undoViewTemplate();
+    Q_PROPERTY(bool canUndoViewTemplate READ canUndoViewTemplate NOTIFY plotBindingsChanged)
+    bool canUndoViewTemplate() const { return m_templateUndo.has_value() && m_templateUndoStore.lock() == m_seriesStore && m_templateUndoGeneration == m_seriesStore->generation(); }
+    Q_INVOKABLE bool trajectoryConfigurationExpanded(int index) const { return m_trajectoryConfigurationExpanded.value(index, false); }
+    Q_INVOKABLE void setTrajectoryConfigurationExpanded(int index, bool expanded) { m_trajectoryConfigurationExpanded.insert(index, expanded); }
     Q_INVOKABLE bool restoreSession(const QVariant &filePath);
     Q_INVOKABLE QVariantList missingSessionFiles(const QVariant &filePath) const;
     Q_INVOKABLE bool restoreSessionWithFiles(const QVariant &filePath, const QVariantMap &replacements);
@@ -214,6 +222,12 @@ private:
     void finishSessionRestore();
     void completeSessionRestore(bool success, const QString &message);
     SessionPlot capturePlotView(PlotItem *plot) const;
+    SessionDocument captureSession(const QString &path) const;
+    void applyTemplateState(const SessionDocument &state);
+    std::optional<SessionDocument> m_templateUndo;
+    std::weak_ptr<PlotSeriesStore> m_templateUndoStore;
+    quint64 m_templateUndoGeneration = 0;
+    QHash<int, bool> m_trajectoryConfigurationExpanded;
     void applyPlotView(PlotItem *plot, const SessionPlot &view);
     void cachePlotView(PlotItem *plot);
     void onLoadFinished(const QString &path,

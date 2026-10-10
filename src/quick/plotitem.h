@@ -71,6 +71,7 @@ public:
     QVector<PlotSeriesId> visibleSeriesIds() const;
     Q_INVOKABLE void setCursorX(double x, int cursorIndex = 1);
     Q_INVOKABLE void moveCursorPair(double startX1, double startX2, double offset);
+    Q_INVOKABLE bool editCursorTime(double value, int index);
     void setCursorPosition(double x, int cursorIndex = 1);
     // Session/peer state is exact, including disabled or off-screen cursors.
     void restoreCursorState(int mode, double x1, double x2);

@@ -28,6 +28,7 @@ private slots:
     void relocatedFilesAndModifiedState();
     void schemaValidationAndAtomicSave();
     void qmlRestoresToolbarAndPlotStates();
+    void viewTemplatesMatchRemapAndUndo();
 };
 
 static void writeFile(const QString &path, const QByteArray &bytes)
@@ -334,6 +335,24 @@ void SessionTest::qmlRestoresToolbarAndPlotStates()
     QVERIFY(host);
     host->show();
     QVERIFY(QTest::qWaitForWindowExposed(host));
+    const QString view = dir.filePath("qml.diview");
+    QVERIFY(controller.saveViewTemplate(view));
+    auto *templateDialog = root->findChild<QObject *>("viewTemplateDialog");
+    QVERIFY(templateDialog);
+    templateDialog->setProperty("file", QUrl::fromLocalFile(view));
+    templateDialog->setProperty("preview", controller.previewViewTemplate(view));
+    templateDialog->setProperty("mapping", QVariantMap{{"0", -1}});
+    QVERIFY(!templateDialog->property("complete").toBool());
+    QVERIFY(QMetaObject::invokeMethod(templateDialog, "assign", Q_ARG(QVariant, 0), Q_ARG(QVariant, 0)));
+    QTRY_VERIFY(templateDialog->property("complete").toBool());
+    QVERIFY(QMetaObject::invokeMethod(templateDialog, "open"));
+    QTRY_VERIFY(templateDialog->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(templateDialog, "apply"));
+    QTRY_VERIFY(!templateDialog->property("visible").toBool());
+    QVERIFY(controller.canUndoViewTemplate());
+    QVERIFY(controller.undoViewTemplate());
+    QCoreApplication::processEvents();
+    QVERIFY2(qmlWarnings.isEmpty(), qPrintable(qmlWarnings.join('\n')));
     QVERIFY(controller.renameSignal(0, "Unsaved rename"));
     QVERIFY(controller.sessionModified());
     auto *prompt = root->findChild<QObject *>("unsavedSessionDialog");
@@ -410,5 +429,93 @@ void SessionTest::extremeImportedRangesRemainSaveable()
     QVERIFY(qIsFinite(document.xMaximum - document.xMinimum));
 }
 
+void SessionTest::viewTemplatesMatchRemapAndUndo()
+{
+    QTemporaryDir dir;
+    const QString oldFile = dir.filePath("old.csv"), newFile = dir.filePath("new.csv");
+    const QString view = dir.filePath("analysis.diview");
+    writeFile(oldFile, "time,A,B,Unused\n0,1,2,3\n10,4,5,6\n");
+    writeFile(newFile, "time,B,A,Unused\n100,5,10,0\n140,6,20,0\n");
+    AppController source;
+    PlotItem a, b;
+    source.setLayout(2, 1); source.attachPlot(&a, 0); source.attachPlot(&b, 1);
+    QVERIFY(source.loadCsv(oldFile)); QTRY_VERIFY(!source.loading());
+    source.selectSignal(0);
+    source.setSignalPen(0, QColor("magenta"), 4, Qt::DashLine);
+    QVERIFY(source.renameSignal(0, "Display A"));
+    QVERIFY(source.configureTrajectory(1, true, 0, 1, -1, false));
+    a.setXRange(2, 8); a.setYRange(-50, 50);
+    QVERIFY(source.saveViewTemplate(view));
+    QVERIFY(source.sessionPath().isEmpty());
+    SessionDocument doc; QString error;
+    QVERIFY2(readViewTemplate(view, &doc, &error), qPrintable(error));
+    QVERIFY(!readSessionDocument(view, &doc, &error));
+
+    AppController target;
+    PlotItem plot;
+    target.attachPlot(&plot, 0);
+    QVERIFY(target.loadCsv(newFile)); QTRY_VERIFY(!target.loading());
+    target.selectSignal(0); plot.setCursorMode(PlotItem::DoubleCursor);
+    target.setLayout(2, 1); target.setActivePlot(1); target.selectSignal(2);
+    target.setLayout(1, 1); target.setActivePlot(0);
+    plot.restoreCursorState(PlotItem::DoubleCursor, 110, 130);
+    const auto beforeColor = target.signalColor(1);
+    const auto preview = target.previewViewTemplate(view);
+    QVERIFY(preview["error"].toString().isEmpty());
+    const auto rows = preview["rows"].toList();
+    QCOMPARE(rows.size(), 2); // Unused signals do not require assignments.
+    QCOMPARE(rows[0].toMap()["match"].toInt(), 1);
+    QCOMPARE(rows[1].toMap()["match"].toInt(), 0);
+    QVERIFY(!target.applyViewTemplate(view, {{"0", 1}, {"1", 1}}));
+    QVERIFY(!target.applyViewTemplate(view, {{"0", 1.5}, {"1", 0}}));
+    QCOMPARE(target.plotRows(), 1); QCOMPARE(target.signalColor(1), beforeColor);
+    QVERIFY(target.applyViewTemplate(view, {{"0", 1}, {"1", 0}}));
+    QCOMPARE(target.loadedFileCount(), 1); QCOMPARE(target.signalCount(), 3);
+    QCOMPARE(target.plotRows(), 2); QVERIFY(target.plotSignalEnabled(0, 1));
+    QVERIFY(target.signalModel()->plotRows(1).isEmpty());
+    QCOMPARE(target.signalName(1), QString("Display A"));
+    QCOMPARE(target.signalColor(1), QColor("magenta"));
+    const auto trajectory = target.trajectoryState(1);
+    QVERIFY(trajectory["enabled"].toBool());
+    QCOMPARE(trajectory["x"].toInt(), 1); QCOMPARE(trajectory["y"].toInt(), 0);
+    QCOMPARE(plot.xMinimum(), 99.2); QCOMPARE(plot.xMaximum(), 140.8);
+    QCOMPARE(plot.yMinimum(), 9.5); QCOMPARE(plot.yMaximum(), 20.5);
+    QCOMPARE(plot.cursorX1(), 100.0); QCOMPARE(plot.cursorX2(), 140.0);
+    QVERIFY(target.canUndoViewTemplate());
+    QVERIFY(target.undoViewTemplate());
+    QCOMPARE(target.plotRows(), 1); QVERIFY(target.plotSignalEnabled(0, 0));
+    QVERIFY(!target.plotSignalEnabled(0, 1));
+    QCOMPARE(target.signalColor(1), beforeColor);
+    QCOMPARE(plot.cursorX1(), 110.0); QCOMPARE(plot.cursorX2(), 130.0);
+    QVERIFY(!target.undoViewTemplate());
+    QVERIFY(target.applyViewTemplate(view, {{"0", 1}, {"1", 0}}, true));
+    QCOMPARE(plot.xMinimum(), 2.0); QCOMPARE(plot.xMaximum(), 8.0);
+    QCOMPARE(plot.yMinimum(), -50.0); QCOMPARE(plot.yMaximum(), 50.0);
+    QVERIFY(target.undoViewTemplate());
+    QVERIFY(target.loadCsv(oldFile)); QTRY_VERIFY(!target.loading());
+    const auto ambiguous = target.previewViewTemplate(view)["rows"].toList();
+    // Different table names use the table ordinal fallback. Both files contain A/B.
+    // Exact old table matches take precedence over fallback candidates.
+    QCOMPARE(ambiguous[0].toMap()["match"].toInt(), 3);
+    writeFile(dir.filePath("corrupt.diview"), "{\"format\":\"DataInspectorViewTemplate\",\"version\":99}");
+    QVERIFY(!target.applyViewTemplate(dir.filePath("corrupt.diview"), {}));
+    QCOMPARE(target.plotRows(), 1);
+    QVERIFY(target.applyViewTemplate(view, {{"0", 3}, {"1", 4}}));
+    QVERIFY(target.canUndoViewTemplate());
+    QVERIFY(QDir(dir.path()).mkpath("duplicate"));
+    const QString duplicate = dir.filePath("duplicate/old.csv");
+    writeFile(duplicate, "time,A,B,Unused\n0,1,2,3\n10,4,5,6\n");
+    QVERIFY(target.loadCsv(duplicate)); QTRY_VERIFY(!target.loading());
+    QVERIFY(!target.canUndoViewTemplate()); QVERIFY(!target.undoViewTemplate());
+    const auto duplicates = target.previewViewTemplate(view)["rows"].toList();
+    QCOMPARE(duplicates[0].toMap()["match"].toInt(), -1);
+    QCOMPARE(duplicates[1].toMap()["match"].toInt(), -1);
+    QFile original(view); QVERIFY(original.open(QIODevice::ReadOnly));
+    const auto bytes = original.readAll(); original.close();
+    QVERIFY(readViewTemplate(view, &doc, &error));
+    doc.series[0].color = QColor();
+    QVERIFY(!writeViewTemplate(view, doc, &error));
+    QVERIFY(original.open(QIODevice::ReadOnly)); QCOMPARE(original.readAll(), bytes);
+}
 QTEST_MAIN(SessionTest)
 #include "session_test.moc"

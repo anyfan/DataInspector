@@ -103,3 +103,7 @@ multiTrajectoryCost 使用 8 条各 100000 点合成地理路径，记录准备�
 中间缩放回归：`plotitem_raster_test --dense --zoomed` 使用 1250–2700 秒视窗，追加 `--compressed` 检查共享 Y 轴。`--dense-csv path --zoomed` 用同样 1450 秒跨度的 3250–4700 秒视窗，在已知恒定极值的 3300–3900 秒区间检查；原始 GPS 数据约 2152.14 秒的真实高样本不作为幽灵凸点删除。CPU `denseOscillationAcrossBucketBoundaries` 检查单桶不足一周期时仍识别振荡，现有阶跃/抖动/NaN/虚线/放大回归继续保留。
 
 选中加粗回归：`plotitem_selected_dense_raster_test` 使用 `--dense --narrow --selected --stepped-millis`，模拟 40 ms 采样、100 ms 平台保持的毫秒锯齿波，在 2600–3100 秒范围检查选中后的四像素线宽。`--dense-csv hmillisec.csv --narrow --selected` 对用户 p3 H_milliSec 原始列运行同一检查；`--compressed` 可同时检查共享大范围 Y 轴。CPU `denseEnvelopeUsesEffectiveStrokeWidth` 覆盖多尺度候选及两档实际线宽，要求原折线顶点完整保留。
+
+## UI 配置复用回归
+
+`appcontroller_test::preciseCursorInputSnapsSynchronizesAndCancels` 检查原始样本吸附、ΔT、无效输入、真实双击示数/Enter/Esc 与视窗外定位。`session_test::viewTemplatesMatchRemapAndUndo` 检查换文件/换列序、仅匹配引用信号、重复/非整数映射拒绝、航迹映射、固定/自适应范围及一次撤销；现有 Main QML 用例检查匹配对话框的完成状态与应用。`trajectory_test::qmlModeSwitchAndSignalDialog` 在源码和 qmlcachegen 两种模式下检查配置折叠、画布尺寸、子图偏好隔离及游标输入。

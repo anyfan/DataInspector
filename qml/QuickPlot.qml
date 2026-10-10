@@ -2,6 +2,7 @@ pragma ComponentBehavior: Bound
 
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Layouts
 import DataInspector
 
 Rectangle {
@@ -325,6 +326,59 @@ Rectangle {
         if (index === 0) plotItem.moveCursorPair(area.startX1, area.startX2, offset)
         else plotItem.setCursorX((index === 1 ? area.startX1 : area.startX2) + offset, index)
     }
+    function openCursorEditor(index) {
+        root.controller.setActivePlot(root.plotIndex)
+        cursorEditor.targetIndex = index
+        cursorInput.text = String(index === 0 ? plotItem.cursorDeltaT : (index === 1 ? plotItem.cursorX1 : plotItem.cursorX2))
+        cursorEditor.errorText = ""
+        cursorEditor.open()
+        cursorInput.forceActiveFocus()
+        cursorInput.selectAll()
+    }
+    Dialog {
+        id: cursorEditor
+        objectName: "cursorTimeEditor"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        modal: true
+        width: 340
+        property int targetIndex: 1
+        property string errorText: ""
+        title: targetIndex === 0 ? "设置 ΔT（固定 T1）" : "设置 T" + targetIndex
+        function apply() {
+            const text = cursorInput.text.trim()
+            const value = Number(text)
+            if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(text)
+                || !Number.isFinite(value) || !plotItem.editCursorTime(value, targetIndex)) {
+                errorText = "请输入有限的秒数，并确认子图有可定位的原始样本。"
+                return
+            }
+            const x = targetIndex === 1 ? plotItem.cursorX1 : plotItem.cursorX2
+            if (x < plotItem.xMinimum || x > plotItem.xMaximum) {
+                const span = plotItem.xMaximum - plotItem.xMinimum
+                root.controller.beginViewChange()
+                plotItem.setXRange(x - span / 2, x + span / 2)
+                root.controller.endViewChange()
+            }
+            close()
+            root.forceActiveFocus()
+        }
+        contentItem: ColumnLayout {
+            TextField {
+                id: cursorInput
+                objectName: "cursorTimeInput"
+                Layout.fillWidth: true
+                selectByMouse: true
+                onAccepted: cursorEditor.apply()
+            }
+            Label { text: "单位：秒。定位最近原始样本，以轴下实际示数为准。"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Label { text: cursorEditor.errorText; visible: text.length > 0; color: "#df4652"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+        }
+        footer: DialogButtonBox {
+            Button { text: "应用"; onClicked: cursorEditor.apply() }
+            Button { text: "取消"; onClicked: cursorEditor.close() }
+        }
+    }
     function tickCovered(value, labelWidth) {
         const px = root.axisLeft + root.xPixel(value)
         for (let i = 0; i < cursorTimes.count; ++i) {
@@ -607,6 +661,7 @@ Rectangle {
                 property real startX1: 0
                 property real startX2: 0
                 onPressed: function(mouse) { root.beginCursorBadgeDrag(timeDrag, mouse, cursorTime.index + 1) }
+                onDoubleClicked: root.openCursorEditor(cursorTime.index + 1)
                 onPositionChanged: function(mouse) { root.moveCursorBadge(timeDrag, mouse, cursorTime.index + 1) }
             }
         }
@@ -878,6 +933,7 @@ Rectangle {
             property real startX1: 0
             property real startX2: 0
             onPressed: function(mouse) { root.beginCursorBadgeDrag(deltaDrag, mouse, 0) }
+            onDoubleClicked: root.openCursorEditor(0)
             onPositionChanged: function(mouse) { root.moveCursorBadge(deltaDrag, mouse, 0) }
         }
     }

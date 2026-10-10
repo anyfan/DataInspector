@@ -109,6 +109,7 @@ void PlotItem::setCursorMode(int mode)
 }
 void PlotItem::setCursorX(double x, int cursorIndex)
 {
+    if (!qIsFinite(x)) return;
     {
         QMutexLocker lock(&m_dataMutex);
         if (m_cursorMode == NoCursor) return;
@@ -121,6 +122,31 @@ void PlotItem::setCursorX(double x, int cursorIndex)
         updateCursorValuesLocked();
     }
     emit cursorChanged(); emit cursorDeltaTChanged(); emit cursorValuesChanged(); update();
+}
+bool PlotItem::editCursorTime(double value, int index)
+{
+    if (!qIsFinite(value) || index < 0 || index > 2) return false;
+    {
+        QMutexLocker lock(&m_dataMutex);
+        if (m_cursorMode == NoCursor || ((index == 0 || index == 2) && m_cursorMode != DoubleCursor))
+            return false;
+        const double target = index == 0 ? m_cursorX1 + value : value;
+        if (!qIsFinite(target)) return false;
+        const auto nearest = PlotSeriesStore::nearestX(m_seriesSnapshot, target);
+        if (!nearest) return false;
+        const double snapped = *nearest;
+        if (!qIsFinite(snapped)) return false;
+        double x1 = m_cursorX1, x2 = m_cursorX2;
+        if (index == 1) x1 = snapped;
+        else x2 = snapped;
+        if (!qIsFinite(x1) || !qIsFinite(x2) || !qIsFinite(x2 - x1)) return false;
+        m_cursorX1 = x1; m_cursorX2 = x2;
+        m_activeCursorIndex = index == 0 ? 2 : index;
+        updateCursorValuesLocked();
+    }
+    emit cursorChanged(); emit activeCursorChanged(); emit cursorDeltaTChanged();
+    emit cursorValuesChanged(); update();
+    return true;
 }
 void PlotItem::moveCursorPair(double startX1, double startX2, double offset)
 {

@@ -298,3 +298,38 @@ bool writeSessionDocument(const QString &path, const SessionDocument &session, Q
     }
     return true;
 }
+
+bool readViewTemplate(const QString &path, SessionDocument *session, QString *error)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) { *error = file.errorString(); return false; }
+    if (file.size() > maxBytes) { *error = QStringLiteral("视图模板超过 16 MiB 上限"); return false; }
+    QJsonParseError parse;
+    const auto document = QJsonDocument::fromJson(file.read(maxBytes + 1), &parse);
+    const auto root = document.object();
+    if (parse.error != QJsonParseError::NoError || !document.isObject()
+        || root.value("format").toString() != QStringLiteral("DataInspectorViewTemplate")
+        || root.value("version") != QJsonValue(1) || !root.value("view").isObject()
+        || root.size() != 3) {
+        *error = QStringLiteral("无效的视图模板格式或版本"); return false;
+    }
+    return sessionFromJson(root.value("view").toObject(), session, error);
+}
+
+bool writeViewTemplate(const QString &path, const SessionDocument &session, QString *error)
+{
+    for (const auto &signal : session.series) if (!signal.color.isValid()) {
+        *error = QStringLiteral("视图模板包含无效信号颜色"); return false;
+    }
+    const auto view = sessionToJson(session);
+    SessionDocument validated;
+    if (!sessionFromJson(view, &validated, error)) return false;
+    const QJsonObject root{{"format", "DataInspectorViewTemplate"}, {"version", 1}, {"view", view}};
+    const auto bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    if (bytes.size() > maxBytes) { *error = QStringLiteral("视图模板超过 16 MiB 上限"); return false; }
+    QSaveFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
+        *error = file.errorString(); return false;
+    }
+    return true;
+}

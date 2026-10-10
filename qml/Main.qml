@@ -504,6 +504,123 @@ ApplicationWindow {
         }
         onRejected: window.pendingUnsavedAction = ""
     }
+
+    FileDialog {
+        id: saveViewTemplateDialog
+        objectName: "saveViewTemplateDialog"
+        title: "保存视图模板"
+        fileMode: FileDialog.SaveFile
+        defaultSuffix: "diview"
+        nameFilters: ["DataInspector 视图模板 (*.diview)"]
+        onAccepted: {
+            if (!window.appController.saveViewTemplate(selectedFile)) {
+                sessionErrorDialog.message = window.appController.status
+                sessionErrorDialog.open()
+            }
+        }
+    }
+    FileDialog {
+        id: openViewTemplateDialog
+        objectName: "openViewTemplateDialog"
+        title: "应用视图模板"
+        fileMode: FileDialog.OpenFile
+        nameFilters: ["DataInspector 视图模板 (*.diview)"]
+        onAccepted: {
+            const preview = window.appController.previewViewTemplate(selectedFile)
+            if (preview.error.length > 0) {
+                sessionErrorDialog.message = preview.error
+                sessionErrorDialog.open()
+                return
+            }
+            viewTemplateDialog.file = selectedFile
+            viewTemplateDialog.preview = preview
+            const mapping = {}
+            for (const row of preview.rows) mapping[String(row.id)] = row.match
+            viewTemplateDialog.mapping = mapping
+            viewTemplateDialog.errorText = ""
+            fixedTemplateRanges.checked = false
+            viewTemplateDialog.open()
+        }
+    }
+    Dialog {
+        id: viewTemplateDialog
+        objectName: "viewTemplateDialog"
+        anchors.centerIn: parent
+        modal: true
+        width: Math.min(780, window.width - 40)
+        height: Math.min(560, window.height - 40)
+        title: "应用视图模板 · 确认信号匹配"
+        property url file
+        property var preview: ({ rows: [], options: [], plotCount: 0 })
+        property var mapping: ({})
+        property string errorText: ""
+        readonly property bool complete: {
+            const assigned = new Set()
+            for (const row of preview.rows) {
+                const value = Number(mapping[String(row.id)])
+                if (!Number.isInteger(value) || value < 0 || assigned.has(value)) return false
+                assigned.add(value)
+            }
+            return true
+        }
+        function assign(id, value) {
+            const next = Object.assign({}, mapping)
+            next[String(id)] = value
+            mapping = next
+        }
+        function apply() {
+            if (!complete) { errorText = "请补齐匹配，同一信号不能重复分配。"; return }
+            if (!window.appController.applyViewTemplate(file, mapping, fixedTemplateRanges.checked)) {
+                errorText = window.appController.status
+                return
+            }
+            close()
+        }
+        contentItem: ColumnLayout {
+            Label {
+                text: "将替换为 " + viewTemplateDialog.preview.plotCount + " 个子图。请核对每项来源；缺失或重名信号需手动指定。"
+                Layout.fillWidth: true
+                wrapMode: Text.WordWrap
+            }
+            ListView {
+                objectName: "viewTemplateMatches"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: viewTemplateDialog.preview.rows
+                ScrollBar.vertical: ScrollBar {}
+                delegate: ColumnLayout {
+                    id: templateMatchRow
+                    required property var modelData
+                    width: ListView.view.width
+                    height: 72
+                    spacing: 2
+                    Label { text: templateMatchRow.modelData.label + " · " + templateMatchRow.modelData.hint; Layout.fillWidth: true; elide: Text.ElideMiddle }
+                    ComboBox {
+                        objectName: "viewTemplateMatch" + templateMatchRow.modelData.id
+                        Layout.fillWidth: true
+                        model: viewTemplateDialog.preview.options
+                        textRole: "label"
+                        valueRole: "id"
+                        currentIndex: {
+                            const selected = Number(viewTemplateDialog.mapping[String(templateMatchRow.modelData.id)])
+                            const options = viewTemplateDialog.preview.options
+                            for (let i = 0; i < options.length; ++i) if (Number(options[i].id) === selected) return i
+                            return 0
+                        }
+                        onActivated: function(index) { viewTemplateDialog.assign(templateMatchRow.modelData.id, Number(viewTemplateDialog.preview.options[index].id)) }
+                    }
+                }
+            }
+            CheckBox { id: fixedTemplateRanges; objectName: "fixedTemplateRanges"; text: "使用模板中的固定坐标范围（默认适应新数据）" }
+            Label { text: "保留当前时间偏移；游标重新定位。应用后可从会话菜单撤销一次。"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Label { text: viewTemplateDialog.errorText; visible: text.length > 0; color: "#df4652"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+        }
+        footer: DialogButtonBox {
+            Button { text: "应用"; enabled: viewTemplateDialog.complete; onClicked: viewTemplateDialog.apply() }
+            Button { text: "取消"; onClicked: viewTemplateDialog.close() }
+        }
+    }
     FileDialog {
         id: openSessionDialog
         objectName: "openSessionDialog"
@@ -843,6 +960,10 @@ ApplicationWindow {
                     id: sessionMenu
                     MenuItem { text: "保存会话…  Ctrl+S"; onTriggered: saveSessionDialog.open() }
                     MenuItem { text: "恢复会话…  Ctrl+Shift+O"; onTriggered: openSessionDialog.open() }
+                    MenuSeparator {}
+                    MenuItem { objectName: "saveViewTemplateMenu"; text: "保存为视图模板…"; enabled: window.appController.signalCount > 0; onTriggered: saveViewTemplateDialog.open() }
+                    MenuItem { objectName: "applyViewTemplateMenu"; text: "应用视图模板…"; enabled: window.appController.signalCount > 0; onTriggered: openViewTemplateDialog.open() }
+                    MenuItem { text: "撤销上次模板应用"; enabled: window.appController.canUndoViewTemplate; onTriggered: window.appController.undoViewTemplate() }
                 }
             }
             IconTool {

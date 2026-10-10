@@ -991,6 +991,17 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
         if (candidate->objectName() == "trajectoryBindingAxis0") { bindingX = candidate; break; }
         for (auto *child : candidate->childItems()) search.append(child);
     }
+    auto *configurationToggle = object->findChild<QQuickItem *>("trajectoryConfigurationToggle");
+    auto *configurationRow = object->findChild<QQuickItem *>("trajectoryConfigurationRow");
+    QVERIFY(configurationToggle && configurationRow);
+    QVERIFY(!configurationRow->isVisible());
+    const double collapsedHeight = item->height();
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier,
+        configurationToggle->mapToScene(QPointF(configurationToggle->width() / 2, configurationToggle->height() / 2)).toPoint());
+    QTRY_VERIFY(configurationRow->isVisible());
+    QTRY_VERIFY(item->height() < collapsedHeight);
+    QVERIFY(c.trajectoryConfigurationExpanded(0));
+    QVERIFY(!c.trajectoryConfigurationExpanded(1));
     QVERIFY(bindingX); QVERIFY(bindingX->width() >= 28); QVERIFY(bindingX->isVisible());
     QCOMPARE(bindingX->property("count").toInt(), 4);
     QCOMPARE(bindingX->property("sourceId").toInt(), 0);
@@ -1147,6 +1158,17 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QCOMPARE(c.trajectoryState(0)["name"].toString(), QString("Wing UI"));
     QVERIFY(c.configureTrajectory(0, false, 0, 1, 2, true));
     QTRY_VERIFY(!object->property("trajectoryMode").toBool());
+    c.selectSignal(0);
+    quick->setProperty("graphCursorMode", 2);
+    QVERIFY(QMetaObject::invokeMethod(quick, "openCursorEditor", Q_ARG(QVariant, 1)));
+    auto *cursorEditor = object->findChild<QObject *>("cursorTimeEditor");
+    auto *cursorInput = object->findChild<QObject *>("cursorTimeInput");
+    QVERIFY(cursorEditor && cursorInput);
+    QTRY_VERIFY(cursorEditor->property("visible").toBool());
+    cursorInput->setProperty("text", "6.1e1");
+    QVERIFY(QMetaObject::invokeMethod(cursorEditor, "apply"));
+    QTRY_VERIFY(!cursorEditor->property("visible").toBool());
+    QCOMPARE(object->findChild<PlotItem *>()->cursorX1(), 61.0);
     object.reset();
 }
 void TrajectoryTest::latestBackgroundRequestWins()
