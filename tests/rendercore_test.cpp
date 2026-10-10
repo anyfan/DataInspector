@@ -10,6 +10,8 @@ class RenderCoreTest final : public QObject
     Q_OBJECT
 
 private slots:
+    void denseOscillationAcrossBucketBoundaries();
+    void denseEnvelopeUsesEffectiveStrokeWidth();
     void denseEnvelopeOnlyAddsCoverage();
     void lodGeometryPreservesStepConnections();
     void indexedMeanAbsoluteMatchesRawSamples();
@@ -49,6 +51,68 @@ private slots:
     void geometryKeepsStrokeWhenASampleRepeats();
     void geometryDoesNotFillViewportWhenStaleLodClipsToEdges();
 };
+
+void RenderCoreTest::denseOscillationAcrossBucketBoundaries()
+{
+    PlotSeriesStore store;
+    PlotSeriesInput input;
+    input.id = 1;
+    // Each bucket contains less than one cycle; no individual bucket can
+    // satisfy the former two-reversals/three-amplitudes classification.
+    for (int i = 0; i < 4000; ++i) {
+        input.time.append(i * .025);
+        input.values.append(20 + (i % 40) / 2 * 50 + (i % 2) * 20);
+    }
+    store.replaceSeries({input});
+    const auto snapshot = store.snapshot({1});
+    const auto lod = PlotLodBuilder::build(snapshot,
+        {snapshot.generation, {1}, 0, 100, 128, 2});
+    QCOMPARE(lod.segments.size(), 1);
+    const auto &segment = lod.segments.first();
+    QVERIFY(segment.denseBuckets.size() > 100);
+    for (const auto &bucket : segment.denseBuckets) {
+        QVERIFY(bucket.firstPoint + 1 < segment.points.size());
+        const auto a = segment.points[bucket.firstPoint];
+        const auto b = segment.points[bucket.firstPoint + 1];
+        QVERIFY(a.x() >= bucket.firstX && a.x() <= bucket.lastX);
+        QVERIFY(b.x() >= bucket.firstX && b.x() <= bucket.lastX);
+    }
+}
+
+void RenderCoreTest::denseEnvelopeUsesEffectiveStrokeWidth()
+{
+    PlotSeriesInput input;
+    input.id = 1;
+    input.lineWidth = 2;
+    for (int i = 0; i < 4000; ++i) {
+        input.time.append(i * .04);
+        input.values.append(30 + ((i * 40 / 100) % 10) * 100);
+    }
+    PlotSeriesStore store;
+    store.replaceSeries({input});
+    const auto snapshot = store.snapshot({1});
+    auto lod = PlotLodBuilder::build(snapshot,
+        {snapshot.generation, {1}, 0, 100, 368, 3});
+    QVERIFY(!lod.segments.isEmpty());
+    bool widerCandidate = false;
+    for (const auto &bucket : lod.segments.first().denseBuckets)
+        widerCandidate |= bucket.minimumLineWidth > 1;
+    QVERIFY(widerCandidate);
+    auto plain = lod;
+    for (auto &segment : plain.segments) segment.denseBuckets.clear();
+    for (double width : {2.0, 4.0}) {
+        for (auto &segment : lod.segments) segment.lineWidth = width;
+        for (auto &segment : plain.segments) segment.lineWidth = width;
+        const GeometryRequest request{{0, 100, -40, 1050, 368, 900}, width};
+        const auto actual = PlotGeometryBuilder::build(lod, request);
+        const auto baseline = PlotGeometryBuilder::build(plain, request);
+        QCOMPARE(actual.segments.size(), baseline.segments.size());
+        const auto &before = baseline.segments.first().vertices;
+        const auto &after = actual.segments.first().vertices;
+        QCOMPARE(after.first(before.size()), before);
+        QVERIFY(after.size() > before.size());
+    }
+}
 
 void RenderCoreTest::denseEnvelopeOnlyAddsCoverage()
 {

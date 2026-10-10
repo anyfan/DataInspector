@@ -27,7 +27,7 @@ void PlotItem::requestLod()
         QMutexLocker lock(&m_dataMutex);
         snapshot = m_seriesSnapshot;
         key = {snapshot.generation, snapshot.orderedIds, m_xMinimum, m_xMaximum,
-               qCeil(qBound(64.0, qIsFinite(width()) ? width() : 64.0, 4096.0)), 1};
+               qCeil(qBound(64.0, qIsFinite(width()) ? width() : 64.0, 4096.0)), 3};
     }
     m_lodScheduler->request(snapshot, key);
     { QMutexLocker lock(&m_dataMutex); m_lodResult = m_lodScheduler->result(); }

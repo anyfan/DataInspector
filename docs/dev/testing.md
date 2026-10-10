@@ -41,6 +41,7 @@ ctest --test-dir build_qt6-debug --output-on-failure
 | `plotitem_blend_test` | 曲线绘制层级（AmplitudeLayers 排序、选中置顶、视窗变化、透明颜色） |
 | `plotitem_raster_test` | GPU 光栅路径（需 `-DENABLE_GPU_TESTS=ON`） |
 | `plotitem_dense_raster_test` | 密集锯齿波两种预览宽度、五档亚像素偏移的边缘一致性（GPU） |
+| `plotitem_zoomed_raster_test` / `plotitem_zoomed_compressed_raster_test` | 中间缩放的跨桶振荡，正常/压缩高度，两种宽度与五档亚像素偏移（GPU） |
 | `plotitem_compressed_raster_test` | 大范围共享 Y 轴下压缩密集波形的边缘一致性（GPU） |
 | `appcontroller_test` | 控制器集成：布局、自适应、游标、回退、会话入口、QML 加载 |
 | `session_test` | 会话往返、结构校验、失败保留、相对路径、子图生命周期 |
@@ -98,3 +99,7 @@ trajectory_raster_test 在原 CAD 环光栅用例后，验证两条不同起点�
 multiTrajectoryCost 使用 8 条各 100000 点合成地理路径，记录准备和 20 次交互预览耗时，无固定帧率断言；不能沿用百万点单航迹结果承诺多航迹性能。原始 Store、路径缓存、级别索引、后台任务及 SG 上传都计入实际使用成本，仍需真实数据/硬件专项测试。
 
 姿态显示修复回归：源码/编译 QML 检查旋转顺序下拉两个可见选项均有文字、表单宽度不溢出、底部方向设置可滚动到达、重开恢复顶部；D3D11 对飞机实际像素差异测量逻辑尺寸不超过 42 像素并验证深色描边覆盖，继续检查测量航向变化和缺失隐藏。
+
+中间缩放回归：`plotitem_raster_test --dense --zoomed` 使用 1250–2700 秒视窗，追加 `--compressed` 检查共享 Y 轴。`--dense-csv path --zoomed` 用同样 1450 秒跨度的 3250–4700 秒视窗，在已知恒定极值的 3300–3900 秒区间检查；原始 GPS 数据约 2152.14 秒的真实高样本不作为幽灵凸点删除。CPU `denseOscillationAcrossBucketBoundaries` 检查单桶不足一周期时仍识别振荡，现有阶跃/抖动/NaN/虚线/放大回归继续保留。
+
+选中加粗回归：`plotitem_selected_dense_raster_test` 使用 `--dense --narrow --selected --stepped-millis`，模拟 40 ms 采样、100 ms 平台保持的毫秒锯齿波，在 2600–3100 秒范围检查选中后的四像素线宽。`--dense-csv hmillisec.csv --narrow --selected` 对用户 p3 H_milliSec 原始列运行同一检查；`--compressed` 可同时检查共享大范围 Y 轴。CPU `denseEnvelopeUsesEffectiveStrokeWidth` 覆盖多尺度候选及两档实际线宽，要求原折线顶点完整保留。

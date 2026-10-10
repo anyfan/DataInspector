@@ -12,7 +12,7 @@ struct LodRequestKey
     double xMinimum = 0.0;
     double xMaximum = 1.0;
     int bucketCount = 0;
-    quint32 algorithmVersion = 1;
+    quint32 algorithmVersion = 3;
 
     bool operator==(const LodRequestKey &other) const;
 };
@@ -22,6 +22,7 @@ struct LodDenseBucket
     double firstX = 0.0;
     double lastX = 0.0;
     qsizetype firstPoint = 0;
+    double minimumLineWidth = 1.0; // In LOD bucket widths, checked after projection.
 };
 
 struct LodSegment

@@ -18,6 +18,14 @@ int main(int argc, char **argv)
     const int denseCsvIndex = app.arguments().indexOf(QStringLiteral("--dense-csv"));
     const bool checkDense = denseCsvIndex >= 0 || app.arguments().contains(QStringLiteral("--dense"));
     const bool compressed = app.arguments().contains(QStringLiteral("--compressed"));
+    const bool zoomed = app.arguments().contains(QStringLiteral("--zoomed"));
+    const bool narrow = app.arguments().contains(QStringLiteral("--narrow"));
+    const bool selected = app.arguments().contains(QStringLiteral("--selected"));
+    const bool sawtooth = app.arguments().contains(QStringLiteral("--sawtooth"));
+    const bool steppedMillis = app.arguments().contains(QStringLiteral("--stepped-millis"));
+    const double denseMinimum = narrow ? 2600
+        : zoomed ? (denseCsvIndex >= 0 ? 3250 : 1250) : 0;
+    const double denseMaximum = narrow ? denseMinimum + 500 : zoomed ? denseMinimum + 1450 : 6400;
     if (checkStep && checkDense) return 4;
     if (QQuickWindow::graphicsApi() == QSGRendererInterface::Software) {
         qInfo() << "GPU raster test requires a hardware scene graph backend";
@@ -57,8 +65,10 @@ int main(int argc, char **argv)
     } else if (checkDense) {
         times.clear(); rising.clear(); falling.clear();
         for (int i = 0; i < 247511; ++i) {
-            times.append(87.065 + i * .025);
-            rising.append(20 + (i % 40) / 2 * 50 + (i % 2) * 20);
+            times.append(87.065 + i * (steppedMillis ? .04 : .025));
+            rising.append(steppedMillis ? 30 + ((i * 40 / 100) % 10) * 100
+                          : sawtooth ? 30 + (i % 40) * (900.0 / 39)
+                                  : 20 + (i % 40) / 2 * 50 + (i % 2) * 20);
         }
         falling = rising;
     }
@@ -85,9 +95,10 @@ int main(int argc, char **argv)
     if (checkDense) {
         window.resize(1920, 1000);
         first.setX(40); first.setY(40); first.setWidth(1840); first.setHeight(900);
-        first.setXRange(0, 6400);
+        first.setXRange(denseMinimum, denseMaximum);
         first.setYRange(compressed ? -8000 : -40, compressed ? 198000 : 1050);
         second.setVisible(false);
+        if (selected) first.setHighlightedSeries(1);
     }
     window.show();
     int attempts = 0;
@@ -104,8 +115,10 @@ int main(int argc, char **argv)
         if (checkDense) {
             const double scale = image.width() / 1920.0;
             int minTop = image.height(), maxTop = 0, minBottom = image.height(), maxBottom = 0;
-            for (int x = qCeil((40 + 3300.0 / 6400 * first.width()) * scale);
-                 x < qFloor((40 + 3900.0 / 6400 * first.width()) * scale); ++x) {
+            const double probeMinimum = narrow ? denseMinimum + 50 : zoomed && denseCsvIndex < 0 ? 1600 : 3300;
+            const double probeMaximum = narrow ? denseMaximum - 50 : zoomed && denseCsvIndex < 0 ? 2600 : 3900;
+            for (int x = qCeil((40 + (probeMinimum - denseMinimum) / (denseMaximum - denseMinimum) * first.width()) * scale);
+                 x < qFloor((40 + (probeMaximum - denseMinimum) / (denseMaximum - denseMinimum) * first.width()) * scale); ++x) {
                 int top = -1, bottom = -1;
                 for (int y = qCeil(40 * scale); y < qFloor(940 * scale); ++y) {
                     if (qRed(image.pixel(x, y)) < 223) {

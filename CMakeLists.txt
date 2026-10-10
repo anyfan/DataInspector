@@ -440,6 +440,21 @@ if(BUILD_TESTING)
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_raster_test> --dense --compressed)
         set_tests_properties(plotitem_compressed_raster_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+        foreach(zoom_case IN ITEMS zoomed zoomed_compressed)
+            set(zoom_args --dense --zoomed)
+            if(zoom_case STREQUAL "zoomed_compressed")
+                list(APPEND zoom_args --compressed)
+            endif()
+            add_test(NAME plotitem_${zoom_case}_raster_test COMMAND ${CMAKE_COMMAND} -E env
+                "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+                "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_raster_test> ${zoom_args})
+            set_tests_properties(plotitem_${zoom_case}_raster_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
+        endforeach()
+        add_test(NAME plotitem_selected_dense_raster_test COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_raster_test>
+            --dense --narrow --selected --stepped-millis)
+        set_tests_properties(plotitem_selected_dense_raster_test PROPERTIES LABELS gpu SKIP_RETURN_CODE 77)
         add_test(NAME plotitem_blend_test COMMAND ${CMAKE_COMMAND} -E env
             "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
             "QT_FORCE_STDERR_LOGGING=1" $<TARGET_FILE:plotitem_blend_test>)

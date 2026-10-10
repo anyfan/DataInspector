@@ -236,6 +236,10 @@ GeometryResult PlotGeometryBuilder::build(const LodResult &lod,
         QVector<QPointF> envelope;
         const double radius = qMax(1.0, width) * .5;
         for (const auto &bucket : lodSegment.denseBuckets) {
+            // Highlighting increases the effective stroke width without a new
+            // LOD job. Wider strokes can merge cycles spanning more buckets.
+            if (bucket.minimumLineWidth * bucketPixels > qMax(1.0, width))
+                continue;
             if (bucket.firstPoint < 0 || bucket.firstPoint + 1 >= lodSegment.points.size())
                 continue;
             const auto a = request.transform.map(lodSegment.points[bucket.firstPoint]);

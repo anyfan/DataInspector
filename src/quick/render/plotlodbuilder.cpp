@@ -135,24 +135,28 @@ static void appendSeriesLod(const PlotSeriesData &series,
     double lastY = 0.0;
     double totalVariation = 0.0;
     int direction = 0, reversals = 0;
+    int firstDirection = 0;
+    double firstY = 0;
+    struct BucketSummary {
+        LodDenseBucket bucket;
+        double minimum, maximum, firstY, lastY, variation;
+        qsizetype samples;
+        int firstDirection, lastDirection, reversals;
+    };
+    QVector<BucketSummary> buckets;
 
     const double span = key.xMaximum - key.xMinimum;
     auto flushBucket = [&]() {
         if (minimum.has_value()) {
-            // Tiny jitter around a single large step is not dense oscillation.
-            // Require travel across the bucket's amplitude range at least three
-            // times, as well as direction changes, before adding an envelope.
-            const double amplitude = maximum->point.y() - minimum->point.y();
-            if (series.monotonicTime && bucketSamples >= 4 && reversals >= 2
-                && qIsFinite(totalVariation) && qIsFinite(amplitude) && amplitude > 0
-                && totalVariation / amplitude >= 3.0
-                && minimum->index != maximum->index
-                && firstX >= key.xMinimum && lastX <= key.xMaximum)
-                current.denseBuckets.append({firstX, lastX, current.points.size()});
+            if (series.monotonicTime)
+                buckets.append({{firstX, lastX, current.points.size()},
+                                minimum->point.y(), maximum->point.y(), firstY, lastY,
+                                totalVariation, bucketSamples, firstDirection, direction, reversals});
             appendReducedBucket(current.points, *minimum, *maximum);
         }
         bucketSamples = 0;
         direction = 0;
+        firstDirection = 0;
         reversals = 0;
         totalVariation = 0.0;
         minimum.reset();
@@ -160,6 +164,51 @@ static void appendSeriesLod(const PlotSeriesData &series,
     };
     auto flushSegment = [&]() {
         flushBucket();
+        // A cycle can straddle pixel buckets at intermediate zoom. Classify
+        // oscillation at several bounded neighborhood sizes, then supplement
+        // each bucket with its own extrema (never spread neighboring peaks).
+        for (qsizetype i = 0; i < buckets.size(); ++i) {
+            if ((i & 1023) == 0 && cancelled && cancelled->load()) return;
+            const auto &candidate = buckets[i];
+            if (candidate.minimum == candidate.maximum
+                || candidate.bucket.firstX < key.xMinimum
+                || candidate.bucket.lastX > key.xMaximum)
+                continue;
+            for (int radius : {2, 4, 8, 16, 32}) {
+                double low = candidate.minimum, high = candidate.maximum, travel = 0;
+                qsizetype samples = 0;
+                int turns = 0, previousDirection = 0;
+                double previousY = 0;
+                for (qsizetype j = qMax(qsizetype(0), i - radius);
+                     j < qMin(buckets.size(), i + radius + 1); ++j) {
+                    const auto &bucket = buckets[j];
+                    low = qMin(low, bucket.minimum); high = qMax(high, bucket.maximum);
+                    if (samples > 0 && bucket.firstY != previousY) {
+                        const int bridgeDirection = bucket.firstY > previousY ? 1 : -1;
+                        if (previousDirection && previousDirection != bridgeDirection) ++turns;
+                        previousDirection = bridgeDirection;
+                        travel += qAbs(bucket.firstY - previousY);
+                    }
+                    if (bucket.firstDirection) {
+                        if (previousDirection && previousDirection != bucket.firstDirection) ++turns;
+                        previousDirection = bucket.lastDirection;
+                    }
+                    turns += bucket.reversals;
+                    travel += bucket.variation;
+                    samples += bucket.samples;
+                    previousY = bucket.lastY;
+                }
+                const double amplitude = high - low;
+                if (samples >= 4 && turns >= 2 && amplitude > 0
+                    && qIsFinite(amplitude) && qIsFinite(travel) && travel / amplitude >= 3) {
+                    auto denseBucket = candidate.bucket;
+                    denseBucket.minimumLineWidth = radius * .5;
+                    current.denseBuckets.append(denseBucket);
+                    break;
+                }
+            }
+        }
+        buckets.clear();
         if (!current.points.isEmpty())
             output.append(std::move(current));
         current = LodSegment{series.id, series.color, {}, series.lineWidth,
@@ -194,11 +243,12 @@ static void appendSeriesLod(const PlotSeriesData &series,
         if (bucketSamples > 0 && point.y() != lastY) {
             totalVariation += qAbs(point.y() - lastY);
             const int nextDirection = point.y() > lastY ? 1 : -1;
+            if (firstDirection == 0) firstDirection = nextDirection;
             if (direction != 0 && direction != nextDirection) ++reversals;
             direction = nextDirection;
         }
         lastY = point.y();
-        if (bucketSamples++ == 0) firstX = point.x();
+        if (bucketSamples++ == 0) { firstX = point.x(); firstY = point.y(); }
         lastX = point.x();
         if (!minimum.has_value()) {
             minimum = candidate;

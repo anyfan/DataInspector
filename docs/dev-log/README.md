@@ -43,6 +43,7 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [密集曲线中间缩放的残留边缘凸点](dense-cross-bucket-zoom-2026-10-09.md) | 跨桶、多尺度与选中线宽判定；GPS 和 H_milliSec 原始数据 GPU 回归 |
 | [密集曲线缩放几何](mcp-dense-curve-zoom-geometry.md) | 三角形条带改为常宽四边形三角形列表，消除楔形填充 |
 | [密集曲线圆角方案（已撤回）](mcp-dense-curve-round-joins.md) | 首次方案与历史验证，现行实现见补充包络记录 |
 | [密集预览修复紧急回退](mcp-dense-preview-emergency-rollback.md) | 撤回 9aa5769，优先恢复普通曲线连续性 |
