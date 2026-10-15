@@ -87,18 +87,39 @@ Pane {
     readonly property var visibleFields: {
         if (!selected) return []
         const roles = ["latitude", "longitude", "height", "roll", "pitch", "yaw", "x", "y", "z", "qw", "qx", "qy", "qz"]
-        return selected.fields.filter(field => {
+        const fields = selected.fields.filter(field => {
             if (!field.fixed || selected.type !== "aircraft") return true
             if (["latitude", "longitude", "height"].indexOf(field.role) >= 0) return selected.geographic
             if (["x", "y", "z"].indexOf(field.role) >= 0) return !selected.geographic
             if (["roll", "pitch", "yaw"].indexOf(field.role) >= 0) return selected.attitudeMode === 1
             return selected.attitudeMode === 2
-        }).sort((a, b) => {
+        })
+        return fields.slice().sort((a, b) => {
             const left = roles.indexOf(a.role), right = roles.indexOf(b.role)
             return (left < 0 ? roles.length : left) - (right < 0 ? roles.length : right)
+                || fields.indexOf(a) - fields.indexOf(b)
         })
     }
+    ListModel { id: fieldRows; dynamicRoles: true }
+    function syncFieldRows(): void {
+        // Keep delegates and the viewport alive across dataObjects notifications.
+        const wanted = new Set(visibleFields.map(field => field.id))
+        for (let i = fieldRows.count - 1; i >= 0; --i)
+            if (!wanted.has(fieldRows.get(i).fieldData.id)) fieldRows.remove(i)
+        for (let i = 0; i < visibleFields.length; ++i) {
+            const field = visibleFields[i]
+            let existing = i
+            while (existing < fieldRows.count && fieldRows.get(existing).fieldData.id !== field.id) ++existing
+            if (existing === fieldRows.count) fieldRows.insert(i, {fieldData: field})
+            else {
+                if (existing !== i) fieldRows.move(existing, i, 1)
+                fieldRows.setProperty(i, "fieldData", field)
+            }
+        }
+    }
+    Component.onCompleted: syncFieldRows()
     onVisibleFieldsChanged: {
+        syncFieldRows()
         if (selectedFieldId.length > 0 && !visibleFields.some(field => field.id === selectedFieldId)) selectedFieldId = ""
     }
     readonly property var selected: {
@@ -128,6 +149,7 @@ Pane {
     }
     function editRule(rule: var): void {
         ruleDialog.ruleId = rule ? rule.id : ""
+        ruleDialog.mergeInputs = rule ? rule.inputIds.slice() : []
         ruleName.text = rule ? rule.name : ""
         operationCombo.currentIndex = 0
         if (rule) for (let i = 0; i < operationCombo.model.length; ++i) if (operationCombo.model[i].id === rule.operation) operationCombo.currentIndex = i
@@ -240,24 +262,26 @@ Pane {
                             Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.fillHeight: true
                             ListView {
                                 id: fieldList
-                                model: manager.visibleFields
+                                objectName: "objectFieldList"
+                                model: fieldRows
+                                currentIndex: -1
                                 clip: true
                                 delegate: ItemDelegate {
                                     id: fieldRow
                                     objectName: "objectFieldRow"
-                                    required property var modelData
+                                    required property var fieldData
                                     width: ListView.view.width; height: 48; padding: 4
-                                    highlighted: manager.selectedFieldId === modelData.id
-                                    background: Rectangle { color: fieldRow.highlighted || manager.dropFieldId === fieldRow.modelData.id ? manager.selectionColor : fieldRow.hovered ? manager.palette.button : "transparent"; radius: 4; border.width: manager.dropFieldId === fieldRow.modelData.id ? 2 : 0; border.color: manager.palette.highlight }
-                                    onClicked: manager.selectedFieldId = modelData.id
+                                    highlighted: manager.selectedFieldId === fieldData.id
+                                    background: Rectangle { color: fieldRow.highlighted || manager.dropFieldId === fieldRow.fieldData.id ? manager.selectionColor : fieldRow.hovered ? manager.palette.button : "transparent"; radius: 4; border.width: manager.dropFieldId === fieldRow.fieldData.id ? 2 : 0; border.color: manager.palette.highlight }
+                                    onClicked: manager.selectedFieldId = fieldData.id
                                     contentItem: RowLayout {
                                     Label {
                                         objectName: "objectFieldRowName"
-                                        text: fieldRow.modelData.name; color: manager.textColor; Layout.preferredWidth: 120; elide: Text.ElideRight
-                                        MouseArea { anchors.fill: parent; onClicked: manager.selectedFieldId = fieldRow.modelData.id; onDoubleClicked: if (!manager.blocked) manager.editField(fieldRow.modelData, -1) }
+                                        text: fieldRow.fieldData.name; color: manager.textColor; Layout.preferredWidth: 120; elide: Text.ElideRight
+                                        MouseArea { anchors.fill: parent; onClicked: manager.selectedFieldId = fieldRow.fieldData.id; onDoubleClicked: if (!manager.blocked) manager.editField(fieldRow.fieldData, -1) }
                                     }
-                                    Label { objectName: "objectFieldRowSource"; text: fieldRow.modelData.source; color: manager.textColor; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideMiddle }
-                                    Button { text: "删除"; visible: !fieldRow.modelData.fixed; enabled: !manager.blocked; onClicked: { if (!manager.appController.removeObjectField(manager.selectedId, fieldRow.modelData.id)) manager.errorText = manager.appController.status } }
+                                    Label { objectName: "objectFieldRowSource"; text: fieldRow.fieldData.source; color: manager.textColor; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideMiddle }
+                                    Button { text: "删除"; visible: !fieldRow.fieldData.fixed; enabled: !manager.blocked; onClicked: { if (!manager.appController.removeObjectField(manager.selectedId, fieldRow.fieldData.id)) manager.errorText = manager.appController.status } }
                                     }
                                 }
                             }
@@ -297,7 +321,7 @@ Pane {
                                         text: ruleRow.modelData.operation === "expression" ? "公式：" + ruleRow.modelData.expression
                                             : ruleRow.modelData.operation === "scale" ? "换算：x × " + ruleRow.modelData.factor + " + " + ruleRow.modelData.bias
                                             : ruleRow.modelData.operation === "bits" || ruleRow.modelData.operation === "bitfield"
-                                                ? ruleRow.modelData.wordBits + " 位 · bit" + ruleRow.modelData.startBit + " 起，共 " + ruleRow.modelData.bitCount + " 位" + (ruleRow.modelData.signedField ? " · 有符号" : "") : "三轴模长"
+                                                ? ruleRow.modelData.wordBits + " 位 · bit" + ruleRow.modelData.startBit + " 起，共 " + ruleRow.modelData.bitCount + " 位" + (ruleRow.modelData.signedField ? " · 有符号" : "") : ruleRow.modelData.operation === "merge" ? "按时间合并同源采样点" : "三轴模长"
                                         Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
                                     }
                                     Label { text: ruleRow.modelData.error; visible: text.length > 0; color: "#df4652"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
@@ -366,6 +390,7 @@ Pane {
         property string errorText: ""
         title: ruleId.length > 0 ? "编辑派生规则" : "新增派生规则"
         anchors.centerIn: parent; modal: true; width: Math.min(660, manager.width - 30)
+        property var mergeInputs: []
         readonly property string operation: String(operationCombo.currentValue)
         readonly property var inputOptions: {
             if (!manager.selected) return []
@@ -386,10 +411,38 @@ Pane {
             TextField { id: ruleName; objectName: "objectRuleName"; Layout.fillWidth: true; Layout.minimumWidth: 0; maximumLength: 256 }
             ObjectCombo {
                 id: operationCombo; objectName: "objectRuleOperation"; textRole: "name"; valueRole: "id"; Layout.fillWidth: true
-                model: [{id: "bits", name: "状态字拆位"}, {id: "bitfield", name: "提取位段"}, {id: "scale", name: "比例与偏置换算"}, {id: "magnitude", name: "三轴模长"}, {id: "expression", name: "自定义公式"}]
+                model: [{id: "bits", name: "状态字拆位"}, {id: "bitfield", name: "提取位段"}, {id: "scale", name: "比例与偏置换算"}, {id: "magnitude", name: "三轴模长"}, {id: "expression", name: "自定义公式"}, {id: "merge", name: "按时间合并同源信号"}]
             }
-            Label { text: "输入 x（对象字段或此前派生结果）" }
-            ObjectCombo { id: inputX; objectName: "objectRuleInputX"; model: ruleDialog.inputOptions; textRole: "name"; valueRole: "id"; Layout.fillWidth: true }
+            Label { text: "输入 x（对象字段或此前派生结果）"; visible: ruleDialog.operation !== "merge" }
+            ObjectCombo { id: inputX; visible: ruleDialog.operation !== "merge"; objectName: "objectRuleInputX"; model: ruleDialog.inputOptions; textRole: "name"; valueRole: "id"; Layout.fillWidth: true }
+            ScrollView {
+                visible: ruleDialog.operation === "merge"
+                Layout.fillWidth: true; Layout.preferredHeight: 180
+                clip: true
+                Column {
+                    width: parent.width
+                    Repeater {
+                        model: ruleDialog.inputOptions
+                        CheckBox {
+                            required property var modelData
+                            text: modelData.name
+                            checked: ruleDialog.mergeInputs.indexOf(modelData.id) >= 0
+                            onToggled: {
+                                const ids = ruleDialog.mergeInputs.slice()
+                                const index = ids.indexOf(modelData.id)
+                                if (checked && index < 0) ids.push(modelData.id)
+                                else if (!checked && index >= 0) ids.splice(index, 1)
+                                ruleDialog.mergeInputs = ids
+                            }
+                        }
+                    }
+                }
+            }
+            Label {
+                visible: ruleDialog.operation === "merge"
+                text: "选择至少两个同源输入。按含偏移的时间排序，不插值；同时间同值去重，不同有效值报错，缺失值优先使用有效值。"
+                Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
+            }
             Label { text: "输入 y / z"; visible: ruleDialog.operation === "magnitude" || ruleDialog.operation === "expression" }
             RowLayout {
                 visible: ruleDialog.operation === "magnitude" || ruleDialog.operation === "expression"
@@ -419,7 +472,7 @@ Pane {
             Label { text: ruleDialog.errorText; visible: text.length > 0; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap; color: "#df4652" }
         }
         function submit(): void {
-            const inputs = [String(inputX.currentValue)]
+            const inputs = operation === "merge" ? mergeInputs.slice() : [String(inputX.currentValue)]
             if (operation === "magnitude" || operation === "expression") {
                 if (String(inputY.currentValue).length > 0) inputs.push(String(inputY.currentValue))
                 if (inputZ.enabled && String(inputZ.currentValue).length > 0) inputs.push(String(inputZ.currentValue))

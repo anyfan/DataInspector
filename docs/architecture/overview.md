@@ -21,7 +21,7 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 
 ## 数据流
 
-对象定义见 `objectdefinition.*`，GUI 管理由 `appcontroller_objects.cpp` 和 `ObjectManager.qml` 提供。规则必须拥有对象，只引用本对象字段或此前输出。后台捕获对象值配置和不可变 Store 原始快照，生成计算样本及索引；GUI 接收完成结果，通过 `publishComputed` 整体替换输出快照，绘图复用现有 Scene Graph。字段来源、计算参数或原始偏移/移除取消旧任务并只清空失效规则及其下游的旧值；过期结果不发布。会话 v10 保存对象类型、飞机配置、对象/输出身份和定义，恢复原始来源后重新计算；旧版本转换为空对象列表。
+对象定义见 `objectdefinition.*`，GUI 管理由 `appcontroller_objects.cpp` 和 `ObjectManager.qml` 提供。规则必须拥有对象，只引用本对象字段或此前输出。后台捕获对象值配置和不可变 Store 原始快照，生成计算样本及索引；GUI 接收完成结果，通过 `publishComputed` 整体替换输出快照，绘图复用现有 Scene Graph。字段来源、计算参数或原始偏移/移除取消旧任务并只清空失效规则及其下游的旧值；过期结果不发布。会话 v11 保存对象类型、飞机配置、对象/输出身份和定义，恢复原始来源后重新计算；旧版本转换为空对象列表。
 
 关于页面由 `AboutDialog.qml` 展示，`AppController::aboutInfo`/`releaseNotes` 提供常量信息，`copyAboutInfo` 在 GUI 线程写入剪贴板。`appcontroller_about.cpp` 读取构建时生成的元数据和嵌入的更新记录，不在程序启动时查询 Git，也不依赖源码目录。
 
@@ -102,3 +102,7 @@ TrajectoryItem::setSources 接收全部不可变 Store 来源。TrajectoryBuilde
 viewconfiguration.* 定义布局、子图、航迹及范围值配置，SessionDocument 和 ViewTemplateDocument 共用同一 JSON 视图校验。sessiondocument.* 保留来源/对象/游标的版本迁移与事务读写；viewtemplatedocument.* 独立校验模板 v2，只包含被引用来源的匹配提示和样式，旧 v1 通过会话读取器转换。appcontroller_session.cpp 负责完整会话恢复，appcontroller_templates.cpp 负责模板匹配、应用和撤销。运行期来源仍使用集中重映射的行号，本批未迁移为稳定系列 ID。
 
 SignalBrowser.qml 管理搜索、列表、树手势及导航，向 Main.qml 发送拖拽/菜单/编辑请求；Main.qml 保留跨子图命中和窗口协调。SessionDialogs.qml 管理会话/模板文件选择、匹配、重定位与保存提示，通过显式控制器和窗口尺寸属性接收依赖。appcontroller_objects.cpp 管理对象定义；appcontroller_objectevaluation.cpp 管理规则增量计算的取消、快照捕获和结果提交。
+
+按时间合并规则 `merge` 复用对象后台计算与失效传播，在不可变来源快照上收集含偏移的原始点，排序并按精确时间去重。同时间不同有效值使整条输出失效；有效值覆盖缺失值。结果以零偏移、单调时间数组发布并构建范围索引，不使用 LOD 或插值。会话 v11 保存该规则。
+
+对象字段列表按预置用途、原始字段顺序显式排序；同用途字段不依赖 JavaScript sort 的稳定性。QML ListModel 按字段 ID 局部增删、移动和更新，避免数据通知重置整个列表，保留可见行与滚动位置。

@@ -20,6 +20,7 @@ class ObjectDataTest : public QObject {
     Q_OBJECT
 private slots:
     void bitsAndSignedFields();
+    void mergeSamples();
     void dependencyPlanPreservesIndependentBranches();
     void expressionsAndTimeBases();
     void ownershipAndSchema();
@@ -43,6 +44,56 @@ static PlotSeriesSnapshot rawSnapshot(QVector<double> values)
     for (qsizetype i = 0; i < values.size(); ++i) input.time.append(double(i));
     PlotSeriesStore store; store.appendSeries({input}); return store.snapshot({0});
 }
+void ObjectDataTest::mergeSamples()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{0, {2, 0}, {20, 0}}, {1, {1, 3}, {10, 30}},
+        {2, {2, 4}, {20, qQNaN()}}, {3, {4}, {40}}});
+    DataObject object{"object", "merged", {{"a", "A", "scalar", 0}, {"b", "B", "scalar", 1},
+        {"c", "C", "scalar", 2}, {"d", "D", "scalar", 3}}, {}};
+    ObjectRule rule; rule.id = "merge"; rule.name = "merged"; rule.operation = "merge";
+    rule.inputs = {"a", "b", "c", "d"}; rule.outputs = {{"out", "merged", 4}}; object.rules = {rule};
+    QString error; QVERIFY2(validateObjects({object}, 5, &error), qPrintable(error));
+    QVector<DataObject> restored;
+    QVERIFY2(objectsFromJson(objectsToJson({object}), 5, &restored, &error, 11), qPrintable(error));
+    QCOMPARE(restored.first().rules.first().inputs, rule.inputs);
+    std::atomic_bool cancel{false};
+    auto result = evaluateObjects(restored, store.snapshot({0, 1, 2, 3}), cancel);
+    QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series.size(), 1);
+    QCOMPARE(result.series.first()->time, QVector<double>({0, 1, 2, 3, 4}));
+    QCOMPARE(result.series.first()->values, QVector<double>({0, 10, 20, 30, 40}));
+    auto snapshot = store.snapshot({0, 1, 2, 3});
+    auto shifted = std::make_shared<PlotSeriesData>(*snapshot.series[3]);
+    shifted->timeOffset = -2; snapshot.series[3] = shifted;
+    result = evaluateObjects({object}, snapshot, cancel);
+    QVERIFY(result.errors.contains("merge")); QVERIFY(result.series.first()->values.isEmpty());
+    shifted->timeOffset = 1;
+    result = evaluateObjects({object}, snapshot, cancel);
+    QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series.first()->time.last(), 5.0);
+    object.rules[0].inputs = {"a", "a"}; QVERIFY(!validateObjects({object}, 5, &error));
+    cancel = true; QVERIFY(evaluateObjects(restored, snapshot, cancel).series.isEmpty());
+    QTemporaryDir dir;
+    for (int i = 0; i < 2; ++i) {
+        QFile file(dir.filePath(QString::number(i) + ".csv")); QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(i == 0 ? "time,X\n0,0\n2,20\n" : "time,X\n1,10\n3,30\n");
+    }
+    AppController controller;
+    for (int i = 0; i < 2; ++i) {
+        QVERIFY(controller.loadCsv(dir.filePath(QString::number(i) + ".csv"))); QTRY_VERIFY(!controller.loading());
+    }
+    const auto owner = controller.createDataObject("merged");
+    const auto a = controller.bindObjectField(owner, {}, "A", "scalar", 0);
+    const auto b = controller.bindObjectField(owner, {}, "B", "scalar", 1);
+    QVERIFY(!controller.addObjectRule(owner, {{"name", "merged"}, {"operation", "merge"}, {"inputs", QVariantList{a, b}}}).isEmpty());
+    QTRY_VERIFY(!controller.deriving());
+    const auto session = dir.filePath("merge.disession"); QVERIFY(controller.saveSession(session));
+    AppController loaded; QVERIFY(loaded.restoreSession(session)); QTRY_VERIFY(!loaded.loading() && !loaded.deriving());
+    const auto loadedRule = loaded.dataObjects().first().toMap()["rules"].toList().first().toMap();
+    QVERIFY(loadedRule["error"].toString().isEmpty());
+    QCOMPARE(loadedRule["operation"].toString(), QString("merge"));
+    QCOMPARE(loadedRule["outputs"].toList().first().toMap()["preview"].toString(), QString("0 / 10 / 20 / 30"));
+}
+
 void ObjectDataTest::dependencyPlanPreservesIndependentBranches()
 {
     PlotSeriesStore store;
@@ -466,6 +517,38 @@ void ObjectDataTest::objectManagerQml()
     QTRY_COMPARE(manager->property("dropFieldId").toString(), fieldAt);
     QTest::mouseRelease(quickWindow, Qt::LeftButton, Qt::NoModifier, dropPoint);
     QCOMPARE(controller.dataObjects().last().toMap()["fields"].toList().first().toMap()["series"].toInt(), 0);
+    // Keep the same visible row and viewport when fields are appended or removed.
+    auto *addField = root->findChild<QObject *>("addObjectFieldButton"); QVERIFY(addField);
+    for (int i = 0; i < 35; ++i) QVERIFY(QMetaObject::invokeMethod(addField, "clicked"));
+    auto *fieldList = root->findChild<QQuickItem *>("objectFieldList"); QVERIFY(fieldList);
+    QTRY_COMPARE(fieldList->property("count").toInt(), 36);
+    QTRY_VERIFY(!controller.deriving());
+    QVERIFY(QMetaObject::invokeMethod(fieldList, "forceLayout"));
+    const auto displayedFields = manager->property("visibleFields").toList();
+    const auto storedFields = controller.dataObjects().last().toMap()["fields"].toList();
+    QCOMPARE(displayedFields.size(), storedFields.size());
+    for (int i = 0; i < storedFields.size(); ++i)
+        QCOMPARE(displayedFields[i].toMap()["id"], storedFields[i].toMap()["id"]);
+    fieldList->setProperty("contentY", 480.0);
+    QPointer<QQuickItem> anchor;
+    QTRY_VERIFY((anchor = visualItem("objectFieldRowName", QStringLiteral("字段 11"))));
+    QTest::qWait(50);
+    const auto anchorY = anchor->mapToScene(QPointF()).y();
+    QVERIFY(QMetaObject::invokeMethod(addField, "clicked"));
+    QTRY_COMPARE(fieldList->property("count").toInt(), 37);
+    QTest::qWait(50);
+    QVERIFY2(anchor, "Adding a field must not recreate existing delegates");
+    QVERIFY(qAbs(anchor->mapToScene(QPointF()).y() - anchorY) < 1);
+    auto fields = controller.dataObjects().last().toMap()["fields"].toList();
+    const auto owner = controller.dataObjects().last().toMap()["id"].toString();
+    QVERIFY(controller.removeObjectField(owner, fields.last().toMap()["id"].toString()));
+    QTRY_COMPARE(fieldList->property("count").toInt(), 36);
+    QTest::qWait(50);
+    QVERIFY(anchor); QVERIFY(qAbs(anchor->mapToScene(QPointF()).y() - anchorY) < 1);
+    QVERIFY(controller.removeObjectField(owner, fields.first().toMap()["id"].toString()));
+    QTRY_COMPARE(fieldList->property("count").toInt(), 35);
+    QTest::qWait(50);
+    QVERIFY(anchor); QVERIFY(qAbs(anchor->mapToScene(QPointF()).y() - anchorY) < 1);
     QVERIFY(QMetaObject::invokeMethod(manager, "close"));
     QVERIFY(root->findChild<QObject *>("plotGrid")->property("visible").toBool());
     QVERIFY(controller.plotSignalEnabled(0, 0));

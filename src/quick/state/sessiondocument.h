@@ -17,7 +17,7 @@ struct SessionSignal
 };
 struct SessionDocument : ViewConfiguration
 {
-    static constexpr int version = 10;
+    static constexpr int version = 11;
     QStringList files; // Relative to the session document, or absolute.
     QVector<SessionSignal> series;
     QVector<DataObject> objects;

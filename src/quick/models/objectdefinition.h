@@ -49,4 +49,4 @@ QJsonArray objectsToJson(const QVector<DataObject> &objects);
 QStringList aircraftFieldRoles();
 QStringList activeAircraftFieldRoles(const DataObject &object);
 bool ensureAircraftFields(DataObject &object);
-bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error, int version = 10);
+bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error, int version = 11);
