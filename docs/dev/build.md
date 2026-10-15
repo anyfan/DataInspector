@@ -81,10 +81,10 @@ powershell -ExecutionPolicy Bypass -File tools/deploy_qt6.ps1 `
 
 工作流：`.github/workflows/windows-release.yml`。
 
-- 推送 `main`：构建成功后更新 `latest` 标签对应的 **main 开发版预发布**，固定下载入口为 <https://github.com/anyfan/DataInspector/releases/tag/latest>。
-- 推送 `v*` 标签（例如 `v0.1.0`）：发布同名正式 Release，发布说明来自随构建保存的 `docs/user-guide/changelog.md`。已存在的正式 Release 不覆盖。
+- 推送 `main`：执行构建、检查和打包，不发布 Release。
+- 推送 `v*` 标签（例如 `v0.3.0`）：发布同名正式 Release，发布说明来自随构建保存的 `docs/user-guide/changelog.md`。已存在的正式 Release 不覆盖；成功发布后将 `latest` 标签更新为该正式版本提交。
 - 指向 `main` 的 PR：只构建、检查和打包，不发布。
-- Actions 页面可手动运行；仅 `main` 或 `v*` 标签运行允许发布。
+- Actions 页面可手动运行；仅 `v*` 标签运行允许发布。
 
 使用标准 `windows-2022` runner，安装 Qt 6.8.3 `win64_llvm_mingw`、qtsvg 和 `tools_llvm_mingw1706`。CI 用 SDK 环境变量单独配置 `build_ci`，不依赖本机预设路径；`ENABLE_MAT=ON`，沿用仓库中的静态库。
 
