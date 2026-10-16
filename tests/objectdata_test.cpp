@@ -30,6 +30,7 @@ private slots:
     void expressionsAndTimeBases();
     void ownershipAndSchema();
     void controllerLifecycleAndRestore();
+    void removingFilesCleansDerivedSignalsAndLegends();
     void editsPreserveUnrelatedResultsAndMergePendingObjects();
     void linkedTrajectoriesAndRuleEdits();
     void staircaseKeepsPulse();
@@ -452,10 +453,105 @@ void ObjectDataTest::controllerLifecycleAndRestore()
     QVERIFY(target.cursorReadouts().isEmpty());
     QVERIFY(restored.bindObjectField(objectId, field, "状态", "scalar", 0).size() > 0); QTRY_VERIFY(!restored.deriving());
     QVERIFY(!target.cursorReadouts().isEmpty());
-    QVERIFY(restored.removeFile("word.csv")); QTRY_VERIFY(!restored.deriving()); QCOMPARE(restored.signalCount(), 8);
+    QVERIFY(restored.removeFile("word.csv")); QTRY_VERIFY(!restored.deriving()); QCOMPARE(restored.signalCount(), 0);
     const auto obj = restored.dataObjects().first().toMap(); QCOMPARE(obj["fields"].toList().first().toMap()["series"].toInt(), -1);
     QVERIFY(restored.saveSession(dir.filePath("without-source.disession")));
     QVERIFY(restored.removeDataObject(objectId)); QCOMPARE(restored.signalCount(), 0);
+}
+void ObjectDataTest::removingFilesCleansDerivedSignalsAndLegends()
+{
+    QTemporaryDir dir; QVERIFY(QDir(dir.path()).mkpath("left")); QVERIFY(QDir(dir.path()).mkpath("right"));
+    const auto left = dir.filePath("left/same.csv"), right = dir.filePath("right/same.csv");
+    for (const auto &path : {left, right}) {
+        QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,A\n0,10\n1,20\n3,40\n");
+    }
+    AppController controller; controller.setLayout(1, 2);
+    PlotItem first, second; first.setWidth(600); first.setHeight(300); second.setWidth(600); second.setHeight(300);
+    controller.attachPlot(&first, 0); controller.attachPlot(&second, 1);
+    QCOMPARE(controller.loadFiles(QVariantList{left, right}), 2); QTRY_VERIFY(!controller.loading());
+    const auto leftGroup = controller.signalModel()->groupAt(0), rightGroup = controller.signalModel()->groupAt(1);
+    QVERIFY(leftGroup != rightGroup);
+    const auto merged = controller.mergeSignals({QVariantMap{{"name", "combined"}, {"signals", QVariantList{0, 1}}}});
+    QVERIFY(!merged.contains("error")); QTRY_VERIFY(!controller.deriving());
+    const auto created = merged["outputs"].toList()[0].toMap(); const auto objectId = created["object"].toString();
+    const auto definition = [&](const QString &object) {
+        for (const auto &value : controller.dataObjects()) if (value.toMap()["id"].toString() == object) return value.toMap();
+        return QVariantMap{};
+    };
+    const auto rule = [&](const QString &object, const QString &id) {
+        for (const auto &value : definition(object)["rules"].toList()) if (value.toMap()["id"].toString() == id) return value.toMap();
+        return QVariantMap{};
+    };
+    const auto mergeId = created["rule"].toString();
+    const auto combined = rule(objectId, mergeId)["outputs"].toList()[0].toMap();
+    const auto downId = controller.addObjectRule(objectId, {{"name", "downstream"}, {"operation", "scale"}, {"inputs", QVariantList{combined["id"]}}, {"factor", 2}});
+    const auto survivingField = definition(objectId)["fields"].toList()[1].toMap()["id"].toString();
+    const auto keepId = controller.addObjectRule(objectId, {{"name", "independent"}, {"operation", "scale"}, {"inputs", QVariantList{survivingField}}, {"factor", 2}});
+    const auto warningId = controller.addObjectRule(objectId, {{"name", "existing diagnostic"}, {"operation", "expression"}, {"inputs", QVariantList{survivingField}}, {"expression", "1/0"}});
+    QVERIFY(!downId.isEmpty() && !keepId.isEmpty() && !warningId.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    const auto detector = controller.createDataObject("detection", "packetloss");
+    QVERIFY(controller.identifyPacketLoss(detector)); QTRY_VERIFY(!controller.deriving());
+    const auto detected = definition(detector)["rules"].toList(); QCOMPARE(detected.size(), 2);
+    const auto lostOutput = detected[0].toMap()["outputs"].toList()[0].toMap();
+    const auto packetDown = controller.addObjectRule(detector, {{"name", "packet downstream"}, {"operation", "scale"}, {"inputs", QVariantList{lostOutput["id"]}}});
+    QVERIFY(!packetDown.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    const auto warning = rule(objectId, warningId)["error"].toString(); QVERIFY(!warning.isEmpty());
+    const auto keepOutput = rule(objectId, keepId)["outputs"].toList()[0].toMap();
+    controller.addSignalToPlot(0, combined["series"].toInt());
+    controller.addSignalToPlot(0, rule(objectId, downId)["outputs"].toList()[0].toMap()["series"].toInt());
+    controller.addSignalToPlot(0, keepOutput["series"].toInt());
+    for (const auto &value : definition(detector)["rules"].toList()) for (const auto &output : value.toMap()["outputs"].toList())
+        controller.addSignalToPlot(1, output.toMap()["series"].toInt());
+    // Use the real legend component: this catches a stale Repeater as well as stale C++ bindings.
+    QQmlEngine engine; QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) { for (const auto &error : errors) warnings.append(error.toString()); });
+    QQmlComponent component(&engine);
+    component.setData(R"(import QtQuick
+import "."
+Item {
+    id: fixture
+    required property var controller
+    required property var renderer
+    property int plotIndex: 0
+    property bool legendDragging: false
+    width: 600; height: 300
+    PlotLegend { objectName: "legendUnderTest"; width: parent.width; plot: fixture; controller: fixture.controller; renderer: fixture.renderer; dragPreview: fixture }
+})", QUrl::fromLocalFile(QStringLiteral(DI_SOURCE_DIR "/qml/removal-fixture.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> view0(component.createWithInitialProperties({{"controller", QVariant::fromValue(&controller)}, {"renderer", QVariant::fromValue(&first)}}));
+    std::unique_ptr<QObject> view1(component.createWithInitialProperties({{"controller", QVariant::fromValue(&controller)}, {"renderer", QVariant::fromValue(&second)}, {"plotIndex", 1}}));
+    QVERIFY(view0 && view1); auto *legend0 = view0->findChild<QObject *>("legendUnderTest"), *legend1 = view1->findChild<QObject *>("legendUnderTest");
+    QVERIFY(legend0 && legend1); QTRY_COMPARE(legend0->property("entryCount").toInt(), 3); QTRY_COMPARE(legend1->property("entryCount").toInt(), 5);
+    QVERIFY(controller.removeFile(leftGroup)); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.signalCount(), 5); QCOMPARE(controller.loadedFileCount(), 1);
+    QVERIFY(rule(objectId, mergeId).isEmpty()); QVERIFY(rule(objectId, downId).isEmpty()); QVERIFY(rule(detector, packetDown).isEmpty());
+    QCOMPARE(definition(objectId)["rules"].toList().size(), 2); QCOMPARE(definition(detector)["rules"].toList().size(), 1);
+    QCOMPARE(rule(objectId, keepId)["outputs"].toList()[0].toMap()["id"], keepOutput["id"]);
+    QCOMPARE(rule(objectId, keepId)["outputs"].toList()[0].toMap()["preview"].toString(), QString("20 / 40 / 80"));
+    QCOMPARE(rule(objectId, warningId)["error"].toString(), warning);
+    QCOMPARE(controller.signalName(0), QString("A")); QCOMPARE(controller.signalName(1), QString("independent"));
+    QCOMPARE(controller.plotSignalRows(0), QVariantList{1}); QCOMPARE(controller.plotSignalRows(1), QVariantList({3, 4}));
+    QTRY_COMPARE(legend0->property("entryCount").toInt(), 1); QTRY_COMPARE(legend1->property("entryCount").toInt(), 2);
+    QCOMPARE(first.visibleSeriesIds(), QVector<int>{1}); QCOMPARE(second.visibleSeriesIds(), QVector<int>({3, 4}));
+    const auto session = dir.filePath("after-removal.disession"); QVERIFY(controller.saveSession(session));
+    AppController restored; QVERIFY(restored.restoreSession(session)); QTRY_VERIFY(!restored.loading() && !restored.deriving());
+    QCOMPARE(restored.signalCount(), 5); QCOMPARE(restored.plotSignalRows(0), QVariantList{1}); QCOMPARE(restored.plotSignalRows(1), QVariantList({3, 4}));
+    // Removing the last source while an evaluation is in flight cannot resurrect its outputs.
+    QVERIFY(controller.editObjectRule(objectId, keepId, {{"name", "independent"}, {"operation", "scale"}, {"inputs", QVariantList{survivingField}}, {"factor", 3}}));
+    QVERIFY(controller.deriving()); QVERIFY(controller.removeFile(rightGroup));
+    QTRY_VERIFY(!controller.deriving()); QTest::qWait(100);
+    QCOMPARE(controller.signalCount(), 0); QCOMPARE(controller.signalModel()->rowCount(), 0);
+    QVERIFY(controller.plotSignalRows(0).isEmpty() && controller.plotSignalRows(1).isEmpty());
+    QVERIFY(first.visibleSeriesIds().isEmpty() && second.visibleSeriesIds().isEmpty());
+    QTRY_COMPARE(legend0->property("entryCount").toInt(), 0); QTRY_COMPARE(legend1->property("entryCount").toInt(), 0);
+    QVERIFY(!legend0->property("visible").toBool() && !legend1->property("visible").toBool());
+    for (const auto &value : controller.dataObjects()) {
+        QVERIFY(value.toMap()["rules"].toList().isEmpty());
+        for (const auto &field : value.toMap()["fields"].toList()) QCOMPARE(field.toMap()["series"].toInt(), -1);
+    }
+    QVERIFY(controller.saveSession(session));
+    QVERIFY(restored.restoreSession(session)); QTRY_VERIFY(!restored.loading() && !restored.deriving()); QCOMPARE(restored.signalCount(), 0);
+    QCoreApplication::processEvents(); QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
 }
 void ObjectDataTest::editsPreserveUnrelatedResultsAndMergePendingObjects()
 {

@@ -22,7 +22,7 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 
 ## 数据流
 
-对象定义见 `objectdefinition.*`，GUI 管理由 `appcontroller_objects.cpp` 和 `ObjectManager.qml` 提供。规则必须拥有对象，只引用本对象字段或此前输出。后台捕获对象值配置和不可变 Store 原始快照，生成计算样本及索引；GUI 接收完成结果，通过 `publishComputed` 整体替换输出快照，绘图复用现有 Scene Graph。字段来源、计算参数或原始偏移/移除取消旧任务并只清空失效规则及其下游的旧值；过期结果不发布。会话 v13 保存对象类型、飞机配置、对象/输出身份和定义，恢复原始来源后重新计算；旧版本转换为空对象列表。
+对象定义见 `objectdefinition.*`，GUI 管理由 `appcontroller_objects.cpp` 和 `ObjectManager.qml` 提供。规则必须拥有对象，只引用本对象字段或此前输出。后台捕获对象值配置和不可变 Store 原始快照，生成计算样本及索引；GUI 接收完成结果，通过 `publishComputed` 整体替换输出快照，绘图复用现有 Scene Graph。字段来源、计算参数或原始偏移变化取消旧任务并只清空失效规则及其下游的旧值；显式删除文件会删除依赖该文件的规则与下游输出；过期结果不发布。会话 v13 保存对象类型、飞机配置、对象/输出身份和定义，恢复原始来源后重新计算；旧版本转换为空对象列表。
 
 关于页面由 `AboutDialog.qml` 展示，`AppController::aboutInfo`/`releaseNotes` 提供常量信息，`copyAboutInfo` 在 GUI 线程写入剪贴板。`appcontroller_about.cpp` 读取构建时生成的元数据和嵌入的更新记录，不在程序启动时查询 Git，也不依赖源码目录。
 
@@ -115,3 +115,5 @@ SignalBrowser.qml 管理搜索、列表、树手势及导航，向 Main.qml 发�
 丢包检测对象类型为 `packetloss`，会话 v13 保存（v12 的通用对象丢包规则继续支持）。导入不创建对象，也不进行丢包分组。对象设置的“自动识别”捕获全部原始来源快照，在现有 ObjectJob 工作池中按文件、含偏移的完整时间轴分块 SHA256 与逐点精确比较归组；共享数组身份优先复用分组，避免对每列重复扫描。识别与计算分为两个任务阶段，GUI 提交前检查 Store generation 和目标对象类型，配置在局部副本中整体校验，不接受过期、取消或超限的部分结果。
 
 识别组保留全部原始来源行，目标对象已有规则绑定其中任一列即可复用，已有周期和输出身份不覆盖。新组复用现有字段或添加代表字段，然后统一添加两个占位输出并进入既有计算链。编辑器新建或切换来源时仅用最多 8192 个间隔预填周期，不在 GUI 全量遍历时间数组；识别任务通过既有 deriving/进度/取消状态反馈。
+
+移除文件时，控制器先收集旧原始行身份，models/objectdefinition 的 removeRulesDependingOnSources 按对象内已排序的依赖图前向计算受影响规则闭包，只传播此次被删除字段及输出，不处理其他已有错误。取消在途计算后一次删除原始/派生行并统一 remapSignalReferences，使 SignalModel 勾选、图例、Store、对象字段/输出和航迹来源一致，最后刷新视图并计算保留规则。对象及字段配置保留，已删除字段映射为 -1；不以“样本为空”判断是否删除规则。

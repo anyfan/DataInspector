@@ -43,6 +43,7 @@ struct ObjectEvaluation {
 };
 QSet<QString> invalidatedObjectRules(const QVector<DataObject> &objects,
     const PlotSeriesSnapshot &snapshot, const QHash<QString, ObjectRuleState> &states);
+QSet<int> removeRulesDependingOnSources(QVector<DataObject> &objects, const QSet<int> &removedSources);
 bool validateObjects(const QVector<DataObject> &objects, int signalCount, QString *error);
 QString validateObjectExpression(const QString &expression, int inputCount);
 ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects,

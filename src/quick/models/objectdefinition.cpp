@@ -226,6 +226,29 @@ bool sameSamples(const PlotSeriesDataPtr &a, const PlotSeriesDataPtr &b)
         && a->points.constData() == b->points.constData();
 }
 }
+QSet<int> removeRulesDependingOnSources(QVector<DataObject> &objects, const QSet<int> &removedSources)
+{
+    QSet<int> removedOutputs;
+    for (auto &object : objects) {
+        QSet<QString> unavailable;
+        for (const auto &field : object.fields)
+            if (removedSources.contains(field.series)) unavailable.insert(field.id);
+        if (unavailable.isEmpty()) continue;
+        QVector<ObjectRule> retained;
+        retained.reserve(object.rules.size());
+        // Valid definitions reference only fields or earlier outputs, so one forward pass
+        // removes every dependent rule while preserving independent branches and identities.
+        for (const auto &rule : std::as_const(object.rules)) {
+            bool affected = false;
+            for (const auto &input : rule.inputs) if (unavailable.contains(input)) { affected = true; break; }
+            if (!affected) { retained.append(rule); continue; }
+            for (const auto &output : rule.outputs) { unavailable.insert(output.id); removedOutputs.insert(output.series); }
+        }
+        object.rules = std::move(retained);
+    }
+    return removedOutputs;
+}
+
 QSet<QString> invalidatedObjectRules(const QVector<DataObject> &objects,
     const PlotSeriesSnapshot &snapshot, const QHash<QString, ObjectRuleState> &states)
 {

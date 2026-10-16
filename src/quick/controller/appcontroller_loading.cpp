@@ -120,10 +120,18 @@ int AppController::loadFiles(const QVariant &filePaths)
 bool AppController::removeFile(const QString &fileName)
 {
     if (m_loading || m_exporting || fileName.isEmpty() || !m_sourcePathsByGroup.contains(fileName)) return false;
-    const QVector<int> removedRows = m_signals->removeFile(fileName);
-    if (removedRows.isEmpty()) return false;
-
-    m_seriesStore->removeSeries(QSet<int>(removedRows.cbegin(), removedRows.cend()));
+    QSet<int> rows;
+    for (int row = 0; row < signalCount(); ++row)
+        if (m_signals->groupAt(row).section(QLatin1Char('/'), 0, 0) == fileName) rows.insert(row);
+    if (rows.isEmpty()) return false;
+    // Plan the complete dependency closure using old row identities. Remove raw and
+    // derived rows together so tree selection, plot legends and trajectories remap once.
+    auto objects = m_objects;
+    rows.unite(removeRulesDependingOnSources(objects, rows));
+    cancelObjectEvaluation();
+    m_objects = std::move(objects);
+    const QVector<int> removedRows = m_signals->removeRowsById(rows);
+    m_seriesStore->removeSeries(rows);
     remapSignalReferences(removedRows);
     for (auto it = removedRows.crbegin(); it != removedRows.crend(); ++it)
         if (*it >= 0 && *it < m_signalColors.size())
