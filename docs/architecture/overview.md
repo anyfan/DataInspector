@@ -22,7 +22,7 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 
 ## 数据流
 
-对象定义见 `objectdefinition.*`，GUI 管理由 `appcontroller_objects.cpp` 和 `ObjectManager.qml` 提供。规则必须拥有对象，只引用本对象字段或此前输出。后台捕获对象值配置和不可变 Store 原始快照，生成计算样本及索引；GUI 接收完成结果，通过 `publishComputed` 整体替换输出快照，绘图复用现有 Scene Graph。字段来源、计算参数或原始偏移/移除取消旧任务并只清空失效规则及其下游的旧值；过期结果不发布。会话 v11 保存对象类型、飞机配置、对象/输出身份和定义，恢复原始来源后重新计算；旧版本转换为空对象列表。
+对象定义见 `objectdefinition.*`，GUI 管理由 `appcontroller_objects.cpp` 和 `ObjectManager.qml` 提供。规则必须拥有对象，只引用本对象字段或此前输出。后台捕获对象值配置和不可变 Store 原始快照，生成计算样本及索引；GUI 接收完成结果，通过 `publishComputed` 整体替换输出快照，绘图复用现有 Scene Graph。字段来源、计算参数或原始偏移/移除取消旧任务并只清空失效规则及其下游的旧值；过期结果不发布。会话 v13 保存对象类型、飞机配置、对象/输出身份和定义，恢复原始来源后重新计算；旧版本转换为空对象列表。
 
 关于页面由 `AboutDialog.qml` 展示，`AppController::aboutInfo`/`releaseNotes` 提供常量信息，`copyAboutInfo` 在 GUI 线程写入剪贴板。`appcontroller_about.cpp` 读取构建时生成的元数据和嵌入的更新记录，不在程序启动时查询 Git，也不依赖源码目录。
 
@@ -109,3 +109,9 @@ SignalBrowser.qml 管理搜索、列表、树手势及导航，向 Main.qml 发�
 对象字段列表按预置用途、原始字段顺序显式排序；同用途字段不依赖 JavaScript sort 的稳定性。QML ListModel 按字段 ID 局部增删、移动和更新，避免数据通知重置整个列表，保留可见行与滚动位置。
 
 自动化任务、模板匹配和合并计划见[CLI 架构](automation.md)。appcontroller_automation.cpp 管理批量飞机配置、完整性检查、逻辑结果与规则查询；models/mergetimeline.* 在单次规则计算中复用共享原始时间基。SignalBrowser 提供可逆逻辑视图，ObjectManager 对规则搜索、筛选并每页显示 20 条。
+
+丢包检测 `packetloss` 在现有对象后台任务内计算，单输入、两个输出，仅访问不可变原始时间戳。有界中位数估算与完整顺序扫描定期检查取消，结果继承来源时间数组/偏移并建立范围索引，累计计数及百分比按阶梯曲线显示。`samplePeriod` 参与计算失效键，自动估算的有效周期随 ObjectRuleState 发布供界面显示；修改周期沿既有依赖链失效，不增加 GUI 全量扫描或渲染线程逻辑。采样周期初始估算后作为可编辑数值保存到会话 v13，0 值规则首次成功计算时转为实际周期并同步失效键，不保存计算数组。
+
+丢包检测对象类型为 `packetloss`，会话 v13 保存（v12 的通用对象丢包规则继续支持）。导入不创建对象，也不进行丢包分组。对象设置的“自动识别”捕获全部原始来源快照，在现有 ObjectJob 工作池中按文件、含偏移的完整时间轴分块 SHA256 与逐点精确比较归组；共享数组身份优先复用分组，避免对每列重复扫描。识别与计算分为两个任务阶段，GUI 提交前检查 Store generation 和目标对象类型，配置在局部副本中整体校验，不接受过期、取消或超限的部分结果。
+
+识别组保留全部原始来源行，目标对象已有规则绑定其中任一列即可复用，已有周期和输出身份不覆盖。新组复用现有字段或添加代表字段，然后统一添加两个占位输出并进入既有计算链。编辑器新建或切换来源时仅用最多 8192 个间隔预填周期，不在 GUI 全量遍历时间数组；识别任务通过既有 deriving/进度/取消状态反馈。

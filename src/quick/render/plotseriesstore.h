@@ -9,8 +9,13 @@
 #include <QVector>
 
 #include <memory>
+#include <functional>
 #include <optional>
 #include <limits>
+
+// Bounded estimator shared by loading, rule evaluation and the editor. Zero means unavailable.
+double estimateSamplingPeriod(qsizetype count, const std::function<double(qsizetype)> &timestamp,
+    const std::function<bool()> &cancelled = {});
 
 using PlotSeriesId = int;
 

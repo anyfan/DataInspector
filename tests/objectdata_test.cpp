@@ -3,6 +3,7 @@
 #include "models/objectdefinition.h"
 #include "qmltypes.h"
 #include "io/xlsxreader.h"
+#include "io/xlsxwriter.h"
 #include "render/plotgeometrybuilder.h"
 #include <QFile>
 #include <QDir>
@@ -21,6 +22,9 @@ class ObjectDataTest : public QObject {
 private slots:
     void bitsAndSignedFields();
     void mergeSamples();
+    void identifyPacketLoss();
+    void packetLoss();
+    void packetLossLifecycle();
     void mergeSharedTimelineMatchesLegacy();
     void dependencyPlanPreservesIndependentBranches();
     void expressionsAndTimeBases();
@@ -44,6 +48,153 @@ static PlotSeriesSnapshot rawSnapshot(QVector<double> values)
     PlotSeriesInput input; input.id = 0; input.values = values;
     for (qsizetype i = 0; i < values.size(); ++i) input.time.append(double(i));
     PlotSeriesStore store; store.appendSeries({input}); return store.snapshot({0});
+}
+void ObjectDataTest::identifyPacketLoss()
+{
+    QTemporaryDir dir;
+    QVector<XlsxExportTable> tables;
+    const QVector<QVector<double>> times{{0, 1, 2, 5}, {0, 1, 2, 5}, {0, .5, 1}, {20, 21, 22, 25}};
+    for (int t = 0; t < times.size(); ++t) {
+        XlsxExportTable table; table.name = QString("part%1").arg(t);
+        for (int c = 0; c < (t == 0 ? 2 : 1); ++c) {
+            auto data = std::make_shared<PlotSeriesData>(); data->time = times[t]; data->values.fill(c, times[t].size());
+            table.series.append({QString("value%1").arg(c), data});
+        }
+        tables.append(table);
+    }
+    const auto path = dir.filePath("groups.xlsx"); QVERIFY(writeXlsxWorkbook(path, tables).error.isEmpty());
+    AppController controller; QVERIFY(controller.loadCsv(path)); QTRY_VERIFY(!controller.loading() && !controller.deriving());
+    QCOMPARE(controller.signalCount(), 5); QCOMPARE(controller.dataObjects().size(), 0);
+    QVERIFY(!controller.identifyPacketLoss("missing"));
+    const auto detector = controller.createDataObject("丢包检测", "packetloss"); QVERIFY(!detector.isEmpty());
+    QVERIFY(controller.identifyPacketLoss(detector)); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.signalCount(), 11); QCOMPARE(controller.dataObjects().size(), 1);
+    auto object = controller.dataObjects()[0].toMap(); const auto objectId = object["id"].toString();
+    QCOMPARE(object["fields"].toList().size(), 3); auto rules = object["rules"].toList(); QCOMPARE(rules.size(), 3);
+    QCOMPARE(rules[0].toMap()["samplePeriod"].toDouble(), 1.0); QCOMPARE(rules[1].toMap()["samplePeriod"].toDouble(), .5);
+    QCOMPARE(rules[2].toMap()["samplePeriod"].toDouble(), 1.0);
+    QCOMPARE(rules[0].toMap()["outputs"].toList()[0].toMap()["preview"].toString(), QString("0 / 0 / 0 / 2"));
+    const auto rule = rules[0].toMap();
+    QVERIFY(controller.editObjectRule(objectId, rule["id"].toString(), {{"name", rule["name"]}, {"operation", "packetloss"},
+        {"inputs", rule["inputIds"]}, {"samplePeriod", .5}})); QTRY_VERIFY(!controller.deriving());
+    // A rule bound to any equivalent raw column covers the same group.
+    const auto representative = object["fields"].toList()[0].toMap();
+    QVERIFY(!controller.bindObjectField(detector, representative["id"].toString(), representative["name"].toString(), "scalar", 1).isEmpty());
+    QTRY_VERIFY(!controller.deriving());
+    QVERIFY(controller.identifyPacketLoss(detector)); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.signalCount(), 11);
+    QCOMPARE(controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap()["id"], rule["id"]);
+    QCOMPARE(controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap()["samplePeriod"].toDouble(), .5);
+    QVERIFY(!controller.loadCsv(path)); QCOMPARE(controller.dataObjects().size(), 1);
+    QFile other(dir.filePath("other.csv")); QVERIFY(other.open(QIODevice::WriteOnly)); other.write("time,value\n0,1\n1,2\n"); other.close();
+    QVERIFY(controller.loadCsv(other.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
+    QCOMPARE(controller.dataObjects().size(), 1); QCOMPARE(controller.signalCount(), 12);
+    QVERIFY(controller.identifyPacketLoss(detector)); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.dataObjects().size(), 1); QCOMPARE(controller.signalCount(), 14);
+    QCOMPARE(controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap()["samplePeriod"].toDouble(), .5);
+    const auto session = dir.filePath("groups.disession"); QVERIFY(controller.saveSession(session));
+    AppController restored; QVERIFY(restored.restoreSession(session)); QTRY_VERIFY(!restored.loading() && !restored.deriving());
+    QCOMPARE(restored.dataObjects().size(), 1); QCOMPARE(restored.signalCount(), 14);
+    const auto restoredRule = restored.dataObjects()[0].toMap()["rules"].toList()[0].toMap();
+    QCOMPARE(restoredRule["id"], rule["id"]); QCOMPARE(restoredRule["samplePeriod"].toDouble(), .5);
+    QCOMPARE(restoredRule["outputs"].toList()[0].toMap()["preview"].toString(), QString("0 / 1 / 2 / 7"));
+    QVERIFY(!restored.sessionModified());
+    SessionDocument document; QString reason; QVERIFY(readSessionDocument(session, &document, &reason));
+    auto legacy = sessionToJson(document); legacy["version"] = 12;
+    SessionDocument parsed; QVERIFY(!sessionFromJson(legacy, &parsed, &reason));
+    const auto copy = restored.duplicateDataObject(detector); QVERIFY(!copy.isEmpty()); QTRY_VERIFY(!restored.deriving());
+    QCOMPARE(restored.dataObjects().last().toMap()["type"].toString(), QString("packetloss"));
+    QCOMPARE(restored.dataObjects().last().toMap()["rules"].toList()[0].toMap()["samplePeriod"].toDouble(), .5);
+    controller.clear(); QCOMPARE(controller.dataObjects().size(), 0);
+    QVERIFY(controller.loadCsv(other.fileName())); QTRY_VERIFY(!controller.loading());
+    const auto full = controller.createDataObject("full", "packetloss");
+    for (int i = 0; i < 256; ++i) QVERIFY(!controller.addDataObjectField(full).isEmpty());
+    QVERIFY(controller.identifyPacketLoss(full)); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.dataObjects()[0].toMap()["fields"].toList().size(), 256);
+    QCOMPARE(controller.dataObjects()[0].toMap()["rules"].toList().size(), 0); QCOMPARE(controller.signalCount(), 1);
+    QVERIFY(controller.status().contains(QStringLiteral("未提交")));
+    QVERIFY(controller.identifyPacketLoss(full)); controller.setSignalPen(0, QColor("red"), 2, Qt::SolidLine);
+    QTRY_VERIFY(!controller.deriving());
+    QVERIFY(controller.status().contains(QStringLiteral("数据已变更")));
+    QCOMPARE(controller.dataObjects()[0].toMap()["rules"].toList().size(), 0);
+    QVERIFY(controller.identifyPacketLoss(full)); controller.clear(); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.dataObjects().size(), 0); QCOMPARE(controller.signalCount(), 0);
+    QFile single(dir.filePath("single.csv")); QVERIFY(single.open(QIODevice::WriteOnly)); single.write("time,value\n1,2\n"); single.close();
+    QVERIFY(controller.loadCsv(single.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
+    QCOMPARE(controller.dataObjects().size(), 0); QCOMPARE(controller.signalCount(), 1);
+    const auto singleObject = controller.createDataObject("single", "packetloss");
+    QVERIFY(controller.identifyPacketLoss(singleObject)); QTRY_VERIFY(!controller.deriving());
+    object = controller.dataObjects()[0].toMap(); const auto singleRule = object["rules"].toList()[0].toMap();
+    QVERIFY(!singleRule["error"].toString().isEmpty()); QCOMPARE(controller.signalCount(), 3);
+    QCOMPARE(controller.estimateObjectSamplePeriod(object["id"].toString(), singleRule["inputIds"].toStringList()[0]), 0.0);
+    QVERIFY(controller.editObjectRule(object["id"].toString(), singleRule["id"].toString(), {{"name", "single"}, {"operation", "packetloss"},
+        {"inputs", singleRule["inputIds"]}, {"samplePeriod", 1}})); QTRY_VERIFY(!controller.deriving());
+    QVERIFY(controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap()["error"].toString().isEmpty());
+}
+void ObjectDataTest::packetLoss()
+{
+    ObjectRule rule; rule.id = "loss"; rule.name = "loss"; rule.operation = "packetloss";
+    rule.inputs = {"input"}; rule.outputs = {{"lost", "lost", 1}, {"rate", "rate", 2}};
+    DataObject object{"o", "object", {{"input", "input", "scalar", 0}}, {rule}};
+    std::atomic_bool cancel{false}; QString error;
+    auto run = [&](QVector<double> time, double period = 0) {
+        PlotSeriesInput raw; raw.id = 0; raw.time = time; raw.values.fill(qQNaN(), time.size()); raw.timeOffset = 10;
+        PlotSeriesStore store; store.appendSeries({raw}); object.rules[0].samplePeriod = period;
+        return evaluateObjects({object}, store.snapshot({0}), cancel);
+    };
+    auto result = run({0, .1, .2, .5, .6, .7});
+    QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series.size(), 2);
+    QCOMPARE(result.series[0]->values, QVector<double>({0, 0, 0, 2, 2, 2}));
+    QVERIFY(qAbs(result.series[1]->values[3] - 100.0 / 3) < 1e-10);
+    QCOMPARE(result.series[1]->values.last(), 25.0);
+    QVERIFY(qAbs(result.states["loss"].samplePeriod - .1) < 1e-12);
+    QCOMPARE(result.series[0]->timeOffset, 10.0); QVERIFY(result.series[0]->step);
+    result = run({0, .1, .2, .5, .6, .7}, .05);
+    QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values.last(), 9.0);
+    result = run({0, .1001, .1999, .3, .4001});
+    QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values.last(), 0.0);
+    result = run({0}, .1); QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values, QVector<double>{0});
+    QVERIFY(!run({0}).errors.isEmpty());
+    for (const auto &time : {QVector<double>{0, 0, .1}, QVector<double>{0, .2, .1}, QVector<double>{0, qQNaN()}, QVector<double>{0, qInf()}}) {
+        result = run(time, .1); QVERIFY(!result.errors.isEmpty());
+        QVERIFY(result.series[0]->values.isEmpty()); QVERIFY(result.series[1]->values.isEmpty());
+    }
+    QVERIFY(!run({0, 1}, 1e-30).errors.isEmpty());
+    run({0, 1}, .1);
+    QVERIFY(validateObjects({object}, 3, &error));
+    QVector<DataObject> restored; const auto json = objectsToJson({object});
+    QVERIFY(objectsFromJson(json, 3, &restored, &error)); QCOMPARE(restored[0].rules[0].samplePeriod, .1);
+    QVERIFY(!objectsFromJson(json, 3, &restored, &error, 11));
+    auto bad = json[0].toObject(); auto rules = bad["rules"].toArray(); auto r = rules[0].toObject();
+    r["samplePeriod"] = "0.1"; rules[0] = r; bad["rules"] = rules;
+    QVERIFY(!objectsFromJson(QJsonArray{bad}, 3, &restored, &error));
+    object.rules[0].samplePeriod = -1; QVERIFY(!validateObjects({object}, 3, &error));
+    cancel = true; QVERIFY(run({0, 1}).series.isEmpty());
+}
+void ObjectDataTest::packetLossLifecycle()
+{
+    QTemporaryDir dir; QFile file(dir.filePath("loss.csv"));
+    QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,value\n0,1\n1,1\n2,1\n5,1\n6,1\n7,1\n"); file.close();
+    AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
+    const auto object = controller.createDataObject("packets");
+    const auto field = controller.bindObjectField(object, {}, "input", "scalar", 0);
+    QVariantMap config{{"name", "loss"}, {"operation", "packetloss"}, {"inputs", QVariantList{field}}};
+    const auto id = controller.addObjectRule(object, config); QVERIFY(!id.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    const auto currentRule = [&] { return controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap(); };
+    QCOMPARE(currentRule()["effectiveSamplePeriod"].toDouble(), 1.0);
+    const auto outputs = currentRule()["outputs"].toList(); QCOMPARE(outputs.size(), 2);
+    QCOMPARE(outputs[0].toMap()["preview"].toString(), QString("0 / 0 / 0 / 2 / 2 / 2"));
+    config["samplePeriod"] = .5; QVERIFY(controller.editObjectRule(object, id, config)); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(currentRule()["effectiveSamplePeriod"].toDouble(), .5);
+    QCOMPARE(currentRule()["outputs"].toList()[0].toMap()["id"], outputs[0].toMap()["id"]);
+    QCOMPARE(currentRule()["outputs"].toList()[0].toMap()["preview"].toString(), QString("0 / 1 / 2 / 7 / 8 / 9"));
+    const auto path = dir.filePath("loss.disession"); QVERIFY(controller.saveSession(path));
+    AppController restored; QVERIFY(restored.restoreSession(path)); QTRY_VERIFY(!restored.loading() && !restored.deriving());
+    const auto savedRule = restored.dataObjects()[0].toMap()["rules"].toList()[0].toMap();
+    QCOMPARE(savedRule["samplePeriod"].toDouble(), .5); QCOMPARE(savedRule["outputs"], currentRule()["outputs"]);
+    QVERIFY(!restored.sessionModified());
+    QVERIFY(!restored.duplicateDataObject(object).isEmpty()); QTRY_VERIFY(!restored.deriving());
+    QCOMPARE(restored.dataObjects()[1].toMap()["rules"].toList()[0].toMap()["samplePeriod"].toDouble(), .5);
 }
 void ObjectDataTest::mergeSharedTimelineMatchesLegacy()
 {
@@ -116,7 +267,7 @@ void ObjectDataTest::mergeSamples()
     }
     AppController controller;
     for (int i = 0; i < 2; ++i) {
-        QVERIFY(controller.loadCsv(dir.filePath(QString::number(i) + ".csv"))); QTRY_VERIFY(!controller.loading());
+        QVERIFY(controller.loadCsv(dir.filePath(QString::number(i) + ".csv"))); QTRY_VERIFY(!controller.loading() && !controller.deriving());
     }
     const auto owner = controller.createDataObject("merged");
     const auto a = controller.bindObjectField(owner, {}, "A", "scalar", 0);
@@ -174,7 +325,7 @@ void ObjectDataTest::dependencyPlanPreservesIndependentBranches()
 
     QTemporaryDir dir; QFile file(dir.filePath("branches.csv"));
     QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,X,Y\n0,2,20\n1,3,30\n"); file.close();
-    AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+    AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
     const auto owner = controller.createDataObject("branches");
     const auto x = controller.bindObjectField(owner, {}, "X", "scalar", 0);
     const auto y = controller.bindObjectField(owner, {}, "Y", "scalar", 1);
@@ -271,7 +422,7 @@ void ObjectDataTest::controllerLifecycleAndRestore()
     QTemporaryDir dir; const auto path = dir.filePath("word.csv"); QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,word,x,y,z\n0,5,3,4,0\n1,128,0,0,5\n2,255,1,2,2\n"); file.close();
     AppController controller; PlotItem plot; plot.setWidth(600); plot.setHeight(300); controller.attachPlot(&plot);
-    QVERIFY(controller.loadCsv(path)); QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QVERIFY(controller.loadCsv(path)); QTRY_VERIFY_WITH_TIMEOUT(!controller.loading() && !controller.deriving(), 5000);
     QVERIFY(controller.addObjectRule("missing", {{"name", "bits"}, {"operation", "bits"}, {"inputs", QVariantList{"source"}}}).isEmpty());
     const auto objectId = controller.createDataObject("device"); QVERIFY(!objectId.isEmpty());
     const auto field = controller.bindObjectField(objectId, {}, "状态", "scalar", 0); QVERIFY(!field.isEmpty());
@@ -312,7 +463,7 @@ void ObjectDataTest::editsPreserveUnrelatedResultsAndMergePendingObjects()
     QVERIFY(file.open(QIODevice::WriteOnly));
     file.write("time,A,B\n0,2,20\n1,3,30\n"); file.close();
     AppController controller; PlotItem plot; plot.setWidth(600); plot.setHeight(300);
-    controller.attachPlot(&plot); QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+    controller.attachPlot(&plot); QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
     const auto a = controller.createDataObject("A"), b = controller.createDataObject("B");
     const auto fa = controller.bindObjectField(a, {}, "input", "scalar", 0);
     const auto fb = controller.bindObjectField(b, {}, "input", "scalar", 1);
@@ -347,7 +498,7 @@ void ObjectDataTest::linkedTrajectoriesAndRuleEdits()
 {
     QTemporaryDir dir; const auto path = dir.filePath("flight.csv"); QFile file(path);
     QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,lat,lon,height,roll,pitch,yaw,lat2\n0,30,120,100,0,0,0,31\n1,30.1,120.1,200,1,2,3,31.1\n"); file.close();
-    AppController controller; PlotItem plot; controller.attachPlot(&plot); QVERIFY(controller.loadCsv(path)); QTRY_VERIFY(!controller.loading());
+    AppController controller; PlotItem plot; controller.attachPlot(&plot); QVERIFY(controller.loadCsv(path)); QTRY_VERIFY(!controller.loading() && !controller.deriving());
     const auto object = controller.createDataObject("plane", "aircraft");
     QVERIFY(controller.configureDataObjectAircraft(object, {{"geographic", true}, {"attitudeMode", 1}, {"radians", false}, {"order", 0}, {"scalarLast", false}, {"navigationToBody", false}}));
     const auto fields = controller.dataObjects().first().toMap()["fields"].toList();
@@ -415,7 +566,7 @@ void ObjectDataTest::objectManagerQml()
     qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
     QTemporaryDir dir; QFile file(dir.filePath("qml.csv")); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,A\n0,5\n1,7\n"); file.close();
-    AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+    AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
     QQmlEngine engine; QStringList warnings;
     connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) { for (const auto &error : errors) warnings.append(error.toString()); });
     QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(DI_SOURCE_DIR "/qml/Main.qml")));
@@ -609,6 +760,40 @@ void ObjectDataTest::objectManagerQml()
     ruleState->setProperty("currentIndex", 2);
     QTRY_COMPARE(countRules("matchingRules"), 0);
     ruleSearch->setProperty("text", ""); ruleState->setProperty("currentIndex", 0);
+    const auto detector = controller.createDataObject("识别对象");
+    manager->setProperty("selectedId", detector);
+    auto *typeSelector = root->findChild<QObject *>("objectTypeSelector"); QVERIFY(typeSelector);
+    typeSelector->setProperty("currentIndex", 2);
+    QVERIFY(QMetaObject::invokeMethod(typeSelector, "activated", Q_ARG(int, 2)));
+    QCOMPARE(controller.dataObjects().last().toMap()["type"].toString(), QString("packetloss"));
+    auto *identify = root->findChild<QObject *>("identifyPacketLossButton"); QVERIFY(identify);
+    QVERIFY(identify->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(identify, "clicked")); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.dataObjects().last().toMap()["rules"].toList().size(), 1);
+    const auto discovered = controller.dataObjects().last().toMap()["rules"].toList()[0].toMap();
+    QCOMPARE(discovered["samplePeriod"].toDouble(), 1.0);
+    QVERIFY(QMetaObject::invokeMethod(identify, "clicked")); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.dataObjects().last().toMap()["rules"].toList().size(), 1);
+    // Exercise the actual dialog: estimated numeric prefill and editable positive period.
+    QQmlExpression createLoss(QQmlEngine::contextForObject(manager), manager, "editRule(null)");
+    createLoss.evaluate(); QVERIFY(!createLoss.hasError());
+    auto *operation = root->findChild<QObject *>("objectRuleOperation"); QVERIFY(operation);
+    operation->setProperty("currentIndex", 6);
+    root->findChild<QObject *>("objectRuleName")->setProperty("text", "packet loss");
+    auto *dialog = root->findChild<QObject *>("objectRuleDialog"); QVERIFY(dialog);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "submit")); QTRY_VERIFY(!controller.deriving());
+    auto loss = controller.dataObjects().last().toMap()["rules"].toList().last().toMap();
+    QCOMPARE(loss["operation"].toString(), QString("packetloss"));
+    QVERIFY(loss["effectiveSamplePeriod"].toDouble() > 0);
+    QQmlExpression editLoss(QQmlEngine::contextForObject(manager), manager, "editRule(selected.rules[selected.rules.length - 1])");
+    editLoss.evaluate(); QVERIFY(!editLoss.hasError());
+    auto *period = root->findChild<QObject *>("objectRuleSamplePeriod"); QVERIFY(period);
+    QCOMPARE(period->property("text").toString().toDouble(), loss["effectiveSamplePeriod"].toDouble());
+    QVERIFY(!root->findChild<QObject *>("objectRuleAutoPeriod"));
+    period->setProperty("text", "-1"); QVERIFY(QMetaObject::invokeMethod(dialog, "submit"));
+    QVERIFY(!dialog->property("errorText").toString().isEmpty());
+    period->setProperty("text", "0.5"); QVERIFY(QMetaObject::invokeMethod(dialog, "submit")); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.dataObjects().last().toMap()["rules"].toList().last().toMap()["samplePeriod"].toDouble(), .5);
     QVERIFY(QMetaObject::invokeMethod(manager, "close"));
     QVERIFY(root->findChild<QObject *>("plotGrid")->property("visible").toBool());
     QVERIFY(controller.plotSignalEnabled(0, 0));

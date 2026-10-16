@@ -154,3 +154,5 @@ template_save/template_read 保存或读取独立的 version=1 JSON；mapping_pr
 `export_logical --wait` 参数 directory 为尚不存在的绝对目录，format=mat/xlsx。成功后得到 data.mat 或 data.xlsx 和 manifest.json；后者记录来源列、偏移、样本数、对象与完整规则定义及汇总。后台在临时目录写完数据和清单后一次发布；失败、取消、目录碰撞均不覆盖现有目标。这里导出的是逻辑结果数据，完整工作区重现仍使用 save_session。
 
 本版未开放主题、窗口几何或任意 QObject 方法调用；help 是服务端可调用能力的完整清单。MCP 不在本次范围内。
+
+`object_create` 支持 `type: "packetloss"`；`rule_update` 支持 `operation: "packetloss"` 及 `config.samplePeriod`（秒，正数为指定周期，0 保留兼容的一次估算入口）。对象设置中的“自动识别”为 GUI 显式操作，加载原始文件和恢复会话不触发识别或创建对象。派生输出仍可用既有 samples/statistics/rules 命令分析。

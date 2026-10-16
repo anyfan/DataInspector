@@ -162,6 +162,7 @@ Pane {
         open()
     }
     function editRule(rule: var): void {
+        ruleDialog.initializing = true
         ruleDialog.ruleId = rule ? rule.id : ""
         ruleDialog.mergeInputs = rule ? rule.inputIds.slice() : []
         ruleName.text = rule ? rule.name : ""
@@ -180,7 +181,10 @@ Pane {
         bitCount.value = rule ? rule.bitCount : 8
         signedField.checked = rule ? rule.signedField : false
         factor.text = rule ? String(rule.factor) : "1"; bias.text = rule ? String(rule.bias) : "0"
+        samplePeriod.text = rule && (rule.samplePeriod > 0 || rule.effectiveSamplePeriod > 0) ? String(rule.samplePeriod > 0 ? rule.samplePeriod : rule.effectiveSamplePeriod) : ""
         expression.text = rule && rule.expression.length > 0 ? rule.expression : "x"
+        ruleDialog.initializing = false
+        if (samplePeriod.text.length === 0) ruleDialog.estimatePeriod()
         ruleDialog.errorText = ""; ruleDialog.open()
     }
     contentItem: ColumnLayout {
@@ -212,7 +216,7 @@ Pane {
                         objectName: "dataObjectRow"
                         required property var modelData
                         width: ListView.view.width
-                        text: modelData.name + (modelData.type === "aircraft" ? " · 飞机" : " · 常规")
+                        text: modelData.name + (modelData.type === "aircraft" ? " · 飞机" : modelData.type === "packetloss" ? " · 丢包检测" : " · 常规")
                         highlighted: modelData.id === manager.selectedId
                         contentItem: Label {
                             objectName: "dataObjectRowText"; text: objectRow.text; color: manager.textColor; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter
@@ -229,10 +233,26 @@ Pane {
                     Label { text: manager.selected ? manager.selected.name : "先新建或选择一个对象"; font.bold: true; Layout.fillWidth: true }
                     ObjectCombo {
                         objectName: "objectTypeSelector"
-                        model: ["常规", "飞机"]
+                        model: ["常规", "飞机", "丢包检测"]
                         enabled: !!manager.selected && !manager.blocked
-                        currentIndex: manager.selected && manager.selected.type === "aircraft" ? 1 : 0
-                        onActivated: { if (!manager.appController.setDataObjectType(manager.selectedId, currentIndex === 1 ? "aircraft" : "general")) { manager.errorText = manager.appController.status; currentIndex = manager.selected && manager.selected.type === "aircraft" ? 1 : 0 } }
+                        currentIndex: manager.selected ? ["general", "aircraft", "packetloss"].indexOf(manager.selected.type) : 0
+                        onActivated: { if (!manager.appController.setDataObjectType(manager.selectedId, ["general", "aircraft", "packetloss"][currentIndex])) { manager.errorText = manager.appController.status; currentIndex = manager.selected ? ["general", "aircraft", "packetloss"].indexOf(manager.selected.type) : 0 } }
+                    }
+                }
+                RowLayout {
+                    visible: !!manager.selected && manager.selected.type === "packetloss"
+                    Layout.fillWidth: true
+                    Button {
+                        objectName: "identifyPacketLossButton"; text: "自动识别"
+                        enabled: !manager.blocked && manager.appController.loadedFileCount > 0
+                        onClicked: {
+                            manager.errorText = ""
+                            if (!manager.appController.identifyPacketLoss(manager.selectedId)) manager.errorText = manager.appController.status
+                        }
+                    }
+                    Label {
+                        text: "识别已加载文件的采样时间组，只补充缺少的检测，保留已有采样周期。"
+                        Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
                     }
                 }
                 TabBar {
@@ -356,7 +376,7 @@ Pane {
                                         text: ruleRow.modelData.operation === "expression" ? "公式：" + ruleRow.modelData.expression
                                             : ruleRow.modelData.operation === "scale" ? "换算：x × " + ruleRow.modelData.factor + " + " + ruleRow.modelData.bias
                                             : ruleRow.modelData.operation === "bits" || ruleRow.modelData.operation === "bitfield"
-                                                ? ruleRow.modelData.wordBits + " 位 · bit" + ruleRow.modelData.startBit + " 起，共 " + ruleRow.modelData.bitCount + " 位" + (ruleRow.modelData.signedField ? " · 有符号" : "") : ruleRow.modelData.operation === "merge" ? "按时间合并同源采样点" : "三轴模长"
+                                                ? ruleRow.modelData.wordBits + " 位 · bit" + ruleRow.modelData.startBit + " 起，共 " + ruleRow.modelData.bitCount + " 位" + (ruleRow.modelData.signedField ? " · 有符号" : "") : ruleRow.modelData.operation === "merge" ? "按时间合并同源采样点" : ruleRow.modelData.operation === "packetloss" ? "采样周期：" + (ruleRow.modelData.samplePeriod > 0 ? ruleRow.modelData.samplePeriod + " 秒" : ruleRow.modelData.effectiveSamplePeriod > 0 ? ruleRow.modelData.effectiveSamplePeriod + " 秒" : "未能估算，请编辑输入") : "三轴模长"
                                         Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
                                     }
                                     Label { text: ruleRow.modelData.error; visible: text.length > 0; color: "#df4652"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
@@ -425,8 +445,15 @@ Pane {
         property string errorText: ""
         title: ruleId.length > 0 ? "编辑派生规则" : "新增派生规则"
         anchors.centerIn: parent; modal: true; width: Math.min(660, manager.width - 30)
+        property bool initializing: false
+        function estimatePeriod(): void {
+            if (initializing || operation !== "packetloss") return
+            const value = manager.appController.estimateObjectSamplePeriod(manager.selectedId, String(inputX.currentValue))
+            samplePeriod.text = value > 0 ? String(value) : ""
+        }
         property var mergeInputs: []
         readonly property string operation: String(operationCombo.currentValue)
+        onOperationChanged: estimatePeriod()
         readonly property var inputOptions: {
             if (!manager.selected) return []
             if (ruleId.length === 0) return manager.selected.inputs
@@ -446,10 +473,10 @@ Pane {
             TextField { id: ruleName; objectName: "objectRuleName"; Layout.fillWidth: true; Layout.minimumWidth: 0; maximumLength: 256 }
             ObjectCombo {
                 id: operationCombo; objectName: "objectRuleOperation"; textRole: "name"; valueRole: "id"; Layout.fillWidth: true
-                model: [{id: "bits", name: "状态字拆位"}, {id: "bitfield", name: "提取位段"}, {id: "scale", name: "比例与偏置换算"}, {id: "magnitude", name: "三轴模长"}, {id: "expression", name: "自定义公式"}, {id: "merge", name: "按时间合并同源信号"}]
+                model: [{id: "bits", name: "状态字拆位"}, {id: "bitfield", name: "提取位段"}, {id: "scale", name: "比例与偏置换算"}, {id: "magnitude", name: "三轴模长"}, {id: "expression", name: "自定义公式"}, {id: "merge", name: "按时间合并同源信号"}, {id: "packetloss", name: "丢包检测"}]
             }
             Label { text: "输入 x（对象字段或此前派生结果）"; visible: ruleDialog.operation !== "merge" }
-            ObjectCombo { id: inputX; visible: ruleDialog.operation !== "merge"; objectName: "objectRuleInputX"; model: ruleDialog.inputOptions; textRole: "name"; valueRole: "id"; Layout.fillWidth: true }
+            ObjectCombo { id: inputX; onCurrentValueChanged: ruleDialog.estimatePeriod(); visible: ruleDialog.operation !== "merge"; objectName: "objectRuleInputX"; model: ruleDialog.inputOptions; textRole: "name"; valueRole: "id"; Layout.fillWidth: true }
             ScrollView {
                 visible: ruleDialog.operation === "merge"
                 Layout.fillWidth: true; Layout.preferredHeight: 180
@@ -502,6 +529,18 @@ Pane {
                 Label { text: "偏置" }
                 TextField { id: bias; text: "0"; Layout.fillWidth: true }
             }
+            ColumnLayout {
+                visible: ruleDialog.operation === "packetloss"
+                Layout.fillWidth: true
+                RowLayout {
+                    Label { text: "采样周期（秒）" }
+                    TextField { id: samplePeriod; objectName: "objectRuleSamplePeriod"; placeholderText: "无法估算，请输入正数"; text: ""; Layout.fillWidth: true; maximumLength: 64 }
+                }
+                Label {
+                    text: "采样周期已按原始时间间隔估算，可直接修改；多数间隔缺包或变频采样时请手动核定。\n丢包数 = max(四舍五入(时间差 / 周期) − 1, 0)；丢包率 = 累计丢包 / (已收到点数 + 累计丢包) × 100%。时间戳须严格递增，首点为 0，不推断首尾以外的丢包。"
+                    Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
+                }
+            }
             TextField { id: expression; objectName: "objectRuleExpression"; visible: ruleDialog.operation === "expression"; text: "sqrt(x*x+y*y+z*z)"; Layout.fillWidth: true; Layout.minimumWidth: 0; maximumLength: 1024 }
             Label { text: "支持 + − * /、比较、&& / || / !、括号、abs/sqrt/min/max；多输入要求相同时间基。"; visible: ruleDialog.operation === "expression" || ruleDialog.operation === "magnitude"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
             Label { text: ruleDialog.errorText; visible: text.length > 0; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap; color: "#df4652" }
@@ -512,7 +551,10 @@ Pane {
                 if (String(inputY.currentValue).length > 0) inputs.push(String(inputY.currentValue))
                 if (inputZ.enabled && String(inputZ.currentValue).length > 0) inputs.push(String(inputZ.currentValue))
             }
-            const config = {name: ruleName.text, operation: operation, inputs: inputs, wordBits: Number(wordWidth.currentText), startBit: startBit.value, bitCount: bitCount.value, signedField: signedField.checked, factor: Number(factor.text), bias: Number(bias.text), expression: expression.text}
+            if (operation === "packetloss" && (!isFinite(Number(samplePeriod.text)) || Number(samplePeriod.text) <= 0)) {
+                errorText = "采样周期必须为正数秒数"; return
+            }
+            const config = {samplePeriod: operation === "packetloss" ? Number(samplePeriod.text) : 0, name: ruleName.text, operation: operation, inputs: inputs, wordBits: Number(wordWidth.currentText), startBit: startBit.value, bitCount: bitCount.value, signedField: signedField.checked, factor: Number(factor.text), bias: Number(bias.text), expression: expression.text}
             const success = ruleId.length > 0 ? manager.appController.editObjectRule(manager.selectedId, ruleId, config)
                 : manager.appController.addObjectRule(manager.selectedId, config).length > 0
             if (success) close()

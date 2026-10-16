@@ -71,6 +71,8 @@ public:
     QString releaseNotes() const;
     Q_INVOKABLE void copyAboutInfo() const;
     QVariantList dataObjects() const;
+    Q_INVOKABLE bool identifyPacketLoss(const QString &objectId);
+    Q_INVOKABLE double estimateObjectSamplePeriod(const QString &objectId, const QString &inputId) const;
     bool deriving() const;
     Q_INVOKABLE bool isDerivedSignal(int row) const { return isObjectOutput(row); }
     Q_INVOKABLE QVariantList objectSourceOptions() const;
@@ -253,6 +255,7 @@ private:
     static QString localSessionPath(const QVariant &value);
     struct ObjectJob;
     QVector<DataObject> m_objects;
+    bool applyPacketLossGroups(const QString &objectId, const QVector<PacketLossGroup> &groups);
     QHash<QString, QString> m_objectErrors;
     std::shared_ptr<ObjectJob> m_objectJob;
     QHash<QString, ObjectRuleState> m_objectEvaluationStates;

@@ -18,6 +18,7 @@ struct ObjectRule {
     int wordBits = 8, startBit = 0, bitCount = 1;
     bool signedField = false;
     double factor = 1, bias = 0;
+    double samplePeriod = 0; // Seconds; zero estimates the period from input timestamps.
     QVector<ObjectOutput> outputs;
 };
 struct DataObject {
@@ -31,6 +32,7 @@ struct DataObject {
 struct ObjectRuleState {
     QJsonObject definition;
     QVector<PlotSeriesDataPtr> inputs;
+    double samplePeriod = 0;
 };
 struct ObjectEvaluation {
     qsizetype mergeTimelineBuilds = 0, mergeTimelineHits = 0, mergeTimelineBytes = 0;
@@ -51,4 +53,12 @@ QJsonArray objectsToJson(const QVector<DataObject> &objects);
 QStringList aircraftFieldRoles();
 QStringList activeAircraftFieldRoles(const DataObject &object);
 bool ensureAircraftFields(DataObject &object);
-bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error, int version = 11);
+bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error, int version = 13);
+
+struct PacketLossGroup {
+    QVector<int> sources;
+    QString name;
+    double samplePeriod = 0;
+};
+QVector<PacketLossGroup> identifyPacketLossGroups(const PlotSeriesSnapshot &snapshot,
+    const std::atomic_bool &cancelled, std::atomic<int> *completed = nullptr);

@@ -1,5 +1,9 @@
 #include "objectdefinition.h"
 #include "mergetimeline.h"
+#include <QCryptographicHash>
+#include <QFileInfo>
+#include <map>
+#include <tuple>
 #include <QRegularExpression>
 #include <cmath>
 #include <functional>
@@ -146,7 +150,7 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
     };
     auto nameValid = [](const QString &name) { return !name.trimmed().isEmpty() && name.size() <= 256 && !name.contains(QChar::Null); };
     for (const auto &object : objects) {
-        if (!identity(object.id) || !nameValid(object.name) || !QStringList{"general", "aircraft"}.contains(object.type) || object.fields.size() > 256 || object.rules.size() > 256)
+        if (!identity(object.id) || !nameValid(object.name) || !QStringList{"general", "aircraft", "packetloss"}.contains(object.type) || object.fields.size() > 256 || object.rules.size() > 256)
             return fail(QStringLiteral("对象身份、名称或数量无效"));
         QSet<QString> available, spatialRoles;
         for (const auto &field : object.fields) {
@@ -166,7 +170,8 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
         }
         for (const auto &rule : object.rules) {
             if (!identity(rule.id) || !nameValid(rule.name) || rule.inputs.isEmpty() || rule.inputs.size() > (rule.operation == "merge" ? 256 : 3)
-                || !std::isfinite(rule.factor) || !std::isfinite(rule.bias)) return fail(QStringLiteral("派生规则无效"));
+                || !std::isfinite(rule.factor) || !std::isfinite(rule.bias)
+                || !std::isfinite(rule.samplePeriod) || rule.samplePeriod < 0) return fail(QStringLiteral("派生规则无效"));
             for (const auto &input : rule.inputs) if (!available.contains(input))
                 return fail(QStringLiteral("派生只能引用本对象字段或此前派生结果，禁止循环依赖"));
             int count = 1;
@@ -177,6 +182,10 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
                 if (rule.operation == "bits") count = rule.bitCount;
             } else if (rule.operation == "scale") {
                 if (rule.inputs.size() != 1) return fail(QStringLiteral("换算需要一个输入"));
+            } else if (rule.operation == "packetloss") {
+                if (rule.inputs.size() != 1 || !std::isfinite(rule.samplePeriod) || rule.samplePeriod < 0)
+                    return fail(QStringLiteral("丢包检测需要一个输入及非负采样周期（0 为自动）"));
+                count = 2;
             } else if (rule.operation == "merge") {
                 if (rule.inputs.size() < 2 || QSet<QString>(rule.inputs.begin(), rule.inputs.end()).size() != rule.inputs.size())
                     return fail(QStringLiteral("时间合并需要至少两个不同输入"));
@@ -207,7 +216,7 @@ QJsonObject calculationKey(const ObjectRule &rule)
     return {{"operation", rule.operation}, {"expression", rule.expression},
         {"inputs", QJsonArray::fromStringList(rule.inputs)}, {"outputs", outputs},
         {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
-        {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}};
+        {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}};
 }
 bool sameSamples(const PlotSeriesDataPtr &a, const PlotSeriesDataPtr &b)
 {
@@ -281,7 +290,7 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                 auto output = std::make_shared<PlotSeriesData>(); output->id = rule.outputs[k].series;
                 output->sourceFile = "object:" + object.id; output->sourceTable = ruleIndex; output->sourceColumn = k;
                 output->sourceTableName = object.name + "/" + rule.name;
-                output->step = rule.operation == "bits" || rule.operation == "bitfield";
+                output->step = rule.operation == "bits" || rule.operation == "bitfield" || rule.operation == "packetloss";
                 if (rule.operation == "expression" && root >= 0 && expression.error.isEmpty())
                     output->step = QStringList{"not", "&&", "||", "==", "!=", ">=", "<=", ">", "<"}.contains(expression.nodes[root].op);
                 if (error.isEmpty() && rule.operation != "merge") {
@@ -344,7 +353,36 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                     }
                 }
             }
-            if (error.isEmpty() && rule.operation != "merge") for (qsizetype i = 0; i < count; ++i) {
+            double samplePeriod = rule.samplePeriod;
+            if (error.isEmpty() && rule.operation == "packetloss") {
+                const auto &source = inputs.first();
+                // Bound estimator memory; calculation below validates every timestamp.
+                if (samplePeriod == 0) {
+                    samplePeriod = estimateSamplingPeriod(count, [&](qsizetype i) { return source->pointAt(i).x(); }, [&] { return cancelled.load(); });
+                    if (cancelled.load()) return {};
+                    if (samplePeriod == 0) error = QStringLiteral("无法估算采样周期，请手动输入正数秒数");
+                }
+                double lost = 0;
+                for (qsizetype i = 0; error.isEmpty() && i < count; ++i) {
+                    if ((i & 4095) == 0 && cancelled.load()) return {};
+                    const double time = source->pointAt(i).x();
+                    const double delta = i ? time - source->pointAt(i - 1).x() : 0;
+                    if (!std::isfinite(time) || (i && (!std::isfinite(delta) || delta <= 0))) {
+                        error = QStringLiteral("丢包检测要求时间戳有限且严格递增（不能重复或倒退）"); break;
+                    }
+                    if (i) {
+                        const double expectedIntervals = std::floor(delta / samplePeriod + 0.5);
+                        const double missing = qMax(0.0, expectedIntervals - 1);
+                        if (!std::isfinite(expectedIntervals) || missing > 9007199254740991.0 - lost - double(count)) {
+                            error = QStringLiteral("丢包数量超出精确计数范围，请检查采样周期"); break;
+                        }
+                        lost += missing;
+                    }
+                    outputs[0]->values[i] = lost;
+                    outputs[1]->values[i] = 100.0 * lost / (lost + double(i) + 1);
+                }
+            }
+            if (error.isEmpty() && rule.operation != "merge" && rule.operation != "packetloss") for (qsizetype i = 0; i < count; ++i) {
                 if ((i & 4095) == 0 && cancelled.load()) return {};
                 double values[3] = {}; bool valid = true;
                 const double time = inputs.first()->pointAt(i).x();
@@ -380,7 +418,7 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
             if (completedRules) completedRules->fetch_add(1, std::memory_order_relaxed);
             if (invalid && error.isEmpty()) result.errors.insert(rule.id, QStringLiteral("%1 个无效样本已留空").arg(invalid));
             if (!error.isEmpty()) result.errors.insert(rule.id, error);
-            if (!result.budgetLimitedRules.contains(rule.id)) result.states.insert(rule.id, {calculationKey(rule), inputs});
+            if (!result.budgetLimitedRules.contains(rule.id)) result.states.insert(rule.id, {calculationKey(rule), inputs, samplePeriod});
             for (int k = 0; k < outputs.size(); ++k) {
                 if (!error.isEmpty()) { outputs[k]->time.clear(); outputs[k]->values.clear(); }
                 outputs[k]->rangeIndex = PlotRangeIndex::build(*outputs[k], [&] { return cancelled.load(); });
@@ -406,7 +444,7 @@ QJsonArray objectsToJson(const QVector<DataObject> &objects)
             for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"name", output.name}, {"series", output.series}});
             rules.append(QJsonObject{{"id", rule.id}, {"name", rule.name}, {"operation", rule.operation}, {"expression", rule.expression},
                 {"inputs", inputs}, {"outputs", outputs}, {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
-                {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}});
+                {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}});
         }
         array.append(QJsonObject{{"id", object.id}, {"name", object.name}, {"type", object.type}, {"fields", fields}, {"rules", rules},
             {"aircraft", QJsonObject{{"geographic", object.geographic}, {"attitudeMode", object.attitude.mode}, {"radians", object.attitude.radians},
@@ -433,6 +471,7 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
         const auto obj = v.toObject(); DataObject object;
         if (version >= 8 || obj.contains("type")) {
             if (!string(obj["type"], &object.type)) return fail();
+            if (object.type == "packetloss" && version < 13) return fail();
         }
         if (!string(obj["id"], &object.id) || !string(obj["name"], &object.name)
             || !obj["fields"].isArray() || obj["fields"].toArray().size() > 256
@@ -473,6 +512,11 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
                 || !integer(r["wordBits"], &rule.wordBits) || !integer(r["startBit"], &rule.startBit) || !integer(r["bitCount"], &rule.bitCount)
                 || !r["signedField"].isBool() || !r["factor"].isDouble() || !r["bias"].isDouble()) return fail();
             if (rule.operation == "merge" && version < 11) return fail();
+            if (rule.operation == "packetloss" && version < 12) return fail();
+            if (version >= 12) {
+                if (!r["samplePeriod"].isDouble() || !std::isfinite(r["samplePeriod"].toDouble()) || r["samplePeriod"].toDouble() < 0) return fail();
+                rule.samplePeriod = r["samplePeriod"].toDouble();
+            }
             rule.signedField = r["signedField"].toBool(); rule.factor = r["factor"].toDouble(); rule.bias = r["bias"].toDouble();
             for (const auto &input : r["inputs"].toArray()) { QString id; if (!string(input, &id)) return fail(); rule.inputs.append(id); }
             for (const auto &ov : r["outputs"].toArray()) {
@@ -487,4 +531,58 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
     }
     if (!validateObjects(parsed, signalCount, error)) return false;
     *objects = parsed; return true;
+}
+
+QVector<PacketLossGroup> identifyPacketLossGroups(const PlotSeriesSnapshot &snapshot,
+    const std::atomic_bool &cancelled, std::atomic<int> *completed)
+{
+    QVector<PacketLossGroup> groups;
+    QVector<PlotSeriesDataPtr> representatives;
+    using Key = std::tuple<QString, quintptr, quintptr, qsizetype, double>;
+    std::map<Key, int> identities;
+    QHash<QString, QHash<QByteArray, QVector<int>>> byFile;
+    for (const auto &source : snapshot.series) {
+        if (cancelled.load()) return {};
+        if (!source || source->sourceFile.startsWith("object:")) continue;
+        const Key identity{source->sourceFile, quintptr(source->time.constData()), quintptr(source->points.constData()), source->sampleCount(), source->timeOffset};
+        const auto cached = identities.find(identity);
+        int group = cached == identities.end() ? -1 : cached->second;
+        if (group < 0) {
+            QCryptographicHash hash(QCryptographicHash::Sha256);
+            QVector<double> block; block.reserve(16384);
+            for (qsizetype i = 0; i < source->sampleCount();) {
+                if (cancelled.load()) return {};
+                block.clear();
+                const qsizetype end = qMin(source->sampleCount(), i + 16384);
+                for (; i < end; ++i) {
+                    const double time = source->pointAt(i).x();
+                    block.append(std::isnan(time) ? qQNaN() : time == 0 ? 0.0 : time);
+                }
+                hash.addData(QByteArrayView(reinterpret_cast<const char *>(block.constData()), block.size() * sizeof(double)));
+            }
+            const auto digest = hash.result();
+            for (int candidate : byFile[source->sourceFile].value(digest)) {
+                const auto &previous = representatives[candidate];
+                bool equal = previous->sampleCount() == source->sampleCount();
+                for (qsizetype i = 0; equal && i < source->sampleCount(); ++i) {
+                    if ((i & 4095) == 0 && cancelled.load()) return {};
+                    const double a = previous->pointAt(i).x(), b = source->pointAt(i).x();
+                    equal = a == b || (std::isnan(a) && std::isnan(b));
+                }
+                if (equal) { group = candidate; break; }
+            }
+            if (group < 0) {
+                group = groups.size();
+                const auto period = estimateSamplingPeriod(source->sampleCount(), [&](qsizetype i) { return source->pointAt(i).x(); }, [&] { return cancelled.load(); });
+                const QString name = (QFileInfo(source->sourceFile).fileName() + "/" + source->sourceTableName).left(220)
+                    + QStringLiteral(" · 采样组 %1").arg(group + 1);
+                groups.append({{}, name, period}); representatives.append(source);
+                byFile[source->sourceFile][digest].append(group);
+            }
+            identities.emplace(identity, group);
+        }
+        groups[group].sources.append(source->id);
+        if (completed) completed->fetch_add(1, std::memory_order_relaxed);
+    }
+    return groups;
 }

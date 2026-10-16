@@ -3,7 +3,27 @@
 #include <QtMath>
 
 #include <limits>
+#include <algorithm>
+#include <cmath>
 #include <utility>
+
+double estimateSamplingPeriod(qsizetype count, const std::function<double(qsizetype)> &timestamp,
+    const std::function<bool()> &cancelled)
+{
+    QVector<double> intervals;
+    const qsizetype n = qMin<qsizetype>(qMax<qsizetype>(0, count - 1), 8192);
+    intervals.reserve(n);
+    for (qsizetype k = 0; k < n; ++k) {
+        if ((k & 4095) == 0 && cancelled && cancelled()) return 0;
+        const qsizetype i = 1 + k * (count - 1) / n;
+        const double delta = timestamp(i) - timestamp(i - 1);
+        if (std::isfinite(delta) && delta > 0) intervals.append(delta);
+    }
+    if (intervals.isEmpty()) return 0;
+    const auto middle = intervals.begin() + intervals.size() / 2;
+    std::nth_element(intervals.begin(), middle, intervals.end());
+    return *middle;
+}
 
 namespace {
 

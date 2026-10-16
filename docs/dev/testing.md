@@ -133,3 +133,7 @@ automation_cli_test 使用实际 exe 和标准库 CLI，覆盖任务真实失败
 ```
 
 前后比较必须核对 rawSignals、mergeRules、outputSamples、errorCount 和 sha256；不能把某文件的耗时收益外推到无共享时间数组的数据。Windows peakWorkingSetBytes 为整个进程历史峰值，含加载阶段。
+
+`objectdata_test::packetLoss` 覆盖自动周期、时间偏移、缺失信号值、时间抖动、手动周期、单点、重复/倒退/无效时间、极端计数、取消及 schema 拒绝；`packetLossLifecycle` 验证编辑重算、输出身份、会话恢复和对象复制。`objectManagerQml` 通过真实 QML 对话框提交检测、检查周期数值预填及非法/有效手动周期。
+
+`identifyPacketLoss` 验证导入不创建对象、显式丢包检测对象、按时间基识别、跨文件隔离、重复识别与代表列复用、手动周期不覆盖、继续导入后主动补充、会话/复制保留类型、v12 拒绝新类型、超限整批拒绝、清空取消及单点修复。`objectManagerQml` 验证对象类型选择、“自动识别”按钮、重复点击和可编辑周期数值。导入、导出、航迹及旧会话测试恢复既有原始数据断言，不再为自动对象调整 fixture。
