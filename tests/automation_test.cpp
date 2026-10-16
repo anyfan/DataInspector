@@ -1,0 +1,162 @@
+#include "automation/automationserver.h"
+#include "controller/appcontroller.h"
+#include "items/plotitem.h"
+#include "startupfiles.h"
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QTcpSocket>
+#include <QTemporaryDir>
+#include <QtTest>
+#include <cmath>
+
+class AutomationTest final : public QObject
+{
+    Q_OBJECT
+    QJsonObject call(const QJsonObject &connection, const QString &command,
+                     const QJsonObject &params = {}, bool authenticated = true)
+    {
+        QTcpSocket socket;
+        socket.connectToHost(QStringLiteral("127.0.0.1"), quint16(connection.value("port").toInt()));
+        if (!socket.waitForConnected(2000)) return {};
+        const QJsonObject request{{"token", authenticated ? connection.value("token").toString() : "wrong"},
+                                  {"command", command}, {"params", params}};
+        socket.write(QJsonDocument(request).toJson(QJsonDocument::Compact) + '\n');
+        QElapsedTimer timer; timer.start();
+        while (!socket.canReadLine() && timer.elapsed() < 10000) QTest::qWait(5);
+        return QJsonDocument::fromJson(socket.readLine()).object();
+    }
+    QJsonObject descriptor(const QString &path)
+    {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly)) return {};
+        return QJsonDocument::fromJson(file.readAll()).object();
+    }
+private slots:
+    void optInAuthAndValidation()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        AppController controller;
+        const QString path = dir.filePath("connection.json");
+        {
+            AutomationServer server(&controller);
+            QString error;
+            QVERIFY(!server.start("relative.json", &error));
+            QVERIFY2(server.start(path, &error), qPrintable(error));
+            const auto conn = descriptor(path);
+            QCOMPARE(conn.value("host").toString(), QStringLiteral("127.0.0.1"));
+            QCOMPARE(call(conn, "status", {}, false).value("error").toObject().value("code").toString(), QStringLiteral("unauthorized"));
+            QVERIFY(call(conn, "help").value("ok").toBool());
+            QVERIFY(call(conn, "status").value("ok").toBool());
+            QCOMPARE(call(conn, "typo").value("error").toObject().value("code").toString(), QStringLiteral("unknown_command"));
+            QVERIFY(!call(conn, "layout", {{"rows", 2}, {"columns", 1.5}}).value("ok").toBool());
+            QVERIFY(!call(conn, "layout", {{"rows", 2}, {"columns", 1}, {"typo", 1}}).value("ok").toBool());
+            QCOMPARE(controller.plotRows(), 1); // No partial mutation on rejected arguments.
+            AutomationServer second(&controller);
+            QVERIFY(!second.start(path, &error));
+            const auto parsed = parseStartupFiles({"DataInspector.exe", "--automation-file", path});
+            QVERIFY(parsed.sessionFile.isEmpty()); // Descriptor .json is never opened as a session.
+        }
+        QVERIFY(!QFileInfo::exists(path));
+    }
+    void originalSamplesStatisticsAndSettings()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QFile csv(dir.filePath(QStringLiteral("数据.csv")));
+        QVERIFY(csv.open(QIODevice::WriteOnly));
+        csv.write("time,A\n0,1\n1,3\n2,\n3,5\n"); csv.close();
+        AppController controller;
+        PlotItem plot;
+        plot.setWidth(640); plot.setHeight(320);
+        controller.attachPlot(&plot);
+        AutomationServer server(&controller);
+        QString error;
+        const auto path = dir.filePath("connection.json");
+        QVERIFY(server.start(path, &error));
+        const auto conn = descriptor(path);
+        QVERIFY(call(conn, "load", {{"path", csv.fileName()}}).value("ok").toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 10000);
+        QCOMPARE(controller.signalCount(), 1);
+        auto listed = call(conn, "signals").value("result").toObject();
+        const QString generation = listed.value("generation").toString();
+        QCOMPARE(listed.value("signals").toArray().size(), 1);
+        QJsonObject params{{"signal", 0}, {"generation", generation}};
+        auto stats = call(conn, "statistics", params).value("result").toObject();
+        QCOMPARE(stats.value("count").toInt(), 3);
+        QCOMPARE(stats.value("missing").toInt(), 1);
+        QCOMPARE(stats.value("mean").toDouble(), 3.0);
+        QVERIFY(qAbs(stats.value("stddev").toDouble() - std::sqrt(8.0 / 3.0)) < 1e-12);
+        QVERIFY(qAbs(stats.value("rms").toDouble() - std::sqrt(35.0 / 3.0)) < 1e-12);
+        auto range = params; range["start"] = 1; range["end"] = 2;
+        stats = call(conn, "statistics", range).value("result").toObject();
+        QCOMPARE(stats.value("mean").toDouble(), 3.0);
+        QCOMPARE(stats.value("count").toInt(), 1);
+        range["start"] = 10; range["end"] = 20;
+        stats = call(conn, "statistics", range).value("result").toObject();
+        QCOMPARE(stats.value("count").toInt(), 0); QVERIFY(stats.value("mean").isNull());
+        auto paged = params; paged["offset"] = 1; paged["limit"] = 2;
+        const auto page = call(conn, "samples", paged).value("result").toObject();
+        QCOMPARE(page.value("nextOffset").toInt(), 3);
+        QVERIFY(page.value("samples").toArray()[1].toArray()[1].isNull());
+        auto nearest = params; nearest["time"] = 0.8;
+        QCOMPARE(call(conn, "nearest", nearest).value("result").toObject().value("sample").toArray(), (QJsonArray{1, 3}));
+        auto binding = params; binding["plot"] = 0; binding["enabled"] = true;
+        QVERIFY(call(conn, "plot_signal", binding).value("ok").toBool());
+        QVERIFY(controller.plotSignalEnabled(0, 0));
+        QVERIFY(call(conn, "cursor_mode", {{"mode", 2}}).value("ok").toBool());
+        QCOMPARE(plot.cursorMode(), 2);
+        QVERIFY(call(conn, "layout", {{"rows", 2}, {"columns", 2}}).value("ok").toBool());
+        QCOMPARE(controller.plotRows(), 2); QCOMPARE(controller.plotColumns(), 2);
+        auto style = params; style["color"] = "#ff123456"; style["width"] = 3; style["style"] = 2;
+        QVERIFY(call(conn, "style", style).value("ok").toBool());
+        QCOMPARE(controller.signalColor(0), QColor("#123456"));
+        QCOMPARE(controller.signalWidth(0), 3.0);
+        QCOMPARE(call(conn, "samples", params).value("error").toObject().value("code").toString(), QStringLiteral("stale_generation"));
+        params["generation"] = call(conn, "signals").value("result").toObject().value("generation");
+        auto offset = params; offset["seconds"] = 10;
+        QVERIFY(call(conn, "offset", offset).value("ok").toBool());
+        params["generation"] = call(conn, "signals").value("result").toObject().value("generation");
+        const auto shifted = call(conn, "samples", params).value("result").toObject().value("samples").toArray();
+        QCOMPARE(shifted[0].toArray(), (QJsonArray{10, 1}));
+        auto renamed = params; renamed["name"] = QStringLiteral("重命名");
+        QVERIFY(call(conn, "rename", renamed).value("ok").toBool());
+        QCOMPARE(controller.signalName(0), QStringLiteral("重命名"));
+        const auto session = dir.filePath("test.disession");
+        QVERIFY(call(conn, "save_session", {{"path", session}}).value("ok").toBool());
+        QVERIFY(QFileInfo::exists(session));
+        QVERIFY(call(conn, "restore_session", {{"path", session}}).value("ok").toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.loading() && !controller.restoringSession(), 10000);
+        QCOMPARE(controller.signalName(0), QStringLiteral("重命名"));
+        QCOMPARE(controller.signalTimeOffset(0), 10.0);
+        QCOMPARE(call(conn, "samples", params).value("error").toObject().value("code").toString(), QStringLiteral("stale_generation"));
+    }
+    void framing()
+    {
+        QTemporaryDir dir;
+        AppController controller;
+        AutomationServer server(&controller);
+        QString error;
+        const auto path = dir.filePath("connection.json");
+        QVERIFY(server.start(path, &error));
+        const auto conn = descriptor(path);
+        QTcpSocket socket;
+        socket.connectToHost("127.0.0.1", quint16(conn.value("port").toInt()));
+        QVERIFY(socket.waitForConnected(2000));
+        socket.write("{"); socket.flush(); QTest::qWait(15);
+        QCOMPARE(socket.bytesAvailable(), 0);
+        socket.write("bad json}\n");
+        QTRY_VERIFY(socket.canReadLine());
+        QCOMPARE(QJsonDocument::fromJson(socket.readLine()).object().value("error").toObject().value("code").toString(), QStringLiteral("invalid_json"));
+        QTcpSocket oversized;
+        oversized.connectToHost("127.0.0.1", quint16(conn.value("port").toInt()));
+        QVERIFY(oversized.waitForConnected(2000));
+        oversized.write(QByteArray(65537, 'x'));
+        QTRY_VERIFY(oversized.canReadLine());
+        QCOMPARE(QJsonDocument::fromJson(oversized.readLine()).object().value("error").toObject().value("code").toString(), QStringLiteral("request_too_large"));
+    }
+};
+
+QTEST_MAIN(AutomationTest)
+#include "automation_test.moc"

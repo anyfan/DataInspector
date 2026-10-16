@@ -75,6 +75,14 @@ Rectangle {
     color: signalBrowser.panelColor
     ColumnLayout { anchors.fill: parent; anchors.margins: 10; anchors.rightMargin: 0; spacing: 8
         Button { objectName: "objectManagerButton"; text: "对象与派生数据…"; Layout.fillWidth: true; enabled: !signalBrowser.appController.restoringSession && !signalBrowser.appController.imageExporting; onClicked: signalBrowser.objectEditor.open() }
+        CheckBox {
+            objectName: "logicalResultsToggle"
+            text: "优先显示合并结果"
+            checked: signalBrowser.appController.logicalSignalView
+            onToggled: signalBrowser.appController.setLogicalSignalView(checked)
+            ToolTip.visible: hovered
+            ToolTip.text: "显示合并输出与未被替代的来源；取消勾选可查看全部原始信号"
+        }
         RowLayout { Layout.fillWidth: true; spacing: 4
             TextField {
                 id: signalSearch

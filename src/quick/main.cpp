@@ -8,6 +8,7 @@
 #include <QTextStream>
 #include <QQuickWindow>
 #include "controller/appcontroller.h"
+#include "automation/automationserver.h"
 
 static int writeStartupError(QQmlApplicationEngine &engine,
                              const QStringList &qmlErrors,
@@ -36,7 +37,20 @@ int main(int argc, char *argv[])
     QGuiApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("DataInspector"));
     app.setOrganizationName(QStringLiteral("DataInspector"));
+    QString automationFile;
+    const QStringList arguments = app.arguments();
+    for (int i = 1; i < arguments.size(); ++i) {
+        if (arguments[i] != QStringLiteral("--automation-file")) continue;
+        if (!automationFile.isEmpty() || i + 1 >= arguments.size()
+            || arguments[i + 1].trimmed().isEmpty()
+            || arguments[i + 1].startsWith(QLatin1Char('-'))) {
+            qCritical() << "Expected one --automation-file <absolute unused path>";
+            return 2;
+        }
+        automationFile = arguments[++i];
+    }
     AppController controller;
+    AutomationServer automation(&controller);
     app.setApplicationVersion(controller.aboutInfo().value(QStringLiteral("version")).toString());
     QQmlApplicationEngine engine;
     engine.addImportPath(QCoreApplication::applicationDirPath() + QStringLiteral("/qml"));
@@ -81,6 +95,14 @@ int main(int argc, char *argv[])
         QTimer::singleShot(0, &controller, [&controller, startupArguments]() {
             controller.openStartupFiles(startupArguments);
         });
+        if (!automationFile.isEmpty()) {
+            QString error;
+            if (!automation.start(automationFile, &error)) {
+                qCritical().noquote() << "Automation startup failed:" << error;
+                app.exit(2);
+                return;
+            }
+        }
         QMetaObject::invokeMethod(splash, "dismiss", Qt::QueuedConnection);
         QTimer::singleShot(360, splash, &QObject::deleteLater);
     });

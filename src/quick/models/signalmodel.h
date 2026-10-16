@@ -38,6 +38,7 @@ public:
                      const QVector<QColor> &colors = {});
     int sourceCount() const { return m_names.size(); }
     void setFilter(const QString &text);
+    void setVisibleSources(std::optional<QSet<int>> rows);
     Q_INVOKABLE int revealSignal(int sourceRow);
     Q_INVOKABLE void toggleGroup(const QString &group);
     // Ancestor group chain of a visible model row, outermost first. Each entry
@@ -99,4 +100,5 @@ private:
     int m_plotCount = 0;
     int m_activePlot = -1;
     QString m_filter;
+    std::optional<QSet<int>> m_visibleSources;
 };

@@ -11,6 +11,7 @@ DataInspector 从老的 QCustomPlot/QWidget 实现（`src/core`、`src/plot`、`
 | `qml/` | Main、SignalBrowser、SessionDialogs、ObjectManager、QuickPlot、TrajectoryPlot 等界面组件 |
 | `src/quick/` | `main.cpp` 入口、`startupfiles.*` 参数解析、`qmltypes.h` 显式 QML_FOREIGN 注册 |
 | `src/quick/controller/` | AppController：生命周期、加载、子图、航迹、会话、模板、对象、计算、图片及关于信息 |
+| `src/quick/automation/` | 本机 JSON CLI；复用控制器与不可变数据快照，见[自动化架构](automation.md) |
 | `src/quick/io/` | DataLoadWorker/DataExportWorker；CSV/TXT/MAT/XLSX 读写与共用表结构、导出校验 |
 | `src/quick/models/` | SignalModel、signalmetadata、objectdefinition（对象定义及规则依赖/计算） |
 | `src/quick/state/` | SessionDocument、ViewConfiguration、ViewTemplateDocument 和 JSON 校验 |
@@ -106,3 +107,5 @@ SignalBrowser.qml 管理搜索、列表、树手势及导航，向 Main.qml 发�
 按时间合并规则 `merge` 复用对象后台计算与失效传播，在不可变来源快照上收集含偏移的原始点，排序并按精确时间去重。同时间不同有效值使整条输出失效；有效值覆盖缺失值。结果以零偏移、单调时间数组发布并构建范围索引，不使用 LOD 或插值。会话 v11 保存该规则。
 
 对象字段列表按预置用途、原始字段顺序显式排序；同用途字段不依赖 JavaScript sort 的稳定性。QML ListModel 按字段 ID 局部增删、移动和更新，避免数据通知重置整个列表，保留可见行与滚动位置。
+
+自动化任务、模板匹配和合并计划见[CLI 架构](automation.md)。appcontroller_automation.cpp 管理批量飞机配置、完整性检查、逻辑结果与规则查询；models/mergetimeline.* 在单次规则计算中复用共享原始时间基。SignalBrowser 提供可逆逻辑视图，ObjectManager 对规则搜索、筛选并每页显示 20 条。

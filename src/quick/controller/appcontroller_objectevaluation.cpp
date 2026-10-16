@@ -8,10 +8,12 @@
 struct AppController::ObjectJob {
     std::atomic_bool cancelled{false}, done{false};
     ObjectEvaluation result;
+    std::atomic<int> completed{0};
+    int total = 0;
 };
 void AppController::cancelObjectEvaluation()
 {
-    if (m_objectJob) m_objectJob->cancelled = true;
+    if (m_objectJob) { m_objectJob->cancelled = true; emit objectEvaluationAborted(); }
     m_objectJob.reset();
 }
 void AppController::refreshComputedPlots(const QVector<PlotSeriesDataPtr> &series)
@@ -71,14 +73,19 @@ void AppController::scheduleObjectEvaluation()
     m_seriesStore->publishComputed(empty);
     refreshComputedPlots(empty);
     if (dirty.isEmpty()) { emit objectsChanged(); return; }
-    const auto job = std::make_shared<ObjectJob>(); m_objectJob = job;
+    const auto job = std::make_shared<ObjectJob>(); job->total = dirty.size(); m_objectJob = job;
     const auto objects = m_objects;
     const auto snapshot = m_seriesStore->snapshot(ids);
     QThreadPool::globalInstance()->start([job, objects, snapshot, retainedValues, dirty] {
-        job->result = evaluateObjects(objects, snapshot, job->cancelled, retainedValues, &dirty);
+        job->result = evaluateObjects(objects, snapshot, job->cancelled, retainedValues, &dirty, true, &job->completed);
         job->done.store(true, std::memory_order_release);
     });
     emit objectsChanged(); QTimer::singleShot(20, this, [this, job] { if (m_objectJob == job) pollObjectEvaluation(); });
+}
+
+QVariantMap AppController::objectEvaluationProgress() const
+{
+    return {{"completed", m_objectJob ? m_objectJob->completed.load() : 0}, {"total", m_objectJob ? m_objectJob->total : 0}};
 }
 void AppController::pollObjectEvaluation()
 {

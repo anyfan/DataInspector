@@ -9,6 +9,8 @@
 | GUI 主线程 | QML 事件、`PlotItem` 视图交互、游标读数 |
 | Scene Graph 渲染线程 | `updatePaintNode` 同步和节点提交、渲染线程拥有的 QSG 节点 |
 | 加载/导出工作线程 | `DataLoadWorker` 解析文件、构建 `PlotRangeIndex`；`DataExportWorker` 写 XLSX/MAT |
+| 自动化分析线程（最多 1 个） | CLI 原始样本分页、最近查询及区间统计；只接收 GUI 捕获的不可变快照，见[自动化架构](automation.md) |
+| 同一自动化工作池 | merge_preview 在原始快照上检查冲突与时间并集；模板解析、任务记录和计划发布仍在 GUI 线程 |
 | LOD 后台线程（最多 2 个） | `PlotLodScheduler` 生成结构化 LOD |
 
 ## 不可变快照
@@ -50,6 +52,7 @@
 - 导出/加载进度循环定期检查取消标志。
 - 文件写入用 `QSaveFile`：先写临时文件，完整成功后才替换目标；取消时保留原文件。
 - 单次 OS 写入或最终提交不能被强行中断。
+- CLI job_cancel 使用原子标志协作取消；加载在数据块/MAT 变量之间检查，派生与分析在扫描间检查。逻辑导出包在同父目录暂存数据与来源清单，完整成功后发布新目录，不覆盖已有目录。
 
 ## 轨迹后台预览
 

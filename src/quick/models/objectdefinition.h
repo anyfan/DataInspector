@@ -33,6 +33,7 @@ struct ObjectRuleState {
     QVector<PlotSeriesDataPtr> inputs;
 };
 struct ObjectEvaluation {
+    qsizetype mergeTimelineBuilds = 0, mergeTimelineHits = 0, mergeTimelineBytes = 0;
     QVector<PlotSeriesDataPtr> series;
     QHash<QString, QString> errors;
     QSet<QString> budgetLimitedRules;
@@ -44,7 +45,8 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
 QString validateObjectExpression(const QString &expression, int inputCount);
 ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects,
     const PlotSeriesSnapshot &snapshot, const std::atomic_bool &cancelled,
-    qsizetype retainedValues = 0, const QSet<QString> *rulesToEvaluate = nullptr);
+    qsizetype retainedValues = 0, const QSet<QString> *rulesToEvaluate = nullptr,
+    bool reuseMergeTimeline = true, std::atomic<int> *completedRules = nullptr);
 QJsonArray objectsToJson(const QVector<DataObject> &objects);
 QStringList aircraftFieldRoles();
 QStringList activeAircraftFieldRoles(const DataObject &object);

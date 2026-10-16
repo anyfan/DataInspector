@@ -21,6 +21,7 @@ class ObjectDataTest : public QObject {
 private slots:
     void bitsAndSignedFields();
     void mergeSamples();
+    void mergeSharedTimelineMatchesLegacy();
     void dependencyPlanPreservesIndependentBranches();
     void expressionsAndTimeBases();
     void ownershipAndSchema();
@@ -43,6 +44,42 @@ static PlotSeriesSnapshot rawSnapshot(QVector<double> values)
     PlotSeriesInput input; input.id = 0; input.values = values;
     for (qsizetype i = 0; i < values.size(); ++i) input.time.append(double(i));
     PlotSeriesStore store; store.appendSeries({input}); return store.snapshot({0});
+}
+void ObjectDataTest::mergeSharedTimelineMatchesLegacy()
+{
+    QVector<PlotSeriesInput> raw; QVector<int> ids; QVector<DataObject> objects;
+    const QVector<double> first{2, 0, 2, 4}, second{1, 2, 3, 4};
+    for (int group = 0; group < 6; ++group) {
+        for (int part = 0; part < 2; ++part) {
+            PlotSeriesInput s; s.id = group * 2 + part; s.time = part ? second : first;
+            for (double time : std::as_const(s.time)) s.values.append(group == 2 && time == 4 ? qQNaN() : time + group);
+            if (group == 3 && part == 1) s.values[1] += 1; // Conflict remains visible.
+            if (group == 4) s.timeOffset = 10;
+            raw.append(s); ids.append(s.id);
+        }
+        DataObject object; object.id = "o" + QString::number(group); object.name = object.id;
+        object.fields = {{object.id + "a", "a", "scalar", group * 2}, {object.id + "b", "b", "scalar", group * 2 + 1}};
+        ObjectRule rule; rule.id = object.id + "r"; rule.name = "merge"; rule.operation = "merge";
+        rule.inputs = {object.fields[0].id, object.fields[1].id}; rule.outputs = {{rule.id + "out", "out", 12 + group}};
+        object.rules = {rule}; objects.append(object);
+    }
+    PlotSeriesStore store; store.appendSeries(raw); const auto snapshot = store.snapshot(ids); std::atomic_bool cancel{false};
+    QVERIFY(snapshot.series[0]->time.constData() == snapshot.series[2]->time.constData());
+    const auto legacy = evaluateObjects(objects, snapshot, cancel, 0, nullptr, false);
+    const auto shared = evaluateObjects(objects, snapshot, cancel);
+    QCOMPARE(shared.errors, legacy.errors); QVERIFY(shared.mergeTimelineHits >= 3); QCOMPARE(shared.series.size(), legacy.series.size());
+    for (int i = 0; i < shared.series.size(); ++i) {
+        QCOMPARE(shared.series[i]->time, legacy.series[i]->time);
+        QCOMPARE(shared.series[i]->values.size(), legacy.series[i]->values.size());
+        for (int j = 0; j < shared.series[i]->values.size(); ++j) {
+            const double a = shared.series[i]->values[j], b = legacy.series[i]->values[j]; QVERIFY(a == b || (std::isnan(a) && std::isnan(b)));
+        }
+    }
+    QVERIFY(shared.series[0]->time.constData() == shared.series[1]->time.constData());
+    auto invalid = std::make_shared<PlotSeriesData>(*snapshot.series[0]); invalid->time[0] = qQNaN();
+    auto invalidSnapshot = snapshot; invalidSnapshot.series[0] = invalid;
+    QCOMPARE(evaluateObjects(objects, invalidSnapshot, cancel).errors, evaluateObjects(objects, invalidSnapshot, cancel, 0, nullptr, false).errors);
+    cancel.store(true); QVERIFY(evaluateObjects(objects, snapshot, cancel).series.isEmpty());
 }
 void ObjectDataTest::mergeSamples()
 {
@@ -549,6 +586,29 @@ void ObjectDataTest::objectManagerQml()
     QTRY_COMPARE(fieldList->property("count").toInt(), 35);
     QTest::qWait(50);
     QVERIFY(anchor); QVERIFY(qAbs(anchor->mapToScene(QPointF()).y() - anchorY) < 1);
+    const auto pagingObject = controller.createDataObject("pagination", "general");
+    const auto pagingField = controller.addDataObjectField(pagingObject);
+    QVERIFY(!controller.bindObjectField(pagingObject, pagingField, "source", "scalar", 0).isEmpty());
+    for (int i = 0; i < 25; ++i)
+        QVERIFY(!controller.addObjectRule(pagingObject, {{"name", QString("page_%1").arg(i, 2, 10, QChar('0'))},
+            {"operation", "scale"}, {"inputs", QVariantList{pagingField}}, {"factor", 2}}).isEmpty());
+    QTRY_VERIFY(!controller.deriving());
+    manager->setProperty("selectedId", pagingObject);
+    const auto countRules = [&](const QString &property) {
+        return QQmlExpression(QQmlEngine::contextForObject(manager), manager, property + ".length").evaluate().toInt();
+    };
+    QTRY_COMPARE(countRules("matchingRules"), 25);
+    QCOMPARE(countRules("pageRules"), 20);
+    manager->setProperty("rulePage", 1);
+    QTRY_COMPARE(countRules("pageRules"), 5);
+    auto *ruleSearch = root->findChild<QObject *>("ruleSearch"); QVERIFY(ruleSearch);
+    ruleSearch->setProperty("text", "page_2");
+    QTRY_COMPARE(countRules("matchingRules"), 5);
+    QCOMPARE(manager->property("rulePage").toInt(), 0);
+    auto *ruleState = root->findChild<QObject *>("ruleStateFilter"); QVERIFY(ruleState);
+    ruleState->setProperty("currentIndex", 2);
+    QTRY_COMPARE(countRules("matchingRules"), 0);
+    ruleSearch->setProperty("text", ""); ruleState->setProperty("currentIndex", 0);
     QVERIFY(QMetaObject::invokeMethod(manager, "close"));
     QVERIFY(root->findChild<QObject *>("plotGrid")->property("visible").toBool());
     QVERIFY(controller.plotSignalEnabled(0, 0));

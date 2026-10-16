@@ -401,6 +401,12 @@ void SignalModel::rebuildGroupIndex()
     m_groupIndexDirty = false;
 }
 
+void SignalModel::setVisibleSources(std::optional<QSet<int>> rows)
+{
+    if (m_visibleSources == rows) return;
+    beginResetModel(); m_visibleSources = std::move(rows); rebuildVisibleNodes(); endResetModel();
+}
+
 void SignalModel::rebuildVisibleNodes()
 {
     rebuildGroupIndex();
@@ -422,9 +428,19 @@ void SignalModel::rebuildVisibleNodes()
             }
         }
     }
+    if (m_visibleSources) {
+        for (auto it = matchingRowsByGroup.begin(); it != matchingRowsByGroup.end(); ++it) {
+            auto &rows = it.value(); rows.erase(std::remove_if(rows.begin(), rows.end(), [this](int r) { return !m_visibleSources->contains(r); }), rows.end());
+        }
+    }
+    QSet<QString> populated;
+    for (auto it = matchingRowsByGroup.cbegin(); it != matchingRowsByGroup.cend(); ++it) if (!it.value().isEmpty()) {
+        QString prefix; for (const auto &part : it.key().split('/')) { prefix = prefix.isEmpty() ? part : prefix + '/' + part; populated.insert(prefix); }
+    }
     for (int row : matchingRowsByGroup.value(QString())) m_visibleNodes.append({false, row, {}, 0});
 
     for (const QString &group : std::as_const(m_orderedGroups)) {
+        if (m_visibleSources && !populated.contains(group)) continue;
         const QString parent = group.section(QLatin1Char('/'), 0, -2);
         if (m_filter.isEmpty() && !parent.isEmpty()) {
             QString prefix;

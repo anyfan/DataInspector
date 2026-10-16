@@ -61,7 +61,7 @@ class AppController : public QObject
     // >= 0 while a single subplot is shown maximized; -1 while tiled.
     Q_PROPERTY(int soloPlotIndex READ soloPlotIndex WRITE setSoloPlot NOTIFY soloPlotChanged)
 public:
-    enum ExportScope { AllLoadedData = 0, PlottedSignals = 1 };
+    enum ExportScope { AllLoadedData = 0, PlottedSignals = 1, LogicalResults = 2 };
     Q_ENUM(ExportScope)
     explicit AppController(QObject *parent = nullptr);
     ~AppController() override;
@@ -112,6 +112,27 @@ public:
     int activePlotIndex() const { return m_signals->activePlot(); }
     int plotStateRevision() const { return m_plotStateRevision; }
     int soloPlotIndex() const { return m_soloPlotIndex; }
+    // GUI-thread capture for automation; workers receive only immutable data.
+    PlotSeriesSnapshot automationSnapshot(const QVector<int> &rows = {}) const
+    { return m_seriesStore->snapshot(rows); }
+    QVariantMap trajectoryRenderState(int index) const;
+    bool setTrajectoryView(int index, int preset);
+    bool captureAutomationWindow(const QString &path);
+    QVariantMap mergeSignals(const QVariantList &groups);
+    QVariantMap mergePlan(const QVariantMap &policy = {}) const;
+    QVariantMap setupAircraft(const QString &id, const QString &name, const QVariantMap &config, const QVariantMap &bindings);
+    Q_INVOKABLE QVariantMap aircraftCheck(const QString &id) const;
+    QVariantMap mappingPreview(const QVariantMap &definition) const;
+    QVector<int> logicalSignalRows() const;
+    Q_INVOKABLE void setLogicalSignalView(bool enabled);
+    Q_PROPERTY(bool logicalSignalView READ logicalSignalView NOTIFY plotBindingsChanged)
+    bool logicalSignalView() const { return m_logicalSignalView; }
+    QVariantMap ruleResults(const QString &search = {}, const QString &state = {}, int offset = 0, int limit = 100) const;
+    QVariantMap objectEvaluationProgress() const;
+    bool exportLogical(const QString &directory, const QString &format);
+    void cancelAutomation(const QString &kind);
+    void retryObjectRules();
+    bool setAutomationCursor(double time, int index = 1);
 
     Q_INVOKABLE bool saveSession(const QVariant &filePath);
     Q_INVOKABLE bool saveViewTemplate(const QVariant &filePath);
@@ -203,6 +224,9 @@ public:
     // Drops every loaded file and signal. Use clearAllPlotSignals() to keep data.
     Q_INVOKABLE void clear();
 signals:
+    void loadBatchFinished(bool success, const QString &message);
+    void dataExportFinished(bool success, bool cancelled, const QString &message);
+    void objectEvaluationAborted();
     void objectsChanged();
     void viewHistoryChanged();
     void revealSignalRequested(int row);
@@ -233,6 +257,9 @@ private:
     std::shared_ptr<ObjectJob> m_objectJob;
     QHash<QString, ObjectRuleState> m_objectEvaluationStates;
     bool m_batchObjectChanges = false;
+    bool m_logicalSignalView = false;
+    bool m_cancelLoad = false;
+    void refreshLogicalSignalView();
     void scheduleObjectEvaluation();
     void pollObjectEvaluation();
     void refreshComputedPlots(const QVector<PlotSeriesDataPtr> &series);

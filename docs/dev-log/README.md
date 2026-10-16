@@ -8,6 +8,8 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [Agent 工作流增强](automation-workflows-2026-10-16.md) | 任务与幂等、飞机映射/检查、合并计划、逻辑导出与共享时间线实测 |
+| [Agent CLI 接入](automation-cli-2026-10-15.md) | 本机 JSON 协议、后台原始统计、设置与会话、版本校验和验证边界 |
 | [对象与派生数据调研](object-derived-data-research-2026-10-10.md) | 通用对象、仅对象派生、位拆分、时间语义与分期建议 |
 | [对象与派生数据首版](object-derived-data-implementation-2026-10-10.md) | 后台计算、状态字与公式、统一管理、v7 会话、关联航迹和验证边界 |
 | [关于页面](about-page-2026-10-09.md) | 构建时版本/Git 信息、离线更新记录、复制诊断信息 |

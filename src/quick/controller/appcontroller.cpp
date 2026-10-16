@@ -46,6 +46,8 @@ AppController::AppController(QObject *parent)
     connect(this, &AppController::activePlotChanged, this, &AppController::markSessionModified);
     connect(this, &AppController::soloPlotChanged, this, &AppController::markSessionModified);
     connect(this, &AppController::plotBindingsChanged, this, &AppController::markSessionModified);
+    connect(this, &AppController::objectsChanged, this, &AppController::refreshLogicalSignalView);
+    connect(this, &AppController::currentFileChanged, this, &AppController::refreshLogicalSignalView);
     QCoreApplication::instance()->installEventFilter(this);
     m_signals->setPlotCount(1);
     qRegisterMetaType<LoadedTable>();
@@ -84,6 +86,7 @@ AppController::AppController(QObject *parent)
                 if (imageExport) {
                     emit imageExportFinished(!cancelled && error.isEmpty(), status());
                 }
+                emit dataExportFinished(!cancelled && error.isEmpty(), cancelled, status());
             }, Qt::QueuedConnection);
     connect(m_exportThread, &QThread::finished, exporter,
             &QObject::deleteLater);

@@ -174,6 +174,7 @@ bool AppController::restoreSessionWithFiles(const QVariant &filePath, const QVar
     m_sessionRelocated = !replacements.isEmpty();
     m_pendingSessionPath = path;
     m_sessionSourcePaths = sources;
+    m_cancelLoad = false;
     m_stagedSessionTables.clear();
     m_batchTotal = sources.size(); m_batchCompleted = 0; m_batchErrors = 0;
     m_batchSignals = 0; m_batchRows = 0; m_batchSkipped = 0; m_batchFirstError.clear();

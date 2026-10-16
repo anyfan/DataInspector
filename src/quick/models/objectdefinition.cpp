@@ -1,4 +1,5 @@
 #include "objectdefinition.h"
+#include "mergetimeline.h"
 #include <QRegularExpression>
 #include <cmath>
 #include <functional>
@@ -245,8 +246,9 @@ QSet<QString> invalidatedObjectRules(const QVector<DataObject> &objects,
 
 ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotSeriesSnapshot &snapshot,
                                  const std::atomic_bool &cancelled, qsizetype retainedValues,
-                                 const QSet<QString> *rulesToEvaluate)
+                                 const QSet<QString> *rulesToEvaluate, bool reuseMergeTimeline, std::atomic<int> *completedRules)
 {
+    MergeTimelineCache mergeTimelines;
     ObjectEvaluation result; QHash<int, PlotSeriesDataPtr> sources;
     for (const auto &s : snapshot.series) sources.insert(s->id, s);
     for (const auto &object : objects) {
@@ -292,7 +294,27 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                 outputs.append(output);
             }
             qsizetype invalid = 0;
-            if (error.isEmpty() && rule.operation == "merge") {
+            if (error.isEmpty() && rule.operation == "merge" && reuseMergeTimeline) {
+                const auto timeline = mergeTimelines.get(inputs, cancelled, &error);
+                if (cancelled.load()) return {};
+                if (timeline && error.isEmpty()) {
+                    auto &output = *outputs.first(); output.monotonicTime = true;
+                    output.time = timeline->time; output.values.fill(qQNaN(), output.time.size());
+                    for (qsizetype group = 0; group < output.time.size() && error.isEmpty(); ++group) {
+                        for (qsizetype i = timeline->starts[group]; i < timeline->starts[group + 1]; ++i) {
+                            if ((i & 4095) == 0 && cancelled.load()) return {};
+                            const auto &entry = timeline->order[i];
+                            const double value = inputs[entry.source]->pointAt(entry.index).y();
+                            double &previous = output.values[group];
+                            if (std::isfinite(previous) && std::isfinite(value) && previous != value) {
+                                error = QStringLiteral("同一时间戳存在不同值，无法合并：%1").arg(output.time[group], 0, 'g', 17); break;
+                            }
+                            if (std::isfinite(value)) previous = value;
+                        }
+                    }
+                }
+            }
+            if (error.isEmpty() && rule.operation == "merge" && !reuseMergeTimeline) {
                 QVector<QPointF> samples;
                 samples.reserve(count);
                 for (const auto &source : inputs) {
@@ -355,6 +377,7 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                     if (!std::isfinite(value)) ++invalid;
                 }
             }
+            if (completedRules) completedRules->fetch_add(1, std::memory_order_relaxed);
             if (invalid && error.isEmpty()) result.errors.insert(rule.id, QStringLiteral("%1 个无效样本已留空").arg(invalid));
             if (!error.isEmpty()) result.errors.insert(rule.id, error);
             if (!result.budgetLimitedRules.contains(rule.id)) result.states.insert(rule.id, {calculationKey(rule), inputs});
@@ -366,6 +389,8 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
             }
         }
     }
+    result.mergeTimelineBuilds = mergeTimelines.builds; result.mergeTimelineHits = mergeTimelines.hits;
+    result.mergeTimelineBytes = mergeTimelines.bytes;
     return result;
 }
 

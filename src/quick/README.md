@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | 根目录 | 启动、命令行与 QML 类型注册 | `main.cpp`、`startupfiles.*`、`qmltypes.h` |
 | `controller/` | GUI 线程协调状态、任务、子图和会话 | `appcontroller.h`；实现按 loading/plots/trajectory/session/templates/objects/objectevaluation/image/about 分文件 |
+| `automation/` | Agent/CLI 本机接入 | `automationserver.*`、`commandcatalog.*`、`automationtasks.cpp`、`automationcommands.cpp`：协议/schema、任务/幂等、检查计划 |
 | `io/` | CSV/TXT/MAT/XLSX 解析、导出与工作线程 | `dataloadworker.*`、`dataexportworker.*`；`loadedtable.h`、`exporttable.h` 为共用数据结构 |
 | `models/` | 信号树、信号元数据、对象定义与规则计算 | `signalmodel.*`、`signalmetadata.*`、`objectdefinition.*` |
 | `state/` | 会话/模板值配置、版本迁移与 JSON 原子读写 | `sessiondocument.*`、`viewconfiguration.*`、`viewtemplatedocument.*`、`jsonvalidation.h` |

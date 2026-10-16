@@ -4,6 +4,7 @@
 | --- | --- | --- |
 | `src/quick/` | 应用入口、启动参数与 QML 注册 | 是 |
 | `src/quick/controller/` | 控制器各职责实现 | 是 |
+| `src/quick/automation/` | 本机 JSON CLI 服务、认证与后台数据分析 | 是 |
 | `src/quick/io/` | 数据读写、加载/导出任务及共用数据结构 | 是 |
 | `src/quick/models/` | 信号树、元数据、对象定义和派生规则 | 是 |
 | `src/quick/state/` | 会话/模板配置及 JSON 读写校验 | 是 |
@@ -13,7 +14,7 @@
 | `assets/` | 应用图标、工具栏 SVG、Windows RC/manifest | 是 |
 | `third_libs/` | 当前 MAT 静态库与头文件，清单见目录 README | 是 |
 | `tests/` | 自动化测试，默认在测试内生成数据 | 是 |
-| `tools/` | 部署、安装包启动检查、性能基准入口 | 是 |
+| `tools/` | JSON CLI、部署、安装包启动检查、性能基准入口 | 是 |
 | `cmake/` | 构建元数据生成与模板 | 是 |
 | `.github/` | 云端构建和发布工作流 | 是 |
 | `docs/user-guide/` | 用户操作与版本记录 | 是 |

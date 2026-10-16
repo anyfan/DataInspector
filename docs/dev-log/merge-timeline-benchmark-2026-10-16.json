@@ -1,0 +1,169 @@
+{
+  "date": "2026-10-16",
+  "input": "test_file/log_335.mat",
+  "build": "qt6-clang-debug",
+  "qt": "6.8.3",
+  "compiler": "LLVM-MinGW 17.0.6",
+  "method": "Three serial alternating legacy/shared pairs; evaluation excludes file loading. Same evaluator and immutable input snapshots; no concurrent build/tests.",
+  "limitations": "Single Windows machine and dataset. Debug build. Peak working set includes loading. Not a rendering or Release benchmark.",
+  "summary": {
+    "legacy": {
+      "medianEvaluationMs": 19414,
+      "medianAfterWorkingSetBytes": 623620096,
+      "medianPeakWorkingSetBytes": 625627136
+    },
+    "shared": {
+      "medianEvaluationMs": 5489,
+      "medianAfterWorkingSetBytes": 486785024,
+      "medianPeakWorkingSetBytes": 491077632
+    }
+  },
+  "evaluationReductionPercent": 71.72658905944165,
+  "afterWorkingSetReductionPercent": 21.942056209811433,
+  "runs": [
+    {
+      "after": {
+        "peakWorkingSetBytes": 625627136,
+        "privateBytes": 614440960,
+        "workingSetBytes": 623620096
+      },
+      "before": {
+        "peakWorkingSetBytes": 461254656,
+        "privateBytes": 328392704,
+        "workingSetBytes": 339173376
+      },
+      "errorCount": 0,
+      "evaluationMs": 20195,
+      "input": "test_file/log_335.mat",
+      "loadMs": 6878,
+      "mergeRules": 271,
+      "mode": "legacy",
+      "outputSamples": 17164702,
+      "rawSignals": 1592,
+      "sha256": "ce08d1950dab666acd810d2f4511ebd07497770694dbef7427050b3026ff108c",
+      "timelineBuilds": 0,
+      "timelineCacheBytes": 0,
+      "timelineHits": 0
+    },
+    {
+      "after": {
+        "peakWorkingSetBytes": 629551104,
+        "privateBytes": 617963520,
+        "workingSetBytes": 627544064
+      },
+      "before": {
+        "peakWorkingSetBytes": 461164544,
+        "privateBytes": 328540160,
+        "workingSetBytes": 339247104
+      },
+      "errorCount": 0,
+      "evaluationMs": 19414,
+      "input": "test_file/log_335.mat",
+      "loadMs": 4183,
+      "mergeRules": 271,
+      "mode": "legacy",
+      "outputSamples": 17164702,
+      "rawSignals": 1592,
+      "sha256": "ce08d1950dab666acd810d2f4511ebd07497770694dbef7427050b3026ff108c",
+      "timelineBuilds": 0,
+      "timelineCacheBytes": 0,
+      "timelineHits": 0
+    },
+    {
+      "after": {
+        "peakWorkingSetBytes": 625491968,
+        "privateBytes": 614215680,
+        "workingSetBytes": 623484928
+      },
+      "before": {
+        "peakWorkingSetBytes": 461250560,
+        "privateBytes": 328417280,
+        "workingSetBytes": 339218432
+      },
+      "errorCount": 0,
+      "evaluationMs": 16999,
+      "input": "test_file/log_335.mat",
+      "loadMs": 4189,
+      "mergeRules": 271,
+      "mode": "legacy",
+      "outputSamples": 17164702,
+      "rawSignals": 1592,
+      "sha256": "ce08d1950dab666acd810d2f4511ebd07497770694dbef7427050b3026ff108c",
+      "timelineBuilds": 0,
+      "timelineCacheBytes": 0,
+      "timelineHits": 0
+    },
+    {
+      "after": {
+        "peakWorkingSetBytes": 491077632,
+        "privateBytes": 476725248,
+        "workingSetBytes": 486785024
+      },
+      "before": {
+        "peakWorkingSetBytes": 461148160,
+        "privateBytes": 328421376,
+        "workingSetBytes": 339144704
+      },
+      "errorCount": 0,
+      "evaluationMs": 5591,
+      "input": "test_file/log_335.mat",
+      "loadMs": 4101,
+      "mergeRules": 271,
+      "mode": "shared",
+      "outputSamples": 17164702,
+      "rawSignals": 1592,
+      "sha256": "ce08d1950dab666acd810d2f4511ebd07497770694dbef7427050b3026ff108c",
+      "timelineBuilds": 4,
+      "timelineCacheBytes": 9002176,
+      "timelineHits": 267
+    },
+    {
+      "after": {
+        "peakWorkingSetBytes": 490946560,
+        "privateBytes": 476446720,
+        "workingSetBytes": 486653952
+      },
+      "before": {
+        "peakWorkingSetBytes": 461152256,
+        "privateBytes": 328421376,
+        "workingSetBytes": 339144704
+      },
+      "errorCount": 0,
+      "evaluationMs": 5489,
+      "input": "test_file/log_335.mat",
+      "loadMs": 4228,
+      "mergeRules": 271,
+      "mode": "shared",
+      "outputSamples": 17164702,
+      "rawSignals": 1592,
+      "sha256": "ce08d1950dab666acd810d2f4511ebd07497770694dbef7427050b3026ff108c",
+      "timelineBuilds": 4,
+      "timelineCacheBytes": 9002176,
+      "timelineHits": 267
+    },
+    {
+      "after": {
+        "peakWorkingSetBytes": 491126784,
+        "privateBytes": 476712960,
+        "workingSetBytes": 486834176
+      },
+      "before": {
+        "peakWorkingSetBytes": 461131776,
+        "privateBytes": 328409088,
+        "workingSetBytes": 339148800
+      },
+      "errorCount": 0,
+      "evaluationMs": 5227,
+      "input": "test_file/log_335.mat",
+      "loadMs": 3995,
+      "mergeRules": 271,
+      "mode": "shared",
+      "outputSamples": 17164702,
+      "rawSignals": 1592,
+      "sha256": "ce08d1950dab666acd810d2f4511ebd07497770694dbef7427050b3026ff108c",
+      "timelineBuilds": 4,
+      "timelineCacheBytes": 9002176,
+      "timelineHits": 267
+    }
+  ]
+}

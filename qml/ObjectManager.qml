@@ -12,6 +12,20 @@ Pane {
     required property bool darkTheme
     property bool dropHighlighted: false
     property string selectedFieldId: ""
+    property int rulePage: 0
+    readonly property int rulePageSize: 20
+    readonly property var matchingRules: {
+        const query = ruleSearch.text.toLowerCase()
+        const state = ruleState.currentIndex
+        const pending = appController.deriving
+        return selected ? selected.rules.filter(rule => {
+            const failed = rule.state === "failed"
+            return (query.length === 0 || (rule.name + " " + rule.sources + " " + rule.error).toLowerCase().indexOf(query) >= 0)
+                && (state === 0 || (state === 1 && !pending && !failed) || (state === 2 && !pending && failed) || (state === 3 && pending))
+        }) : []
+    }
+    readonly property var pageRules: matchingRules.slice(rulePage * rulePageSize, (rulePage + 1) * rulePageSize)
+    onMatchingRulesChanged: rulePage = Math.min(rulePage, Math.max(0, Math.ceil(matchingRules.length / rulePageSize) - 1))
     palette.window: darkTheme ? "#20252b" : "#f7f9fb"
     palette.windowText: darkTheme ? "#e6edf3" : "#202830"
     palette.text: manager.textColor
@@ -54,7 +68,7 @@ Pane {
     readonly property bool blocked: appController.loading || appController.exporting || appController.restoringSession
     readonly property bool timePlot: { const revision = appController.plotStateRevision; return !appController.trajectoryState(appController.activePlotIndex).enabled }
     readonly property var objects: appController.dataObjects
-    onSelectedIdChanged: selectedFieldId = ""
+    onSelectedIdChanged: { selectedFieldId = ""; rulePage = 0 }
     readonly property var selectedField: {
         if (selected) for (let i = 0; i < selected.fields.length; ++i) if (selected.fields[i].id === selectedFieldId) return selected.fields[i]
         return null
@@ -290,6 +304,27 @@ Pane {
                     ColumnLayout {
                         Button { text: "新增派生规则…"; objectName: "addObjectRuleButton"; enabled: !!manager.selected && manager.selected.inputs.length > 0 && !manager.blocked; onClicked: manager.editRule(null) }
                         RowLayout {
+                            Layout.fillWidth: true
+                            TextField { id: ruleSearch; objectName: "ruleSearch"; placeholderText: "搜索规则或来源…"; Layout.fillWidth: true; Layout.minimumWidth: 0; onTextChanged: manager.rulePage = 0 }
+                            ObjectCombo { id: ruleState; objectName: "ruleStateFilter"; model: ["全部", "成功", "失败", "计算中"]; onActivated: manager.rulePage = 0 }
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label {
+                                Layout.fillWidth: true
+                                text: {
+                                    const rules = manager.selected ? manager.selected.rules : []
+                                    const failed = rules.filter(rule => rule.state === "failed").length
+                                    const warnings = rules.filter(rule => rule.warning).length
+                                    return manager.appController.deriving ? "计算中 · " + rules.length + " 条规则"
+                                        : "成功 " + (rules.length - failed) + " · 失败 " + failed + " · 警告 " + warnings + " · 匹配 " + manager.matchingRules.length
+                                }
+                            }
+                            Button { objectName: "rulesPreviousPage"; text: "上一页"; enabled: manager.rulePage > 0; onClicked: --manager.rulePage }
+                            Label { text: (manager.rulePage + 1) + " / " + Math.max(1, Math.ceil(manager.matchingRules.length / manager.rulePageSize)) }
+                            Button { objectName: "rulesNextPage"; text: "下一页"; enabled: (manager.rulePage + 1) * manager.rulePageSize < manager.matchingRules.length; onClicked: ++manager.rulePage }
+                        }
+                        RowLayout {
                             visible: !manager.timePlot
                             Label { text: "当前子图是航迹，绘制派生曲线请切换到时间图。"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
                             Button {
@@ -305,7 +340,7 @@ Pane {
                         ScrollView {
                             Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.fillHeight: true
                             ListView {
-                                model: manager.selected ? manager.selected.rules : []
+                                model: manager.pageRules
                                 clip: true; spacing: 10
                                 delegate: ColumnLayout {
                                     id: ruleRow

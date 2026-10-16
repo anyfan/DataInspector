@@ -213,7 +213,7 @@ static bool parseSimpleCsvRow(QStringView line, QChar delimiter,
 
 void DataLoadWorker::finishTables(const QString &path, QVector<LoadedTable> tables, int skipped)
 {
-    const auto cancelled = [] { return QThread::currentThread()->isInterruptionRequested(); };
+    const auto cancelled = [this] { return isCancelled(); };
     for (auto &table : tables) {
         table.rangeIndexes.reserve(table.values.size());
         for (const auto &values : std::as_const(table.values)) {
@@ -231,6 +231,8 @@ void DataLoadWorker::finishTables(const QString &path, QVector<LoadedTable> tabl
 
 void DataLoadWorker::loadFile(const QString &path)
 {
+    const auto cancellationReply = qScopeGuard([this, &path] { if (m_cancelled.load()) emit finished(path, {}, 0, QStringLiteral("已取消加载")); });
+    if (isCancelled()) return;
     if (path.endsWith(QStringLiteral(".xlsx"), Qt::CaseInsensitive)) {
         loadXlsx(path);
         return;
@@ -252,8 +254,8 @@ void DataLoadWorker::loadXlsx(const QString &path)
     XlsxReadResult result = readXlsxWorkbook(
         path, [this, &path](int percentage) {
             emit progress(path, percentage);
-        }, []() {
-            return QThread::currentThread()->isInterruptionRequested();
+        }, [this]() {
+            return isCancelled();
         });
     if (result.cancelled) return;
     if (result.error.isEmpty()) emit progress(path, 99);
@@ -306,7 +308,7 @@ void DataLoadWorker::loadCsv(const QString &path)
     emit progress(path, 0);
     const char *lineBegin = headerEnd < fileEnd ? headerEnd + 1 : fileEnd;
     while (lineBegin < fileEnd) {
-        if (QThread::currentThread()->isInterruptionRequested()) return;
+        if (isCancelled()) return;
         const char *lineEnd = std::find(lineBegin, fileEnd, '\n');
         const char *contentEnd = lineEnd;
         if (contentEnd > lineBegin && contentEnd[-1] == '\r') --contentEnd;
@@ -384,6 +386,7 @@ void DataLoadWorker::loadMat(const QString &path)
     matvar_t *variable = nullptr;
     emit progress(path, 0);
     while ((variable = Mat_VarReadNextInfo(file)) != nullptr) {
+        if (isCancelled()) { Mat_VarFree(variable); Mat_Close(file); return; }
         const QString name = QString::fromLatin1(variable->name ? variable->name : "");
         const QRegularExpressionMatch match = variableExpression.match(name);
         if (!match.hasMatch()) {

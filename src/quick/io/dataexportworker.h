@@ -21,6 +21,7 @@ public slots:
                         bool zipCompressionEnabled);
     void exportMat(const QString &path, const QVector<DataExportTable> &tables);
     void exportPng(const QString &path, const QImage &image);
+    void exportLogicalPackage(const QString &directory, const QString &format, const QVector<DataExportTable> &tables, const QByteArray &manifest);
 
 signals:
     void progress(int percentage);

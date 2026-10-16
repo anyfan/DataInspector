@@ -6,6 +6,32 @@
 #include <algorithm>
 #include <QUuid>
 
+QVariantMap AppController::trajectoryRenderState(int index) const
+{
+    auto state = trajectoryState(index);
+    const auto *item = m_trajectoryPlots.value(index).data();
+    state["attached"] = bool(item);
+    state["pending"] = item && item->pending();
+    state["error"] = item ? item->error() : QStringLiteral("Trajectory view is not attached");
+    state["ready"] = item && !item->pending() && item->error().isEmpty();
+    if (item) {
+        state["referenceOrigin"] = item->referenceOrigin();
+        state["attitudeStatus"] = item->attitudeStatus();
+        state["planar"] = item->planar();
+    }
+    return state;
+}
+
+bool AppController::setTrajectoryView(int index, int preset)
+{
+    auto *item = m_trajectoryPlots.value(index).data();
+    if (!item || !m_trajectories.value(index).enabled || preset < 0 || preset > 3
+        || sessionInteractionBlocked() || m_loading || m_exporting) return false;
+    item->presetView(preset);
+    item->fitView();
+    return true;
+}
+
 QVariantMap AppController::trajectoryState(int index) const
 {
     const auto state = m_trajectories.value(index);

@@ -27,6 +27,66 @@ void resolveObjectMeasurements(const DataObject &object, SessionTrajectoryEntry 
 }
 }
 bool AppController::deriving() const { return bool(m_objectJob); }
+
+QVariantMap AppController::mergeSignals(const QVariantList &groups)
+{
+    if (m_loading || m_exporting || deriving() || sessionInteractionBlocked() || groups.isEmpty() || groups.size() > 32768)
+        return {{"error", QStringLiteral("Merge request is empty, too large, or controller is busy")}};
+    auto next = m_objects;
+    QVariantList created;
+    QVector<PlotSeriesInput> placeholders;
+    QVector<QColor> colors;
+    QStringList names, outputGroups;
+    int paletteIndex = m_nextColorIndex;
+    DataObject *target = nullptr;
+    for (const auto &value : groups) {
+        const auto group = value.toMap();
+        const auto name = group.value("name").toString();
+        const auto sources = group.value("signals").toList();
+        if (!validName(name) || sources.size() < 2 || sources.size() > 256)
+            return {{"error", QStringLiteral("Each merge requires a name and 2-256 distinct raw sources")}};
+        QSet<int> seen;
+        QVector<int> rows;
+        for (const auto &source : sources) {
+            bool ok = false; const double number = source.toDouble(&ok);
+            if (!ok || !std::isfinite(number) || std::floor(number) != number || number < 0 || number >= signalCount())
+                return {{"error", QStringLiteral("Invalid merge source")}};
+            const int row = int(number);
+            if (seen.contains(row) || isObjectOutput(row))
+                return {{"error", QStringLiteral("Merge sources must be distinct raw signals")}};
+            seen.insert(row); rows.append(row);
+        }
+        if (!target || target->fields.size() + sources.size() > 256 || target->rules.size() >= 256) {
+            if (next.size() >= 256) return {{"error", QStringLiteral("Object limit exceeded")}};
+            DataObject object; object.id = newId();
+            object.name = QStringLiteral("同源信号合并 %1").arg(next.size() + 1);
+            next.append(object); target = &next.last();
+        }
+        ObjectRule rule; rule.id = newId(); rule.name = name.trimmed(); rule.operation = "merge";
+        for (int row : rows) {
+            ObjectField field{newId(), signalName(row).left(256), QStringLiteral("scalar"), row};
+            rule.inputs.append(field.id); target->fields.append(field);
+        }
+        const int outputRow = signalCount() + placeholders.size();
+        rule.outputs.append({newId(), rule.name, outputRow});
+        target->rules.append(rule);
+        PlotSeriesInput input; input.id = outputRow; input.sourceFile = "object:" + target->id;
+        input.sourceTable = target->rules.size() - 1; input.sourceColumn = 0;
+        input.sourceTableName = target->name + "/" + rule.name;
+        input.color = signalPalette().at(paletteIndex); paletteIndex = (paletteIndex + 1) % signalPalette().size();
+        placeholders.append(input); colors.append(input.color); names.append(rule.name); outputGroups.append(objectOutputGroup(*target));
+        created.append(QVariantMap{{"object", target->id}, {"rule", rule.id}, {"signal", outputRow}, {"name", rule.name}, {"inputs", sources}});
+    }
+    QString error;
+    if (!validateObjects(next, signalCount() + placeholders.size(), &error)) return {{"error", error}};
+    // Install the complete validated batch, then evaluate once. No per-field jobs.
+    m_objects = std::move(next); m_nextColorIndex = paletteIndex;
+    m_seriesStore->appendSeries(placeholders); m_signalColors.append(colors);
+    m_signals->appendNames(names, outputGroups, colors);
+    markSessionModified(); scheduleObjectEvaluation(); notifyPlotBindingsChanged(); emit currentFileChanged();
+    return {{"outputs", created}, {"accepted", true}, {"completed", false}};
+}
+
 QString AppController::objectOutputGroup(const DataObject &object) const
 {
     QString name = object.name; name.replace('/', QChar(0x2215));
@@ -58,12 +118,13 @@ QVariantList AppController::dataObjects() const
             fields.append(item); inputs.append(QVariantMap{{"id", field.id}, {"name", field.name}});
         }
         for (const auto &rule : object.rules) {
-            QVariantList outputs; QStringList sources;
+            QVariantList outputs; QStringList sources; bool hasSamples = false;
             for (const auto &id : rule.inputs) for (const auto &v : inputs)
                 if (v.toMap().value("id").toString() == id) sources.append(v.toMap().value("name").toString());
             for (const auto &output : rule.outputs) {
                 QStringList preview;
                 const auto snapshot = m_seriesStore->snapshot({output.series});
+                hasSamples |= !snapshot.series.isEmpty() && snapshot.series.first()->sampleCount() > 0;
                 if (!snapshot.series.isEmpty()) for (qsizetype i = 0; i < qMin(qsizetype(8), snapshot.series.first()->sampleCount()); ++i) {
                     const auto sample = snapshot.series.first()->pointAt(i);
                     preview.append(std::isfinite(sample.y()) ? QString::number(sample.y(), 'g', 8) : QStringLiteral("缺失"));
@@ -76,7 +137,9 @@ QVariantList AppController::dataObjects() const
                 {"inputIds", rule.inputs},
                 {"sources", sources.join("、")}, {"expression", rule.expression}, {"factor", rule.factor}, {"bias", rule.bias},
                 {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
-                {"signedField", rule.signedField}, {"outputs", outputs}, {"error", m_objectErrors.value(rule.id)}});
+                {"signedField", rule.signedField}, {"outputs", outputs}, {"error", m_objectErrors.value(rule.id)},
+                {"warning", hasSamples && !m_objectErrors.value(rule.id).isEmpty()},
+                {"state", deriving() ? "pending" : !hasSamples && !m_objectErrors.value(rule.id).isEmpty() ? "failed" : "succeeded"}});
         }
         objects.append(QVariantMap{{"id", object.id}, {"name", object.name}, {"type", object.type}, {"fields", fields}, {"rules", rules}, {"inputs", inputs},
             {"geographic", object.geographic}, {"attitudeMode", object.attitude.mode}, {"radians", object.attitude.radians}, {"order", object.attitude.order},

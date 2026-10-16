@@ -52,7 +52,11 @@ ctest --test-dir build_qt6-debug --output-on-failure
 | `xlsxwriter_test` | XLSX 写入、工作表拆分 |
 | `matwriter_test` | MAT5 流式写入、pN/pN_title、取消保留 |
 | `startupfiles_test` | 命令行参数解析、开关跳过、会话优先 |
+| `automation_test` | 本机协议、认证/帧限制、原始统计与分页、设置/恢复和旧版本拒绝 |
+| `automation_cli_test` | 可选 Python3 3.9+；实际程序 + CLI，中文路径/参数文件、分析、飞机对象/经纬高绑定、航迹准备与视角、PNG 捕获、稳定字段会话恢复和错误退出码（offscreen/software） |
 | `startupdrop_test` | 启动后窗口拖放事件投递 |
+
+automation_cli_test 另验证 clear 删除全部对象/数据；merge_signals 的整批拒绝无部分提交、交错采样正确合并、同时间不同值报错及保存恢复后错误仍可追溯。
 
 `appcontroller_test::signalTreeDragAddsToTargetPlot` 使用实际窗口鼠标按下、移动和松开验证信号树拖拽：搜索后的源行映射、目标边框高亮、跨图添加保留原图绑定、重复添加、图外取消及无效索引。信号名称需要拖动超过 8 个逻辑像素；测试从名称区域开始，不触发复选框或线型编辑。
 
@@ -116,3 +120,16 @@ multiTrajectoryCost 使用 8 条各 100000 点合成地理路径，记录准备�
 
 状态收敛回归：session_test::trajectorySelectionKeepsSingleState 检查活动/非活动航迹编辑、切换及 JSON 往返；objectdata_test::editsPreserveUnrelatedResultsAndMergePendingObjects 检查无关结果和错误保留、连续编辑取消后的对象合并重算；表达式用例检查保留值数组仍计入预算。plotitem_lod_test 检查取消在途 LOD 后继续原始样本吸附/读数，以及恢复曲线后的视窗几何。既有文件移除、派生输出删除和会话恢复用例覆盖统一引用重映射。
 规则依赖回归：objectdata_test::dependencyPlanPreservesIndependentBranches 覆盖同对象独立分支、下游传播、仅子规则参数失效、取消不安装状态、显示名称/画笔不重算及保留分支预算。session_test::viewTemplateSchemaIsIndependentAndMigratesLegacy 覆盖精简模板 v2、旧 v1 迁移、未引用来源剔除、重复/缺失引用和未知字段拒绝；现有模板匹配/撤销、会话迁移与实际 QML 鼠标事件用例验证拆分后的行为。
+
+## Agent 工作流与合并性能
+
+automation_cli_test 使用实际 exe 和标准库 CLI，覆盖任务真实失败、幂等请求与冲突、模板读写/歧义/单位、飞机批量绑定及姿态可见、逻辑导出包/目录碰撞、已有规则更新、冲突预览/执行/去重与协作取消加载。合成 XLSX 含正常片段和冲突片段，不依赖用户数据。objectManagerQml 验证 25 条规则的分页、搜索和状态筛选。mergeSharedTimelineMatchesLegacy 对非单调时间、同时间重复、缺失、冲突、偏移和取消比较旧路径与缓存路径，并验证时间数组共享。
+
+性能测量不注册进默认 CTest，需显式提供数据并串行运行，记录配置、结果哈希及内存；加载耗时与 evaluationMs 分开：
+
+```powershell
+./build_qt6-debug/merge_benchmark.exe --input D:/data/log.mat --mode legacy --output ./build_qt6-debug/merge-old.json
+./build_qt6-debug/merge_benchmark.exe --input D:/data/log.mat --mode shared --output ./build_qt6-debug/merge-new.json
+```
+
+前后比较必须核对 rawSignals、mergeRules、outputSamples、errorCount 和 sha256；不能把某文件的耗时收益外推到无共享时间数组的数据。Windows peakWorkingSetBytes 为整个进程历史峰值，含加载阶段。

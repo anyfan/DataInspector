@@ -1,5 +1,11 @@
 # 构建
 
+## CLI 自动化
+
+自动化服务 `automation/automationserver.*` 纳入 DI_CONTROLLER_SOURCES，di_app_core 新增 Qt6::Network 依赖。Qt SDK 需含 Network 模块，部署脚本随 Qt DLL 一起复制，并将 `datainspector_cli.py` 放在 exe 旁；CLI 用户另需 Python 3.9+ 标准库。没有新增第三方库。使用与协议见[CLI 文档](../user-guide/automation-cli.md)。
+
+BUILD_TESTING 开启时构建 automation_test；发现 Python3 3.9+ 时另注册 automation_cli_test，启动实际 DataInspector，运行离屏软件后端的 CLI 端到端检查。
+
 对象派生实现 `appcontroller_objects.cpp`、`objectdefinition.*` 纳入 `DI_CONTROLLER_SOURCES`，`ObjectManager.qml`、`ThemedComboBox.qml` 纳入 `DI_QML_FILES`。后者为对象和航迹配置统一提供可读的下拉选中项。`objectdata_test` 链接现有控制器/绘图内核并包含同一 QML 资源；QML_FOREIGN 注册头也纳入测试 MOC。
 
 ## 关于页面的构建元数据
@@ -123,3 +129,5 @@ DI_CONTROLLER_SOURCES 纳入 appcontroller_objectevaluation.cpp（规则调度�
 工程目录和本地产物约定见[工程目录](project-layout.md)，MAT 依赖清单见[第三方依赖](../../third_libs/README.md)。构建树保持原路径，本机 CI 辅助工具归入 .local/，不再占用 build_ci/。旧 resources.qrc 已停用并移除，图标由 DI_ICON_FILES 统一管理。
 
 源码按 controller/io/models/state/items/render 子目录组织。CMake 共用源文件列表引用真实新路径；头文件搜索根仍为 src/quick，同目录包含本地文件名，跨目录显式使用模块路径，不增设旧路径转发头或依赖隐式搜索顺序。QML_FOREIGN 注册入口仍为 src/quick/qmltypes.h。
+
+自动化增强源文件 automation/{commandcatalog,automationtasks,automationcommands}、controller/appcontroller_automation.cpp 与 models/mergetimeline.* 纳入 DI_CONTROLLER_SOURCES。BUILD_TESTING 额外构建 merge_benchmark（不注册耗时 CTest），复用 di_app_core；Windows 链接系统 psapi 采集进程内存，无新增第三方依赖。

@@ -13,7 +13,7 @@ option(ENABLE_MAT "Enable MAT file loading (requires LLVM-MinGW compatible matio
 option(ENABLE_GPU_TESTS "Run native-window GPU raster regression (requires graphics session)" OFF)
 set(DATAINSPECTOR_BIN_DIR "bin" CACHE STRING "Application output subdirectory")
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 QuickDialogs2)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Core Gui Qml Quick QuickControls2 QuickDialogs2 Network)
 qt_standard_project_setup(REQUIRES 6.8)
 # Make generated module metadata discoverable by qmllint and QML language servers.
 set(QT_QML_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/qml")
@@ -93,6 +93,12 @@ set(DI_MAT_SOURCES
 )
 
 set(DI_CONTROLLER_SOURCES
+    ${DI_QUICK_DIR}/automation/automationserver.cpp
+    ${DI_QUICK_DIR}/automation/automationserver.h
+    ${DI_QUICK_DIR}/automation/commandcatalog.cpp
+    ${DI_QUICK_DIR}/automation/commandcatalog.h
+    ${DI_QUICK_DIR}/automation/automationtasks.cpp
+    ${DI_QUICK_DIR}/automation/automationcommands.cpp
     ${DI_QUICK_DIR}/controller/appcontroller_about.cpp
     ${DI_QUICK_DIR}/qmltypes.h
     ${DI_QUICK_DIR}/state/sessiondocument.cpp
@@ -108,6 +114,9 @@ set(DI_CONTROLLER_SOURCES
     ${DI_QUICK_DIR}/controller/appcontroller_objectevaluation.cpp
     ${DI_QUICK_DIR}/models/objectdefinition.cpp
     ${DI_QUICK_DIR}/models/objectdefinition.h
+    ${DI_QUICK_DIR}/models/mergetimeline.cpp
+    ${DI_QUICK_DIR}/models/mergetimeline.h
+    ${DI_QUICK_DIR}/controller/appcontroller_automation.cpp
     ${DI_QUICK_DIR}/controller/appcontroller.cpp
     ${DI_QUICK_DIR}/controller/appcontroller_loading.cpp
     ${DI_QUICK_DIR}/controller/appcontroller_image.cpp
@@ -247,7 +256,7 @@ add_library(di_app_core STATIC ${DI_APP_CORE_SOURCES})
 add_dependencies(di_app_core di_build_info)
 target_include_directories(di_app_core PRIVATE "${CMAKE_BINARY_DIR}/generated")
 target_include_directories(di_app_core PUBLIC src/quick)
-target_link_libraries(di_app_core PUBLIC Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Qml Qt6::Quick di_plot_items)
+target_link_libraries(di_app_core PUBLIC Qt6::Core Qt6::CorePrivate Qt6::Gui Qt6::Qml Qt6::Quick Qt6::Network di_plot_items)
 qt_extract_metatypes(di_app_core)
 if(ENABLE_MAT)
     target_link_libraries(di_app_core PUBLIC di_mat)
@@ -304,6 +313,11 @@ if(BUILD_TESTING)
     find_package(Qt6 6.8 REQUIRED COMPONENTS Test)
     add_executable(performance_benchmark tools/performance_benchmark.cpp)
     target_link_libraries(performance_benchmark PRIVATE di_app_core)
+    add_executable(merge_benchmark tools/merge_benchmark.cpp)
+    target_link_libraries(merge_benchmark PRIVATE di_app_core)
+    if(WIN32)
+        target_link_libraries(merge_benchmark PRIVATE psapi)
+    endif()
 
     # Registers a CTest that can find the Qt DLLs; extra args are passed to the binary.
     function(di_add_test target)
@@ -409,6 +423,18 @@ if(BUILD_TESTING)
         target_link_libraries(startupfiles_test PRIVATE di_mat)
     endif()
     di_add_test(startupfiles_test -platform offscreen)
+
+    add_executable(automation_test tests/automation_test.cpp)
+    target_link_libraries(automation_test PRIVATE di_app_core Qt6::Test)
+    di_add_test(automation_test -platform offscreen)
+    find_package(Python3 3.9 QUIET COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME automation_cli_test COMMAND ${CMAKE_COMMAND} -E env
+            "PATH=$<TARGET_FILE_DIR:Qt6::Core>;$ENV{PATH}"
+            "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/automation_cli_test.py"
+            $<TARGET_FILE:DataInspector> "${CMAKE_SOURCE_DIR}/tools/datainspector_cli.py")
+        set_tests_properties(automation_cli_test PROPERTIES TIMEOUT 120)
+    endif()
 
     add_executable(startupdrop_test tests/startupdrop_test.cpp)
     target_include_directories(startupdrop_test PRIVATE src/quick)

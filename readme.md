@@ -33,6 +33,8 @@ cmake --build --preset qt6-clang-debug
 
 ## 主要功能
 
+- [Agent／JSON CLI 自动化](docs/user-guide/automation-cli.md)：连接显式开启的本机窗口，查询数据和设置软件；支持任务进度/取消/幂等重试、飞机映射与姿态检查、合并预览执行、逻辑结果和来源清单导出。
+
 - 双击 T1/T2/ΔT 精确输入秒数；航迹配置可收起，释放画布空间。
 - 会话菜单支持 `.diview` 视图模板：换数据后预览信号匹配，复用布局、样式及航迹配置，支持一次撤销。
 
@@ -70,6 +72,7 @@ src/quick/
   main.cpp                    入口、Splash → Main 加载顺序
   startupfiles.*              启动参数解析
   qmltypes.h                  QML_FOREIGN 类型注册
+  automation/                 本机 JSON CLI 服务、后台原始数据统计
   controller/                 AppController 按职责拆分的实现
     appcontroller.*           生命周期与公共接口
     appcontroller_loading.cpp 加载/移除与导出入口

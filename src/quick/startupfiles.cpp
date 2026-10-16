@@ -23,7 +23,7 @@ bool optionTakesValue(const QString &option)
         QStringLiteral("-display"), QStringLiteral("-geometry"),
         QStringLiteral("-title"), QStringLiteral("-qmljsdebugger"),
         QStringLiteral("-qwindowgeometry"), QStringLiteral("-qwindowtitle"),
-        QStringLiteral("-qwindowicon")};
+        QStringLiteral("-qwindowicon"), QStringLiteral("--automation-file")};
     return options.contains(option, Qt::CaseInsensitive);
 }
 

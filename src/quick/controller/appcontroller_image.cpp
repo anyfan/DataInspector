@@ -9,6 +9,13 @@
 #include <QUrl>
 #include <QtMath>
 
+bool AppController::captureAutomationWindow(const QString &path)
+{
+    for (const auto &plot : m_plots)
+        if (plot && plot->window()) return exportPlotImage(plot->window()->contentItem(), path, 1);
+    return false;
+}
+
 bool AppController::exportPlotImage(QObject *object, const QVariant &filePath, int scale)
 {
     auto *item = qobject_cast<QQuickItem *>(object);

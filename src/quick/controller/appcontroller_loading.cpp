@@ -99,6 +99,7 @@ int AppController::loadFiles(const QVariant &filePaths)
         return 0;
     }
     if (!m_loading) {
+        m_cancelLoad = false;
         m_batchTotal = accepted;
         m_batchCompleted = 0;
         m_batchErrors = 0;
@@ -164,6 +165,8 @@ bool AppController::collectExportTables(int scope, QVector<DataExportTable> *tab
     } else if (scope == AllLoadedData) {
         rows.reserve(signalCount());
         for (int row = 0; row < signalCount(); ++row) rows.append(row);
+    } else if (scope == LogicalResults) {
+        rows = logicalSignalRows();
     } else {
         return false;
     }
@@ -287,9 +290,11 @@ void AppController::startNextLoad()
         if (!m_batchFirstError.isEmpty())
             summary += QStringLiteral("：%1").arg(m_batchFirstError);
         setStatus(summary);
+        emit loadBatchFinished(m_batchErrors == 0, summary);
         return;
     }
     m_activeLoadPath = m_loadQueue.dequeue();
+    m_loader->resetCancellation();
     setStatus(QStringLiteral("正在加载 %1（%2/%3）…")
                   .arg(QFileInfo(m_activeLoadPath).fileName())
                   .arg(m_batchCompleted + 1).arg(m_batchTotal));
@@ -308,7 +313,13 @@ void AppController::onLoadProgress(const QString &path, int percentage)
 void AppController::onLoadFinished(const QString &path, const QVector<LoadedTable> &tables,
                                    int skipped, const QString &error)
 {
+    if (!m_loading || path != m_activeLoadPath) return;
     m_pendingPaths.remove(path);
+    if (m_cancelLoad) {
+        if (m_pendingSession) { completeSessionRestore(false, QStringLiteral("已取消会话恢复")); return; }
+        m_loading = false; m_activeLoadPath.clear(); emit loadingChanged();
+        setStatus(QStringLiteral("已取消加载")); emit loadBatchFinished(false, status()); return;
+    }
     if (!error.isEmpty()) {
         ++m_batchErrors;
         if (m_batchFirstError.isEmpty()) m_batchFirstError = error;

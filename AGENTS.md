@@ -20,6 +20,7 @@ DataInspector：Windows 上面向工程时间序列数据的高性能查看器�
 | 工程目录、第三方依赖、本地文件 | `docs/dev/project-layout.md` |
 | 构建、CMake、部署 | `docs/dev/build.md` |
 | 测试套件与验证命令 | `docs/dev/testing.md` |
+| Agent 调用 CLI、数据分析与软件设置 | `docs/user-guide/automation-cli.md`、`docs/architecture/automation.md` |
 | QML 静态检查/类型注册 | `docs/dev/qml-tooling.md` |
 | 工具链/环境坑 | `docs/dev/toolchain-troubleshooting.md` |
 | 历史开发记录与旧计划（问题溯源用，勿据此实现） | `docs/dev-log/README.md` |
@@ -41,6 +42,7 @@ src/quick/
   main.cpp                    入口、Splash → Main 加载顺序
   startupfiles.*              启动参数解析
   qmltypes.h                  QML_FOREIGN 类型注册
+  automation/                 本机 CLI、命令 schema、任务/幂等与合并检查计划
   controller/                 AppController 按职责拆分的实现
     appcontroller.*           生命周期与公共接口
     appcontroller_loading.cpp 加载/移除与导出入口
@@ -50,6 +52,7 @@ src/quick/
     appcontroller_templates.cpp  模板匹配、应用、撤销
     appcontroller_objects.cpp 对象定义操作
     appcontroller_objectevaluation.cpp  规则增量计算调度
+    appcontroller_automation.cpp  批量飞机配置、映射检查、规则查询与逻辑结果
     appcontroller_image.cpp / appcontroller_about.cpp  图片与关于信息
   io/                         后台加载/导出、CSV/TXT/MAT/XLSX 读写
     dataloadworker.* / dataexportworker.*  工作线程调度
@@ -57,7 +60,7 @@ src/quick/
     matwriter.* / mat5streamwriter.*  MAT 流式写入
     loadedtable.h / exporttable.h / exportvalidation.cpp  共用数据与校验
   models/                     信号树、元数据、对象定义与派生规则
-    signalmodel.* / signalmetadata.* / objectdefinition.*
+    signalmodel.* / signalmetadata.* / objectdefinition.* / mergetimeline.*
   state/                      会话与模板值配置、JSON 校验和原子读写
     sessiondocument.* / viewconfiguration.* / viewtemplatedocument.*
     jsonvalidation.h
