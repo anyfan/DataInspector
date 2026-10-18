@@ -253,10 +253,10 @@ ApplicationWindow {
         id: signalContextMenu
         property int signalIndex: -1
         MenuItem {
-            text: window.appController.isDerivedSignal(signalContextMenu.signalIndex) ? "管理所属对象…" : "绑定到对象…"
+            text: window.appController.isDerivedSignal(signalContextMenu.signalIndex) ? "管理处理规则…" : "绑定到对象…"
             enabled: !window.appController.loading && !window.appController.exporting
             onTriggered: {
-                if (window.appController.isDerivedSignal(signalContextMenu.signalIndex)) objectManager.revealOutput(signalContextMenu.signalIndex)
+                if (window.appController.isDerivedSignal(signalContextMenu.signalIndex)) processingManager.revealOutput(signalContextMenu.signalIndex)
                 else objectManager.bindSource(signalContextMenu.signalIndex)
             }
         }
@@ -493,6 +493,7 @@ ApplicationWindow {
         onAccepted: {
             window.imageExportUrl = selectedFile
             objectManager.close()
+            processingManager.close()
             window.imageCaptureAll = window.exportImageAll
             imageCaptureTimer.restart()
         }
@@ -933,6 +934,7 @@ ApplicationWindow {
             visible: window.signalTreeVisible
             appController: window.appController
             objectEditor: objectManager
+            processingEditor: processingManager
             panelColor: window.panelColor
             borderColor: window.borderColor
             accentColor: window.accentColor
@@ -957,7 +959,22 @@ ApplicationWindow {
             }
         }
         Rectangle { id: plotPanel; SplitView.fillWidth: true; SplitView.minimumWidth: 280; color: window.darkTheme ? "#14181d" : "#ffffff"; clip: true
-            ObjectManager { id: objectManager; anchors.fill: parent; appController: window.appController; darkTheme: window.darkTheme }
+            ObjectManager {
+                id: objectManager
+                anchors.fill: parent
+                appController: window.appController
+                darkTheme: window.darkTheme
+                onVisibleChanged: if (visible) { processingManager.close(); signalBrowser.showSection(2) }
+            }
+            ObjectManager {
+                id: processingManager
+                objectName: "processingManager"
+                processingMode: true
+                anchors.fill: parent
+                appController: window.appController
+                darkTheme: window.darkTheme
+                onVisibleChanged: if (visible) { objectManager.close(); signalBrowser.showSection(1) }
+            }
             // Shared Y gutter: every visible subplot uses the widest measured
             // tick-label width so their X axes line up column by column.
             property real sharedAxisLeft: 0
@@ -969,7 +986,7 @@ ApplicationWindow {
                 }
                 if (widest !== sharedAxisLeft) sharedAxisLeft = widest
             }
-            GridLayout { id: plotGrid; objectName: "plotGrid"; visible: !objectManager.visible; enabled: !window.appController.imageExporting; anchors.fill: parent; rows: window.subplotMaximized && !window.imageCaptureAll ? 1 : window.appController.plotRows; columns: window.subplotMaximized && !window.imageCaptureAll ? 1 : window.appController.plotColumns; columnSpacing: 0; rowSpacing: 0; uniformCellWidths: true; uniformCellHeights: true
+            GridLayout { id: plotGrid; objectName: "plotGrid"; visible: !objectManager.visible && !processingManager.visible; enabled: !window.appController.imageExporting; anchors.fill: parent; rows: window.subplotMaximized && !window.imageCaptureAll ? 1 : window.appController.plotRows; columns: window.subplotMaximized && !window.imageCaptureAll ? 1 : window.appController.plotColumns; columnSpacing: 0; rowSpacing: 0; uniformCellWidths: true; uniformCellHeights: true
                 Repeater { id: plotRepeater; model: window.appController.plotRows * window.appController.plotColumns
                     delegate: QuickPlot {
                         required property int index

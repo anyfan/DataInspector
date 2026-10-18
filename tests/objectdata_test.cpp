@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QJsonDocument>
 #include <QQmlComponent>
 #include <QQmlEngine>
 #include <QQmlExpression>
@@ -24,6 +25,7 @@ private slots:
     void mergeSamples();
     void identifyPacketLoss();
     void packetLoss();
+    void packetLossCounters();
     void packetLossLifecycle();
     void mergeSharedTimelineMatchesLegacy();
     void dependencyPlanPreservesIndependentBranches();
@@ -36,6 +38,7 @@ private slots:
     void staircaseKeepsPulse();
     void objectManagerQml();
     void objectFieldPolicy();
+    void independentProcessingAndLegacyMigration();
 };
 static ObjectRule bitRule(int width, int start, int bits, bool split = true, bool signedValue = false)
 {
@@ -49,6 +52,99 @@ static PlotSeriesSnapshot rawSnapshot(QVector<double> values)
     PlotSeriesInput input; input.id = 0; input.values = values;
     for (qsizetype i = 0; i < values.size(); ++i) input.time.append(double(i));
     PlotSeriesStore store; store.appendSeries({input}); return store.snapshot({0});
+}
+void ObjectDataTest::independentProcessingAndLegacyMigration()
+{
+    QTemporaryDir dir;
+    const auto sourcePath = dir.filePath("independent.csv");
+    QFile source(sourcePath); QVERIFY(source.open(QIODevice::WriteOnly));
+    source.write("time,A,B\n0,2,8\n1,3,9\n"); source.close();
+    AppController controller;
+    QVERIFY(controller.loadCsv(sourcePath)); QTRY_VERIFY(!controller.loading());
+    const auto object = controller.createDataObject("device");
+    const auto field = controller.bindObjectField(object, {}, "A", "scalar", 0);
+    QVERIFY(!field.isEmpty());
+    QVERIFY(controller.addObjectRule(object, {{"name", "must be independent"}, {"inputs", QVariantList{field}}, {"operation", "scale"}}).isEmpty());
+    const auto processing = controller.createDataObject("scaling", "processing");
+    const auto rule = controller.addObjectRule(processing, {{"name", "scaled"}, {"inputs", QVariantList{"raw:0"}}, {"operation", "scale"}, {"factor", 2}});
+    QVERIFY(!rule.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    const auto first = controller.processingConfigurations().first().toMap()["rules"].toList().first().toMap();
+    const auto output = first["outputs"].toList().first().toMap();
+    QCOMPARE(output["preview"].toString(), QString("4 / 6"));
+    const auto child = controller.addObjectRule(processing, {{"name", "child"}, {"inputs", QVariantList{output["id"]}}, {"operation", "scale"}, {"factor", 3}});
+    QVERIFY(!child.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    auto preview = [&] { return controller.processingConfigurations().first().toMap()["rules"].toList().last().toMap()["outputs"].toList().first().toMap()["preview"].toString(); };
+    QCOMPARE(preview(), QString("12 / 18"));
+    QVERIFY(!controller.bindObjectField(object, field, "B", "scalar", 1).isEmpty()); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(preview(), QString("12 / 18"));
+    const auto objectCopy = controller.duplicateDataObject(object); QVERIFY(!objectCopy.isEmpty());
+    QCOMPARE(controller.signalCount(), 4);
+    QVERIFY(controller.removeDataObject(object)); QTRY_VERIFY(!controller.deriving());
+    QVERIFY(controller.removeDataObject(objectCopy)); QTRY_VERIFY(!controller.deriving());
+    QVERIFY(controller.objectConfigurations().isEmpty());
+    QCOMPARE(preview(), QString("12 / 18"));
+    QVERIFY(!controller.removeObjectRule(processing, rule)); // A live downstream still protects its input.
+    const auto copy = controller.duplicateDataObject(processing); QVERIFY(!copy.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.signalCount(), 6);
+    QVERIFY(controller.removeDataObject(copy)); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.signalCount(), 4); QCOMPARE(preview(), QString("12 / 18"));
+    for (int section : {0, 1}) {
+        controller.setSignalBrowserSection(section);
+        auto *model = controller.signalModel();
+        int leaves = 0;
+        for (int row = 0; row < model->rowCount(); ++row) {
+            const int sourceRow = model->data(model->index(row), SignalModel::IndexRole).toInt();
+            if (sourceRow < 0) continue;
+            ++leaves;
+            QCOMPARE(controller.isDerivedSignal(sourceRow), section == 1);
+        }
+        QCOMPARE(leaves, 2);
+    }
+    const auto sessionPath = dir.filePath("independent.disession");
+    QVERIFY(controller.saveSession(sessionPath));
+    QVERIFY(!controller.sessionModified());
+    controller.setSignalBrowserSection(0); QVERIFY(!controller.sessionModified());
+    QFile saved(sessionPath); QVERIFY(saved.open(QIODevice::ReadOnly));
+    const auto json = QJsonDocument::fromJson(saved.readAll()).object();
+    QCOMPARE(json["version"].toInt(), 15);
+    QVERIFY(json["objects"].toArray().isEmpty());
+    QCOMPARE(json["processing"].toArray().size(), 1);
+    QCOMPARE(json["signals"].toArray()[2].toObject()["processingId"].toString(), processing);
+    SessionDocument parsed; QString error;
+    QVERIFY2(sessionFromJson(json, &parsed, &error), qPrintable(error));
+    auto invalid = json; invalid.remove("processing"); QVERIFY(!sessionFromJson(invalid, &parsed, &error));
+    invalid = json; invalid["objects"] = json["processing"]; QVERIFY(!sessionFromJson(invalid, &parsed, &error));
+    invalid = json;
+    auto signalEntries = invalid["signals"].toArray(); auto bad = signalEntries[2].toObject();
+    bad["processingId"] = "missing"; signalEntries[2] = bad; invalid["signals"] = signalEntries;
+    QVERIFY(!sessionFromJson(invalid, &parsed, &error));
+
+    // Rebuild an actual v14 object-owned fixture from the same raw identities.
+    auto legacy = json; legacy["version"] = 14; legacy.remove("processing");
+    auto definition = json["processing"].toArray()[0].toObject(); definition["type"] = "general";
+    legacy["objects"] = QJsonArray{definition};
+    signalEntries = legacy["signals"].toArray();
+    for (int i = 0; i < signalEntries.size(); ++i) {
+        auto signal = signalEntries[i].toObject(); signal["objectId"] = signal.take("processingId"); signalEntries[i] = signal;
+    }
+    legacy["signals"] = signalEntries;
+    QVERIFY2(sessionFromJson(legacy, &parsed, &error), qPrintable(error));
+    QCOMPARE(parsed.objects.size(), 2);
+    QVERIFY(parsed.objects[0].rules.isEmpty());
+    QCOMPARE(parsed.objects[1].rules[0].id, rule);
+    QCOMPARE(parsed.objects[1].rules[0].outputs[0].id, output["id"].toString());
+    QVERIFY(parsed.objects[0].fields[0].id != parsed.objects[1].fields[0].id);
+    const auto legacyPath = dir.filePath("legacy.disession");
+    QFile old(legacyPath); QVERIFY(old.open(QIODevice::WriteOnly)); old.write(QJsonDocument(legacy).toJson()); old.close();
+    AppController restored;
+    QVERIFY(restored.restoreSession(legacyPath)); QTRY_VERIFY(!restored.loading() && !restored.deriving());
+    QCOMPARE(restored.processingConfigurations().size(), 1);
+    QVERIFY(restored.removeDataObject(processing)); QTRY_VERIFY(!restored.deriving()); // Old object id, not new processing id.
+    QCOMPARE(restored.signalCount(), 4);
+    QCOMPARE(restored.processingConfigurations()[0].toMap()["rules"].toList().last().toMap()["outputs"].toList().first().toMap()["preview"].toString(), QString("12 / 18"));
+    QVERIFY(restored.removeFile("independent.csv")); QTRY_VERIFY(!restored.deriving());
+    QCOMPARE(restored.signalCount(), 0);
+    QVERIFY(restored.processingConfigurations()[0].toMap()["rules"].toList().isEmpty());
 }
 void ObjectDataTest::identifyPacketLoss()
 {
@@ -172,12 +268,91 @@ void ObjectDataTest::packetLoss()
     object.rules[0].samplePeriod = -1; QVERIFY(!validateObjects({object}, 3, &error));
     cancel = true; QVERIFY(run({0, 1}).series.isEmpty());
 }
+void ObjectDataTest::packetLossCounters()
+{
+    ObjectRule rule; rule.id = "loss"; rule.name = "loss"; rule.operation = "packetloss";
+    rule.lossMode = "sequence"; rule.inputs = {"input"};
+    rule.outputs = {{"lost", "lost", 1}, {"rate", "rate", 2}};
+    DataObject object{"o", "object", {{"input", "input", "scalar", 0}}, {rule}};
+    std::atomic_bool cancel{false}; QString error;
+    auto run = [&](QVector<double> values, QVector<double> time = {}) {
+        if (time.isEmpty()) for (int i = 0; i < values.size(); ++i) time.append(i);
+        PlotSeriesInput raw; raw.id = 0; raw.time = time; raw.values = values; raw.timeOffset = 10;
+        PlotSeriesStore store; store.appendSeries({raw});
+        return evaluateObjects({object}, store.snapshot({0}), cancel);
+    };
+    auto &r = object.rules[0];
+    auto result = run({10, 11, 14, 14, 15});
+    QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values, QVector<double>({0, 0, 2, 2, 2}));
+    QVERIFY(qAbs(result.series[1]->values.last() - 100.0 / 3) < 1e-10);
+    QCOMPARE(result.states["loss"].duplicateSamples, 1);
+    QCOMPARE(result.series[0]->timeOffset, 10.0); QVERIFY(result.series[0]->step);
+    r.counterModulus = 256;
+    result = run({254, 255, 0, 1, 4}); QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values.last(), 2.0);
+    result = run({254, 1}); QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values.last(), 2.0);
+    for (const auto &values : {QVector<double>{100, 0}, QVector<double>{0, 128}, QVector<double>{0, 256},
+        QVector<double>{0, qQNaN()}, QVector<double>{0, qInf()}, QVector<double>{0, 1.5}, QVector<double>{0, -1}}) {
+        result = run(values); QVERIFY(!result.errors.isEmpty()); QVERIFY(result.series[0]->values.isEmpty());
+    }
+    r.counterModulus = 0; QVERIFY(!run({10, 0}).errors.isEmpty());
+    r.counterStep = 2;
+    result = run({0, 2, 8}); QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values.last(), 2.0);
+    QVERIFY(!run({0, 3}).errors.isEmpty());
+    r.counterStep = 1; r.lossMode = "stride"; r.expectedStride = 10;
+    result = run({100, 110, 123, 133}); QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values.last(), 3.0);
+    QVERIFY(qAbs(result.series[1]->values.last() - 300.0 / 34) < 1e-10);
+    QVERIFY(!run({100, 109}).errors.isEmpty());
+    r.lossMode = "rate"; r.counterRate = 1000; r.counterTolerance = 1;
+    result = run({100, 109, 120}, {0, .01, .02}); QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values.last(), 0.0);
+    result = run({100, 108, 125}, {0, .01, .03}); QVERIFY(result.errors.isEmpty());
+    QCOMPARE(result.series[0]->values, QVector<double>({0, 2, 5}));
+    QVERIFY(qAbs(result.series[1]->values.last() - 100.0 / 6) < 1e-10);
+    result = run({100, 100}, {0, .01}); QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values.last(), 10.0);
+    QCOMPARE(result.series[1]->values.last(), 100.0);
+    QVERIFY(!run({100, 120}, {0, .01}).errors.isEmpty());
+    QVERIFY(!run({100, 110}, {0, 0}).errors.isEmpty());
+    r.counterModulus = 256;
+    result = run({250, 4}, {0, .01}); QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series[0]->values.last(), 0.0);
+    QVERIFY(!run({250, 4}, {0, 1}).errors.isEmpty()); // Multiple wraps cannot be inferred.
+    QVERIFY(validateObjects({object}, 3, &error));
+    const auto json = objectsToJson({object}); QVector<DataObject> restored;
+    QVERIFY(objectsFromJson(json, 3, &restored, &error));
+    QCOMPARE(restored[0].rules[0].lossMode, QString("rate")); QCOMPARE(restored[0].rules[0].counterRate, 1000.0);
+    QCOMPARE(restored[0].rules[0].counterModulus, 256.0); QCOMPARE(restored[0].rules[0].counterTolerance, 1.0);
+    QVERIFY(!objectsFromJson(json, 3, &restored, &error, 13));
+    auto legacyObject = json[0].toObject(); auto legacyRules = legacyObject["rules"].toArray();
+    auto legacyRule = legacyRules[0].toObject();
+    for (const auto &key : {"lossMode", "counterStep", "expectedStride", "counterModulus", "counterRate", "counterTolerance"}) legacyRule.remove(key);
+    legacyRules[0] = legacyRule; legacyObject["rules"] = legacyRules;
+    QVERIFY(objectsFromJson(QJsonArray{legacyObject}, 3, &restored, &error, 13));
+    QCOMPARE(restored[0].rules[0].lossMode, QString("time"));
+    QVERIFY(!objectsFromJson(QJsonArray{legacyObject}, 3, &restored, &error, 14));
+    PlotSeriesInput input; input.id = 0; input.time = {0, .01}; input.values = {250, 4};
+    PlotSeriesStore keyStore; keyStore.appendSeries({input}); const auto snapshot = keyStore.snapshot({0});
+    const auto evaluated = evaluateObjects({object}, snapshot, cancel);
+    auto publishedSnapshot = snapshot; publishedSnapshot.series += evaluated.series;
+    QVERIFY(evaluated.errors.isEmpty()); QVERIFY(invalidatedObjectRules({object}, publishedSnapshot, evaluated.states).isEmpty());
+    for (double ObjectRule::*member : {&ObjectRule::counterStep, &ObjectRule::expectedStride, &ObjectRule::counterModulus,
+        &ObjectRule::counterRate, &ObjectRule::counterTolerance}) {
+        const double before = r.*member; r.*member = before + 1;
+        QVERIFY(invalidatedObjectRules({object}, publishedSnapshot, evaluated.states).contains("loss")); r.*member = before;
+    }
+    r.lossMode = "sequence"; QVERIFY(invalidatedObjectRules({object}, publishedSnapshot, evaluated.states).contains("loss")); r.lossMode = "rate";
+
+    auto bad = json[0].toObject(); auto rules = bad["rules"].toArray(); auto config = rules[0].toObject();
+    config["counterRate"] = "1000"; rules[0] = config; bad["rules"] = rules;
+    QVERIFY(!objectsFromJson(QJsonArray{bad}, 3, &restored, &error));
+    r.counterStep = 0; QVERIFY(!validateObjects({object}, 3, &error)); r.counterStep = 1;
+    r.counterModulus = 1; QVERIFY(!validateObjects({object}, 3, &error)); r.counterModulus = 256;
+    r.counterRate = qInf(); QVERIFY(!validateObjects({object}, 3, &error)); r.counterRate = 1000;
+    cancel = true; QVERIFY(run({250, 4}).series.isEmpty());
+}
 void ObjectDataTest::packetLossLifecycle()
 {
     QTemporaryDir dir; QFile file(dir.filePath("loss.csv"));
     QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,value\n0,1\n1,1\n2,1\n5,1\n6,1\n7,1\n"); file.close();
     AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
-    const auto object = controller.createDataObject("packets");
+    const auto object = controller.createDataObject("packets", "processing");
     const auto field = controller.bindObjectField(object, {}, "input", "scalar", 0);
     QVariantMap config{{"name", "loss"}, {"operation", "packetloss"}, {"inputs", QVariantList{field}}};
     const auto id = controller.addObjectRule(object, config); QVERIFY(!id.isEmpty()); QTRY_VERIFY(!controller.deriving());
@@ -196,6 +371,17 @@ void ObjectDataTest::packetLossLifecycle()
     QVERIFY(!restored.sessionModified());
     QVERIFY(!restored.duplicateDataObject(object).isEmpty()); QTRY_VERIFY(!restored.deriving());
     QCOMPARE(restored.dataObjects()[1].toMap()["rules"].toList()[0].toMap()["samplePeriod"].toDouble(), .5);
+    config["lossMode"] = "rate"; config["counterRate"] = 1; config["counterModulus"] = 256;
+    config["counterTolerance"] = .5; config["counterStep"] = 1; config["expectedStride"] = 2;
+    QVERIFY(controller.editObjectRule(object, id, config)); QTRY_VERIFY(!controller.deriving());
+    QVERIFY(controller.saveSession(path));
+    AppController counterRestored; QVERIFY(counterRestored.restoreSession(path)); QTRY_VERIFY(!counterRestored.loading() && !counterRestored.deriving());
+    const auto counterRule = counterRestored.dataObjects()[0].toMap()["rules"].toList()[0].toMap();
+    QCOMPARE(counterRule["lossMode"].toString(), QString("rate")); QCOMPARE(counterRule["counterTolerance"].toDouble(), .5);
+    QCOMPARE(counterRule["counterModulus"].toDouble(), 256.0);
+    QVERIFY(!counterRestored.duplicateDataObject(object).isEmpty()); QTRY_VERIFY(!counterRestored.deriving());
+    QCOMPARE(counterRestored.dataObjects()[1].toMap()["rules"].toList()[0].toMap()["expectedStride"].toDouble(), 2.0);
+
 }
 void ObjectDataTest::mergeSharedTimelineMatchesLegacy()
 {
@@ -270,7 +456,7 @@ void ObjectDataTest::mergeSamples()
     for (int i = 0; i < 2; ++i) {
         QVERIFY(controller.loadCsv(dir.filePath(QString::number(i) + ".csv"))); QTRY_VERIFY(!controller.loading() && !controller.deriving());
     }
-    const auto owner = controller.createDataObject("merged");
+    const auto owner = controller.createDataObject("merged", "processing");
     const auto a = controller.bindObjectField(owner, {}, "A", "scalar", 0);
     const auto b = controller.bindObjectField(owner, {}, "B", "scalar", 1);
     QVERIFY(!controller.addObjectRule(owner, {{"name", "merged"}, {"operation", "merge"}, {"inputs", QVariantList{a, b}}}).isEmpty());
@@ -327,7 +513,7 @@ void ObjectDataTest::dependencyPlanPreservesIndependentBranches()
     QTemporaryDir dir; QFile file(dir.filePath("branches.csv"));
     QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,X,Y\n0,2,20\n1,3,30\n"); file.close();
     AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
-    const auto owner = controller.createDataObject("branches");
+    const auto owner = controller.createDataObject("branches", "processing");
     const auto x = controller.bindObjectField(owner, {}, "X", "scalar", 0);
     const auto y = controller.bindObjectField(owner, {}, "Y", "scalar", 1);
     QVERIFY(!controller.addObjectRule(owner, {{"name", "left"}, {"operation", "scale"}, {"inputs", QVariantList{x}}, {"factor", 2}}).isEmpty());
@@ -404,9 +590,18 @@ void ObjectDataTest::ownershipAndSchema()
     state.objects = {object}; SessionSignal output = raw; output.file = -1; output.objectId = "obj"; output.outputId = "out0"; state.series.append(output);
     SessionDocument parsed; QString error;
     QVERIFY2(sessionFromJson(sessionToJson(state), &parsed, &error), qPrintable(error));
-    QCOMPARE(parsed.objects.size(), 1);
+    QCOMPARE(parsed.objects.size(), 2);
     QCOMPARE(parsed.objects[0].type, QStringLiteral("general"));
+    QVERIFY(parsed.objects[0].rules.isEmpty());
+    QCOMPARE(parsed.objects[1].type, QStringLiteral("processing"));
     auto old = sessionToJson(state); old["version"] = 7;
+    old["objects"] = objectsToJson(state.objects); old.remove("processing");
+    auto legacySignals = old["signals"].toArray();
+    for (int i = 0; i < legacySignals.size(); ++i) {
+        auto signal = legacySignals[i].toObject(); signal.remove("processingId");
+        signal["objectId"] = state.series[i].objectId; legacySignals[i] = signal;
+    }
+    old["signals"] = legacySignals;
     auto oldObjects = old["objects"].toArray(); auto oldObject = oldObjects[0].toObject(); oldObject.remove("type"); oldObjects[0] = oldObject; old["objects"] = oldObjects;
     QVERIFY(sessionFromJson(old, &parsed, &error));
     old["version"] = 8; QVERIFY(!sessionFromJson(old, &parsed, &error));
@@ -425,7 +620,7 @@ void ObjectDataTest::controllerLifecycleAndRestore()
     AppController controller; PlotItem plot; plot.setWidth(600); plot.setHeight(300); controller.attachPlot(&plot);
     QVERIFY(controller.loadCsv(path)); QTRY_VERIFY_WITH_TIMEOUT(!controller.loading() && !controller.deriving(), 5000);
     QVERIFY(controller.addObjectRule("missing", {{"name", "bits"}, {"operation", "bits"}, {"inputs", QVariantList{"source"}}}).isEmpty());
-    const auto objectId = controller.createDataObject("device"); QVERIFY(!objectId.isEmpty());
+    const auto objectId = controller.createDataObject("device", "processing"); QVERIFY(!objectId.isEmpty());
     const auto field = controller.bindObjectField(objectId, {}, "状态", "scalar", 0); QVERIFY(!field.isEmpty());
     const auto rule = controller.addObjectRule(objectId, {{"name", "flags"}, {"operation", "bits"}, {"inputs", QVariantList{field}}, {"bitCount", 8}});
     QVERIFY(!rule.isEmpty()); QTRY_VERIFY_WITH_TIMEOUT(!controller.deriving(), 5000);
@@ -560,7 +755,7 @@ void ObjectDataTest::editsPreserveUnrelatedResultsAndMergePendingObjects()
     file.write("time,A,B\n0,2,20\n1,3,30\n"); file.close();
     AppController controller; PlotItem plot; plot.setWidth(600); plot.setHeight(300);
     controller.attachPlot(&plot); QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
-    const auto a = controller.createDataObject("A"), b = controller.createDataObject("B");
+    const auto a = controller.createDataObject("A", "processing"), b = controller.createDataObject("B", "processing");
     const auto fa = controller.bindObjectField(a, {}, "input", "scalar", 0);
     const auto fb = controller.bindObjectField(b, {}, "input", "scalar", 1);
     const auto ruleA = controller.addObjectRule(a, {{"name", "A output"}, {"operation", "scale"}, {"inputs", QVariantList{fa}}, {"factor", 2}});
@@ -604,17 +799,23 @@ void ObjectDataTest::linkedTrajectoriesAndRuleEdits()
     QVERIFY(!controller.bindObjectField(object, fields[1].toMap()["id"].toString(), "lon", "longitude", 1).isEmpty());
     for (int i = 2; i < 6; ++i) QVERIFY(!controller.bindObjectField(object, fields[i].toMap()["id"].toString(), QString::number(i), QStringList{"height", "roll", "pitch", "yaw"}[i - 2], i).isEmpty());
     QVERIFY(controller.showObjectTrajectory(object, 0));
+    QVERIFY(controller.styleTrajectory(0, "plane", QColor("#d95319"), 5, false));
+    QVERIFY(controller.showObjectTrajectory(object, 0));
+    QCOMPARE(controller.trajectoryState(0)["color"].value<QColor>(), QColor("#d95319"));
+    QCOMPARE(controller.trajectoryState(0)["width"].toDouble(), 5.0);
+    QVERIFY(controller.trajectoryState(0)["visible"].toBool());
     QVERIFY(controller.configureDataObjectAircraft(object, {{"geographic", true}, {"attitudeMode", 1}, {"radians", true}, {"order", 1}, {"scalarLast", false}, {"navigationToBody", true}}));
     QVERIFY(!controller.setDataObjectType(object, "general"));
     QVERIFY(controller.bindObjectField(object, latitude, "lat", "latitude", 6).size() > 0);
     QVERIFY(controller.renameDataObject(object, "plane updated"));
-    const auto rule = controller.addObjectRule(object, {{"name", "scaled"}, {"operation", "scale"}, {"inputs", QVariantList{latitude}}, {"factor", 2}});
+    const auto processing = controller.createDataObject("flight processing", "processing");
+    const auto rule = controller.addObjectRule(processing, {{"name", "scaled"}, {"operation", "scale"}, {"inputs", QVariantList{"raw:6"}}, {"factor", 2}});
     QVERIFY(!rule.isEmpty()); QTRY_VERIFY(!controller.deriving());
-    QVERIFY(controller.editObjectRule(object, rule, {{"name", "modified"}, {"operation", "scale"}, {"inputs", QVariantList{latitude}}, {"factor", 3}}));
+    QVERIFY(controller.editObjectRule(processing, rule, {{"name", "modified"}, {"operation", "scale"}, {"inputs", QVariantList{"raw:6"}}, {"factor", 3}}));
     QTRY_VERIFY(!controller.deriving());
-    QCOMPARE(controller.dataObjects().first().toMap()["rules"].toList().first().toMap()["factor"].toDouble(), 3.0);
-    const auto outputId = controller.dataObjects().first().toMap()["rules"].toList().first().toMap()["outputs"].toList().first().toMap()["id"].toString();
-    QVERIFY(!controller.editObjectRule(object, rule, {{"name", "cycle"}, {"operation", "scale"}, {"inputs", QVariantList{outputId}}}));
+    QCOMPARE(controller.processingConfigurations().first().toMap()["rules"].toList().first().toMap()["factor"].toDouble(), 3.0);
+    const auto outputId = controller.processingConfigurations().first().toMap()["rules"].toList().first().toMap()["outputs"].toList().first().toMap()["id"].toString();
+    QVERIFY(!controller.editObjectRule(processing, rule, {{"name", "cycle"}, {"operation", "scale"}, {"inputs", QVariantList{outputId}}}));
     const auto session = dir.filePath("plane.disession"); QVERIFY(controller.saveSession(session));
     SessionDocument saved; QString error; QVERIFY(readSessionDocument(session, &saved, &error));
     QCOMPARE(saved.plots[0].trajectory.activeEntry().objectId, object); QCOMPARE(saved.plots[0].trajectory.activeEntry().axes[0], 6);
@@ -636,7 +837,7 @@ void ObjectDataTest::linkedTrajectoriesAndRuleEdits()
     QVERIFY(!saved.plots[0].trajectory.activeEntry().geographic); QCOMPARE(saved.plots[0].trajectory.activeEntry().attitude.mode, 2);
     QCOMPARE(saved.plots[0].trajectory.activeEntry().axes, (std::array<int, 3>{{0, 1, 2}}));
     QCOMPARE(saved.plots[0].trajectory.activeEntry().attitude.sources, (std::array<int, 4>{{4, 5, 6, 3}}));
-    QVERIFY(restored.removeDataObject(object)); QCOMPARE(restored.signalCount(), 7);
+    QVERIFY(restored.removeDataObject(object)); QCOMPARE(restored.signalCount(), 8);
     const auto removed = dir.filePath("removed.disession"); QVERIFY(restored.saveSession(removed));
     QVERIFY(readSessionDocument(removed, &saved, &error)); QVERIFY(saved.plots[0].trajectory.activeEntry().objectId.isEmpty());
     QCOMPARE(saved.plots[0].trajectory.activeEntry().axes[0], -1);
@@ -661,7 +862,7 @@ void ObjectDataTest::objectManagerQml()
     qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
-    QTemporaryDir dir; QFile file(dir.filePath("qml.csv")); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,A\n0,5\n1,7\n"); file.close();
+    QTemporaryDir dir; QFile file(dir.filePath("qml.csv")); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,A,B\n0,5,8\n1,7,9\n"); file.close();
     AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
     QQmlEngine engine; QStringList warnings;
     connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) { for (const auto &error : errors) warnings.append(error.toString()); });
@@ -677,6 +878,21 @@ void ObjectDataTest::objectManagerQml()
     const auto id = controller.createDataObject("设备 A"); QVERIFY(!id.isEmpty()); manager->setProperty("selectedId", id);
     QCoreApplication::processEvents(); QVERIFY(manager->property("selected").isValid());
     QVERIFY(root->findChild<QObject *>("createObjectButton"));
+    auto *sidebar = root->findChild<QObject *>("sidebarObjectList"); QVERIFY(sidebar);
+    auto *tabs = root->findChild<QObject *>("signalBrowserTabs"); QVERIFY(tabs);
+    QCOMPARE(tabs->property("currentIndex").toInt(), 2);
+    QTRY_COMPARE(sidebar->property("count").toInt(), 1);
+    QVERIFY(qobject_cast<QQuickItem *>(sidebar)->isVisible());
+    auto *objectSearch = root->findChild<QObject *>("objectSearch"); QVERIFY(objectSearch);
+    objectSearch->setProperty("text", QStringLiteral("不存在"));
+    QTRY_COMPARE(sidebar->property("count").toInt(), 0);
+    objectSearch->setProperty("text", QStringLiteral("设备"));
+    QTRY_COMPARE(sidebar->property("count").toInt(), 1);
+    objectSearch->setProperty("text", QString());
+    QVERIFY(QMetaObject::invokeMethod(manager->findChild<QObject *>("browseObjectSourcesButton"), "clicked"));
+    QCOMPARE(tabs->property("currentIndex").toInt(), 0);
+    QVERIFY(!qobject_cast<QQuickItem *>(sidebar)->isVisible());
+    QVERIFY(manager->property("visible").toBool());
     QVERIFY(QMetaObject::invokeMethod(manager, "bindSource", Q_ARG(int, 0)));
     QCOMPARE(controller.dataObjects().first().toMap()["fields"].toList().size(), 1);
     QObject *treeCheck = nullptr;
@@ -696,7 +912,9 @@ void ObjectDataTest::objectManagerQml()
     QVERIFY(QMetaObject::invokeMethod(root.get(), "finishSignalTreeDrag"));
     QCOMPARE(controller.dataObjects().first().toMap()["fields"].toList().first().toMap()["series"].toInt(), 0);
     QVERIFY(controller.plotSignalEnabled(0, 0));
-    auto *button = root->findChild<QObject *>("addObjectRuleButton"); QVERIFY(button);
+    auto *processor = root->findChild<QObject *>("processingManager"); QVERIFY(processor);
+    auto *button = processor->findChild<QObject *>("addObjectRuleButton"); QVERIFY(button);
+    QVERIFY(!qobject_cast<QQuickItem *>(manager->findChild<QObject *>("addObjectRuleButton"))->isVisible());
     QVERIFY(QMetaObject::invokeMethod(root->findChild<QObject *>("addObjectFieldButton"), "clicked"));
     QCOMPARE(controller.dataObjects().first().toMap()["fields"].toList().last().toMap()["name"].toString(), QStringLiteral("字段 2"));
     auto *fieldDialog = root->findChild<QObject *>("objectFieldDialog"); QVERIFY(fieldDialog);
@@ -731,15 +949,35 @@ void ObjectDataTest::objectManagerQml()
     root->setProperty("darkTheme", true); capture("object-editor-dark");
     QCOMPARE(selectedText->property("color").value<QColor>().name(), QStringLiteral("#e6edf3"));
     root->setProperty("darkTheme", false);
+    const auto processing = controller.createDataObject("设备 A 处理", "processing");
+    processor->setProperty("selectedId", processing);
+    QVERIFY(QMetaObject::invokeMethod(processor, "open"));
+    QTRY_VERIFY(qobject_cast<QQuickItem *>(button)->isVisible());
+    QCOMPARE(controller.signalBrowserSection(), 1);
     QVERIFY(QMetaObject::invokeMethod(button, "clicked"));
-    auto *ruleFooter = root->findChild<QObject *>("objectRuleDialog")->property("footer").value<QObject *>();
+    auto *ruleFooter = processor->findChild<QObject *>("objectRuleDialog")->property("footer").value<QObject *>();
     QVERIFY(ruleFooter); QCOMPARE(ruleFooter->property("count").toInt(), 2);
-    root->findChild<QObject *>("objectRuleName")->setProperty("text", "flags");
-    QVERIFY(QMetaObject::invokeMethod(root->findChild<QObject *>("objectRuleDialog"), "submit"));
-    QTRY_VERIFY(!controller.deriving()); QCOMPARE(controller.signalCount(), 9);
+    processor->findChild<QObject *>("objectRuleName")->setProperty("text", "flags");
+    QVERIFY(QMetaObject::invokeMethod(processor->findChild<QObject *>("objectRuleDialog"), "submit"));
+    QTRY_VERIFY(!controller.deriving()); QCOMPARE(controller.signalCount(), 10);
+    // Editing can select any raw signal, not only sources previously used by the configuration.
+    QQmlExpression editFirstRule(QQmlEngine::contextForObject(processor), processor, "editRule(selected.rules[0])");
+    editFirstRule.evaluate(); QVERIFY(!editFirstRule.hasError());
+    auto *inputSelector = processor->findChild<QObject *>("objectRuleInputX"); QVERIFY(inputSelector);
+    QCOMPARE(inputSelector->property("count").toInt(), 2);
+    QCOMPARE(inputSelector->property("currentValue").toString(), QString("raw:0"));
+    inputSelector->setProperty("currentIndex", 1);
+    QVERIFY(QMetaObject::invokeMethod(processor->findChild<QObject *>("objectRuleDialog"), "submit"));
+    QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.processingConfigurations()[0].toMap()["rules"].toList()[0].toMap()["inputIds"].toStringList(), QStringList{"raw:1"});
+    editFirstRule.evaluate(); QVERIFY(!editFirstRule.hasError());
+    QCOMPARE(inputSelector->property("currentValue").toString(), QString("raw:1"));
+    inputSelector->setProperty("currentIndex", 0);
+    QVERIFY(QMetaObject::invokeMethod(processor->findChild<QObject *>("objectRuleDialog"), "submit"));
+    QTRY_VERIFY(!controller.deriving());
     QVERIFY(controller.configureTrajectory(0, true, 0, -1, -1, false));
     QVERIFY(!manager->property("timePlot").toBool());
-    QVERIFY(QMetaObject::invokeMethod(root->findChild<QObject *>("objectSwitchTimePlot"), "clicked"));
+    QVERIFY(QMetaObject::invokeMethod(processor->findChild<QObject *>("objectSwitchTimePlot"), "clicked"));
     QVERIFY(manager->property("timePlot").toBool());
     auto *nameField = root->findChild<QObject *>("objectNameField"); QVERIFY(nameField);
     QQmlExpression textColor(qmlContext(nameField), nameField, "palette.text");
@@ -747,9 +985,62 @@ void ObjectDataTest::objectManagerQml()
     root->setProperty("darkTheme", true);
     QCOMPARE(textColor.evaluate().value<QColor>().name(), QStringLiteral("#e6edf3"));
     root->setProperty("darkTheme", false);
+    QVERIFY(QMetaObject::invokeMethod(manager, "open"));
+    QCOMPARE(controller.signalBrowserSection(), 0);
+    QCOMPARE(tabs->property("currentIndex").toInt(), 2);
+    QTRY_COMPARE(sidebar->property("count").toInt(), 1); // Processing configuration is excluded.
+    manager->setProperty("selectedId", QString());
+    QQuickItem *sidebarRow = nullptr;
+    QTRY_VERIFY((sidebarRow = visualItem("sidebarObjectRow")));
+    QTest::mouseClick(quickWindow, Qt::LeftButton, Qt::NoModifier,
+        sidebarRow->mapToScene(QPointF(sidebarRow->width() / 2, sidebarRow->height() / 2)).toPoint());
+    QTRY_COMPARE(manager->property("selectedId").toString(), id);
+    capture("object-sidebar-light");
+    root->setProperty("darkTheme", true); capture("object-sidebar-dark"); root->setProperty("darkTheme", false);
+    QVERIFY(QMetaObject::invokeMethod(manager->findChild<QObject *>("browseObjectSourcesButton"), "clicked"));
     QVERIFY(controller.setDataObjectType(id, "aircraft"));
     QCOMPARE(controller.dataObjects().first().toMap()["fields"].toList().size(), 5);
-    QCOMPARE(controller.dataObjects().first().toMap()["rules"].toList().size(), 1);
+    QCOMPARE(controller.objectConfigurations().first().toMap()["rules"].toList().size(), 0);
+    QCOMPARE(controller.processingConfigurations().first().toMap()["rules"].toList().size(), 1);
+    const auto planeFields = controller.objectConfigurations().first().toMap()["fields"].toList();
+    for (const auto &value : planeFields) {
+        const auto field = value.toMap(); const auto role = field["role"].toString();
+        if (role == "latitude" || role == "longitude")
+            QVERIFY(!controller.bindObjectField(id, field["id"].toString(), field["name"].toString(), role, role == "latitude" ? 0 : 1).isEmpty());
+    }
+    tabs->setProperty("currentIndex", 2);
+    QQuickItem *trajectoryCheck = nullptr;
+    QTRY_VERIFY((trajectoryCheck = visualItem("objectTrajectoryCheck")) && trajectoryCheck->isVisible());
+    auto clickItem = [&](QQuickItem *item) {
+        QTest::mouseClick(quickWindow, Qt::LeftButton, Qt::NoModifier,
+            item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
+    };
+    QVERIFY(controller.removeTrajectory(0, 0)); // Remove the earlier unlinked Cartesian trajectory fixture.
+    QTRY_VERIFY(trajectoryCheck->width() > 0);
+    clickItem(trajectoryCheck);
+    QTRY_COMPARE(controller.trajectoryState(0)["objectId"].toString(), id);
+    QVERIFY(controller.trajectoryState(0)["enabled"].toBool());
+    QVERIFY(!manager->property("visible").toBool());
+    QQuickItem *trajectoryLine = nullptr;
+    QTRY_VERIFY((trajectoryLine = visualItem("objectTrajectoryStyleButton")) && trajectoryLine->isVisible());
+    clickItem(trajectoryLine);
+    auto *styleDialog = root->findChild<QObject *>("objectTrajectoryStyleDialog"); QVERIFY(styleDialog);
+    QTRY_VERIFY(styleDialog->property("visible").toBool());
+    styleDialog->setProperty("lineColor", QColor("#d95319"));
+    root->findChild<QObject *>("objectTrajectoryWidth")->setProperty("value", 5);
+    QVERIFY(QMetaObject::invokeMethod(styleDialog, "submit"));
+    QVERIFY(!styleDialog->property("visible").toBool());
+    QCOMPARE(controller.trajectoryState(0)["color"].value<QColor>(), QColor("#d95319"));
+    QCOMPARE(controller.trajectoryState(0)["width"].toDouble(), 5.0);
+    clickItem(trajectoryCheck); QTRY_VERIFY(!controller.trajectoryState(0)["visible"].toBool());
+    clickItem(trajectoryCheck); QTRY_VERIFY(controller.trajectoryState(0)["visible"].toBool());
+    QCOMPARE(controller.trajectoryState(0)["color"].value<QColor>(), QColor("#d95319"));
+    QCOMPARE(controller.trajectoryState(0)["width"].toDouble(), 5.0);
+    capture("aircraft-trajectory-sidebar");
+    QVERIFY(controller.removeTrajectory(0, controller.trajectoryState(0)["active"].toInt()));
+    QVERIFY(controller.configureTrajectory(0, false, 0, -1, -1, false));
+    QVERIFY(QMetaObject::invokeMethod(manager, "open"));
+    QVERIFY(QMetaObject::invokeMethod(manager->findChild<QObject *>("browseObjectSourcesButton"), "clicked"));
     const auto copied = controller.duplicateDataObject(id); QVERIFY(!copied.isEmpty());
     QCOMPARE(controller.dataObjects().last().toMap()["type"].toString(), QStringLiteral("aircraft"));
     manager->setProperty("selectedId", copied);
@@ -833,66 +1124,110 @@ void ObjectDataTest::objectManagerQml()
     QTRY_COMPARE(fieldList->property("count").toInt(), 35);
     QTest::qWait(50);
     QVERIFY(anchor); QVERIFY(qAbs(anchor->mapToScene(QPointF()).y() - anchorY) < 1);
-    const auto pagingObject = controller.createDataObject("pagination", "general");
+    const auto pagingObject = controller.createDataObject("pagination", "processing");
     const auto pagingField = controller.addDataObjectField(pagingObject);
     QVERIFY(!controller.bindObjectField(pagingObject, pagingField, "source", "scalar", 0).isEmpty());
     for (int i = 0; i < 25; ++i)
         QVERIFY(!controller.addObjectRule(pagingObject, {{"name", QString("page_%1").arg(i, 2, 10, QChar('0'))},
             {"operation", "scale"}, {"inputs", QVariantList{pagingField}}, {"factor", 2}}).isEmpty());
     QTRY_VERIFY(!controller.deriving());
-    manager->setProperty("selectedId", pagingObject);
+    processor->setProperty("selectedId", pagingObject);
+    QVERIFY(QMetaObject::invokeMethod(processor, "open"));
     const auto countRules = [&](const QString &property) {
-        return QQmlExpression(QQmlEngine::contextForObject(manager), manager, property + ".length").evaluate().toInt();
+        return QQmlExpression(QQmlEngine::contextForObject(processor), processor, property + ".length").evaluate().toInt();
     };
     QTRY_COMPARE(countRules("matchingRules"), 25);
     QCOMPARE(countRules("pageRules"), 20);
-    manager->setProperty("rulePage", 1);
+    processor->setProperty("rulePage", 1);
     QTRY_COMPARE(countRules("pageRules"), 5);
-    auto *ruleSearch = root->findChild<QObject *>("ruleSearch"); QVERIFY(ruleSearch);
+    auto *ruleSearch = processor->findChild<QObject *>("ruleSearch"); QVERIFY(ruleSearch);
     ruleSearch->setProperty("text", "page_2");
     QTRY_COMPARE(countRules("matchingRules"), 5);
-    QCOMPARE(manager->property("rulePage").toInt(), 0);
-    auto *ruleState = root->findChild<QObject *>("ruleStateFilter"); QVERIFY(ruleState);
+    QCOMPARE(processor->property("rulePage").toInt(), 0);
+    auto *ruleState = processor->findChild<QObject *>("ruleStateFilter"); QVERIFY(ruleState);
     ruleState->setProperty("currentIndex", 2);
     QTRY_COMPARE(countRules("matchingRules"), 0);
     ruleSearch->setProperty("text", ""); ruleState->setProperty("currentIndex", 0);
-    const auto detector = controller.createDataObject("识别对象");
-    manager->setProperty("selectedId", detector);
-    auto *typeSelector = root->findChild<QObject *>("objectTypeSelector"); QVERIFY(typeSelector);
-    typeSelector->setProperty("currentIndex", 2);
-    QVERIFY(QMetaObject::invokeMethod(typeSelector, "activated", Q_ARG(int, 2)));
-    QCOMPARE(controller.dataObjects().last().toMap()["type"].toString(), QString("packetloss"));
-    auto *identify = root->findChild<QObject *>("identifyPacketLossButton"); QVERIFY(identify);
+    const auto detector = controller.createDataObject("识别配置", "processing");
+    processor->setProperty("selectedId", detector);
+    auto *typeSelector = processor->findChild<QObject *>("objectTypeSelector"); QVERIFY(typeSelector);
+    QVERIFY(!qobject_cast<QQuickItem *>(typeSelector)->isVisible());
+    QCOMPARE(controller.dataObjects().last().toMap()["type"].toString(), QString("processing"));
+    QQmlExpression autoLoss(QQmlEngine::contextForObject(processor), processor, "editRule(null)");
+    autoLoss.evaluate(); QVERIFY(!autoLoss.hasError());
+    auto *autoOperation = processor->findChild<QObject *>("objectRuleOperation"); QVERIFY(autoOperation);
+    auto *autoDialog = processor->findChild<QObject *>("objectRuleDialog"); QVERIFY(autoDialog);
+    auto *identify = processor->findChild<QObject *>("identifyPacketLossButton"); QVERIFY(identify);
+    QVERIFY(!identify->property("visible").toBool());
+    autoOperation->setProperty("currentIndex", 6);
     QVERIFY(identify->property("visible").toBool());
     QVERIFY(QMetaObject::invokeMethod(identify, "clicked")); QTRY_VERIFY(!controller.deriving());
     QCOMPARE(controller.dataObjects().last().toMap()["rules"].toList().size(), 1);
     const auto discovered = controller.dataObjects().last().toMap()["rules"].toList()[0].toMap();
     QCOMPARE(discovered["samplePeriod"].toDouble(), 1.0);
+    QVERIFY(!autoDialog->property("visible").toBool());
+    QCOMPARE(controller.dataObjects().last().toMap()["type"].toString(), QString("processing"));
+    autoLoss.evaluate(); QVERIFY(!autoLoss.hasError()); autoOperation->setProperty("currentIndex", 6);
     QVERIFY(QMetaObject::invokeMethod(identify, "clicked")); QTRY_VERIFY(!controller.deriving());
     QCOMPARE(controller.dataObjects().last().toMap()["rules"].toList().size(), 1);
     // Exercise the actual dialog: estimated numeric prefill and editable positive period.
-    QQmlExpression createLoss(QQmlEngine::contextForObject(manager), manager, "editRule(null)");
+    QQmlExpression createLoss(QQmlEngine::contextForObject(processor), processor, "editRule(null)");
     createLoss.evaluate(); QVERIFY(!createLoss.hasError());
-    auto *operation = root->findChild<QObject *>("objectRuleOperation"); QVERIFY(operation);
+    auto *operation = processor->findChild<QObject *>("objectRuleOperation"); QVERIFY(operation);
     operation->setProperty("currentIndex", 6);
-    root->findChild<QObject *>("objectRuleName")->setProperty("text", "packet loss");
-    auto *dialog = root->findChild<QObject *>("objectRuleDialog"); QVERIFY(dialog);
+    processor->findChild<QObject *>("objectRuleName")->setProperty("text", "packet loss");
+    auto *dialog = processor->findChild<QObject *>("objectRuleDialog"); QVERIFY(dialog);
     QVERIFY(QMetaObject::invokeMethod(dialog, "submit")); QTRY_VERIFY(!controller.deriving());
     auto loss = controller.dataObjects().last().toMap()["rules"].toList().last().toMap();
     QCOMPARE(loss["operation"].toString(), QString("packetloss"));
     QVERIFY(loss["effectiveSamplePeriod"].toDouble() > 0);
-    QQmlExpression editLoss(QQmlEngine::contextForObject(manager), manager, "editRule(selected.rules[selected.rules.length - 1])");
+    QQmlExpression editLoss(QQmlEngine::contextForObject(processor), processor, "editRule(selected.rules[selected.rules.length - 1])");
     editLoss.evaluate(); QVERIFY(!editLoss.hasError());
-    auto *period = root->findChild<QObject *>("objectRuleSamplePeriod"); QVERIFY(period);
+    auto *period = processor->findChild<QObject *>("objectRuleSamplePeriod"); QVERIFY(period);
     QCOMPARE(period->property("text").toString().toDouble(), loss["effectiveSamplePeriod"].toDouble());
-    QVERIFY(!root->findChild<QObject *>("objectRuleAutoPeriod"));
+    QVERIFY(!processor->findChild<QObject *>("objectRuleAutoPeriod"));
     period->setProperty("text", "-1"); QVERIFY(QMetaObject::invokeMethod(dialog, "submit"));
     QVERIFY(!dialog->property("errorText").toString().isEmpty());
     period->setProperty("text", "0.5"); QVERIFY(QMetaObject::invokeMethod(dialog, "submit")); QTRY_VERIFY(!controller.deriving());
     QCOMPARE(controller.dataObjects().last().toMap()["rules"].toList().last().toMap()["samplePeriod"].toDouble(), .5);
-    QVERIFY(QMetaObject::invokeMethod(manager, "close"));
+    editLoss.evaluate(); QVERIFY(!editLoss.hasError());
+    auto *lossModeControl = processor->findChild<QObject *>("objectRuleLossMode"); QVERIFY(lossModeControl);
+    lossModeControl->setProperty("currentIndex", 2);
+    processor->findChild<QObject *>("objectRuleExpectedStride")->setProperty("text", "10");
+    processor->findChild<QObject *>("objectRuleCounterModulus")->setProperty("text", "256");
+    QVERIFY(QMetaObject::invokeMethod(dialog, "submit")); QTRY_VERIFY(!controller.deriving());
+    loss = controller.dataObjects().last().toMap()["rules"].toList().last().toMap();
+    QCOMPARE(loss["lossMode"].toString(), QString("stride")); QCOMPARE(loss["expectedStride"].toDouble(), 10.0);
+    QCOMPARE(loss["counterModulus"].toDouble(), 256.0);
+    const auto copy = controller.duplicateDataObject(detector); QVERIFY(!copy.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.dataObjects().last().toMap()["rules"].toList().last().toMap()["lossMode"].toString(), QString("stride"));
+    QVERIFY(QMetaObject::invokeMethod(processor, "close"));
     QVERIFY(root->findChild<QObject *>("plotGrid")->property("visible").toBool());
     QVERIFY(controller.plotSignalEnabled(0, 0));
+    QFile other(dir.filePath("other.csv")); QVERIFY(other.open(QIODevice::WriteOnly));
+    other.write("time,C\n0,2\n1,4\n"); other.close();
+    QVERIFY(controller.loadCsv(other.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
+    QVERIFY(QMetaObject::invokeMethod(processor, "open"));
+    QQmlExpression newRule(QQmlEngine::contextForObject(processor), processor, "editRule(null)");
+    newRule.evaluate(); QVERIFY(!newRule.hasError());
+    processor->findChild<QObject *>("objectRuleName")->setProperty("text", "stale input");
+    QVERIFY(controller.removeFile("qml.csv")); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.signalCount(), 1); // Remaining C has shifted into former A's row.
+    QVERIFY(QMetaObject::invokeMethod(dialog, "submit"));
+    QVERIFY(dialog->property("visible").toBool());
+    QVERIFY(dialog->property("errorText").toString().contains(QStringLiteral("来源已变更")));
+    QCOMPARE(controller.signalCount(), 1);
+    QVERIFY(QMetaObject::invokeMethod(dialog, "close"));
+    const auto objectCount = controller.objectConfigurations().size();
+    auto *createSidebar = root->findChild<QObject *>("createSidebarObjectButton"); QVERIFY(createSidebar);
+    tabs->setProperty("currentIndex", 2);
+    QVERIFY(QMetaObject::invokeMethod(createSidebar, "clicked"));
+    QTRY_COMPARE(controller.objectConfigurations().size(), objectCount + 1);
+    QCOMPARE(controller.objectConfigurations().last().toMap()["type"].toString(), QString("aircraft"));
+    QVERIFY(controller.objectConfigurations().last().toMap()["name"].toString().startsWith(QStringLiteral("飞机 ")));
+    QCOMPARE(manager->property("selectedId").toString(), controller.objectConfigurations().last().toMap()["id"].toString());
+    QVERIFY(manager->property("visible").toBool());
+    QVERIFY(!processor->property("visible").toBool());
     QCoreApplication::processEvents(); QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
 }
 void ObjectDataTest::objectFieldPolicy()

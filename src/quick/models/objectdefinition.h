@@ -19,6 +19,9 @@ struct ObjectRule {
     bool signedField = false;
     double factor = 1, bias = 0;
     double samplePeriod = 0; // Seconds; zero estimates the period from input timestamps.
+    QString lossMode = QStringLiteral("time"); // time / sequence / stride / rate
+    double counterStep = 1, expectedStride = 1, counterModulus = 0;
+    double counterRate = 1, counterTolerance = 0; // Frames/second and frames.
     QVector<ObjectOutput> outputs;
 };
 struct DataObject {
@@ -29,10 +32,18 @@ struct DataObject {
     bool geographic = true;
     TrajectoryAttitude attitude{0}; // Sources are resolved from fixed object fields when enabled.
 };
+// Processing configurations share the bounded evaluation representation, but
+// have their own lifecycle and are stored outside the session's objects array.
+inline bool isProcessingConfiguration(const DataObject &definition)
+{
+    return definition.type == "processing" || definition.type == "packetloss";
+}
+QHash<QString, QString> detachObjectProcessing(QVector<DataObject> &definitions);
 struct ObjectRuleState {
     QJsonObject definition;
     QVector<PlotSeriesDataPtr> inputs;
     double samplePeriod = 0;
+    qsizetype duplicateSamples = 0;
 };
 struct ObjectEvaluation {
     qsizetype mergeTimelineBuilds = 0, mergeTimelineHits = 0, mergeTimelineBytes = 0;
@@ -54,7 +65,7 @@ QJsonArray objectsToJson(const QVector<DataObject> &objects);
 QStringList aircraftFieldRoles();
 QStringList activeAircraftFieldRoles(const DataObject &object);
 bool ensureAircraftFields(DataObject &object);
-bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error, int version = 13);
+bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error, int version = 15);
 
 struct PacketLossGroup {
     QVector<int> sources;

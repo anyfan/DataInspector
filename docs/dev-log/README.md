@@ -8,6 +8,8 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [独立处理配置](independent-processing-2026-10-17.md) | 派生规则与对象解耦、栏目过滤、会话 v15 与旧规则迁移 |
+| [信号树布局调整](signal-browser-layout-2026-10-17.md) | 保留纯文字三分页，其余样式试调已按用户要求撤回 |
 | [删除文件后的派生引用清理](file-removal-derived-cleanup-2026-10-16.md) | 依赖闭包、统一行重映射、信号树和真实 QML 图例回归 |
 | [丢包检测](packet-loss-2026-10-16.md) | 自动/手动采样周期、累计丢包数量与百分比、会话 v12 |
 | [Agent 工作流增强](automation-workflows-2026-10-16.md) | 任务与幂等、飞机映射/检查、合并计划、逻辑导出与共享时间线实测 |
@@ -114,3 +116,5 @@
 - [工程目录整理（2026-10-10）](project-directory-cleanup-2026-10-10.md)：清理无调用方依赖/资源、本机工具及旧包归档、目录导航和忽略规则。
 
 - [C++ 源码按职责整理（2026-10-10）](src-layout-cleanup-2026-10-10.md)：controller/io/models/state/items 分组、显式头文件路径、CMake 与导航同步。
+
+- [Y 计数丢包检测](packet-loss-y-counter-2026-10-17.md)：抽样、频率、回绕与会话 v14。

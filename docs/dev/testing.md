@@ -32,6 +32,8 @@ ctest --test-dir build_qt6-debug --output-on-failure
 
 ## CTest 套件
 
+`objectdata_test::independentProcessingAndLegacyMigration` 验证无对象的处理配置、直接原始输入、下游依赖、对象重绑/复制/删除不影响处理、处理复制与删除、栏目原始/派生过滤、v15 严格校验、v14 实际会话恢复迁移和文件移除清理。对象管理 QML 回归分别操作对象字段编辑器与处理规则编辑器，验证独立类型、对象分页列表/搜索/新建/鼠标选择、飞机行真实鼠标勾选航迹/样式弹窗/隐藏与重显保留颜色线宽、切回信号栏保留对象编辑状态、规则分页、丢包检测及真实规则对话框。
+
 `objectdata_test` 验证拆位/符号位段、表达式与时间基、对象归属和会话校验、来源重新绑定/移除、后台结果、保存恢复、阶梯短脉冲和对象管理 QML（选中名称可见、信号树绑定、自动命名、真实鼠标双击重命名、固定飞机参数保护与坐标/姿态配置）。设置 DI_OBJECT_UI_CAPTURE_DIR 可输出浅色、深色、飞机页面的离屏截图；截图需与所用 Scene Graph 后端一同记录。
 
 | 套件 | 覆盖范围 |
@@ -139,3 +141,7 @@ automation_cli_test 使用实际 exe 和标准库 CLI，覆盖任务真实失败
 `identifyPacketLoss` 验证导入不创建对象、显式丢包检测对象、按时间基识别、跨文件隔离、重复识别与代表列复用、手动周期不覆盖、继续导入后主动补充、会话/复制保留类型、v12 拒绝新类型、超限整批拒绝、清空取消及单点修复。`objectManagerQml` 验证对象类型选择、“自动识别”按钮、重复点击和可编辑周期数值。导入、导出、航迹及旧会话测试恢复既有原始数据断言，不再为自动对象调整 fixture。
 
 `objectdata_test::removingFilesCleansDerivedSignalsAndLegends` 用同名不同路径的两个文件创建合并、丢包检测和多层下游，验证删除一个文件时独立分支/诊断、来源身份和周期配置保留，真实 PlotLegend 的 entryCount/visible 与 C++ 绑定同步清理；保存恢复不带失效输出，删除末个文件或取消在途计算后信号树、图例和 Store 保持为空。`controllerLifecycleAndRestore` 同步验证移除文件后派生输出数量为 0；手动解绑仍保留规则并可重新绑定恢复。
+
+`objectdata_test::packetLossCounters` 覆盖 Y 逐帧/固定抽样/按时间频率、重复值分母、非单位步长、正常与跨缺口回绕、半范围及多圈歧义、整数/越界/非法时间、超预期接收、容差和 v14 严格类型。packetLossLifecycle 验证计数参数保存恢复与复制；objectManagerQml 验证真实编辑器切换 Y 模式、参数提交及复制保留。
+
+受限 Windows 沙箱若 QTemporaryDir 能建目录但内部文件 open 失败，将当前测试进程的 TEMP/TMP 指向仓库可写的 build_qt6-debug/test-temp 后重跑；不需放宽生产代码文件权限。QtTest stdout 不可见时可用 `-o build_qt6-debug/result.txt,txt` 保存断言日志。

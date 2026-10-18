@@ -10,14 +10,14 @@ struct SessionSignal
 {
     int file = -1, table = -1, column = -1;
     QString tableName, originalName, name;
-    QString objectId, outputId; // Empty for a raw file column.
+    QString objectId, outputId; // Processing owner (legacy member name); empty for a raw column.
     QColor color;
     double width = 2.0, timeOffset = 0.0;
     int style = 1;
 };
 struct SessionDocument : ViewConfiguration
 {
-    static constexpr int version = 13;
+    static constexpr int version = 15;
     QStringList files; // Relative to the session document, or absolute.
     QVector<SessionSignal> series;
     QVector<DataObject> objects;

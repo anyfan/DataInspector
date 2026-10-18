@@ -10,6 +10,8 @@ Pane {
     objectName: "objectManager"
     visible: false
     required property bool darkTheme
+    property bool processingMode: false
+    property bool sidebarNavigation: false
     property bool dropHighlighted: false
     property string selectedFieldId: ""
     property int rulePage: 0
@@ -61,13 +63,25 @@ Pane {
         selectedId = id; nameDialog.targetId = id; objectNameField.text = object.name; nameDialog.open()
     }
     background: Rectangle { color: manager.palette.window; border.width: manager.dropHighlighted ? 2 : 0; border.color: manager.palette.highlight }
+    signal sourcesRequested()
+    function createObject(): void {
+        if (blocked) return
+        const id = appController.addDataObject(processingMode ? "processing" : "general")
+        if (id.length > 0) { selectedId = id; errorText = "" } else errorText = appController.status
+    }
+    function duplicateObject(): void {
+        if (blocked || !selected) return
+        const id = appController.duplicateDataObject(selectedId)
+        if (id.length > 0) { selectedId = id; errorText = "" } else errorText = appController.status
+    }
+    function deleteObject(): void { if (!blocked && selected) deleteObjectDialog.open() }
     function open(): void { visible = true; if (!selected && objects.length > 0) selectedId = objects[0].id }
     function close(): void { visible = false; pendingSource = -1 }
     property string selectedId: ""
     property string errorText: ""
     readonly property bool blocked: appController.loading || appController.exporting || appController.restoringSession
     readonly property bool timePlot: { const revision = appController.plotStateRevision; return !appController.trajectoryState(appController.activePlotIndex).enabled }
-    readonly property var objects: appController.dataObjects
+    readonly property var objects: processingMode ? appController.processingConfigurations : appController.objectConfigurations
     onSelectedIdChanged: { selectedFieldId = ""; rulePage = 0 }
     readonly property var selectedField: {
         if (selected) for (let i = 0; i < selected.fields.length; ++i) if (selected.fields[i].id === selectedFieldId) return selected.fields[i]
@@ -157,12 +171,13 @@ Pane {
     function revealOutput(row: int): void {
         for (let i = 0; i < objects.length; ++i) for (let j = 0; j < objects[i].rules.length; ++j) {
             const outputs = objects[i].rules[j].outputs
-            for (let k = 0; k < outputs.length; ++k) if (outputs[k].series === row) { selectedId = objects[i].id; tabs.currentIndex = 1; open(); return }
+            for (let k = 0; k < outputs.length; ++k) if (outputs[k].series === row) { selectedId = objects[i].id; open(); return }
         }
         open()
     }
     function editRule(rule: var): void {
         ruleDialog.initializing = true
+        ruleDialog.sourcesChanged = false
         ruleDialog.ruleId = rule ? rule.id : ""
         ruleDialog.mergeInputs = rule ? rule.inputIds.slice() : []
         ruleName.text = rule ? rule.name : ""
@@ -182,6 +197,12 @@ Pane {
         signedField.checked = rule ? rule.signedField : false
         factor.text = rule ? String(rule.factor) : "1"; bias.text = rule ? String(rule.bias) : "0"
         samplePeriod.text = rule && (rule.samplePeriod > 0 || rule.effectiveSamplePeriod > 0) ? String(rule.samplePeriod > 0 ? rule.samplePeriod : rule.effectiveSamplePeriod) : ""
+        lossMode.currentIndex = rule ? Math.max(0, ["time", "sequence", "stride", "rate"].indexOf(rule.lossMode)) : 0
+        counterStep.text = rule ? String(rule.counterStep) : "1"
+        expectedStride.text = rule ? String(rule.expectedStride) : "1"
+        counterModulus.text = rule ? String(rule.counterModulus) : "0"
+        counterRate.text = rule ? String(rule.counterRate) : "1"
+        counterTolerance.text = rule ? String(rule.counterTolerance) : "0"
         expression.text = rule && rule.expression.length > 0 ? rule.expression : "x"
         ruleDialog.initializing = false
         if (samplePeriod.text.length === 0) ruleDialog.estimatePeriod()
@@ -191,20 +212,21 @@ Pane {
         spacing: 8
         RowLayout {
             Layout.fillWidth: true
-            Label { text: "对象与派生数据"; font.bold: true; font.pixelSize: 18; Layout.fillWidth: true }
+            Label { text: manager.processingMode ? "信号处理" : "对象管理"; font.bold: true; font.pixelSize: 18; Layout.fillWidth: true }
             Button { objectName: "closeObjectManagerButton"; text: "返回曲线"; onClicked: manager.close() }
         }
         RowLayout {
             Layout.fillWidth: true
-            Button { objectName: "createObjectButton"; text: "新建对象"; enabled: !manager.blocked; onClicked: { const id = manager.appController.addDataObject("general"); if (id.length > 0) manager.selectedId = id; else manager.errorText = manager.appController.status } }
-            Button { text: "复制配置"; enabled: !!manager.selected && !manager.blocked; onClicked: { const id = manager.appController.duplicateDataObject(manager.selectedId); if (id.length > 0) manager.selectedId = id; else manager.errorText = manager.appController.status } }
-            Button { text: "删除对象…"; enabled: !!manager.selected && !manager.blocked; onClicked: deleteObjectDialog.open() }
+            Button { objectName: "createObjectButton"; text: manager.processingMode ? "新建处理配置" : "新建对象"; enabled: !manager.blocked; onClicked: manager.createObject() }
+            Button { text: "复制配置"; enabled: !!manager.selected && !manager.blocked; onClicked: manager.duplicateObject() }
+            Button { text: manager.processingMode ? "删除处理配置…" : "删除对象…"; enabled: !!manager.selected && !manager.blocked; onClicked: manager.deleteObject() }
             Item { Layout.fillWidth: true }
             Label { text: manager.appController.deriving ? "正在计算…" : "" }
         }
         RowLayout {
             Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.fillHeight: true
             ScrollView {
+                visible: manager.processingMode || !manager.sidebarNavigation
                 Layout.preferredWidth: 180; Layout.fillHeight: true
                 ListView {
                     id: objectList
@@ -216,7 +238,7 @@ Pane {
                         objectName: "dataObjectRow"
                         required property var modelData
                         width: ListView.view.width
-                        text: modelData.name + (modelData.type === "aircraft" ? " · 飞机" : modelData.type === "packetloss" ? " · 丢包检测" : " · 常规")
+                        text: modelData.name + (modelData.type === "aircraft" ? " · 飞机" : manager.processingMode ? "" : " · 常规")
                         highlighted: modelData.id === manager.selectedId
                         contentItem: Label {
                             objectName: "dataObjectRowText"; text: objectRow.text; color: manager.textColor; elide: Text.ElideRight; verticalAlignment: Text.AlignVCenter
@@ -230,39 +252,19 @@ Pane {
             ColumnLayout {
                 Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.fillHeight: true
                 RowLayout {
-                    Label { text: manager.selected ? manager.selected.name : "先新建或选择一个对象"; font.bold: true; Layout.fillWidth: true }
+                    Label { text: manager.selected ? manager.selected.name : manager.processingMode ? "先新建或选择处理配置" : "先新建或选择一个对象"; font.bold: true; Layout.fillWidth: true }
                     ObjectCombo {
                         objectName: "objectTypeSelector"
-                        model: ["常规", "飞机", "丢包检测"]
+                        visible: !manager.processingMode
+                        readonly property var types: ["general", "aircraft"]
+                        model: ["常规", "飞机"]
                         enabled: !!manager.selected && !manager.blocked
-                        currentIndex: manager.selected ? ["general", "aircraft", "packetloss"].indexOf(manager.selected.type) : 0
-                        onActivated: { if (!manager.appController.setDataObjectType(manager.selectedId, ["general", "aircraft", "packetloss"][currentIndex])) { manager.errorText = manager.appController.status; currentIndex = manager.selected ? ["general", "aircraft", "packetloss"].indexOf(manager.selected.type) : 0 } }
+                        currentIndex: manager.selected ? types.indexOf(manager.selected.type) : 0
+                        onActivated: { if (!manager.appController.setDataObjectType(manager.selectedId, types[currentIndex])) { manager.errorText = manager.appController.status; currentIndex = manager.selected ? types.indexOf(manager.selected.type) : 0 } }
                     }
-                }
-                RowLayout {
-                    visible: !!manager.selected && manager.selected.type === "packetloss"
-                    Layout.fillWidth: true
-                    Button {
-                        objectName: "identifyPacketLossButton"; text: "自动识别"
-                        enabled: !manager.blocked && manager.appController.loadedFileCount > 0
-                        onClicked: {
-                            manager.errorText = ""
-                            if (!manager.appController.identifyPacketLoss(manager.selectedId)) manager.errorText = manager.appController.status
-                        }
-                    }
-                    Label {
-                        text: "识别已加载文件的采样时间组，只补充缺少的检测，保留已有采样周期。"
-                        Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
-                    }
-                }
-                TabBar {
-                    id: tabs
-                    Layout.fillWidth: true
-                    TabButton { id: fieldsTab; text: "数据字段"; contentItem: Label { text: fieldsTab.text; color: manager.textColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } background: Rectangle { color: fieldsTab.checked ? manager.selectionColor : manager.palette.button } }
-                    TabButton { id: rulesTab; text: "派生数据"; contentItem: Label { text: rulesTab.text; color: manager.textColor; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.AlignVCenter } background: Rectangle { color: rulesTab.checked ? manager.selectionColor : manager.palette.button } }
                 }
                 StackLayout {
-                    currentIndex: tabs.currentIndex
+                    currentIndex: manager.processingMode ? 1 : 0
                     Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.fillHeight: true
                     ColumnLayout {
                         RowLayout {
@@ -291,7 +293,8 @@ Pane {
                             }
                             Label { text: "导航 NED：北 / 东 / 下；机体 FRD：前 / 右 / 下。飞机预置参数不可删除，可解除来源绑定。"; color: manager.textColor; wrapMode: Text.WordWrap; Layout.fillWidth: true }
                         }
-                        Label { text: "左侧勾选显示当前对象的全部来源。选中字段后勾选来源，或将信号直接拖到字段；取消勾选可解除当前对象的绑定。"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
+                        Button { objectName: "browseObjectSourcesButton"; text: "选择来源…"; enabled: !!manager.selected && !manager.blocked; onClicked: manager.sourcesRequested() }
+                        Label { text: "切换到左侧信号栏选择来源，勾选显示当前对象的全部来源。选中字段后勾选来源，或将信号直接拖到字段；取消勾选可解除当前对象的绑定。"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
                         ScrollView {
                             Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.fillHeight: true
                             ListView {
@@ -376,7 +379,7 @@ Pane {
                                         text: ruleRow.modelData.operation === "expression" ? "公式：" + ruleRow.modelData.expression
                                             : ruleRow.modelData.operation === "scale" ? "换算：x × " + ruleRow.modelData.factor + " + " + ruleRow.modelData.bias
                                             : ruleRow.modelData.operation === "bits" || ruleRow.modelData.operation === "bitfield"
-                                                ? ruleRow.modelData.wordBits + " 位 · bit" + ruleRow.modelData.startBit + " 起，共 " + ruleRow.modelData.bitCount + " 位" + (ruleRow.modelData.signedField ? " · 有符号" : "") : ruleRow.modelData.operation === "merge" ? "按时间合并同源采样点" : ruleRow.modelData.operation === "packetloss" ? "采样周期：" + (ruleRow.modelData.samplePeriod > 0 ? ruleRow.modelData.samplePeriod + " 秒" : ruleRow.modelData.effectiveSamplePeriod > 0 ? ruleRow.modelData.effectiveSamplePeriod + " 秒" : "未能估算，请编辑输入") : "三轴模长"
+                                                ? ruleRow.modelData.wordBits + " 位 · bit" + ruleRow.modelData.startBit + " 起，共 " + ruleRow.modelData.bitCount + " 位" + (ruleRow.modelData.signedField ? " · 有符号" : "") : ruleRow.modelData.operation === "merge" ? "按时间合并同源采样点" : ruleRow.modelData.operation === "packetloss" ? (ruleRow.modelData.lossMode !== "time" ? "Y 计数 · " + ({sequence: "逐帧", stride: "固定抽样", rate: "按时间与频率"})[ruleRow.modelData.lossMode] + (ruleRow.modelData.lossMode !== "rate" ? " · 重复采样 " + ruleRow.modelData.duplicateSamples : "") : "采样周期：" + (ruleRow.modelData.samplePeriod > 0 ? ruleRow.modelData.samplePeriod + " 秒" : ruleRow.modelData.effectiveSamplePeriod > 0 ? ruleRow.modelData.effectiveSamplePeriod + " 秒" : "未能估算，请编辑输入")) : "三轴模长"
                                         Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
                                     }
                                     Label { text: ruleRow.modelData.error; visible: text.length > 0; color: "#df4652"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
@@ -410,7 +413,7 @@ Pane {
         id: nameDialog
         objectName: "objectNameDialog"
         palette: manager.palette
-        title: "重命名对象"
+        title: manager.processingMode ? "重命名处理配置" : "重命名对象"
         property string targetId: ""
         anchors.centerIn: parent; modal: true; width: 360
         standardButtons: Dialog.Ok | Dialog.Cancel
@@ -446,8 +449,17 @@ Pane {
         title: ruleId.length > 0 ? "编辑派生规则" : "新增派生规则"
         anchors.centerIn: parent; modal: true; width: Math.min(660, manager.width - 30)
         property bool initializing: false
+        property bool sourcesChanged: false
+        property bool submitting: false
+        Connections {
+            target: manager.appController
+            function onCurrentFileChanged(): void {
+                if (manager.processingMode && ruleDialog.visible && !ruleDialog.submitting)
+                    ruleDialog.sourcesChanged = true
+            }
+        }
         function estimatePeriod(): void {
-            if (initializing || operation !== "packetloss") return
+            if (initializing || operation !== "packetloss" || lossMode.currentIndex !== 0) return
             const value = manager.appController.estimateObjectSamplePeriod(manager.selectedId, String(inputX.currentValue))
             samplePeriod.text = value > 0 ? String(value) : ""
         }
@@ -458,8 +470,16 @@ Pane {
             if (!manager.selected) return []
             if (ruleId.length === 0) return manager.selected.inputs
             const options = []
-            const fields = manager.selected.fields
-            for (let i = 0; i < fields.length; ++i) options.push({id: fields[i].id, name: fields[i].name})
+            if (manager.processingMode) {
+                const outputIds = new Set()
+                for (const rule of manager.selected.rules)
+                    for (const output of rule.outputs) outputIds.add(output.id)
+                for (const input of manager.selected.inputs)
+                    if (!outputIds.has(input.id)) options.push(input)
+            } else {
+                const fields = manager.selected.fields
+                for (let i = 0; i < fields.length; ++i) options.push({id: fields[i].id, name: fields[i].name})
+            }
             const rules = manager.selected.rules
             for (let i = 0; i < rules.length; ++i) {
                 if (rules[i].id === ruleId) break
@@ -467,15 +487,42 @@ Pane {
             }
             return options
         }
-        ColumnLayout {
-            width: parent.width
+        contentItem: ScrollView {
+            id: ruleScroll
+            implicitHeight: Math.min(ruleContent.implicitHeight, Math.max(160, manager.height - 160))
+            contentWidth: availableWidth
+            clip: true
+            ColumnLayout {
+            id: ruleContent
+            width: ruleScroll.availableWidth
             Label { text: "规则 / 输出名称" }
             TextField { id: ruleName; objectName: "objectRuleName"; Layout.fillWidth: true; Layout.minimumWidth: 0; maximumLength: 256 }
             ObjectCombo {
                 id: operationCombo; objectName: "objectRuleOperation"; textRole: "name"; valueRole: "id"; Layout.fillWidth: true
                 model: [{id: "bits", name: "状态字拆位"}, {id: "bitfield", name: "提取位段"}, {id: "scale", name: "比例与偏置换算"}, {id: "magnitude", name: "三轴模长"}, {id: "expression", name: "自定义公式"}, {id: "merge", name: "按时间合并同源信号"}, {id: "packetloss", name: "丢包检测"}]
             }
-            Label { text: "输入 x（对象字段或此前派生结果）"; visible: ruleDialog.operation !== "merge" }
+            RowLayout {
+                visible: ruleDialog.operation === "packetloss" && ruleDialog.ruleId.length === 0
+                Layout.fillWidth: true
+                Button {
+                    objectName: "identifyPacketLossButton"
+                    text: "自动识别"
+                    enabled: !!manager.selected && !manager.blocked && !manager.appController.deriving && manager.appController.loadedFileCount > 0
+                    onClicked: {
+                        if (ruleDialog.sourcesChanged) { ruleDialog.errorText = "数据来源已变更，请重新打开规则并确认输入信号"; return }
+                        ruleDialog.submitting = true
+                        const accepted = manager.appController.identifyPacketLoss(manager.selectedId)
+                        ruleDialog.submitting = false
+                        if (accepted) ruleDialog.close()
+                        else ruleDialog.errorText = manager.appController.status
+                    }
+                }
+                Label {
+                    text: "按已加载文件的采样时间组批量添加检测；保留已有规则和手动周期。"
+                    Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
+                }
+            }
+            Label { text: "输入 x（原始信号或此前处理结果）"; visible: ruleDialog.operation !== "merge" }
             ObjectCombo { id: inputX; onCurrentValueChanged: ruleDialog.estimatePeriod(); visible: ruleDialog.operation !== "merge"; objectName: "objectRuleInputX"; model: ruleDialog.inputOptions; textRole: "name"; valueRole: "id"; Layout.fillWidth: true }
             ScrollView {
                 visible: ruleDialog.operation === "merge"
@@ -532,11 +579,50 @@ Pane {
             ColumnLayout {
                 visible: ruleDialog.operation === "packetloss"
                 Layout.fillWidth: true
+                ComboBox {
+                    id: lossMode; objectName: "objectRuleLossMode"; Layout.fillWidth: true
+                    model: ["X 采样时间", "Y 计数：逐帧", "Y 计数：固定间隔抽样", "Y 计数：按时间与频率"]
+                    onActivated: ruleDialog.estimatePeriod()
+                }
+                GridLayout {
+                    visible: lossMode.currentIndex !== 0; columns: 2; Layout.fillWidth: true
+                    Label { text: "每帧计数步长" }
+                    TextField { id: counterStep; objectName: "objectRuleCounterStep"; text: "1"; Layout.fillWidth: true; maximumLength: 32 }
+                    Label { text: "正常跨过帧数"; visible: lossMode.currentIndex === 2 }
+                    TextField { id: expectedStride; objectName: "objectRuleExpectedStride"; visible: lossMode.currentIndex === 2; text: "1"; Layout.fillWidth: true; maximumLength: 32 }
+                    Label { text: "应收频率（帧/秒）"; visible: lossMode.currentIndex === 3 }
+                    TextField { id: counterRate; objectName: "objectRuleCounterRate"; visible: lossMode.currentIndex === 3; text: "1"; Layout.fillWidth: true; maximumLength: 32 }
+                    Label { text: "允许误差（帧）"; visible: lossMode.currentIndex === 3 }
+                    TextField { id: counterTolerance; objectName: "objectRuleCounterTolerance"; visible: lossMode.currentIndex === 3; text: "0"; Layout.fillWidth: true; maximumLength: 32 }
+                    Label { text: "回绕范围" }
+                    ComboBox {
+                        Layout.fillWidth: true
+                        model: ["不回绕", "8 位：0～255", "16 位：0～65535", "32 位：0～4294967295", "自定义模数"]
+                        currentIndex: [0, 256, 65536, 4294967296].indexOf(Number(counterModulus.text)) >= 0 ? [0, 256, 65536, 4294967296].indexOf(Number(counterModulus.text)) : 4
+                        onActivated: if (currentIndex < 4) counterModulus.text = String([0, 256, 65536, 4294967296][currentIndex])
+                    }
+                    Label { text: "回绕模数（0 为关闭）" }
+                    TextField { id: counterModulus; objectName: "objectRuleCounterModulus"; text: "0"; Layout.fillWidth: true; maximumLength: 32 }
+                }
+                Label {
+                    visible: lossMode.currentIndex !== 0
+                    text: lossMode.currentIndex === 3
+                        ? "输入必须是累计实际接收帧数；预期帧数 = 时间差 × 应收频率。差额超过容差才计丢包，首点仅作基线。发送序号不适用于此模式。"
+                        : "逐帧要求完整记录；固定抽样扣除正常跨过的帧数。发送序号的缺口可能包含未记录帧，结果不一定是通信丢包。重复值不增加丢包或收到帧数。"
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
+                Label {
+                    visible: lossMode.currentIndex !== 0
+                    text: "回绕范围为 0～模数−1，正常回绕不计丢包。须保证两点间增量小于半个范围；复位、乱序或多次回绕无法仅凭 Y 区分。参数未知时不能可靠计算丢包。"
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
                 RowLayout {
+                    visible: lossMode.currentIndex === 0
                     Label { text: "采样周期（秒）" }
                     TextField { id: samplePeriod; objectName: "objectRuleSamplePeriod"; placeholderText: "无法估算，请输入正数"; text: ""; Layout.fillWidth: true; maximumLength: 64 }
                 }
                 Label {
+                    visible: lossMode.currentIndex === 0
                     text: "采样周期已按原始时间间隔估算，可直接修改；多数间隔缺包或变频采样时请手动核定。\n丢包数 = max(四舍五入(时间差 / 周期) − 1, 0)；丢包率 = 累计丢包 / (已收到点数 + 累计丢包) × 100%。时间戳须严格递增，首点为 0，不推断首尾以外的丢包。"
                     Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
                 }
@@ -545,18 +631,25 @@ Pane {
             Label { text: "支持 + − * /、比较、&& / || / !、括号、abs/sqrt/min/max；多输入要求相同时间基。"; visible: ruleDialog.operation === "expression" || ruleDialog.operation === "magnitude"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
             Label { text: ruleDialog.errorText; visible: text.length > 0; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap; color: "#df4652" }
         }
+        }
         function submit(): void {
+            if (sourcesChanged) {
+                errorText = "数据来源已变更，请重新打开规则并确认输入信号"
+                return
+            }
             const inputs = operation === "merge" ? mergeInputs.slice() : [String(inputX.currentValue)]
             if (operation === "magnitude" || operation === "expression") {
                 if (String(inputY.currentValue).length > 0) inputs.push(String(inputY.currentValue))
                 if (inputZ.enabled && String(inputZ.currentValue).length > 0) inputs.push(String(inputZ.currentValue))
             }
-            if (operation === "packetloss" && (!isFinite(Number(samplePeriod.text)) || Number(samplePeriod.text) <= 0)) {
+            if (operation === "packetloss" && lossMode.currentIndex === 0 && (!isFinite(Number(samplePeriod.text)) || Number(samplePeriod.text) <= 0)) {
                 errorText = "采样周期必须为正数秒数"; return
             }
-            const config = {samplePeriod: operation === "packetloss" ? Number(samplePeriod.text) : 0, name: ruleName.text, operation: operation, inputs: inputs, wordBits: Number(wordWidth.currentText), startBit: startBit.value, bitCount: bitCount.value, signedField: signedField.checked, factor: Number(factor.text), bias: Number(bias.text), expression: expression.text}
+            const config = {lossMode: ["time", "sequence", "stride", "rate"][lossMode.currentIndex], counterStep: Number(counterStep.text), expectedStride: Number(expectedStride.text), counterModulus: Number(counterModulus.text), counterRate: Number(counterRate.text), counterTolerance: Number(counterTolerance.text), samplePeriod: operation === "packetloss" && lossMode.currentIndex === 0 ? Number(samplePeriod.text) : 0, name: ruleName.text, operation: operation, inputs: inputs, wordBits: Number(wordWidth.currentText), startBit: startBit.value, bitCount: bitCount.value, signedField: signedField.checked, factor: Number(factor.text), bias: Number(bias.text), expression: expression.text}
+            submitting = true
             const success = ruleId.length > 0 ? manager.appController.editObjectRule(manager.selectedId, ruleId, config)
                 : manager.appController.addObjectRule(manager.selectedId, config).length > 0
+            submitting = false
             if (success) close()
             else errorText = manager.appController.status.length > 0 ? manager.appController.status : "请检查规则名称、输入和参数"
         }
@@ -568,9 +661,9 @@ Pane {
     Dialog {
         id: deleteObjectDialog
         palette: manager.palette
-        title: "删除对象"
+        title: manager.processingMode ? "删除处理配置" : "删除对象"
         anchors.centerIn: parent; modal: true; width: 380; standardButtons: Dialog.Ok | Dialog.Cancel
-        Label { width: parent.width; text: "删除对象及其全部派生规则、结果和绘图引用。原始文件与信号保留。"; wrapMode: Text.WordWrap }
+        Label { width: parent.width; text: manager.processingMode ? "删除此处理配置及其全部规则、结果和绘图引用。原始信号与对象保留。" : "删除此对象及其航迹关联。独立处理配置和原始信号保留。"; wrapMode: Text.WordWrap }
         onAccepted: { manager.appController.removeDataObject(manager.selectedId); manager.selectedId = "" }
     }
     Dialog {

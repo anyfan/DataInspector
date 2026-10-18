@@ -265,7 +265,7 @@ void AppController::finishSessionRestore()
             PlotSeriesInput input; input.id = inputs.size(); input.sourceFile = "object:" + object.id;
             input.sourceTable = r; input.sourceColumn = k; input.sourceTableName = object.name + "/" + object.rules[r].name;
             input.color = s.color; input.lineWidth = s.width; input.lineStyle = Qt::PenStyle(s.style);
-            input.step = object.rules[r].operation == "bits" || object.rules[r].operation == "bitfield";
+            input.step = object.rules[r].operation == "bits" || object.rules[r].operation == "bitfield" || object.rules[r].operation == "packetloss";
             savedToCurrent[output.series] = input.id; output.series = input.id;
             inputs.append(input); colors.append(s.color); originalNames.append(s.originalName); groups.append(objectOutputGroup(object));
         }

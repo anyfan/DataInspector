@@ -18,8 +18,8 @@ bool AppController::identifyPacketLoss(const QString &objectId)
 {
     if (m_loading || m_exporting || deriving() || sessionInteractionBlocked()) return false;
     bool found = false;
-    for (const auto &object : m_objects) if (object.id == objectId && object.type == "packetloss") found = true;
-    if (!found) { setStatus(QStringLiteral("请先选择丢包检测对象")); return false; }
+    for (const auto &object : m_objects) if (object.id == objectId && isProcessingConfiguration(object)) found = true;
+    if (!found) { setStatus(QStringLiteral("请先选择独立处理配置")); return false; }
     QSet<int> computedRows;
     for (const auto &object : m_objects) for (const auto &rule : object.rules)
         for (const auto &output : rule.outputs) computedRows.insert(output.series);
@@ -136,7 +136,7 @@ void AppController::pollObjectEvaluation()
         auto state = result.states.value(rule.id);
         if (!result.states.contains(rule.id)) continue;
         // Materialize the initial estimate once; later recalculation preserves the editable value.
-        if (rule.operation == "packetloss" && rule.samplePeriod == 0 && state.samplePeriod > 0 && !result.errors.contains(rule.id)) {
+        if (rule.operation == "packetloss" && rule.lossMode == "time" && rule.samplePeriod == 0 && state.samplePeriod > 0 && !result.errors.contains(rule.id)) {
             rule.samplePeriod = state.samplePeriod;
             state.definition.insert("samplePeriod", rule.samplePeriod);
         }

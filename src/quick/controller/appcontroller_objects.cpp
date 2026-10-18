@@ -11,6 +11,16 @@
 namespace {
 QString newId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 bool validName(const QString &name) { return !name.trimmed().isEmpty() && name.size() <= 256 && !name.contains(QChar::Null); }
+bool readCounterConfig(const QVariantMap &config, ObjectRule &rule)
+{
+    rule.lossMode = config.value("lossMode", rule.lossMode).toString();
+    { bool ok = true; rule.counterStep = config.value("counterStep", rule.counterStep).toDouble(&ok); if (!ok) return false; }
+    { bool ok = true; rule.expectedStride = config.value("expectedStride", rule.expectedStride).toDouble(&ok); if (!ok) return false; }
+    { bool ok = true; rule.counterModulus = config.value("counterModulus", rule.counterModulus).toDouble(&ok); if (!ok) return false; }
+    { bool ok = true; rule.counterRate = config.value("counterRate", rule.counterRate).toDouble(&ok); if (!ok) return false; }
+    { bool ok = true; rule.counterTolerance = config.value("counterTolerance", rule.counterTolerance).toDouble(&ok); if (!ok) return false; }
+    return true;
+}
 void resolveObjectMeasurements(const DataObject &object, SessionTrajectoryEntry &track)
 {
     QHash<QString, int> fields;
@@ -28,6 +38,92 @@ void resolveObjectMeasurements(const DataObject &object, SessionTrajectoryEntry 
 }
 }
 bool AppController::deriving() const { return bool(m_objectJob); }
+
+QVariantList AppController::objectConfigurations() const
+{
+    QVariantList result;
+    for (const auto &value : dataObjects()) {
+        const auto type = value.toMap().value("type").toString();
+        if (type != "processing" && type != "packetloss") result.append(value);
+    }
+    return result;
+}
+
+QVariantList AppController::processingConfigurations() const
+{
+    if (std::none_of(m_objects.cbegin(), m_objects.cend(), [](const DataObject &definition) {
+        return isProcessingConfiguration(definition);
+    })) return {};
+    QVariantList result, rawInputs;
+    QSet<int> derived;
+    for (const auto &definition : m_objects) for (const auto &rule : definition.rules)
+        for (const auto &output : rule.outputs) derived.insert(output.series);
+    for (int row = 0; row < signalCount(); ++row) if (!derived.contains(row))
+        rawInputs.append(QVariantMap{{"id", "raw:" + QString::number(row)},
+            {"name", m_signals->groupAt(row) + " / " + signalName(row)}});
+    for (const auto &value : dataObjects()) {
+        auto config = value.toMap();
+        if (config["type"] != "processing" && config["type"] != "packetloss") continue;
+        auto inputs = rawInputs;
+        QHash<QString, QString> rawIds;
+        for (const auto &field : config["fields"].toList()) {
+            const auto source = field.toMap();
+            const int row = source["series"].toInt();
+            rawIds.insert(source["id"].toString(), row >= 0 ? "raw:" + QString::number(row) : source["id"].toString());
+            if (row < 0) inputs.append(QVariantMap{{"id", source["id"]}, {"name", source["name"].toString() + QStringLiteral("（来源已移除）")}});
+        }
+        QVariantList rules;
+        for (const auto &value : config["rules"].toList()) {
+            auto rule = value.toMap();
+            QStringList ids;
+            for (const auto &id : rule["inputIds"].toStringList()) ids.append(rawIds.value(id, id));
+            rule["inputIds"] = ids;
+            rules.append(rule);
+            for (const auto &output : rule["outputs"].toList()) {
+                const auto item = output.toMap();
+                inputs.append(QVariantMap{{"id", item["id"]}, {"name", item["name"]}});
+            }
+        }
+        config["inputs"] = inputs;
+        config["rules"] = rules;
+        result.append(config);
+    }
+    return result;
+}
+
+void AppController::migrateObjectProcessing()
+{
+    bool needed = false;
+    for (const auto &object : m_objects) needed |= !isProcessingConfiguration(object) && !object.rules.isEmpty();
+    if (!needed || m_loading || sessionInteractionBlocked()) return;
+    cancelObjectEvaluation();
+    detachObjectProcessing(m_objects);
+    for (const auto &config : m_objects) if (isProcessingConfiguration(config))
+        for (const auto &rule : config.rules) for (const auto &output : rule.outputs)
+            m_signals->setSignalGroup(output.series, objectOutputGroup(config));
+    m_objectEvaluationStates.clear();
+    markSessionModified();
+    scheduleObjectEvaluation();
+}
+
+bool AppController::normalizeProcessingInputs(DataObject &definition, ObjectRule &rule) const
+{
+    if (!isProcessingConfiguration(definition)) return true; // Legacy C++/CLI input ids.
+    for (auto &input : rule.inputs) {
+        if (!input.startsWith("raw:")) continue;
+        bool ok = false;
+        const int row = input.mid(4).toInt(&ok);
+        if (!ok || row < 0 || row >= signalCount() || isObjectOutput(row)) return false;
+        QString id;
+        for (const auto &source : definition.fields) if (source.series == row) { id = source.id; break; }
+        if (id.isEmpty()) {
+            id = newId();
+            definition.fields.append({id, signalName(row).left(256), QStringLiteral("scalar"), row});
+        }
+        input = id;
+    }
+    return true;
+}
 
 QVariantMap AppController::mergeSignals(const QVariantList &groups)
 {
@@ -58,8 +154,12 @@ QVariantMap AppController::mergeSignals(const QVariantList &groups)
             seen.insert(row); rows.append(row);
         }
         if (!target || target->fields.size() + sources.size() > 256 || target->rules.size() >= 256) {
-            if (next.size() >= 256) return {{"error", QStringLiteral("Object limit exceeded")}};
+            const auto count = std::count_if(next.cbegin(), next.cend(), [](const DataObject &definition) {
+                return isProcessingConfiguration(definition);
+            });
+            if (count >= 256) return {{"error", QStringLiteral("Processing configuration limit exceeded")}};
             DataObject object; object.id = newId();
+            object.type = "processing";
             object.name = QStringLiteral("同源信号合并 %1").arg(next.size() + 1);
             next.append(object); target = &next.last();
         }
@@ -91,9 +191,9 @@ QVariantMap AppController::mergeSignals(const QVariantList &groups)
 bool AppController::applyPacketLossGroups(const QString &objectId, const QVector<PacketLossGroup> &groups)
 {
     auto next = m_objects;
-    auto target = std::find_if(next.begin(), next.end(), [&](const DataObject &object) { return object.id == objectId && object.type == "packetloss"; });
-    if (target == next.end()) { setStatus(QStringLiteral("对象类型已变更，请选择丢包检测对象后重新识别")); return false; }
-    if (groups.size() > 256) { setStatus(QStringLiteral("自动识别未提交：超过 256 个采样组，请手动分配到多个检测对象")); return false; }
+    auto target = std::find_if(next.begin(), next.end(), [&](const DataObject &object) { return object.id == objectId && isProcessingConfiguration(object); });
+    if (target == next.end()) { setStatus(QStringLiteral("请选择独立处理配置后重新识别")); return false; }
+    if (groups.size() > 256) { setStatus(QStringLiteral("自动识别未提交：超过 256 个采样组，请手动分配到多个处理配置")); return false; }
     QVector<PlotSeriesInput> placeholders; QStringList names, outputGroups; QVector<QColor> colors;
     int paletteIndex = m_nextColorIndex;
     int added = 0;
@@ -104,7 +204,7 @@ bool AppController::applyPacketLossGroups(const QString &objectId, const QVector
         for (const auto &field : target->fields) if (sourceRows.contains(field.series)) matchingFields.append(field.id);
         bool exists = false;
         for (const auto &rule : target->rules)
-            if (rule.operation == "packetloss" && rule.inputs.size() == 1 && matchingFields.contains(rule.inputs.first())) exists = true;
+            if (rule.operation == "packetloss" && rule.lossMode == "time" && rule.inputs.size() == 1 && matchingFields.contains(rule.inputs.first())) exists = true;
         if (exists) continue; // Preserve identities, edited periods and downstream references.
         QString field;
         if (!matchingFields.isEmpty()) field = matchingFields.first();
@@ -140,6 +240,10 @@ bool AppController::applyPacketLossGroups(const QString &objectId, const QVector
 double AppController::estimateObjectSamplePeriod(const QString &objectId, const QString &inputId) const
 {
     int row = -1;
+    if (inputId.startsWith("raw:")) {
+        bool ok = false; const int candidate = inputId.mid(4).toInt(&ok);
+        if (ok && candidate >= 0 && candidate < signalCount() && !isObjectOutput(candidate)) row = candidate;
+    }
     for (const auto &object : m_objects) if (object.id == objectId) {
         for (const auto &field : object.fields) if (field.id == inputId) row = field.series;
         for (const auto &rule : object.rules) for (const auto &output : rule.outputs) if (output.id == inputId) row = output.series;
@@ -153,7 +257,9 @@ double AppController::estimateObjectSamplePeriod(const QString &objectId, const 
 QString AppController::objectOutputGroup(const DataObject &object) const
 {
     QString name = object.name; name.replace('/', QChar(0x2215));
-    return QStringLiteral("对象/%1 [%2]/派生数据").arg(name, object.id.left(8));
+    return isProcessingConfiguration(object)
+        ? QStringLiteral("处理/%1 [%2]").arg(name, object.id.left(8))
+        : QStringLiteral("对象/%1 [%2]/派生数据").arg(name, object.id.left(8));
 }
 bool AppController::isObjectOutput(int row) const
 {
@@ -197,8 +303,8 @@ QVariantList AppController::dataObjects() const
                 inputs.append(QVariantMap{{"id", output.id}, {"name", signalName(output.series)}});
             }
             rules.append(QVariantMap{{"id", rule.id}, {"name", rule.name}, {"operation", rule.operation},
-                {"effectiveSamplePeriod", m_objectEvaluationStates.value(rule.id).samplePeriod}, {"inputIds", rule.inputs},
-                {"sources", sources.join("、")}, {"expression", rule.expression}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod},
+                {"duplicateSamples", m_objectEvaluationStates.value(rule.id).duplicateSamples}, {"effectiveSamplePeriod", m_objectEvaluationStates.value(rule.id).samplePeriod}, {"inputIds", rule.inputs},
+                {"sources", sources.join("、")}, {"expression", rule.expression}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance},
                 {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
                 {"signedField", rule.signedField}, {"outputs", outputs}, {"error", m_objectErrors.value(rule.id)},
                 {"warning", hasSamples && !m_objectErrors.value(rule.id).isEmpty()},
@@ -214,12 +320,17 @@ QVariantList AppController::dataObjects() const
 QString AppController::addDataObject(const QString &type)
 {
     QSet<QString> names; for (const auto &object : m_objects) names.insert(object.name);
-    int number = 1; while (names.contains(QStringLiteral("对象 %1").arg(number))) ++number;
-    return createDataObject(QStringLiteral("对象 %1").arg(number), type);
+    const auto pattern = type == "processing" || type == "packetloss" ? QStringLiteral("处理 %1")
+        : type == "aircraft" ? QStringLiteral("飞机 %1") : QStringLiteral("对象 %1");
+    int number = 1; while (names.contains(pattern.arg(number))) ++number;
+    return createDataObject(pattern.arg(number), type);
 }
 QString AppController::createDataObject(const QString &name, const QString &type)
 {
-    if (m_loading || m_exporting || sessionInteractionBlocked() || !validName(name) || m_objects.size() >= 256 || !QStringList{"general", "aircraft", "packetloss"}.contains(type)) return {};
+    int sameKind = 0;
+    const bool processing = type == "processing" || type == "packetloss";
+    for (const auto &definition : m_objects) sameKind += isProcessingConfiguration(definition) == processing;
+    if (m_loading || m_exporting || sessionInteractionBlocked() || !validName(name) || sameKind >= 256 || !QStringList{"general", "aircraft", "packetloss", "processing"}.contains(type)) return {};
     DataObject object; object.id = newId(); object.name = name.trimmed(); object.type = type;
     if (type == "aircraft") ensureAircraftFields(object);
     m_objects.append(object);
@@ -227,9 +338,10 @@ QString AppController::createDataObject(const QString &name, const QString &type
 }
 bool AppController::setDataObjectType(const QString &id, const QString &type)
 {
-    if (m_loading || m_exporting || sessionInteractionBlocked() || !QStringList{"general", "aircraft", "packetloss"}.contains(type)) return false;
+    if (m_loading || m_exporting || sessionInteractionBlocked() || !QStringList{"general", "aircraft", "packetloss", "processing"}.contains(type)) return false;
     for (auto &object : m_objects) if (object.id == id) {
         if (object.type == type) return true;
+        if (isProcessingConfiguration(object) != (type == "processing" || type == "packetloss")) return false;
         if (type != "aircraft") for (const auto &state : m_trajectories) for (const auto &track : state.entries())
             if (track.objectId == id) { setStatus(QStringLiteral("请先解除该飞机对象的航迹绑定，再切换类型")); return false; }
         if (type == "aircraft" && !ensureAircraftFields(object)) { setStatus(QStringLiteral("字段数量已达上限")); return false; }
@@ -337,16 +449,20 @@ QString AppController::addObjectRule(const QString &objectId, const QVariantMap 
     bool factorOk = true, biasOk = true, periodOk = true;
     rule.factor = config.value("factor", 1).toDouble(&factorOk); rule.bias = config.value("bias", 0).toDouble(&biasOk);
     rule.samplePeriod = config.value("samplePeriod", 0).toDouble(&periodOk);
-    if (!factorOk || !biasOk || !periodOk) return {};
+    if (!factorOk || !biasOk || !periodOk || !readCounterConfig(config, rule)) return {};
     const int count = rule.operation == "bits" ? rule.bitCount : rule.operation == "packetloss" ? 2 : 1;
     const auto names = config.value("outputNames").toStringList();
     for (int k = 0; k < count; ++k) rule.outputs.append({newId(), names.value(k,
         rule.operation == "bits" ? rule.name + ".bit" + QString::number(rule.startBit + k)
             : rule.operation == "packetloss" ? rule.name + (k == 0 ? QStringLiteral(".累计丢包数") : QStringLiteral(".丢包率(%)")) : rule.name), signalCount() + k});
     bool found = false;
-    for (auto &object : next) if (object.id == objectId) { object.rules.append(rule); found = true; }
+    for (auto &object : next) if (object.id == objectId && isProcessingConfiguration(object)) {
+        if (!normalizeProcessingInputs(object, rule)) { setStatus(QStringLiteral("请选择有效的原始信号来源")); return {}; }
+        object.rules.append(rule); found = true;
+    }
     QString error;
-    if (!found || !validateObjects(next, signalCount() + count, &error)) { setStatus(error); return {}; }
+    if (!found) { setStatus(QStringLiteral("请选择独立处理配置；对象不再包含派生规则")); return {}; }
+    if (!validateObjects(next, signalCount() + count, &error)) { setStatus(error); return {}; }
     m_objects = next;
     QStringList outputNames, groups; QVector<QColor> colors; QVector<PlotSeriesInput> placeholders;
     for (const auto &object : m_objects) if (object.id == objectId) for (const auto &output : rule.outputs) {
@@ -363,10 +479,11 @@ bool AppController::editObjectRule(const QString &objectId, const QString &ruleI
 {
     if (m_loading || m_exporting || sessionInteractionBlocked()) return false;
     auto next = m_objects; bool found = false;
-    for (auto &object : next) if (object.id == objectId) for (auto &rule : object.rules) if (rule.id == ruleId) {
+    for (auto &object : next) if (object.id == objectId && isProcessingConfiguration(object)) for (auto &rule : object.rules) if (rule.id == ruleId) {
         found = true; rule.name = config.value("name").toString().trimmed(); rule.operation = config.value("operation").toString();
         rule.expression = config.value("expression").toString(); rule.inputs.clear();
         for (const auto &v : config.value("inputs").toList()) rule.inputs.append(v.toString());
+        if (!normalizeProcessingInputs(object, rule)) { setStatus(QStringLiteral("请选择有效的原始信号来源")); return false; }
         bool ok = true;
         auto readInt = [&](const QString &key, int fallback, int *out) {
             bool converted = true; const double value = config.value(key, fallback).toDouble(&converted);
@@ -378,7 +495,7 @@ bool AppController::editObjectRule(const QString &objectId, const QString &ruleI
         rule.factor = config.value("factor", rule.factor).toDouble(&factorOk); rule.bias = config.value("bias", rule.bias).toDouble(&biasOk);
         rule.signedField = config.value("signedField", rule.signedField).toBool();
         rule.samplePeriod = config.value("samplePeriod", rule.samplePeriod).toDouble(&periodOk);
-        if (!ok || !factorOk || !biasOk || !periodOk) { setStatus(QStringLiteral("派生参数必须为合法数值")); return false; }
+        if (!ok || !factorOk || !biasOk || !periodOk || !readCounterConfig(config, rule)) { setStatus(QStringLiteral("派生参数必须为合法数值")); return false; }
         const int count = rule.operation == "bits" ? rule.bitCount : rule.operation == "packetloss" ? 2 : 1;
         if (count != rule.outputs.size()) { setStatus(QStringLiteral("修改规则保留输出身份和数量；改变输出数量请新建规则")); return false; }
     }
@@ -441,7 +558,7 @@ QString AppController::duplicateDataObject(const QString &id)
         for (const auto &output : rule.outputs) names.append(signalName(output.series));
         const QString created = addObjectRule(target, {{"name", rule.name}, {"operation", rule.operation}, {"inputs", inputs},
             {"expression", rule.expression}, {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
-            {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"outputNames", names}});
+            {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}, {"outputNames", names}});
         if (created.isEmpty()) {
             removeDataObject(target);
             m_batchObjectChanges = false;
@@ -474,7 +591,9 @@ bool AppController::showObjectTrajectory(const QString &id, int plotIndex)
             if (std::any_of(state.activeEntry().axes.cbegin(), state.activeEntry().axes.cend(), [](int row) { return row >= 0; }) && !addTrajectory(plotIndex)) return false;
         }
         if (!configureTrajectory(plotIndex, true, measurement.axes[0], measurement.axes[1], measurement.axes[2], object.geographic)) return false;
-        styleTrajectory(plotIndex, object.name, QColor("#0072bd"), 2, true);
+        const auto entry = m_trajectories.value(plotIndex).activeEntry();
+        styleTrajectory(plotIndex, object.name, existing >= 0 ? entry.color : QColor("#0072bd"),
+                        existing >= 0 ? entry.width : 2, true);
         auto &state = m_trajectories[plotIndex];
         for (const auto &field : object.fields) if (aircraftFieldRoles().contains(field.role)) {
             const int row = field.series;

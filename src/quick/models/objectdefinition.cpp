@@ -9,6 +9,7 @@
 #include <functional>
 #include <QJsonObject>
 #include <algorithm>
+#include <QUuid>
 
 namespace {
 // A bounded arithmetic grammar, compiled once per rule. No script execution.
@@ -139,10 +140,41 @@ bool ensureAircraftFields(DataObject &object)
     });
     return true;
 }
+QHash<QString, QString> detachObjectProcessing(QVector<DataObject> &definitions)
+{
+    QHash<QString, QString> owners;
+    QVector<DataObject> processing;
+    for (auto &object : definitions) {
+        if (isProcessingConfiguration(object) || object.rules.isEmpty()) continue;
+        DataObject config;
+        config.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        config.name = object.name.left(250) + QStringLiteral(" 处理");
+        config.type = "processing";
+        QHash<QString, QString> inputs;
+        for (const auto &field : object.fields) {
+            auto source = field;
+            source.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            source.role = "scalar";
+            inputs.insert(field.id, source.id);
+            config.fields.append(source);
+        }
+        config.rules = std::move(object.rules);
+        object.rules.clear();
+        for (auto &rule : config.rules) for (auto &input : rule.inputs)
+            if (inputs.contains(input)) input = inputs.value(input);
+        owners.insert(object.id, config.id);
+        processing.append(config);
+    }
+    definitions.append(processing);
+    return owners;
+}
+
 bool validateObjects(const QVector<DataObject> &objects, int signalCount, QString *error)
 {
     auto fail = [&](const QString &why) { *error = why; return false; };
-    if (objects.size() > 256) return fail(QStringLiteral("对象最多 256 个"));
+    int processingCount = 0;
+    for (const auto &object : objects) processingCount += isProcessingConfiguration(object);
+    if (processingCount > 256 || objects.size() - processingCount > 256) return fail(QStringLiteral("对象和处理配置分别最多 256 个"));
     QSet<QString> identities; QSet<int> outputSeries;
     auto identity = [&](const QString &id) {
         if (id.isEmpty() || id.size() > 128 || identities.contains(id)) return false;
@@ -150,7 +182,7 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
     };
     auto nameValid = [](const QString &name) { return !name.trimmed().isEmpty() && name.size() <= 256 && !name.contains(QChar::Null); };
     for (const auto &object : objects) {
-        if (!identity(object.id) || !nameValid(object.name) || !QStringList{"general", "aircraft", "packetloss"}.contains(object.type) || object.fields.size() > 256 || object.rules.size() > 256)
+        if (!identity(object.id) || !nameValid(object.name) || !QStringList{"general", "aircraft", "packetloss", "processing"}.contains(object.type) || object.fields.size() > 256 || object.rules.size() > 256)
             return fail(QStringLiteral("对象身份、名称或数量无效"));
         QSet<QString> available, spatialRoles;
         for (const auto &field : object.fields) {
@@ -173,7 +205,7 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
                 || !std::isfinite(rule.factor) || !std::isfinite(rule.bias)
                 || !std::isfinite(rule.samplePeriod) || rule.samplePeriod < 0) return fail(QStringLiteral("派生规则无效"));
             for (const auto &input : rule.inputs) if (!available.contains(input))
-                return fail(QStringLiteral("派生只能引用本对象字段或此前派生结果，禁止循环依赖"));
+                return fail(QStringLiteral("处理规则只能引用本配置来源或此前处理结果，禁止循环依赖"));
             int count = 1;
             if (rule.operation == "bits" || rule.operation == "bitfield") {
                 if ((rule.wordBits != 8 && rule.wordBits != 16 && rule.wordBits != 32) || rule.startBit < 0
@@ -185,6 +217,15 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
             } else if (rule.operation == "packetloss") {
                 if (rule.inputs.size() != 1 || !std::isfinite(rule.samplePeriod) || rule.samplePeriod < 0)
                     return fail(QStringLiteral("丢包检测需要一个输入及非负采样周期（0 为自动）"));
+                const auto positiveInteger = [](double v) { return std::isfinite(v) && v >= 1 && v <= 4294967296.0 && std::floor(v) == v; };
+                if (!QStringList{"time", "sequence", "stride", "rate"}.contains(rule.lossMode)
+                    || !positiveInteger(rule.counterStep) || !positiveInteger(rule.expectedStride)
+                    || !std::isfinite(rule.counterModulus) || rule.counterModulus < 0
+                    || rule.counterModulus > 4294967296.0 || std::floor(rule.counterModulus) != rule.counterModulus
+                    || (rule.counterModulus > 0 && (rule.counterModulus <= rule.counterStep || std::fmod(rule.counterModulus, rule.counterStep) != 0))
+                    || !std::isfinite(rule.counterRate) || rule.counterRate <= 0 || rule.counterRate > 4294967296.0
+                    || !std::isfinite(rule.counterTolerance) || rule.counterTolerance < 0 || rule.counterTolerance > 4294967296.0)
+                    return fail(QStringLiteral("计数检测模式、步长、抽样间隔、回绕模数、频率或容差无效"));
                 count = 2;
             } else if (rule.operation == "merge") {
                 if (rule.inputs.size() < 2 || QSet<QString>(rule.inputs.begin(), rule.inputs.end()).size() != rule.inputs.size())
@@ -216,7 +257,7 @@ QJsonObject calculationKey(const ObjectRule &rule)
     return {{"operation", rule.operation}, {"expression", rule.expression},
         {"inputs", QJsonArray::fromStringList(rule.inputs)}, {"outputs", outputs},
         {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
-        {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}};
+        {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}};
 }
 bool sameSamples(const PlotSeriesDataPtr &a, const PlotSeriesDataPtr &b)
 {
@@ -377,7 +418,8 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                 }
             }
             double samplePeriod = rule.samplePeriod;
-            if (error.isEmpty() && rule.operation == "packetloss") {
+            qsizetype duplicateSamples = 0;
+            if (error.isEmpty() && rule.operation == "packetloss" && rule.lossMode == "time") {
                 const auto &source = inputs.first();
                 // Bound estimator memory; calculation below validates every timestamp.
                 if (samplePeriod == 0) {
@@ -403,6 +445,65 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                     }
                     outputs[0]->values[i] = lost;
                     outputs[1]->values[i] = 100.0 * lost / (lost + double(i) + 1);
+                }
+            }
+            if (error.isEmpty() && rule.operation == "packetloss" && rule.lossMode != "time") {
+                const auto &source = inputs.first();
+                const bool rate = rule.lossMode == "rate";
+                double lost = 0, received = rate ? 0 : 1;
+                for (qsizetype i = 0; error.isEmpty() && i < count; ++i) {
+                    if ((i & 4095) == 0 && cancelled.load()) return {};
+                    const auto point = source->pointAt(i);
+                    const double value = point.y();
+                    if (!std::isfinite(point.x()) || !std::isfinite(value) || value < 0
+                        || value > 9007199254740991.0 || std::floor(value) != value
+                        || (rule.counterModulus > 0 && value >= rule.counterModulus)) {
+                        error = QStringLiteral("计数值须为非负精确整数且在回绕范围内，时间须有限（样本 %1）").arg(i + 1); break;
+                    }
+                    if (i) {
+                        const auto previous = source->pointAt(i - 1);
+                        const double dt = point.x() - previous.x();
+                        if (!std::isfinite(dt) || dt <= 0) {
+                            error = QStringLiteral("计数检测要求时间戳严格递增（样本 %1）").arg(i + 1); break;
+                        }
+                        double delta = value - previous.y();
+                        if (delta < 0 && rule.counterModulus > 0) delta += rule.counterModulus;
+                        const double expected = rate ? dt * rule.counterRate : rule.lossMode == "stride" ? rule.expectedStride : 1;
+                        // Half-range jumps are ambiguous; never infer complete extra wraps.
+                        if (delta < 0 || (rule.counterModulus > 0 && (delta >= rule.counterModulus / 2
+                            || expected + (rate ? rule.counterTolerance : 0) >= rule.counterModulus / rule.counterStep / 2))) {
+                            error = QStringLiteral("计数倒退、复位或回绕次数不确定，请核定范围/采样频率（样本 %1）").arg(i + 1); break;
+                        }
+                        if (std::fmod(delta, rule.counterStep) != 0) {
+                            error = QStringLiteral("计数增量不是递增步长的整数倍（样本 %1）").arg(i + 1); break;
+                        }
+                        const double frames = delta / rule.counterStep;
+                        if (frames == 0 && !rate) ++duplicateSamples;
+                        double missing = 0, accepted = 0;
+                        if (rate) {
+                            if (!std::isfinite(expected) || expected > 9007199254740991.0) {
+                                error = QStringLiteral("预期帧数超出精确计数范围"); break;
+                            }
+                            if (frames > expected + rule.counterTolerance + 0.5) {
+                                error = QStringLiteral("实际计数超过预期频率，请检查频率或计数器含义（样本 %1）").arg(i + 1); break;
+                            }
+                            const double deficit = std::floor(expected + 0.5) - frames;
+                            missing = deficit > rule.counterTolerance ? qMax(0.0, deficit) : 0;
+                            accepted = frames;
+                        } else if (frames > 0) {
+                            if (frames < expected) {
+                                error = QStringLiteral("计数增量小于正常抽样增量（样本 %1）").arg(i + 1); break;
+                            }
+                            missing = frames - expected;
+                            accepted = expected;
+                        } // Repeats add neither loss nor received frames in sequence/stride mode.
+                        if (missing + accepted > 9007199254740991.0 - lost - received) {
+                            error = QStringLiteral("累计帧数超出精确计数范围"); break;
+                        }
+                        lost += missing; received += accepted;
+                    }
+                    outputs[0]->values[i] = lost;
+                    outputs[1]->values[i] = lost + received > 0 ? 100.0 * lost / (lost + received) : 0;
                 }
             }
             if (error.isEmpty() && rule.operation != "merge" && rule.operation != "packetloss") for (qsizetype i = 0; i < count; ++i) {
@@ -441,7 +542,7 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
             if (completedRules) completedRules->fetch_add(1, std::memory_order_relaxed);
             if (invalid && error.isEmpty()) result.errors.insert(rule.id, QStringLiteral("%1 个无效样本已留空").arg(invalid));
             if (!error.isEmpty()) result.errors.insert(rule.id, error);
-            if (!result.budgetLimitedRules.contains(rule.id)) result.states.insert(rule.id, {calculationKey(rule), inputs, samplePeriod});
+            if (!result.budgetLimitedRules.contains(rule.id)) result.states.insert(rule.id, {calculationKey(rule), inputs, samplePeriod, duplicateSamples});
             for (int k = 0; k < outputs.size(); ++k) {
                 if (!error.isEmpty()) { outputs[k]->time.clear(); outputs[k]->values.clear(); }
                 outputs[k]->rangeIndex = PlotRangeIndex::build(*outputs[k], [&] { return cancelled.load(); });
@@ -467,7 +568,7 @@ QJsonArray objectsToJson(const QVector<DataObject> &objects)
             for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"name", output.name}, {"series", output.series}});
             rules.append(QJsonObject{{"id", rule.id}, {"name", rule.name}, {"operation", rule.operation}, {"expression", rule.expression},
                 {"inputs", inputs}, {"outputs", outputs}, {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
-                {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}});
+                {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}});
         }
         array.append(QJsonObject{{"id", object.id}, {"name", object.name}, {"type", object.type}, {"fields", fields}, {"rules", rules},
             {"aircraft", QJsonObject{{"geographic", object.geographic}, {"attitudeMode", object.attitude.mode}, {"radians", object.attitude.radians},
@@ -487,7 +588,7 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
         if (!v.isString() || v.toString().size() > 1024 || v.toString().contains(QChar::Null)) return false;
         *out = v.toString(); return true;
     };
-    if (!value.isArray() || value.toArray().size() > 256) return fail();
+    if (!value.isArray() || value.toArray().size() > (version >= 15 ? 512 : 256)) return fail();
     QVector<DataObject> parsed;
     for (const auto &v : value.toArray()) {
         if (!v.isObject()) return fail();
@@ -495,6 +596,7 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
         if (version >= 8 || obj.contains("type")) {
             if (!string(obj["type"], &object.type)) return fail();
             if (object.type == "packetloss" && version < 13) return fail();
+            if (object.type == "processing" && version < 15) return fail();
         }
         if (!string(obj["id"], &object.id) || !string(obj["name"], &object.name)
             || !obj["fields"].isArray() || obj["fields"].toArray().size() > 256
@@ -540,6 +642,19 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
                 if (!r["samplePeriod"].isDouble() || !std::isfinite(r["samplePeriod"].toDouble()) || r["samplePeriod"].toDouble() < 0) return fail();
                 rule.samplePeriod = r["samplePeriod"].toDouble();
             }
+            if (version >= 14) {
+                if (!string(r["lossMode"], &rule.lossMode)) return fail();
+                if (!r["counterStep"].isDouble()) return fail();
+                rule.counterStep = r["counterStep"].toDouble();
+                if (!r["expectedStride"].isDouble()) return fail();
+                rule.expectedStride = r["expectedStride"].toDouble();
+                if (!r["counterModulus"].isDouble()) return fail();
+                rule.counterModulus = r["counterModulus"].toDouble();
+                if (!r["counterRate"].isDouble()) return fail();
+                rule.counterRate = r["counterRate"].toDouble();
+                if (!r["counterTolerance"].isDouble()) return fail();
+                rule.counterTolerance = r["counterTolerance"].toDouble();
+            } else if (r.contains("lossMode") && r["lossMode"].toString() != "time") return fail();
             rule.signedField = r["signedField"].toBool(); rule.factor = r["factor"].toDouble(); rule.bias = r["bias"].toDouble();
             for (const auto &input : r["inputs"].toArray()) { QString id; if (!string(input, &id)) return fail(); rule.inputs.append(id); }
             for (const auto &ov : r["outputs"].toArray()) {

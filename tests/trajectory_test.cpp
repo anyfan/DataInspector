@@ -982,7 +982,7 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
         configurationToggle->mapToScene(QPointF(configurationToggle->width() / 2, configurationToggle->height() / 2)).toPoint());
     QTRY_VERIFY(configurationRow->isVisible()); QTRY_VERIFY(item->height() < collapsedHeight);
     auto *objectSelector = object->findChild<QObject *>("trajectoryObjectSelector"); QVERIFY(objectSelector);
-    QCOMPARE(objectSelector->property("currentText").toString(), QStringLiteral("对象 1"));
+    QCOMPARE(objectSelector->property("currentText").toString(), QStringLiteral("飞机 1"));
     QVERIFY(c.renameDataObject(plane, "Flight A"));
     QTRY_COMPARE(objectSelector->property("currentText").toString(), QStringLiteral("Flight A"));
     QCOMPARE(c.trajectoryState(0)["objectId"].toString(), plane);

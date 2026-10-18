@@ -57,6 +57,9 @@ class AppController : public QObject
     Q_PROPERTY(int activePlotIndex READ activePlotIndex NOTIFY activePlotChanged)
     Q_PROPERTY(int plotStateRevision READ plotStateRevision NOTIFY plotBindingsChanged)
     Q_PROPERTY(QVariantList dataObjects READ dataObjects NOTIFY objectsChanged)
+    Q_PROPERTY(QVariantList objectConfigurations READ objectConfigurations NOTIFY objectsChanged)
+    Q_PROPERTY(QVariantList processingConfigurations READ processingConfigurations NOTIFY objectsChanged)
+    Q_PROPERTY(int signalBrowserSection READ signalBrowserSection NOTIFY signalBrowserSectionChanged)
     Q_PROPERTY(bool deriving READ deriving NOTIFY objectsChanged)
     // >= 0 while a single subplot is shown maximized; -1 while tiled.
     Q_PROPERTY(int soloPlotIndex READ soloPlotIndex WRITE setSoloPlot NOTIFY soloPlotChanged)
@@ -71,6 +74,11 @@ public:
     QString releaseNotes() const;
     Q_INVOKABLE void copyAboutInfo() const;
     QVariantList dataObjects() const;
+    QVariantList objectConfigurations() const;
+    QVariantList processingConfigurations() const;
+    Q_INVOKABLE void migrateObjectProcessing();
+    int signalBrowserSection() const { return m_signalBrowserSection; }
+    Q_INVOKABLE void setSignalBrowserSection(int section);
     Q_INVOKABLE bool identifyPacketLoss(const QString &objectId);
     Q_INVOKABLE double estimateObjectSamplePeriod(const QString &objectId, const QString &inputId) const;
     bool deriving() const;
@@ -230,6 +238,7 @@ signals:
     void dataExportFinished(bool success, bool cancelled, const QString &message);
     void objectEvaluationAborted();
     void objectsChanged();
+    void signalBrowserSectionChanged();
     void viewHistoryChanged();
     void revealSignalRequested(int row);
     void restoringSessionChanged();
@@ -261,6 +270,8 @@ private:
     QHash<QString, ObjectRuleState> m_objectEvaluationStates;
     bool m_batchObjectChanges = false;
     bool m_logicalSignalView = false;
+    int m_signalBrowserSection = -1; // Legacy/CLI combined view; GUI chooses raw or processing.
+    bool normalizeProcessingInputs(DataObject &definition, ObjectRule &rule) const;
     bool m_cancelLoad = false;
     void refreshLogicalSignalView();
     void scheduleObjectEvaluation();

@@ -15,19 +15,26 @@ using namespace JsonValidation;
 
 QJsonObject sessionToJson(const SessionDocument &s)
 {
+    auto definitions = s.objects;
+    const auto migratedOwners = detachObjectProcessing(definitions);
     QJsonArray files, series;
     for (const auto &path : s.files) files.append(QJsonObject{{"path", path}});
     for (const auto &signal : s.series) {
         series.append(QJsonObject{{"file", signal.file}, {"table", signal.table},
             {"column", signal.column}, {"tableName", signal.tableName},
-            {"objectId", signal.objectId}, {"outputId", signal.outputId},
+            {"processingId", migratedOwners.value(signal.objectId, signal.objectId)}, {"outputId", signal.outputId},
             {"originalName", signal.originalName}, {"name", signal.name},
             {"color", signal.color.name(QColor::HexArgb)}, {"width", signal.width},
             {"style", signal.style}, {"timeOffset", signal.timeOffset}});
     }
     auto root = viewConfigurationToJson(s);
     root.insert("format", "DataInspectorSession"); root.insert("version", SessionDocument::version);
-    root.insert("files", files); root.insert("signals", series); root.insert("objects", objectsToJson(s.objects));
+    QVector<DataObject> objects, processing;
+    for (const auto &definition : definitions)
+        (isProcessingConfiguration(definition) ? processing : objects).append(definition);
+    root.insert("files", files); root.insert("signals", series);
+    root.insert("objects", objectsToJson(objects));
+    root.insert("processing", objectsToJson(processing));
     root.insert("cursor", QJsonObject{{"mode", s.cursor.mode}, {"x1", s.cursor.x1}, {"x2", s.cursor.x2}});
     return root;
 }
@@ -58,7 +65,8 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
         const auto obj = entry.toObject();
         SessionSignal signal;
         QString color;
-        if (version >= 7 && (!text(obj.value("objectId"), &signal.objectId, true)
+        if (version >= 15 && obj.contains("objectId") && obj["objectId"].toString() != "") return fail("signals.objectId is obsolete");
+        if (version >= 7 && (!text(obj.value(version >= 15 ? "processingId" : "objectId"), &signal.objectId, true)
             || !text(obj.value("outputId"), &signal.outputId, true))) return fail("signals.objectId/outputId");
         const bool derived = !signal.objectId.isEmpty();
         if (derived != !signal.outputId.isEmpty()) return fail("signals.objectId/outputId");
@@ -81,7 +89,24 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
     }
     if (version >= 7) {
         QString why;
-        if (!objectsFromJson(root.value("objects"), parsed.series.size(), &parsed.objects, &why, version)) return fail("objects: " + why);
+        auto definitions = root.value("objects");
+        if (version >= 15) {
+            if (!definitions.isArray() || definitions.toArray().size() > 256
+                || !root.value("processing").isArray() || root.value("processing").toArray().size() > 256) return fail("objects/processing");
+            auto combined = definitions.toArray();
+            for (const auto &entry : combined) {
+                const auto object = entry.toObject();
+                if (object["type"].toString() != "general" && object["type"].toString() != "aircraft") return fail("objects.type");
+                if (!object["rules"].isArray() || !object["rules"].toArray().isEmpty()) return fail("objects.rules");
+            }
+            for (const auto &entry : root.value("processing").toArray()) {
+                const auto type = entry.toObject()["type"].toString();
+                if (type != "processing" && type != "packetloss") return fail("processing.type");
+                combined.append(entry);
+            }
+            definitions = combined;
+        }
+        if (!objectsFromJson(definitions, parsed.series.size(), &parsed.objects, &why, version)) return fail("objects/processing: " + why);
         QSet<int> owned;
         for (const auto &object : parsed.objects) for (const auto &rule : object.rules) for (const auto &output : rule.outputs) {
             const auto &signal = parsed.series[output.series];
@@ -110,6 +135,10 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
         QSet<QString> objectIds; for (const auto &object : parsed.objects) if (object.type == "aircraft") objectIds.insert(object.id);
         for (const auto &plot : parsed.plots) for (const auto &track : plot.trajectory.entries())
             if (!track.objectId.isEmpty() && !objectIds.contains(track.objectId)) return fail("trajectory.objectId");
+    }
+    if (version < 15) {
+        const auto migratedOwners = detachObjectProcessing(parsed.objects);
+        for (auto &signal : parsed.series) signal.objectId = migratedOwners.value(signal.objectId, signal.objectId);
     }
     *session = std::move(parsed);
     return true;

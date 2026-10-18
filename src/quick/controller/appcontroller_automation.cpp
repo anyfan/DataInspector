@@ -168,10 +168,26 @@ QVector<int> AppController::logicalSignalRows() const
 }
 
 void AppController::setLogicalSignalView(bool enabled) { m_logicalSignalView = enabled; refreshLogicalSignalView(); emit plotBindingsChanged(); }
+void AppController::setSignalBrowserSection(int section)
+{
+    if (section < -1 || section > 1 || m_signalBrowserSection == section) return;
+    m_signalBrowserSection = section;
+    refreshLogicalSignalView();
+    emit signalBrowserSectionChanged();
+}
 void AppController::refreshLogicalSignalView()
 {
-    if (m_logicalSignalView) { const auto rows = logicalSignalRows(); m_signals->setVisibleSources(QSet<int>(rows.begin(), rows.end())); }
-    else m_signals->setVisibleSources(std::nullopt);
+    if (m_signalBrowserSection < 0 && !m_logicalSignalView) { m_signals->setVisibleSources(std::nullopt); return; }
+    QSet<int> derived;
+    for (const auto &definition : m_objects) for (const auto &rule : definition.rules)
+        for (const auto &output : rule.outputs) derived.insert(output.series);
+    QSet<int> visible;
+    const auto candidates = m_logicalSignalView && m_signalBrowserSection != 0 ? logicalSignalRows() : QVector<int>{};
+    if (m_logicalSignalView && m_signalBrowserSection != 0) {
+        for (int row : candidates) if (m_signalBrowserSection < 0 || derived.contains(row)) visible.insert(row);
+    } else for (int row = 0; row < signalCount(); ++row)
+        if ((m_signalBrowserSection == 1) == derived.contains(row)) visible.insert(row);
+    m_signals->setVisibleSources(visible);
 }
 
 QVariantMap AppController::ruleResults(const QString &search, const QString &state, int offset, int limit) const

@@ -109,14 +109,14 @@ QJsonArray automationCatalog()
         add("rules_retry", "Recompute existing definitions after cancellation or corrected data", object({}), true, true);
         add("rule_update", "Update an existing rule while preserving output identities", object({{"generation", generation}, {"object", text()}, {"rule", text()},
             {"config", object({{"name", text()}, {"operation", enumeration({"bits", "bitfield", "scale", "merge", "magnitude", "expression", "packetloss"})}, {"inputs", array(text(128), 1, 256)},
-                {"expression?", text(4096)}, {"factor?", number()}, {"bias?", number()}, {"samplePeriod?", Schema{{"type", "number"}, {"minimum", 0}}}, {"wordBits?", integer(8, 32)}, {"startBit?", integer(0, 31)}, {"bitCount?", integer(1, 32)}, {"signedField?", flag()}})}}), true, true);
+                {"expression?", text(4096)}, {"factor?", number()}, {"bias?", number()}, {"lossMode?", enumeration({"time", "sequence", "stride", "rate"})}, {"counterStep?", number()}, {"expectedStride?", number()}, {"counterModulus?", number()}, {"counterRate?", number()}, {"counterTolerance?", number()}, {"samplePeriod?", Schema{{"type", "number"}, {"minimum", 0}}}, {"wordBits?", integer(8, 32)}, {"startBit?", integer(0, 31)}, {"bitCount?", integer(1, 32)}, {"signedField?", flag()}})}}), true, true);
         add("clear", "Clear data and objects; disk files remain", object({}), true);
         add("load", "Load one local file", object({{"path", path()}}), true, true);
         add("merge_signals", "Create explicit raw-source merge groups", object({{"generation", generation}, {"groups", array(object({{"name", text()}, {"signals", array(signal, 2, 256)}}), 1, 256)}}), true, true);
         add("merge_preview", "Check grouping, existing rules, conflicts and output counts without modifying data", object({{"policy?", policy()}}), false, true);
         add("merge_plan", "Read an existing checked merge plan", object({{"id", text(128)}}));
         add("merge_execute", "Execute a checked plan once", object({{"id", text(128)}}), true, true);
-        add("object_create", "Create an object", object({{"name", text()}, {"type", enumeration({"general", "aircraft", "packetloss"})}}), true);
+        add("object_create", "Create an object or independent processing configuration", object({{"name", text()}, {"type", enumeration({"general", "aircraft", "processing", "packetloss"})}}), true);
         add("aircraft_configure", "Configure aircraft conventions", object({{"object", text()}, {"geographic", flag()}, {"attitudeMode", integer(0, 2)}, {"radians", flag()}, {"order", integer(0, 1)}, {"scalarLast", flag()}, {"navigationToBody", flag()}}), true);
         add("object_bind_field", "Bind one existing field", object({{"generation", generation}, {"object", text()}, {"field", text()}, {"signal", integer(-1)}}), true);
         add("aircraft_setup", "Atomically create/update conventions and all bindings; optionally show trajectory and cursor", object({{"generation", generation}, {"object?", text()}, {"name?", text()}, {"config", config()}, {"bindings", bindings()}, {"plot?", plot}, {"cursorTime?", number()}}), true, true);

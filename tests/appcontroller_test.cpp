@@ -1907,6 +1907,8 @@ void AppControllerTest::signalSectionsKeepNestedPathsAndAlignedNames()
         extraNames.append(QStringLiteral("Other%1").arg(i));
         extraGroups.append("flight.mat/p3");
     }
+    // This fixture appends model rows directly, bypassing controller load notifications.
+    controller.setSignalBrowserSection(-1);
     controller.signalModel()->appendNames(extraNames, extraGroups, {});
     QCOMPARE(controller.signalModel()->rowCount(), 129);
     auto *list = object->findChild<QQuickItem *>("signalList");

@@ -4,11 +4,13 @@ import QtQuick.Controls
 import QtQuick.Controls.Basic as Basic
 import QtQuick.Layouts
 import QtQuick.Shapes
+import QtQuick.Dialogs as Dialogs
 import DataInspector
 Rectangle {
     id: signalBrowser
     required property AppController appController
     required property ObjectManager objectEditor
+    required property ObjectManager processingEditor
     required property color panelColor
     required property color borderColor
     required property color accentColor
@@ -20,6 +22,7 @@ Rectangle {
     required property real hostWidth
     required property bool signalTreeDragging
     required property int signalDragRevision
+    readonly property color secondaryTextColor: darkTheme ? "#9aa6b3" : "#737e8a"
     readonly property var activeTrajectoryObject: {
         const revision = signalBrowser.appController.plotStateRevision
         const state = signalBrowser.appController.trajectoryState(signalBrowser.appController.activePlotIndex)
@@ -31,13 +34,67 @@ Rectangle {
     signal editSignalRequested(int row)
     signal removeFileRequested(string group)
     signal contextRequested(int kind, int row, string group)
+    readonly property var matchingObjects: {
+        const query = objectSearch.text.trim().toLowerCase()
+        return appController.objectConfigurations.filter(object =>
+            (object.name + " " + (object.type === "aircraft" ? "飞机" : "常规")).toLowerCase().includes(query))
+    }
+    readonly property var objectTrajectoryState: {
+        const revision = appController.plotStateRevision
+        return appController.trajectoryState(appController.activePlotIndex)
+    }
+    function applyObjectTrajectory(id: string, plot: int, color: color, width: real, visible: bool): bool {
+        let state = appController.trajectoryState(plot)
+        let index = state.tracks.findIndex(track => track.objectId === id)
+        if (index < 0 && !visible) return true
+        if (visible) {
+            if (!appController.showObjectTrajectory(id, plot)) return false
+        } else if (!appController.selectTrajectory(plot, index)) return false
+        state = appController.trajectoryState(plot)
+        if (state.objectId !== id) return false
+        if (!appController.styleTrajectory(plot, state.name, color, width, visible)) return false
+        objectEditor.close()
+        processingEditor.close()
+        return true
+    }
+    function editObjectTrajectory(id: string): void {
+        const state = objectTrajectoryState
+        const track = state.tracks.find(value => value.objectId === id)
+        objectStyle.objectId = id
+        objectStyle.plotIndex = appController.activePlotIndex
+        objectStyle.lineColor = track ? track.color : "#0072bd"
+        objectStyle.trackVisible = track ? track.visible : true
+        objectStyle.errorText = ""
+        objectTrackWidth.value = track ? track.width : 2
+        objectStyle.open()
+    }
+    function editObject(id: string): void {
+        objectEditor.selectedId = id
+        objectEditor.errorText = ""
+        objectEditor.open()
+    }
+    Connections {
+        target: signalBrowser.objectEditor
+        function onSourcesRequested(): void { signalBrowser.showSection(0) }
+    }
+    Binding {
+        target: signalBrowser.objectEditor
+        property: "sidebarNavigation"
+        value: browserTabs.currentIndex === 2
+    }
     signal hideRequested()
+    Component.onCompleted: {
+        appController.migrateObjectProcessing()
+        appController.setSignalBrowserSection(0)
+    }
+    function showSection(index: int): void { browserTabs.currentIndex = index }
     function clearSearch() {
         signalSearch.clear()
         searchTimer.stop()
         signalSearch.filtering = false
     }
     function revealSignal(row) {
+        browserTabs.currentIndex = appController.isDerivedSignal(row) ? 1 : 0
         clearSearch()
         const modelRow = signalBrowser.appController.signalModel.revealSignal(row)
         signalList.currentIndex = modelRow
@@ -69,54 +126,304 @@ Rectangle {
     }
 
 
+    Dialog {
+        id: objectStyle
+        objectName: "objectTrajectoryStyleDialog"
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: 340
+        modal: true
+        title: "飞机航迹样式"
+        property string objectId: ""
+        property int plotIndex: -1
+        property color lineColor: "#0072bd"
+        property bool trackVisible: true
+        property string errorText: ""
+        function submit(): void {
+            if (signalBrowser.objectEditor.blocked || signalBrowser.appController.imageExporting) return
+            if (signalBrowser.applyObjectTrajectory(objectId, plotIndex, lineColor, objectTrackWidth.value, trackVisible)) close()
+            else errorText = signalBrowser.appController.status
+        }
+        contentItem: ColumnLayout {
+            RowLayout {
+                Label { text: "颜色" }
+                Button {
+                    objectName: "objectTrajectoryColorButton"
+                    text: String(objectStyle.lineColor)
+                    onClicked: { objectTrackColor.selectedColor = objectStyle.lineColor; objectTrackColor.open() }
+                    background: Rectangle { color: objectStyle.lineColor; radius: 3 }
+                }
+                Label { text: "线宽" }
+                SpinBox { id: objectTrackWidth; objectName: "objectTrajectoryWidth"; from: 1; to: 12 }
+            }
+            Label { text: objectStyle.errorText; visible: text.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+        }
+        footer: DialogButtonBox {
+            Button { text: "确定"; enabled: !signalBrowser.objectEditor.blocked && !signalBrowser.appController.imageExporting; onClicked: objectStyle.submit() }
+            Button { text: "取消"; onClicked: objectStyle.close() }
+        }
+    }
+    Dialogs.ColorDialog {
+        id: objectTrackColor
+        title: "航迹颜色"
+        onAccepted: objectStyle.lineColor = selectedColor
+    }
     SplitView.preferredWidth: 280
     SplitView.minimumWidth: 180
     SplitView.maximumWidth: Math.max(180, signalBrowser.hostWidth - 320)
     color: signalBrowser.panelColor
     ColumnLayout { anchors.fill: parent; anchors.margins: 10; anchors.rightMargin: 0; spacing: 8
-        Button { objectName: "objectManagerButton"; text: "对象与派生数据…"; Layout.fillWidth: true; enabled: !signalBrowser.appController.restoringSession && !signalBrowser.appController.imageExporting; onClicked: signalBrowser.objectEditor.open() }
-        CheckBox {
-            objectName: "logicalResultsToggle"
-            text: "优先显示合并结果"
-            checked: signalBrowser.appController.logicalSignalView
-            onToggled: signalBrowser.appController.setLogicalSignalView(checked)
-            ToolTip.visible: hovered
-            ToolTip.text: "显示合并输出与未被替代的来源；取消勾选可查看全部原始信号"
-        }
-        RowLayout { Layout.fillWidth: true; spacing: 4
-            TextField {
-                id: signalSearch
-                objectName: "signalSearch"
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 4
+            Basic.TabBar {
+                id: browserTabs
+                objectName: "signalBrowserTabs"
                 Layout.fillWidth: true
-                placeholderText: "搜索信号…"
-                property bool filtering: false
-                property real previousContentY: 0
-                onTextChanged: {
-                    if (!filtering && text.trim().length > 0) {
-                        previousContentY = signalList.contentY
-                        filtering = true
-                    }
-                    searchTimer.restart()
+                onCurrentIndexChanged: {
+                    signalBrowser.dragCancelRequested()
+                    signalBrowser.appController.setSignalBrowserSection(currentIndex === 1 ? 1 : 0)
+                    if (currentIndex === 1) signalBrowser.objectEditor.close()
+                    else if (currentIndex === 2) signalBrowser.processingEditor.close()
                 }
-                Timer {
-                    id: searchTimer
-                    interval: 150
-                    onTriggered: {
-                        signalBrowser.appController.filterSignals(signalSearch.text)
-                        if (signalSearch.filtering && signalSearch.text.trim().length === 0) {
-                            signalList.forceLayout()
-                            signalList.contentY = Math.max(signalList.originY,
-                                Math.min(signalList.originY + Math.max(0, signalList.contentHeight - signalList.height),
-                                    signalSearch.previousContentY))
-                            signalSearch.filtering = false
+                background: Rectangle { color: signalBrowser.panelColor }
+                Repeater {
+                    model: ["信号", "处理", "对象"]
+                    delegate: Basic.TabButton {
+                        id: browserTab
+                        required property string modelData
+                        text: modelData
+                        implicitHeight: 36
+                        padding: 8
+                        contentItem: Text {
+                            text: browserTab.text
+                            color: browserTab.checked ? signalBrowser.accentColor : signalBrowser.secondaryTextColor
+                            font.weight: browserTab.checked ? Font.DemiBold : Font.Normal
+                            horizontalAlignment: Text.AlignHCenter
+                            verticalAlignment: Text.AlignVCenter
+                        }
+                        background: Rectangle {
+                            color: browserTab.hovered
+                                ? (signalBrowser.darkTheme ? "#29333d" : "#eef4fa")
+                                : signalBrowser.panelColor
+                            Rectangle {
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                anchors.bottom: parent.bottom
+                                width: 24
+                                height: 2
+                                radius: 1
+                                visible: browserTab.checked
+                                color: signalBrowser.accentColor
+                            }
                         }
                     }
                 }
             }
-            ToolButton { text: "×"; enabled: signalSearch.text.length > 0; onClicked: signalSearch.clear(); ToolTip.visible: hovered && !signalBrowser.signalTreeDragging; ToolTip.text: "清除搜索" }
-            ToolButton { text: "‹"; onClicked: signalBrowser.hideRequested(); ToolTip.visible: hovered && !signalBrowser.signalTreeDragging; ToolTip.text: "隐藏信号树（可从设置恢复）" }
+            ToolButton {
+                objectName: "hideSignalBrowserButton"
+                text: "‹"
+                Layout.preferredWidth: 24
+                Layout.preferredHeight: 28
+                onClicked: signalBrowser.hideRequested()
+                ToolTip.visible: hovered && !signalBrowser.signalTreeDragging
+                ToolTip.text: "隐藏信号树（可从设置恢复）"
+            }
         }
-        Item { Layout.fillWidth: true; Layout.fillHeight: true
+        Button { objectName: "objectManagerButton"; visible: browserTabs.currentIndex === 1; text: "管理处理规则…"; Layout.fillWidth: true; enabled: !signalBrowser.appController.restoringSession && !signalBrowser.appController.imageExporting; onClicked: { if (browserTabs.currentIndex === 1) signalBrowser.processingEditor.open(); else signalBrowser.objectEditor.open() } }
+        CheckBox {
+            objectName: "logicalResultsToggle"
+            visible: browserTabs.currentIndex === 1
+            text: "隐藏失败的合并结果"
+            checked: signalBrowser.appController.logicalSignalView
+            onToggled: signalBrowser.appController.setLogicalSignalView(checked)
+            ToolTip.visible: hovered
+            ToolTip.text: "隐藏失败的合并输出；原始来源始终保留在信号栏"
+        }
+        TextField {
+            id: signalSearch
+            visible: browserTabs.currentIndex !== 2
+            objectName: "signalSearch"
+            Layout.fillWidth: true
+            Layout.minimumWidth: 0
+            Layout.rightMargin: 6
+            implicitHeight: 30
+            leftPadding: 8
+            rightPadding: 30
+            background: Rectangle {
+                radius: 3
+                color: signalBrowser.darkTheme ? "#171c22" : "#ffffff"
+                border.color: signalSearch.activeFocus ? signalBrowser.accentColor : signalBrowser.borderColor
+            }
+            ToolButton {
+                objectName: "clearSignalSearchButton"
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                width: 28
+                height: parent.height
+                text: "×"
+                visible: signalSearch.text.length > 0
+                onClicked: signalSearch.clear()
+                ToolTip.visible: hovered && !signalBrowser.signalTreeDragging
+                ToolTip.text: "清除搜索"
+            }
+            placeholderText: "搜索信号…"
+            property bool filtering: false
+            property real previousContentY: 0
+            onTextChanged: {
+                if (!filtering && text.trim().length > 0) {
+                    previousContentY = signalList.contentY
+                    filtering = true
+                }
+                searchTimer.restart()
+            }
+            Timer {
+                id: searchTimer
+                interval: 150
+                onTriggered: {
+                    signalBrowser.appController.filterSignals(signalSearch.text)
+                    if (signalSearch.filtering && signalSearch.text.trim().length === 0) {
+                        signalList.forceLayout()
+                        signalList.contentY = Math.max(signalList.originY,
+                            Math.min(signalList.originY + Math.max(0, signalList.contentHeight - signalList.height),
+                                signalSearch.previousContentY))
+                        signalSearch.filtering = false
+                    }
+                }
+            }
+        }
+        ColumnLayout {
+            visible: browserTabs.currentIndex === 2
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            Layout.rightMargin: 6
+            spacing: 8
+            Button {
+                objectName: "createSidebarObjectButton"
+                text: "新建飞机"
+                Layout.fillWidth: true
+                enabled: !signalBrowser.objectEditor.blocked && !signalBrowser.appController.imageExporting
+                onClicked: {
+                    const id = signalBrowser.appController.addDataObject("aircraft")
+                    if (id.length > 0) signalBrowser.editObject(id)
+                    else signalBrowser.objectEditor.errorText = signalBrowser.appController.status
+                }
+            }
+            TextField {
+                id: objectSearch
+                objectName: "objectSearch"
+                Layout.fillWidth: true
+                implicitHeight: 30
+                leftPadding: 8
+                rightPadding: 30
+                placeholderText: "搜索对象…"
+                background: Rectangle {
+                    radius: 3
+                    color: signalBrowser.darkTheme ? "#171c22" : "#ffffff"
+                    border.color: objectSearch.activeFocus ? signalBrowser.accentColor : signalBrowser.borderColor
+                }
+                ToolButton {
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 28; height: parent.height; text: "×"
+                    visible: objectSearch.text.length > 0
+                    onClicked: objectSearch.clear()
+                }
+            }
+            ListView {
+                id: sidebarObjects
+                objectName: "sidebarObjectList"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                model: signalBrowser.matchingObjects
+                boundsBehavior: Flickable.StopAtBounds
+                ScrollBar.vertical: ScrollBar {}
+                delegate: Basic.ItemDelegate {
+                    id: sidebarObject
+                    objectName: "sidebarObjectRow"
+                    required property var modelData
+                    width: ListView.view.width
+                    readonly property var track: signalBrowser.objectTrajectoryState.tracks.find(value => value.objectId === modelData.id) || null
+                    implicitHeight: 50
+                    enabled: !signalBrowser.objectEditor.blocked && !signalBrowser.appController.imageExporting
+                    highlighted: signalBrowser.objectEditor.selectedId === modelData.id
+                    onClicked: signalBrowser.editObject(modelData.id)
+                    contentItem: RowLayout {
+                        spacing: 6
+                        CheckBox {
+                            objectName: "objectTrajectoryCheck"
+                            visible: sidebarObject.modelData.type === "aircraft"
+                            checked: !!sidebarObject.track && signalBrowser.objectTrajectoryState.enabled && sidebarObject.track.visible
+                            onClicked: {
+                                if (!signalBrowser.applyObjectTrajectory(sidebarObject.modelData.id, signalBrowser.appController.activePlotIndex,
+                                    sidebarObject.track ? sidebarObject.track.color : "#0072bd", sidebarObject.track ? sidebarObject.track.width : 2, checked))
+                                    signalBrowser.objectEditor.errorText = signalBrowser.appController.status
+                            }
+                            ToolTip.visible: hovered
+                            ToolTip.text: "显示或隐藏此飞机在当前子图的航迹"
+                        }
+                        Column {
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            spacing: 3
+                            Text { width: parent.width; text: sidebarObject.modelData.name; color: signalBrowser.treeTextColor; elide: Text.ElideRight; font.weight: Font.Medium }
+                            Text {
+                                width: parent.width
+                                text: (sidebarObject.modelData.type === "aircraft" ? "飞机" : "常规") + " · "
+                                    + sidebarObject.modelData.fields.filter(field => field.series >= 0).length + "/" + sidebarObject.modelData.fields.length + " 字段已绑定"
+                                color: signalBrowser.secondaryTextColor
+                                elide: Text.ElideRight
+                                font.pixelSize: 12
+                            }
+                        }
+                        Basic.ToolButton {
+                            id: objectLineButton
+                            objectName: "objectTrajectoryStyleButton"
+                            visible: sidebarObject.modelData.type === "aircraft"
+                            implicitWidth: 42; implicitHeight: 30
+                            onClicked: signalBrowser.editObjectTrajectory(sidebarObject.modelData.id)
+                            contentItem: Item {
+                                Rectangle {
+                                    anchors.centerIn: parent
+                                    width: 28
+                                    height: sidebarObject.track ? sidebarObject.track.width : 2
+                                    color: sidebarObject.track ? sidebarObject.track.color : "#0072bd"
+                                }
+                            }
+                            background: Rectangle { radius: 3; color: objectLineButton.hovered ? (signalBrowser.darkTheme ? "#354451" : "#e0eaf4") : "transparent" }
+                            ToolTip.visible: hovered
+                            ToolTip.text: "配置此飞机的航迹颜色和线宽"
+                        }
+                    }
+                    background: Rectangle {
+                        radius: 3
+                        color: sidebarObject.highlighted ? (signalBrowser.darkTheme ? "#293e52" : "#d9eafa")
+                            : sidebarObject.hovered ? (signalBrowser.darkTheme ? "#29333d" : "#eef4fa") : "transparent"
+                    }
+                    TapHandler {
+                        acceptedButtons: Qt.RightButton
+                        onTapped: { signalBrowser.editObject(sidebarObject.modelData.id); objectMenu.popup() }
+                    }
+                    Menu {
+                        id: objectMenu
+                        MenuItem { text: "重命名…"; onTriggered: signalBrowser.objectEditor.renameObject(sidebarObject.modelData.id) }
+                        MenuItem { text: "复制对象"; onTriggered: signalBrowser.objectEditor.duplicateObject() }
+                        MenuItem { text: "删除对象…"; onTriggered: signalBrowser.objectEditor.deleteObject() }
+                    }
+                }
+                Label {
+                    anchors.centerIn: parent
+                    width: parent.width - 16
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.WordWrap
+                    color: signalBrowser.secondaryTextColor
+                    visible: sidebarObjects.count === 0
+                    text: signalBrowser.appController.objectConfigurations.length === 0
+                        ? "尚无对象，点击“新建飞机”添加" : "没有匹配的对象"
+                }
+            }
+        }
+        Item { visible: browserTabs.currentIndex !== 2; Layout.fillWidth: true; Layout.fillHeight: true
         ListView { id: signalList; enabled: !signalBrowser.appController.imageExporting; anchors.fill: parent; clip: true; model: signalBrowser.appController.signalModel
             objectName: "signalList"
             anchors.rightMargin: 5
@@ -268,7 +575,7 @@ Rectangle {
                         objectName: "signalTreeCheck"
                         readonly property int sourceRow: signalDelegate.signalIndex
                         visible: !signalDelegate.groupNode
-                        checked: signalBrowser.objectEditor.visible ? signalBrowser.objectEditor.sourceChecked(signalDelegate.signalIndex) : signalBrowser.activeTrajectoryObject ? signalBrowser.activeTrajectoryObject.fields.some(field => field.series === signalDelegate.signalIndex) : signalDelegate.signalChecked
+                        checked: browserTabs.currentIndex === 1 ? signalDelegate.signalChecked : signalBrowser.objectEditor.visible ? signalBrowser.objectEditor.sourceChecked(signalDelegate.signalIndex) : signalBrowser.activeTrajectoryObject ? signalBrowser.activeTrajectoryObject.fields.some(field => field.series === signalDelegate.signalIndex) : signalDelegate.signalChecked
                         Layout.preferredWidth: 24
                         Layout.preferredHeight: 24
                         palette.window: signalBrowser.panelColor
@@ -279,7 +586,11 @@ Rectangle {
                         palette.highlightedText: "#ffffff"
                         onClicked: {
                             signalList.currentIndex = signalDelegate.index
-                            if (signalBrowser.objectEditor.visible) signalBrowser.objectEditor.selectSource(signalDelegate.signalIndex)
+                            if (browserTabs.currentIndex === 1) {
+                                if (signalBrowser.appController.trajectoryState(signalBrowser.appController.activePlotIndex).enabled) signalBrowser.processingEditor.open()
+                                else signalBrowser.appController.toggleSignal(signalDelegate.signalIndex)
+                            }
+                            else if (signalBrowser.objectEditor.visible) signalBrowser.objectEditor.selectSource(signalDelegate.signalIndex)
                             else if (signalBrowser.appController.trajectoryState(signalBrowser.appController.activePlotIndex).enabled) {
                                 if (signalBrowser.activeTrajectoryObject) signalBrowser.objectEditor.selectedId = signalBrowser.activeTrajectoryObject.id
                                 signalBrowser.objectEditor.open()
@@ -345,7 +656,7 @@ Rectangle {
                         }
                     }
                     ToolButton {
-                        visible: signalDelegate.fileNode
+                        visible: signalDelegate.fileNode && browserTabs.currentIndex !== 1
                         Layout.preferredWidth: 26
                         Layout.preferredHeight: 24
                         text: "×"
@@ -402,6 +713,7 @@ Rectangle {
                 TapHandler {
                     acceptedButtons: Qt.RightButton
                     onTapped: {
+                        if (browserTabs.currentIndex === 1 && signalDelegate.groupNode) return
                         signalList.currentIndex = signalDelegate.index
                         if (signalDelegate.fileNode) {
                             signalBrowser.contextRequested(2, -1, signalDelegate.groupName)

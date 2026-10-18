@@ -60,6 +60,34 @@ private slots:
         }
         QVERIFY(!QFileInfo::exists(path));
     }
+    void packetLossCounterRuleUpdate()
+    {
+        QTemporaryDir dir; QFile csv(dir.filePath("counter.csv"));
+        QVERIFY(csv.open(QIODevice::WriteOnly)); csv.write("time,count\n0,254\n1,255\n2,1\n"); csv.close();
+        AppController controller; AutomationServer server(&controller); QString error;
+        const auto path = dir.filePath("connection.json"); QVERIFY(server.start(path, &error));
+        const auto conn = descriptor(path);
+        QVERIFY(call(conn, "load", {{"path", csv.fileName()}})["ok"].toBool());
+        QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 10000);
+        const auto object = controller.createDataObject("counter", "packetloss");
+        const auto field = controller.addDataObjectField(object);
+        QVERIFY(!controller.bindObjectField(object, field, "count", "scalar", 0).isEmpty());
+        const auto rule = controller.addObjectRule(object, {{"name", "loss"}, {"operation", "packetloss"},
+            {"inputs", QVariantList{field}}, {"samplePeriod", 1}});
+        QVERIFY(!rule.isEmpty()); QTRY_VERIFY(!controller.deriving());
+        const auto listed = call(conn, "signals")["result"].toObject();
+        QJsonObject config{{"name", "loss"}, {"operation", "packetloss"}, {"inputs", QJsonArray{field}},
+            {"lossMode", "sequence"}, {"counterStep", 1}, {"expectedStride", 1}, {"counterModulus", 256},
+            {"counterRate", 1}, {"counterTolerance", 0}};
+        QJsonObject params{{"generation", listed["generation"]}, {"object", object}, {"rule", rule}, {"config", config}};
+        QVERIFY(call(conn, "rule_update", params)["ok"].toBool()); QTRY_VERIFY(!controller.deriving());
+        const auto current = controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap();
+        QCOMPARE(current["lossMode"].toString(), QString("sequence"));
+        QCOMPARE(current["outputs"].toList()[0].toMap()["preview"].toString(), QString("0 / 0 / 1"));
+        config["lossMode"] = "unknown"; params["config"] = config;
+        QVERIFY(!call(conn, "rule_update", params)["ok"].toBool());
+        QCOMPARE(controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap()["lossMode"].toString(), QString("sequence"));
+    }
     void originalSamplesStatisticsAndSettings()
     {
         QTemporaryDir dir;

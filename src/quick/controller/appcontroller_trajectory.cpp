@@ -36,7 +36,7 @@ QVariantMap AppController::trajectoryState(int index) const
 {
     const auto state = m_trajectories.value(index);
     QVariantList tracks;
-    for (const auto &entry : state.entries()) tracks.append(QVariantMap{{"id", entry.id}, {"name", entry.name}, {"visible", entry.visible}, {"color", entry.color}});
+    for (const auto &entry : state.entries()) tracks.append(QVariantMap{{"id", entry.id}, {"name", entry.name}, {"visible", entry.visible}, {"color", entry.color}, {"objectId", entry.objectId}, {"width", entry.width}});
     const auto &attitude = state.activeEntry().attitude;
     return {{"tracks", tracks}, {"active", state.active}, {"objectId", state.activeEntry().objectId}, {"name", state.activeEntry().name}, {"color", state.activeEntry().color}, {"width", state.activeEntry().width}, {"visible", state.activeEntry().visible},
             {"attitudeMode", attitude.mode}, {"attitudeSources", QVariantList{attitude.sources[0], attitude.sources[1], attitude.sources[2], attitude.sources[3]}},

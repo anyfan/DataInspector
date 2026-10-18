@@ -113,7 +113,7 @@ object_trajectory、trajectory_view 和带 plot 的 aircraft_setup/mapping_apply
 
 signals 另提供 originalName。调用者应按物理来源、单位与原始名称确定分组，不能只因显示名称相似就合并；同一文件内分散各表、原始名称完全相同的信号可作为候选。明确核对分组后将 groups 数组提交给 merge_signals；服务不猜测同源关系，不按特定文件名适配。超出 64 KiB 请求上限时分批，每批完成 wait 并重新取得 generation。
 
-控制器预先校验全部分组，自动按每对象 256 字段/规则的限制分配常规对象，批量发布输出占位后只调度一次计算。原始信号保留不变；每组形成一条派生输出，独立信号无需重复生成。该命令会创建新规则，超时后先检查 objects，不应盲目重发。
+控制器预先校验全部分组，自动按每处理配置 256 来源映射/规则的限制分配独立处理配置，批量发布输出占位后只调度一次计算。原始信号保留不变；每组形成一条派生输出，独立信号无需重复生成。该命令会创建新规则，超时后先检查 objects，不应盲目重发。
 
 响应 accepted=true、completed=false 只表示定义已提交。wait 后检查 objects 中每条规则的 error 和输出；同一时间同值去重、缺失与有效重合保留有效值、同一时间不同有效值报错。冲突或 512 MiB 计算值预算不足时保留定义与来源，不将失败输出伪装为成功。详细语义见[对象与派生数据](objects-and-derived-data.md)。
 
@@ -123,7 +123,7 @@ signals 另提供 originalName。调用者应按物理来源、单位与原始�
 
 计划包含 generation、重复组、独立列数、已有规则、预计值内存、冲突及输出样本数；即使任务 succeeded，仍须检查 ready。ready=false 禁止执行。merge_execute 传计划 id，并建议携带 requestId、`--wait`；数据变化后计划失效。执行跳过已有相同原始来源集合的合并规则，同一计划重复执行复用结果，失败或取消后通过 rules_retry 重算现有定义。每实例最多保留 32 份计划，重启后失效。预览不修改数据，但会实际校验样本，耗时与数据量相关。
 
-`rules` 提供 search、state=pending/succeeded/failed、offset、limit（默认 100），返回全局汇总及分页；`objects` 也支持 offset/limit，省略分页参数保留旧数组格式。`rule_update` 传 generation、object、rule、config，更新已有规则并保留输出身份；输出数量改变会拒绝。取消后可用 rules_retry 重新计算。GUI 对象面板提供搜索、状态筛选、20 条分页及结果摘要。
+`rules` 提供 search、state=pending/succeeded/failed、offset、limit（默认 100），返回全局汇总及分页；`objects` 也支持 offset/limit，省略分页参数保留旧数组格式。`rule_update` 传 generation、object、rule、config，更新已有规则并保留输出身份；输出数量改变会拒绝。取消后可用 rules_retry 重新计算。GUI 处理页面提供搜索、状态筛选、20 条分页及结果摘要。
 
 ## 可复用飞机映射模板
 
@@ -149,10 +149,16 @@ template_save/template_read 保存或读取独立的 version=1 JSON；mapping_pr
 
 ## 逻辑结果视图与导出
 
-`signals {logical:true}` 返回成功合并输出和未被替代的信号；失败合并输出不进入逻辑集合，其原始输入继续保留。signal 编号保持原工作区编号。`logical_view {enabled:true}` 或 GUI 信号树的“优先显示合并结果”只调整显示，关闭后可查看全部原始来源；不会删除数据。
+`signals {logical:true}` 返回成功合并输出和未被替代的信号；失败合并输出不进入逻辑集合，其原始输入继续保留。signal 编号保持原工作区编号。`logical_view {enabled:true}` 只调整显示；GUI 的“处理”栏通过“隐藏失败的合并结果”过滤失败输出，“信号”栏始终保留原始信号。不会删除数据。
 
 `export_logical --wait` 参数 directory 为尚不存在的绝对目录，format=mat/xlsx。成功后得到 data.mat 或 data.xlsx 和 manifest.json；后者记录来源列、偏移、样本数、对象与完整规则定义及汇总。后台在临时目录写完数据和清单后一次发布；失败、取消、目录碰撞均不覆盖现有目标。这里导出的是逻辑结果数据，完整工作区重现仍使用 save_session。
 
 本版未开放主题、窗口几何或任意 QObject 方法调用；help 是服务端可调用能力的完整清单。MCP 不在本次范围内。
 
-`object_create` 支持 `type: "packetloss"`；`rule_update` 支持 `operation: "packetloss"` 及 `config.samplePeriod`（秒，正数为指定周期，0 保留兼容的一次估算入口）。对象设置中的“自动识别”为 GUI 显式操作，加载原始文件和恢复会话不触发识别或创建对象。派生输出仍可用既有 samples/statistics/rules 命令分析。
+`object_create` 支持 `type: "packetloss"`；`rule_update` 支持 `operation: "packetloss"` 及 `config.samplePeriod`（秒，正数为指定周期，0 保留兼容的一次估算入口）。新增派生规则窗口选择“丢包检测”后提供“自动识别”，为 GUI 显式操作，加载原始文件和恢复会话不触发识别或创建对象。派生输出仍可用既有 samples/statistics/rules 命令分析。
+
+`rule_update.config` 的 packetloss 规则另支持 `lossMode: "time" | "sequence" | "stride" | "rate"`，以及数值 `counterStep`、`expectedStride`、`counterModulus`、`counterRate`、`counterTolerance`。默认依次为 time、1、1、0、1、0；修改时未指定参数保留原值。按时间模式要求输入为累计实际接收帧数，频率单位为应收帧/秒；发送序号不可替代。具体公式、分母和回绕限制见对象与派生数据手册的 Y 计数检测。
+
+## 独立处理配置（会话 v15）
+
+`object_create` 保留原命令名，type=general/aircraft 创建对象，type=processing/packetloss 创建独立处理配置。`objects` 为兼容客户端继续列出这两类定义，可按 type 区分；规则所属的 object 参数现指处理配置 ID。新规则仅允许放在处理配置中，不能放入常规或飞机对象；规则输入支持 `raw:<信号行号>`，也可使用配置内来源 ID 或此前输出 ID。删除/重绑对象字段不改变处理结果，旧会话恢复时会拆分原对象规则。
