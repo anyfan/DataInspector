@@ -31,7 +31,7 @@ private slots:
     void schemaValidationAndAtomicSave();
     void qmlRestoresToolbarAndPlotStates();
     void viewTemplatesMatchRemapAndUndo();
-    void viewTemplateSchemaIsIndependentAndMigratesLegacy();
+    void viewTemplateSchemaIsIndependent();
 };
 
 void SessionTest::trajectorySelectionKeepsSingleState()
@@ -281,14 +281,20 @@ void SessionTest::schemaValidationAndAtomicSave()
     auto doc = documentFor("flight.csv");
     const QJsonObject valid = sessionToJson(doc);
     QVector<QJsonObject> invalid;
-    auto object = valid; object["version"] = 99; invalid.append(object);
-    object = valid; object["xRange"] = QJsonArray{2, 1}; invalid.append(object);
+    for (int version = 0; version < SessionDocument::version; ++version) {
+        auto old = valid; old["version"] = version; invalid.append(old);
+    }
+    for (const auto &version : {QJsonValue(99), QJsonValue(18.5), QJsonValue("18"), QJsonValue()}) {
+        auto wrong = valid; wrong["version"] = version; invalid.append(wrong);
+    }
+    auto object = valid; object["xRange"] = QJsonArray{2, 1}; invalid.append(object);
     object = valid; auto plots = object["plots"].toArray(); auto plot = plots[0].toObject();
     plot["signals"] = QJsonArray{99}; plots[0] = plot; object["plots"] = plots; invalid.append(object);
     object = valid; auto series = object["signals"].toArray(); series.append(series[0]); object["signals"] = series; invalid.append(object);
     for (const auto &json : invalid) {
-        SessionDocument parsed;
+        SessionDocument parsed = doc;
         QVERIFY(!sessionFromJson(json, &parsed, &error)); QVERIFY(!error.isEmpty());
+        QCOMPARE(sessionToJson(parsed), valid);
     }
     writeFile(path, "original");
     doc.cursor.x1 = std::numeric_limits<double>::infinity();
@@ -600,7 +606,7 @@ void SessionTest::viewTemplatesMatchRemapAndUndo()
     QVERIFY(!writeViewTemplate(view, doc, &error));
     QVERIFY(original.open(QIODevice::ReadOnly)); QCOMPARE(original.readAll(), bytes);
 }
-void SessionTest::viewTemplateSchemaIsIndependentAndMigratesLegacy()
+void SessionTest::viewTemplateSchemaIsIndependent()
 {
     auto session = documentFor("D:/private/flight/old.csv");
     session.series[0].timeOffset = 123;
@@ -609,8 +615,10 @@ void SessionTest::viewTemplateSchemaIsIndependentAndMigratesLegacy()
     const auto view = viewTemplateFromSession(session);
     const auto json = viewTemplateToJson(view);
     const auto bytes = QJsonDocument(json).toJson();
-    QCOMPARE(json["version"].toInt(), 2);
+    QCOMPARE(json["version"].toInt(), 3);
     QCOMPARE(json["signals"].toArray().size(), 1);
+    const auto trajectory = json["view"].toObject()["plots"].toArray()[0].toObject()["trajectory"].toObject();
+    QVERIFY(!trajectory.contains("axes")); QVERIFY(!trajectory.contains("geographic"));
     QVERIFY(!bytes.contains("D:/private"));
     QVERIFY(!bytes.contains("timeOffset")); QVERIFY(!bytes.contains("Unused"));
     QVERIFY(!json["view"].toObject().contains("files"));
@@ -620,9 +628,11 @@ void SessionTest::viewTemplateSchemaIsIndependentAndMigratesLegacy()
     QVERIFY2(viewTemplateFromJson(json, &restored, &error), qPrintable(error));
     QCOMPARE(restored.series[0].sourceName, QString("old.csv"));
     const QJsonObject legacy{{"format", "DataInspectorViewTemplate"}, {"version", 1}, {"view", sessionToJson(session)}};
-    QVERIFY2(viewTemplateFromJson(legacy, &restored, &error), qPrintable(error));
+    QVERIFY(!viewTemplateFromJson(legacy, &restored, &error));
     QCOMPARE(viewTemplateToJson(restored), json);
-    auto wrong = json; wrong["files"] = QJsonArray{};
+    auto wrong = json; wrong["version"] = 2;
+    QVERIFY(!viewTemplateFromJson(wrong, &restored, &error));
+    wrong = json; wrong["files"] = QJsonArray{};
     QVERIFY(!viewTemplateFromJson(wrong, &restored, &error));
     wrong = json; auto signalRows = wrong["signals"].toArray(); signalRows.append(signalRows.first()); wrong["signals"] = signalRows;
     QVERIFY(!viewTemplateFromJson(wrong, &restored, &error));
@@ -638,10 +648,12 @@ void SessionTest::viewTemplateSchemaIsIndependentAndMigratesLegacy()
     QTemporaryDir dir;
     const auto path = dir.filePath("legacy.diview");
     writeFile(path, QJsonDocument(legacy).toJson());
-    QVERIFY(readViewTemplate(path, &restored, &error));
+    QVERIFY(!readViewTemplate(path, &restored, &error));
+    QFile unchanged(path); QVERIFY(unchanged.open(QIODevice::ReadOnly));
+    QCOMPARE(QJsonDocument::fromJson(unchanged.readAll()).object(), legacy); unchanged.close();
     QVERIFY(writeViewTemplate(path, restored, &error));
     QFile updated(path); QVERIFY(updated.open(QIODevice::ReadOnly));
-    QCOMPARE(QJsonDocument::fromJson(updated.readAll()).object()["version"].toInt(), 2);
+    QCOMPARE(QJsonDocument::fromJson(updated.readAll()).object()["version"].toInt(), 3);
 }
 QTEST_MAIN(SessionTest)
 #include "session_test.moc"

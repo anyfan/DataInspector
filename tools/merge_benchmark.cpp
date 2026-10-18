@@ -1,5 +1,6 @@
 #include "io/dataloadworker.h"
 #include "models/objectdefinition.h"
+#include "../tests/support/merge_reference.h"
 #include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QCryptographicHash>
@@ -48,7 +49,7 @@ int main(int argc, char **argv)
         rule.outputs.append({rule.id + "out", rule.name, output++}); object.rules.append(rule); objects.append(object);
     }
     const auto before = memory(); const auto snapshot = store.snapshot(ids); std::atomic_bool cancelled{false};
-    QElapsedTimer timer; timer.start(); const auto result = evaluateObjects(objects, snapshot, cancelled, 0, nullptr, shared); const qint64 elapsed = timer.elapsed();
+    QElapsedTimer timer; timer.start(); const auto result = (shared ? evaluateObjects(objects, snapshot, cancelled) : evaluateMergeReference(objects, snapshot, cancelled)); const qint64 elapsed = timer.elapsed();
     const auto after = memory(); QCryptographicHash hash(QCryptographicHash::Sha256); double samples = 0;
     for (const auto &series : result.series) {
         samples += series->sampleCount(); hash.addData(QByteArrayView(reinterpret_cast<const char *>(series->time.constData()), series->time.size() * sizeof(double)));

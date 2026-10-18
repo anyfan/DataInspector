@@ -3,7 +3,7 @@
 #include <cmath>
 
 std::shared_ptr<const MergeTimelineCache::Timeline> MergeTimelineCache::get(
-    const QVector<PlotSeriesDataPtr> &inputs, const std::atomic_bool &cancelled, QString *error, bool reuse)
+    const QVector<PlotSeriesDataPtr> &inputs, const std::atomic_bool &cancelled, QString *error)
 {
     Key key;
     qsizetype count = 0;
@@ -13,10 +13,8 @@ std::shared_ptr<const MergeTimelineCache::Timeline> MergeTimelineCache::get(
             : static_cast<const void *>(s->points.constData())), s->sampleCount(), s->timeOffset, !s->points.isEmpty());
         count += s->sampleCount();
     }
-    if (reuse) {
-        const auto it = m_cache.find(key);
-        if (it != m_cache.end()) { ++hits; return it->second; }
-    }
+    const auto it = m_cache.find(key);
+    if (it != m_cache.end()) { ++hits; return it->second; }
     auto timeline = std::make_shared<Timeline>(); timeline->order.reserve(count);
     for (int source = 0; source < inputs.size(); ++source)
         for (qsizetype index = 0; index < inputs[source]->sampleCount(); ++index) {
@@ -36,6 +34,6 @@ std::shared_ptr<const MergeTimelineCache::Timeline> MergeTimelineCache::get(
     timeline->starts.append(count); ++builds;
     const qsizetype cost = timeline->order.capacity() * qsizetype(sizeof(Entry))
         + timeline->time.capacity() * qsizetype(sizeof(double)) + timeline->starts.capacity() * qsizetype(sizeof(qsizetype));
-    if (reuse && cost <= 64 * 1024 * 1024 - bytes) { m_cache.emplace(std::move(key), timeline); bytes += cost; }
+    if (cost <= 64 * 1024 * 1024 - bytes) { m_cache.emplace(std::move(key), timeline); bytes += cost; }
     return timeline;
 }

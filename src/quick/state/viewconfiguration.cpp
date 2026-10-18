@@ -42,7 +42,6 @@ bool readTrack(const QJsonValue &value, int signalCount, SessionTrajectoryEntry 
     return true;
 }
 
-
 }
 QJsonObject viewConfigurationToJson(const ViewConfiguration &s)
 {
@@ -60,12 +59,10 @@ QJsonObject viewConfigurationToJson(const ViewConfiguration &s)
             {"yRange", QJsonArray{plot.yMinimum, plot.yMaximum}},
             {"normalizeY", plot.normalizeY}, {"lineWidth", plot.lineWidth},
             {"trajectory", QJsonObject{{"enabled", plot.trajectory.enabled},
-                {"geographic", plot.trajectory.activeEntry().geographic},
                 {"tracks", tracks}, {"active", plot.trajectory.active},
                 {"signals", available},
                 {"rotation", rotation}, {"viewScale", plot.trajectory.camera.viewScale},
                 {"panDepth", plot.trajectory.camera.panDepth},
-                {"axes", QJsonArray{plot.trajectory.activeEntry().axes[0], plot.trajectory.activeEntry().axes[1], plot.trajectory.activeEntry().axes[2]}},
                 {"camera", QJsonArray{plot.trajectory.camera.azimuth, plot.trajectory.camera.elevation,
                     plot.trajectory.camera.zoom, plot.trajectory.camera.panX, plot.trajectory.camera.panY}}}}});
     }
@@ -74,7 +71,7 @@ QJsonObject viewConfigurationToJson(const ViewConfiguration &s)
         {"xRange", QJsonArray{s.xMinimum, s.xMaximum}}};
 }
 bool viewConfigurationFromJson(const QJsonObject &root, int signalCount,
-    ViewConfiguration *view, QString *error, int version, const QVector<QColor> &legacyColors)
+    ViewConfiguration *view, QString *error)
 {
     auto fail = [&](const QString &field) { *error = QStringLiteral("视图配置无效：%1").arg(field); return false; };
     ViewConfiguration parsed;
@@ -104,82 +101,53 @@ bool viewConfigurationFromJson(const QJsonObject &root, int signalCount,
                 return fail("plots.signals");
             used.insert(signal); plot.seriesIds.append(signal);
         }
-        if (version >= 2) {
-            const auto trajectory = obj.value("trajectory").toObject();
-            if (version >= 6) {
-                const auto tracks = trajectory.value("tracks").toArray();
-                if (tracks.isEmpty() || tracks.size() > 64 || !integer(trajectory.value("active"), 0, tracks.size() - 1, &plot.trajectory.active)) return fail("trajectory.tracks/active");
-                plot.trajectory.tracks.clear(); QSet<QString> ids;
-                for (const auto &entry : tracks) {
-                    SessionTrajectoryEntry track;
-                    if (!readTrack(entry, signalCount, &track) || ids.contains(track.id)) return fail("trajectory.tracks[]");
-                    ids.insert(track.id); plot.trajectory.tracks.append(track);
-                }
+        const auto trajectory = obj.value("trajectory").toObject();
+        const auto tracks = trajectory.value("tracks").toArray();
+        if (tracks.isEmpty() || tracks.size() > 64 || !integer(trajectory.value("active"), 0, tracks.size() - 1, &plot.trajectory.active)) return fail("trajectory.tracks/active");
+        plot.trajectory.tracks.clear(); QSet<QString> ids;
+        for (const auto &entry : tracks) {
+            SessionTrajectoryEntry track;
+            if (!readTrack(entry, signalCount, &track) || ids.contains(track.id)) return fail("trajectory.tracks[]");
+            ids.insert(track.id); plot.trajectory.tracks.append(track);
+        }
 
-                const auto activeTrack = trackToJson(plot.trajectory.activeEntry());
-                if (trajectory.value("axes") != activeTrack.value("axes") || trajectory.value("geographic") != activeTrack.value("geographic")) return fail("trajectory.active fields");
-            }
-            const auto axes = trajectory.value("axes").toArray();
-            const auto camera = trajectory.value("camera").toArray();
-            if (!trajectory.value("enabled").isBool() || axes.size() != 3 || camera.size() != 5)
-                return fail("plots.trajectory");
-            plot.trajectory.enabled = trajectory.value("enabled").toBool();
-            if (version < 3) plot.trajectory.activeEntry().geographic = false;
-            if (version >= 3) {
-                if (!trajectory.value("geographic").isBool()) return fail("plots.trajectory.geographic");
-                plot.trajectory.activeEntry().geographic = trajectory.value("geographic").toBool();
-            }
-            for (int axis = 0; axis < 3; ++axis)
-                if (!integer(axes[axis], -1, signalCount - 1, &plot.trajectory.activeEntry().axes[axis]))
-                    return fail("plots.trajectory.axes");
-            if (version >= 5) {
-                if (!trajectory.value("signals").isArray() || trajectory.value("signals").toArray().size() > maxSignals)
-                    return fail("plots.trajectory.signals");
-                QSet<int> available;
-                for (const auto &entry : trajectory.value("signals").toArray()) {
-                    int id = -1;
-                    if (!integer(entry, 0, signalCount - 1, &id) || available.contains(id))
-                        return fail("plots.trajectory.signals");
-                    available.insert(id); plot.trajectory.signalIds.append(id);
-                }
-                for (int id : plot.trajectory.activeEntry().axes) if (id >= 0 && !available.contains(id))
-                    return fail("plots.trajectory.axes");
-                if (version >= 6) {
-                    std::optional<bool> geographic;
-                    for (const auto &track : plot.trajectory.entries()) {
-                        for (int id : track.axes) if (id >= 0 && !available.contains(id)) return fail("trajectory.tracks.axes");
-                        for (int id : track.attitude.sources) if (id >= 0 && !available.contains(id)) return fail("trajectory.attitude.sources");
-                        if (std::any_of(track.axes.cbegin(), track.axes.cend(), [](int id) { return id >= 0; })) {
-                            if (geographic && *geographic != track.geographic) return fail("trajectory.mixed coordinates");
-                            geographic = track.geographic;
-                        }
-                    }
-                }
-            } else {
-                for (int id : plot.trajectory.activeEntry().axes) if (id >= 0 && !plot.trajectory.signalIds.contains(id))
-                    plot.trajectory.signalIds.append(id);
-            }
-            auto &view = plot.trajectory.camera;
-            if (!number(camera[0], &view.azimuth) || !number(camera[1], &view.elevation)
-                || !number(camera[2], &view.zoom) || !number(camera[3], &view.panX)
-                || !number(camera[4], &view.panY) || !view.valid()) return fail("plots.trajectory.camera");
-            if (version >= 4) {
-                if (!trajectory.value("rotation").isArray()) return fail("plots.trajectory.rotation");
-                const auto rotation = trajectory.value("rotation").toArray();
-                if (!rotation.isEmpty() && rotation.size() != 4) return fail("plots.trajectory.rotation");
-                view.freeRotation = !rotation.isEmpty();
-                for (int i = 0; i < rotation.size(); ++i)
-                    if (!number(rotation[i], &view.rotation[i])) return fail("plots.trajectory.rotation");
-                if (!number(trajectory.value("viewScale"), &view.viewScale)
-                    || !number(trajectory.value("panDepth"), &view.panDepth) || !view.valid())
-                    return fail("plots.trajectory.camera");
+        if (trajectory.contains("axes") || trajectory.contains("geographic")) return fail("trajectory obsolete active fields");
+        const auto camera = trajectory.value("camera").toArray();
+        if (!trajectory.value("enabled").isBool() || camera.size() != 5)
+            return fail("plots.trajectory");
+        plot.trajectory.enabled = trajectory.value("enabled").toBool();
+        if (!trajectory.value("signals").isArray() || trajectory.value("signals").toArray().size() > maxSignals)
+            return fail("plots.trajectory.signals");
+        QSet<int> available;
+        for (const auto &entry : trajectory.value("signals").toArray()) {
+            int id = -1;
+            if (!integer(entry, 0, signalCount - 1, &id) || available.contains(id))
+                return fail("plots.trajectory.signals");
+            available.insert(id); plot.trajectory.signalIds.append(id);
+        }
+        std::optional<bool> geographic;
+        for (const auto &track : plot.trajectory.entries()) {
+            for (int id : track.axes) if (id >= 0 && !available.contains(id)) return fail("trajectory.tracks.axes");
+            for (int id : track.attitude.sources) if (id >= 0 && !available.contains(id)) return fail("trajectory.attitude.sources");
+            if (std::any_of(track.axes.cbegin(), track.axes.cend(), [](int id) { return id >= 0; })) {
+                if (geographic && *geographic != track.geographic) return fail("trajectory.mixed coordinates");
+                geographic = track.geographic;
             }
         }
-        if (version < 6) {
+        auto &view = plot.trajectory.camera;
+        if (!number(camera[0], &view.azimuth) || !number(camera[1], &view.elevation)
+            || !number(camera[2], &view.zoom) || !number(camera[3], &view.panX)
+            || !number(camera[4], &view.panY) || !view.valid()) return fail("plots.trajectory.camera");
+        if (!trajectory.value("rotation").isArray()) return fail("plots.trajectory.rotation");
+        const auto rotation = trajectory.value("rotation").toArray();
+        if (!rotation.isEmpty() && rotation.size() != 4) return fail("plots.trajectory.rotation");
+        view.freeRotation = !rotation.isEmpty();
+        for (int i = 0; i < rotation.size(); ++i)
+            if (!number(rotation[i], &view.rotation[i])) return fail("plots.trajectory.rotation");
+        if (!number(trajectory.value("viewScale"), &view.viewScale)
+            || !number(trajectory.value("panDepth"), &view.panDepth) || !view.valid())
+            return fail("plots.trajectory.camera");
 
-            // Legacy trajectory colour came from its first time source.
-            for (int id : plot.trajectory.activeEntry().axes) if (id >= 0) { plot.trajectory.activeEntry().color = legacyColors.value(id); break; }
-        }
         parsed.plots.append(plot);
     }
     *view = parsed;

@@ -76,7 +76,7 @@ public:
     QVariantList dataObjects() const;
     QVariantList objectConfigurations() const;
     QVariantList processingConfigurations() const;
-    Q_INVOKABLE void migrateObjectProcessing();
+    Q_INVOKABLE QVariantList processingRuleInputs(const QString &id, const QString &beforeRule = {}) const;
     int signalBrowserSection() const { return m_signalBrowserSection; }
     Q_INVOKABLE void setSignalBrowserSection(int section);
     Q_INVOKABLE bool identifyPacketLoss(const QString &objectId, const QString &rateMode = QStringLiteral("window"), double rateWindowSeconds = 1);
@@ -271,6 +271,7 @@ private:
     bool m_batchObjectChanges = false;
     bool m_logicalSignalView = false;
     int m_signalBrowserSection = -1; // Legacy/CLI combined view; GUI chooses raw or processing.
+    QVariantMap configurationToVariant(const DataObject &object, bool processing = false) const;
     bool normalizeProcessingInputs(DataObject &definition, ObjectRule &rule) const;
     bool m_cancelLoad = false;
     void refreshLogicalSignalView();

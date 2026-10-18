@@ -107,7 +107,6 @@ Rectangle {
     signal hideRequested()
     signal showRequested()
     Component.onCompleted: {
-        appController.migrateObjectProcessing()
         appController.setSignalBrowserSection(0)
     }
     function showSection(index: int): void { browserTabs.currentIndex = index }

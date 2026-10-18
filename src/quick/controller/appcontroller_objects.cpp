@@ -10,6 +10,13 @@
 
 namespace {
 QString newId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
+QSet<int> outputRows(const QVector<DataObject> &objects)
+{
+    QSet<int> rows;
+    for (const auto &object : objects) for (const auto &rule : object.rules)
+        for (const auto &output : rule.outputs) rows.insert(output.series);
+    return rows;
+}
 bool validName(const QString &name) { return !name.trimmed().isEmpty() && name.size() <= 256 && !name.contains(QChar::Null); }
 QString packetLossOutputName(const ObjectRule &rule) {
     return rule.name + (rule.rateMode == "count" ? QStringLiteral(".累计丢包数")
@@ -48,73 +55,44 @@ bool AppController::deriving() const { return bool(m_objectJob); }
 QVariantList AppController::objectConfigurations() const
 {
     QVariantList result;
-    for (const auto &value : dataObjects()) {
-        const auto type = value.toMap().value("type").toString();
-        if (type != "processing" && type != "packetloss") result.append(value);
-    }
+    for (const auto &object : m_objects)
+        if (!isProcessingConfiguration(object)) result.append(configurationToVariant(object));
     return result;
 }
 
 QVariantList AppController::processingConfigurations() const
 {
-    if (std::none_of(m_objects.cbegin(), m_objects.cend(), [](const DataObject &definition) {
-        return isProcessingConfiguration(definition);
-    })) return {};
-    QVariantList result, rawInputs;
-    QSet<int> derived;
-    for (const auto &definition : m_objects) for (const auto &rule : definition.rules)
-        for (const auto &output : rule.outputs) derived.insert(output.series);
-    for (int row = 0; row < signalCount(); ++row) if (!derived.contains(row))
-        rawInputs.append(QVariantMap{{"id", "raw:" + QString::number(row)},
-            {"name", m_signals->groupAt(row) + " / " + signalName(row)}});
-    for (const auto &value : dataObjects()) {
-        auto config = value.toMap();
-        if (config["type"] != "processing" && config["type"] != "packetloss") continue;
-        auto inputs = rawInputs;
-        QHash<QString, QString> rawIds;
-        for (const auto &field : config["fields"].toList()) {
-            const auto source = field.toMap();
-            const int row = source["series"].toInt();
-            rawIds.insert(source["id"].toString(), row >= 0 ? "raw:" + QString::number(row) : source["id"].toString());
-            if (row < 0) inputs.append(QVariantMap{{"id", source["id"]}, {"name", source["name"].toString() + QStringLiteral("（来源已移除）")}});
-        }
-        QVariantList rules;
-        for (const auto &value : config["rules"].toList()) {
-            auto rule = value.toMap();
-            QStringList ids;
-            for (const auto &id : rule["inputIds"].toStringList()) ids.append(rawIds.value(id, id));
-            rule["inputIds"] = ids;
-            rules.append(rule);
-            for (const auto &output : rule["outputs"].toList()) {
-                const auto item = output.toMap();
-                inputs.append(QVariantMap{{"id", item["id"]}, {"name", item["name"]}});
-            }
-        }
-        config["inputs"] = inputs;
-        config["rules"] = rules;
-        result.append(config);
-    }
+    QVariantList result;
+    for (const auto &object : m_objects)
+        if (isProcessingConfiguration(object)) result.append(configurationToVariant(object, true));
     return result;
 }
 
-void AppController::migrateObjectProcessing()
+QVariantList AppController::processingRuleInputs(const QString &id, const QString &beforeRule) const
 {
-    bool needed = false;
-    for (const auto &object : m_objects) needed |= !isProcessingConfiguration(object) && !object.rules.isEmpty();
-    if (!needed || m_loading || sessionInteractionBlocked()) return;
-    cancelObjectEvaluation();
-    detachObjectProcessing(m_objects);
-    for (const auto &config : m_objects) if (isProcessingConfiguration(config))
-        for (const auto &rule : config.rules) for (const auto &output : rule.outputs)
-            m_signals->setSignalGroup(output.series, objectOutputGroup(config));
-    m_objectEvaluationStates.clear();
-    markSessionModified();
-    scheduleObjectEvaluation();
+    const auto selected = std::find_if(m_objects.cbegin(), m_objects.cend(), [&](const DataObject &object) {
+        return object.id == id && isProcessingConfiguration(object);
+    });
+    if (selected == m_objects.cend()) return {};
+    if (!beforeRule.isEmpty() && std::none_of(selected->rules.cbegin(), selected->rules.cend(),
+        [&](const ObjectRule &rule) { return rule.id == beforeRule; })) return {};
+    QVariantList inputs;
+    const auto derived = outputRows(m_objects);
+    for (int row = 0; row < signalCount(); ++row) if (!derived.contains(row))
+        inputs.append(QVariantMap{{"id", "raw:" + QString::number(row)},
+            {"name", m_signals->groupAt(row) + " / " + signalName(row)}});
+    for (const auto &field : selected->fields) if (field.series < 0)
+        inputs.append(QVariantMap{{"id", field.id}, {"name", field.name + QStringLiteral("（来源已移除）")}});
+    for (const auto &rule : selected->rules) {
+        if (rule.id == beforeRule) break;
+        for (const auto &output : rule.outputs)
+            inputs.append(QVariantMap{{"id", output.id}, {"name", signalName(output.series)}});
+    }
+    return inputs;
 }
 
 bool AppController::normalizeProcessingInputs(DataObject &definition, ObjectRule &rule) const
 {
-    if (!isProcessingConfiguration(definition)) return true; // Legacy C++/CLI input ids.
     for (auto &input : rule.inputs) {
         if (!input.startsWith("raw:")) continue;
         bool ok = false;
@@ -279,56 +257,67 @@ QVariantList AppController::objectSourceOptions() const
 {
     QVariantList options;
     options.append(QVariantMap{{"id", -1}, {"name", QStringLiteral("未绑定")}});
-    for (int row = 0; row < signalCount(); ++row) if (!isObjectOutput(row))
+    const auto derived = outputRows(m_objects);
+    for (int row = 0; row < signalCount(); ++row) if (!derived.contains(row))
         options.append(QVariantMap{{"id", row}, {"name", m_signals->groupAt(row) + "/" + signalName(row)}});
     return options;
 }
 QVariantList AppController::dataObjects() const
 {
-    QVariantList objects;
-    for (const auto &object : m_objects) {
-        QVariantList fields, rules, inputs;
-        for (const auto &field : object.fields) {
-            const QVariantMap item{{"id", field.id}, {"name", field.name}, {"role", field.role},
-                {"fixed", object.type == "aircraft" && aircraftFieldRoles().contains(field.role)},
-                {"series", field.series}, {"source", field.series < 0 ? QStringLiteral("未绑定") : m_signals->groupAt(field.series) + " / " + signalName(field.series)}};
-            fields.append(item); inputs.append(QVariantMap{{"id", field.id}, {"name", field.name}});
-        }
-        for (const auto &rule : object.rules) {
-            QVariantList outputs; QStringList sources; bool hasSamples = false;
-            for (const auto &id : rule.inputs) for (const auto &v : inputs)
-                if (v.toMap().value("id").toString() == id) sources.append(v.toMap().value("name").toString());
-            for (const auto &output : rule.outputs) {
-                QStringList preview;
-                const auto snapshot = m_seriesStore->snapshot({output.series});
-                hasSamples |= !snapshot.series.isEmpty() && snapshot.series.first()->sampleCount() > 0;
-                if (!snapshot.series.isEmpty()) for (qsizetype i = 0; i < qMin(qsizetype(8), snapshot.series.first()->sampleCount()); ++i) {
-                    const auto sample = snapshot.series.first()->pointAt(i);
-                    preview.append(std::isfinite(sample.y()) ? QString::number(sample.y(), 'g', 8) : QStringLiteral("缺失"));
-                }
-                outputs.append(QVariantMap{{"id", output.id}, {"name", signalName(output.series)}, {"series", output.series},
-                    {"checked", plotSignalEnabled(activePlotIndex(), output.series)}, {"preview", preview.join(" / ")}});
-                inputs.append(QVariantMap{{"id", output.id}, {"name", signalName(output.series)}});
-            }
-            rules.append(QVariantMap{{"id", rule.id}, {"name", rule.name}, {"operation", rule.operation},
-                {"duplicateSamples", m_objectEvaluationStates.value(rule.id).duplicateSamples}, {"effectiveSamplePeriod", m_objectEvaluationStates.value(rule.id).samplePeriod}, {"inputIds", rule.inputs},
-                {"sources", sources.join("、")}, {"expression", rule.expression}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance},
-                {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
-                {"signedField", rule.signedField}, {"outputs", outputs}, {"error", m_objectErrors.value(rule.id)},
-                {"warning", hasSamples && !m_objectErrors.value(rule.id).isEmpty()},
-                {"state", deriving() ? "pending" : !hasSamples && !m_objectErrors.value(rule.id).isEmpty() ? "failed" : "succeeded"}});
-        }
-        objects.append(QVariantMap{{"id", object.id}, {"name", object.name}, {"type", object.type}, {"fields", fields}, {"rules", rules}, {"inputs", inputs},
-            {"geographic", object.geographic}, {"attitudeMode", object.attitude.mode}, {"radians", object.attitude.radians}, {"order", object.attitude.order},
-            {"scalarLast", object.attitude.scalarLast}, {"navigationToBody", object.attitude.navigationToBody}});
+    QVariantList result;
+    for (const auto &object : m_objects) result.append(configurationToVariant(object));
+    return result;
+}
+
+QVariantMap AppController::configurationToVariant(const DataObject &object, bool processing) const
+{
+    QVariantList fields, rules, inputs;
+    QHash<QString, QString> inputNames, inputIds;
+    for (const auto &field : object.fields) {
+        const QVariantMap item{{"id", field.id}, {"name", field.name}, {"role", field.role},
+            {"fixed", object.type == "aircraft" && aircraftFieldRoles().contains(field.role)},
+            {"series", field.series}, {"source", field.series < 0 ? QStringLiteral("未绑定") : m_signals->groupAt(field.series) + " / " + signalName(field.series)}};
+        inputNames.insert(field.id, field.name);
+        inputIds.insert(field.id, processing && field.series >= 0 ? "raw:" + QString::number(field.series) : field.id);
+        fields.append(item); if (!processing) inputs.append(QVariantMap{{"id", field.id}, {"name", field.name}});
     }
-    return objects;
+    for (const auto &rule : object.rules) {
+        QVariantList outputs; QStringList sources; bool hasSamples = false;
+        QStringList ids;
+        for (const auto &id : rule.inputs) {
+            if (inputNames.contains(id)) sources.append(inputNames.value(id));
+            ids.append(inputIds.value(id, id));
+        }
+        for (const auto &output : rule.outputs) {
+            QStringList preview;
+            const auto snapshot = m_seriesStore->snapshot({output.series});
+            hasSamples |= !snapshot.series.isEmpty() && snapshot.series.first()->sampleCount() > 0;
+            if (!snapshot.series.isEmpty()) for (qsizetype i = 0; i < qMin(qsizetype(8), snapshot.series.first()->sampleCount()); ++i) {
+                const auto sample = snapshot.series.first()->pointAt(i);
+                preview.append(std::isfinite(sample.y()) ? QString::number(sample.y(), 'g', 8) : QStringLiteral("缺失"));
+            }
+            outputs.append(QVariantMap{{"id", output.id}, {"name", signalName(output.series)}, {"series", output.series},
+                {"checked", plotSignalEnabled(activePlotIndex(), output.series)}, {"preview", preview.join(" / ")}});
+            inputNames.insert(output.id, signalName(output.series));
+            if (!processing) inputs.append(QVariantMap{{"id", output.id}, {"name", signalName(output.series)}});
+        }
+        rules.append(QVariantMap{{"id", rule.id}, {"name", rule.name}, {"operation", rule.operation},
+            {"duplicateSamples", m_objectEvaluationStates.value(rule.id).duplicateSamples}, {"effectiveSamplePeriod", m_objectEvaluationStates.value(rule.id).samplePeriod}, {"inputIds", ids},
+            {"sources", sources.join("、")}, {"expression", rule.expression}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance},
+            {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
+            {"signedField", rule.signedField}, {"outputs", outputs}, {"error", m_objectErrors.value(rule.id)},
+            {"warning", hasSamples && !m_objectErrors.value(rule.id).isEmpty()},
+            {"state", deriving() ? "pending" : !hasSamples && !m_objectErrors.value(rule.id).isEmpty() ? "failed" : "succeeded"}});
+    }
+    return QVariantMap{{"id", object.id}, {"name", object.name}, {"type", object.type}, {"fields", fields}, {"rules", rules}, {"inputs", processing ? QVariantList{} : inputs},
+            {"geographic", object.geographic}, {"attitudeMode", object.attitude.mode}, {"radians", object.attitude.radians}, {"order", object.attitude.order},
+            {"scalarLast", object.attitude.scalarLast}, {"navigationToBody", object.attitude.navigationToBody}};
 }
 
 QString AppController::addDataObject(const QString &type)
 {
     QSet<QString> names; for (const auto &object : m_objects) names.insert(object.name);
-    const auto pattern = type == "processing" || type == "packetloss" ? QStringLiteral("处理 %1")
+    const auto pattern = type == "processing" ? QStringLiteral("处理 %1")
         : type == "aircraft" ? QStringLiteral("飞机 %1") : QStringLiteral("对象 %1");
     int number = 1; while (names.contains(pattern.arg(number))) ++number;
     return createDataObject(pattern.arg(number), type);
@@ -336,9 +325,9 @@ QString AppController::addDataObject(const QString &type)
 QString AppController::createDataObject(const QString &name, const QString &type)
 {
     int sameKind = 0;
-    const bool processing = type == "processing" || type == "packetloss";
+    const bool processing = type == "processing";
     for (const auto &definition : m_objects) sameKind += isProcessingConfiguration(definition) == processing;
-    if (m_loading || m_exporting || sessionInteractionBlocked() || !validName(name) || sameKind >= 256 || !QStringList{"general", "aircraft", "packetloss", "processing"}.contains(type)) return {};
+    if (m_loading || m_exporting || sessionInteractionBlocked() || !validName(name) || sameKind >= 256 || !QStringList{"general", "aircraft", "processing"}.contains(type)) return {};
     DataObject object; object.id = newId(); object.name = name.trimmed(); object.type = type;
     if (type == "aircraft") ensureAircraftFields(object);
     m_objects.append(object);
@@ -346,10 +335,10 @@ QString AppController::createDataObject(const QString &name, const QString &type
 }
 bool AppController::setDataObjectType(const QString &id, const QString &type)
 {
-    if (m_loading || m_exporting || sessionInteractionBlocked() || !QStringList{"general", "aircraft", "packetloss", "processing"}.contains(type)) return false;
+    if (m_loading || m_exporting || sessionInteractionBlocked() || !QStringList{"general", "aircraft", "processing"}.contains(type)) return false;
     for (auto &object : m_objects) if (object.id == id) {
         if (object.type == type) return true;
-        if (isProcessingConfiguration(object) != (type == "processing" || type == "packetloss")) return false;
+        if (isProcessingConfiguration(object) != (type == "processing")) return false;
         if (type != "aircraft") for (const auto &state : m_trajectories) for (const auto &track : state.entries())
             if (track.objectId == id) { setStatus(QStringLiteral("请先解除该飞机对象的航迹绑定，再切换类型")); return false; }
         if (type == "aircraft" && !ensureAircraftFields(object)) { setStatus(QStringLiteral("字段数量已达上限")); return false; }
@@ -460,12 +449,10 @@ QString AppController::addObjectRule(const QString &objectId, const QVariantMap 
     if (!factorOk || !biasOk || !periodOk || !readCounterConfig(config, rule)) return {};
     if (rule.operation == "packetloss" && !config.contains("rateMode")) rule.rateMode = "window";
     const auto names = config.value("outputNames").toStringList();
-    // Internal duplication preserves both identities of legacy dual-output rules.
-    const bool legacyPair = rule.operation == "packetloss" && m_batchObjectChanges && names.size() == 2;
-    const int count = rule.operation == "bits" ? rule.bitCount : legacyPair ? 2 : 1;
+    const int count = rule.operation == "bits" ? rule.bitCount : 1;
     for (int k = 0; k < count; ++k) rule.outputs.append({newId(), names.value(k,
         rule.operation == "bits" ? rule.name + ".bit" + QString::number(rule.startBit + k)
-            : rule.operation == "packetloss" ? (legacyPair && k == 0 ? rule.name + QStringLiteral(".累计丢包数") : packetLossOutputName(rule)) : rule.name), signalCount() + k});
+            : rule.operation == "packetloss" ? packetLossOutputName(rule) : rule.name), signalCount() + k});
     bool found = false;
     for (auto &object : next) if (object.id == objectId && isProcessingConfiguration(object)) {
         if (!normalizeProcessingInputs(object, rule)) { setStatus(QStringLiteral("请选择有效的原始信号来源")); return {}; }
@@ -508,13 +495,10 @@ bool AppController::editObjectRule(const QString &objectId, const QString &ruleI
         rule.signedField = config.value("signedField", rule.signedField).toBool();
         rule.samplePeriod = config.value("samplePeriod", rule.samplePeriod).toDouble(&periodOk);
         if (!ok || !factorOk || !biasOk || !periodOk || !readCounterConfig(config, rule)) { setStatus(QStringLiteral("派生参数必须为合法数值")); return false; }
-        const int count = rule.operation == "bits" ? rule.bitCount : rule.operation == "packetloss" && previous.operation == "packetloss" ? previous.outputs.size() : 1;
+        const int count = rule.operation == "bits" ? rule.bitCount : 1;
         if (count != rule.outputs.size()) { setStatus(QStringLiteral("修改规则保留输出身份和数量；改变输出数量请新建规则")); return false; }
         if (rule.operation == "packetloss" && previous.operation == "packetloss") {
-            if (previous.outputs.size() == 2 && rule.rateMode == "count") {
-                setStatus(QStringLiteral("旧版双输出规则保留原输出；如需单独累计丢包数，请新建规则")); return false;
-            }
-            const int index = previous.outputs.size() == 2 ? 1 : 0;
+            const int index = 0;
             const auto oldName = previous.outputs[index].name;
             if (oldName == previous.name + ".丢包率(%)" || oldName == previous.name + ".累计丢包数" || oldName == previous.name + ".累计丢包率(%)" || oldName == previous.name + ".窗口丢包率(%)")
                 rule.outputs[index].name = packetLossOutputName(rule);

@@ -32,4 +32,4 @@ models/mergetimeline.* 在每次 evaluateObjects 内建立有界 64 MiB 缓存�
 
 merge_benchmark 以同一快照分别选择旧排序路径和共享路径，哈希全部输出时间和值。它是测量工具，不以绝对耗时作为 CTest 断言。此优化不涉及 Plot LOD、渲染锁或已撤回的冷 LOD 试验。
 
-逻辑视图通过 SignalModel 可逆来源掩码隐藏被成功 merge 替代的输入，不改 Store 行号。逻辑导出收集相同集合及来源清单，DataExportWorker 在同父目录临时文件夹写完全部文件后 rename 发布；目录存在则失败。会话仍 v11，任务、计划和显示掩码不写入会话。
+逻辑视图通过 SignalModel 可逆来源掩码隐藏被成功 merge 替代的输入，不改 Store 行号。逻辑导出收集相同集合及来源清单，DataExportWorker 在同父目录临时文件夹写完全部文件后 rename 发布；目录存在则失败。会话格式见[会话指南](../user-guide/session.md)；任务、计划和显示掩码不写入会话。

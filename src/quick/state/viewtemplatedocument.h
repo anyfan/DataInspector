@@ -11,7 +11,7 @@ struct ViewTemplateSignal {
 };
 // Independent of data paths, time offsets, object definitions and session version.
 struct ViewTemplateDocument : ViewConfiguration {
-    static constexpr int version = 2;
+    static constexpr int version = 3;
     QMap<int, ViewTemplateSignal> series;
 };
 ViewTemplateDocument viewTemplateFromSession(const SessionDocument &session);

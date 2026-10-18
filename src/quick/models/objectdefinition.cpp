@@ -10,7 +10,6 @@
 #include <functional>
 #include <QJsonObject>
 #include <algorithm>
-#include <QUuid>
 
 namespace {
 // A bounded arithmetic grammar, compiled once per rule. No script execution.
@@ -141,35 +140,6 @@ bool ensureAircraftFields(DataObject &object)
     });
     return true;
 }
-QHash<QString, QString> detachObjectProcessing(QVector<DataObject> &definitions)
-{
-    QHash<QString, QString> owners;
-    QVector<DataObject> processing;
-    for (auto &object : definitions) {
-        if (isProcessingConfiguration(object) || object.rules.isEmpty()) continue;
-        DataObject config;
-        config.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        config.name = object.name.left(250) + QStringLiteral(" 处理");
-        config.type = "processing";
-        QHash<QString, QString> inputs;
-        for (const auto &field : object.fields) {
-            auto source = field;
-            source.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            source.role = "scalar";
-            inputs.insert(field.id, source.id);
-            config.fields.append(source);
-        }
-        config.rules = std::move(object.rules);
-        object.rules.clear();
-        for (auto &rule : config.rules) for (auto &input : rule.inputs)
-            if (inputs.contains(input)) input = inputs.value(input);
-        owners.insert(object.id, config.id);
-        processing.append(config);
-    }
-    definitions.append(processing);
-    return owners;
-}
-
 bool validateObjects(const QVector<DataObject> &objects, int signalCount, QString *error)
 {
     auto fail = [&](const QString &why) { *error = why; return false; };
@@ -183,7 +153,7 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
     };
     auto nameValid = [](const QString &name) { return !name.trimmed().isEmpty() && name.size() <= 256 && !name.contains(QChar::Null); };
     for (const auto &object : objects) {
-        if (!identity(object.id) || !nameValid(object.name) || !QStringList{"general", "aircraft", "packetloss", "processing"}.contains(object.type) || object.fields.size() > 256 || object.rules.size() > 256)
+        if (!identity(object.id) || !nameValid(object.name) || !QStringList{"general", "aircraft", "processing"}.contains(object.type) || object.fields.size() > 256 || object.rules.size() > 256)
             return fail(QStringLiteral("对象身份、名称或数量无效"));
         QSet<QString> available, spatialRoles;
         for (const auto &field : object.fields) {
@@ -229,8 +199,6 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
                     || !std::isfinite(rule.counterRate) || rule.counterRate <= 0 || rule.counterRate > 4294967296.0
                     || !std::isfinite(rule.counterTolerance) || rule.counterTolerance < 0 || rule.counterTolerance > 4294967296.0)
                     return fail(QStringLiteral("计数检测模式、步长、抽样间隔、回绕模数、频率或容差无效"));
-                count = rule.outputs.size() == 2 ? 2 : 1;
-                if (count == 2 && rule.rateMode == "count") return fail(QStringLiteral("累计丢包数需使用单项输出规则"));
             } else if (rule.operation == "merge") {
                 if (rule.inputs.size() < 2 || QSet<QString>(rule.inputs.begin(), rule.inputs.end()).size() != rule.inputs.size())
                     return fail(QStringLiteral("时间合并需要至少两个不同输入"));
@@ -323,7 +291,7 @@ QSet<QString> invalidatedObjectRules(const QVector<DataObject> &objects,
 
 ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotSeriesSnapshot &snapshot,
                                  const std::atomic_bool &cancelled, qsizetype retainedValues,
-                                 const QSet<QString> *rulesToEvaluate, bool reuseMergeTimeline, std::atomic<int> *completedRules)
+                                 const QSet<QString> *rulesToEvaluate, std::atomic<int> *completedRules)
 {
     MergeTimelineCache mergeTimelines;
     ObjectEvaluation result; QHash<int, PlotSeriesDataPtr> sources;
@@ -371,7 +339,7 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                 outputs.append(output);
             }
             qsizetype invalid = 0;
-            if (error.isEmpty() && rule.operation == "merge" && reuseMergeTimeline) {
+            if (error.isEmpty() && rule.operation == "merge") {
                 const auto timeline = mergeTimelines.get(inputs, cancelled, &error);
                 if (cancelled.load()) return {};
                 if (timeline && error.isEmpty()) {
@@ -391,42 +359,11 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                     }
                 }
             }
-            if (error.isEmpty() && rule.operation == "merge" && !reuseMergeTimeline) {
-                QVector<QPointF> samples;
-                samples.reserve(count);
-                for (const auto &source : inputs) {
-                    for (qsizetype i = 0; i < source->sampleCount(); ++i) {
-                        if ((i & 4095) == 0 && cancelled.load()) return {};
-                        const auto point = source->pointAt(i);
-                        if (!std::isfinite(point.x())) { error = QStringLiteral("合并来源含无效时间戳"); break; }
-                        samples.append(point);
-                    }
-                    if (!error.isEmpty()) break;
-                }
-                if (error.isEmpty()) {
-                    std::sort(samples.begin(), samples.end(), [](const QPointF &a, const QPointF &b) { return a.x() < b.x(); });
-                    auto &output = *outputs.first();
-                    output.monotonicTime = true;
-                    for (qsizetype i = 0; i < samples.size(); ++i) {
-                        if ((i & 4095) == 0 && cancelled.load()) return {};
-                        const auto &point = samples[i];
-                        const double value = std::isfinite(point.y()) ? point.y() : qQNaN();
-                        if (!output.time.isEmpty() && output.time.last() == point.x()) {
-                            double &previous = output.values.last();
-                            if (std::isfinite(previous) && std::isfinite(value) && previous != value) {
-                                error = QStringLiteral("同一时间戳存在不同值，无法合并：%1").arg(point.x(), 0, 'g', 17); break;
-                            }
-                            if (!std::isfinite(previous)) previous = value;
-                        } else { output.time.append(point.x()); output.values.append(value); }
-                    }
-                }
-            }
             double samplePeriod = rule.samplePeriod;
             qsizetype duplicateSamples = 0;
             const auto writePacketLoss = [&](qsizetype index, double lost, double received) {
                 const double rate = lost + received > 0 ? 100.0 * lost / (lost + received) : 0;
-                if (outputs.size() == 2) { outputs[0]->values[index] = lost; outputs[1]->values[index] = rate; }
-                else outputs[0]->values[index] = rule.rateMode == "count" ? lost : rate;
+                outputs[0]->values[index] = rule.rateMode == "count" ? lost : rate;
             };
             if (error.isEmpty() && rule.operation == "packetloss" && rule.lossMode == "time") {
                 const auto &source = inputs.first();
@@ -542,7 +479,7 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                         if ((first & 4095) == 0 && cancelled.load()) return {};
                         const auto expired = countsAt(first++); lost -= expired.first; received -= expired.second;
                     }
-                    outputs[outputs.size() == 2 ? 1 : 0]->values[i] = lost + received > 0 ? 100.0 * lost / (lost + received) : 0;
+                    outputs[0]->values[i] = lost + received > 0 ? 100.0 * lost / (lost + received) : 0;
                 }
             }
 
@@ -616,7 +553,7 @@ QJsonArray objectsToJson(const QVector<DataObject> &objects)
     }
     return array;
 }
-bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error, int version)
+bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error)
 {
     auto fail = [&] { *error = QStringLiteral("对象定义格式无效"); return false; };
     auto integer = [](const QJsonValue &v, int *out) {
@@ -628,16 +565,12 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
         if (!v.isString() || v.toString().size() > 1024 || v.toString().contains(QChar::Null)) return false;
         *out = v.toString(); return true;
     };
-    if (!value.isArray() || value.toArray().size() > (version >= 15 ? 512 : 256)) return fail();
+    if (!value.isArray() || value.toArray().size() > 512) return fail();
     QVector<DataObject> parsed;
     for (const auto &v : value.toArray()) {
         if (!v.isObject()) return fail();
         const auto obj = v.toObject(); DataObject object;
-        if (version >= 8 || obj.contains("type")) {
-            if (!string(obj["type"], &object.type)) return fail();
-            if (object.type == "packetloss" && version < 13) return fail();
-            if (object.type == "processing" && version < 15) return fail();
-        }
+        if (!string(obj["type"], &object.type)) return fail();
         if (!string(obj["id"], &object.id) || !string(obj["name"], &object.name)
             || !obj["fields"].isArray() || obj["fields"].toArray().size() > 256
             || !obj["rules"].isArray() || obj["rules"].toArray().size() > 256) return fail();
@@ -647,27 +580,14 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
             if (!string(f["id"], &field.id) || !string(f["name"], &field.name) || !string(f["role"], &field.role) || !integer(f["series"], &field.series)) return fail();
             object.fields.append(field);
         }
-        if (version < 8 && !obj.contains("type"))
-            for (const auto &field : object.fields)
-                if (field.role == "latitude" || field.role == "longitude") object.type = "aircraft";
-        if (version >= 9) {
-            if (!obj["aircraft"].isObject()) return fail();
-            const auto settings = obj["aircraft"].toObject();
-            for (const auto &key : {"geographic", "radians", "scalarLast", "navigationToBody"}) if (!settings[key].isBool()) return fail();
-            if (!integer(settings["attitudeMode"], &object.attitude.mode) || object.attitude.mode < 0 || object.attitude.mode > 2
-                || !integer(settings["order"], &object.attitude.order) || object.attitude.order < 0 || object.attitude.order > 1) return fail();
-            object.geographic = settings["geographic"].toBool(); object.attitude.radians = settings["radians"].toBool();
-            object.attitude.scalarLast = settings["scalarLast"].toBool(); object.attitude.navigationToBody = settings["navigationToBody"].toBool();
-        } else {
-            object.attitude.mode = 1; // Preserve the pre-v9 aircraft default during migration.
-            for (auto &field : object.fields) if (object.type == "general" || field.role == "status") field.role = "scalar";
-            if (object.type == "aircraft" && !ensureAircraftFields(object)) return fail();
-        }
-        if (version < 10) {
-            for (auto &field : object.fields) if (field.role == "scalar")
-                for (const auto &role : aircraftFieldRoles()) if (field.id == object.id.left(80) + "-preset-" + role) field.role = role;
-            if (object.type == "aircraft" && !ensureAircraftFields(object)) return fail();
-        }
+        if (!obj["aircraft"].isObject()) return fail();
+        const auto settings = obj["aircraft"].toObject();
+        for (const auto &key : {"geographic", "radians", "scalarLast", "navigationToBody"}) if (!settings[key].isBool()) return fail();
+        if (!integer(settings["attitudeMode"], &object.attitude.mode) || object.attitude.mode < 0 || object.attitude.mode > 2
+            || !integer(settings["order"], &object.attitude.order) || object.attitude.order < 0 || object.attitude.order > 1) return fail();
+        object.geographic = settings["geographic"].toBool(); object.attitude.radians = settings["radians"].toBool();
+        object.attitude.scalarLast = settings["scalarLast"].toBool(); object.attitude.navigationToBody = settings["navigationToBody"].toBool();
+
         for (const auto &rv : obj["rules"].toArray()) {
             if (!rv.isObject()) return fail();
             const auto r = rv.toObject(); ObjectRule rule;
@@ -676,29 +596,22 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
                 || !r["outputs"].isArray() || r["outputs"].toArray().size() > 32
                 || !integer(r["wordBits"], &rule.wordBits) || !integer(r["startBit"], &rule.startBit) || !integer(r["bitCount"], &rule.bitCount)
                 || !r["signedField"].isBool() || !r["factor"].isDouble() || !r["bias"].isDouble()) return fail();
-            if (rule.operation == "merge" && version < 11) return fail();
-            if (rule.operation == "packetloss" && version < 12) return fail();
-            if (version >= 12) {
-                if (!r["samplePeriod"].isDouble() || !std::isfinite(r["samplePeriod"].toDouble()) || r["samplePeriod"].toDouble() < 0) return fail();
-                rule.samplePeriod = r["samplePeriod"].toDouble();
-            }
-            if (version >= 14) {
-                if (!string(r["lossMode"], &rule.lossMode)) return fail();
-                if (!r["counterStep"].isDouble()) return fail();
-                rule.counterStep = r["counterStep"].toDouble();
-                if (!r["expectedStride"].isDouble()) return fail();
-                rule.expectedStride = r["expectedStride"].toDouble();
-                if (!r["counterModulus"].isDouble()) return fail();
-                rule.counterModulus = r["counterModulus"].toDouble();
-                if (!r["counterRate"].isDouble()) return fail();
-                rule.counterRate = r["counterRate"].toDouble();
-                if (!r["counterTolerance"].isDouble()) return fail();
-                rule.counterTolerance = r["counterTolerance"].toDouble();
-            } else if (r.contains("lossMode") && r["lossMode"].toString() != "time") return fail();
-            if (version >= 16) {
-                if (!string(r["rateMode"], &rule.rateMode) || !r["rateWindowSeconds"].isDouble()) return fail();
-                rule.rateWindowSeconds = r["rateWindowSeconds"].toDouble();
-            } else if (r.contains("rateMode") && r["rateMode"].toString() != "cumulative") return fail();
+
+            if (!r["samplePeriod"].isDouble() || !std::isfinite(r["samplePeriod"].toDouble()) || r["samplePeriod"].toDouble() < 0) return fail();
+            rule.samplePeriod = r["samplePeriod"].toDouble();
+            if (!string(r["lossMode"], &rule.lossMode)) return fail();
+            if (!r["counterStep"].isDouble()) return fail();
+            rule.counterStep = r["counterStep"].toDouble();
+            if (!r["expectedStride"].isDouble()) return fail();
+            rule.expectedStride = r["expectedStride"].toDouble();
+            if (!r["counterModulus"].isDouble()) return fail();
+            rule.counterModulus = r["counterModulus"].toDouble();
+            if (!r["counterRate"].isDouble()) return fail();
+            rule.counterRate = r["counterRate"].toDouble();
+            if (!r["counterTolerance"].isDouble()) return fail();
+            rule.counterTolerance = r["counterTolerance"].toDouble();
+            if (!string(r["rateMode"], &rule.rateMode) || !r["rateWindowSeconds"].isDouble()) return fail();
+            rule.rateWindowSeconds = r["rateWindowSeconds"].toDouble();
             rule.signedField = r["signedField"].toBool(); rule.factor = r["factor"].toDouble(); rule.bias = r["bias"].toDouble();
             for (const auto &input : r["inputs"].toArray()) { QString id; if (!string(input, &id)) return fail(); rule.inputs.append(id); }
             for (const auto &ov : r["outputs"].toArray()) {
@@ -707,7 +620,7 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
                 if (!string(o["id"], &output.id) || !string(o["name"], &output.name) || !integer(o["series"], &output.series)) return fail();
                 rule.outputs.append(output);
             }
-            if (rule.operation == "packetloss" && version < 17 && (rule.outputs.size() != 2 || rule.rateMode == "count")) return fail();
+
             object.rules.append(rule);
         }
         parsed.append(object);

@@ -110,7 +110,7 @@ void AppController::scheduleObjectEvaluation()
     const auto objects = m_objects;
     const auto snapshot = m_seriesStore->snapshot(ids);
     QThreadPool::globalInstance()->start([job, objects, snapshot, retainedValues, dirty] {
-        job->result = evaluateObjects(objects, snapshot, job->cancelled, retainedValues, &dirty, true, &job->completed);
+        job->result = evaluateObjects(objects, snapshot, job->cancelled, retainedValues, &dirty, &job->completed);
         job->done.store(true, std::memory_order_release);
     });
     emit objectsChanged(); QTimer::singleShot(20, this, [this, job] { if (m_objectJob == job) pollObjectEvaluation(); });

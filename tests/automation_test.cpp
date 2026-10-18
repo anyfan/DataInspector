@@ -69,7 +69,7 @@ private slots:
         const auto conn = descriptor(path);
         QVERIFY(call(conn, "load", {{"path", csv.fileName()}})["ok"].toBool());
         QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 10000);
-        const auto object = controller.createDataObject("counter", "packetloss");
+        const auto object = controller.createDataObject("counter", "processing");
         const auto field = controller.addDataObjectField(object);
         QVERIFY(!controller.bindObjectField(object, field, "count", "scalar", 0).isEmpty());
         const auto rule = controller.addObjectRule(object, {{"name", "loss"}, {"operation", "packetloss"},

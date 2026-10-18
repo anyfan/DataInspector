@@ -131,3 +131,7 @@ DI_CONTROLLER_SOURCES 纳入 appcontroller_objectevaluation.cpp（规则调度�
 源码按 controller/io/models/state/items/render 子目录组织。CMake 共用源文件列表引用真实新路径；头文件搜索根仍为 src/quick，同目录包含本地文件名，跨目录显式使用模块路径，不增设旧路径转发头或依赖隐式搜索顺序。QML_FOREIGN 注册入口仍为 src/quick/qmltypes.h。
 
 自动化增强源文件 automation/{commandcatalog,automationtasks,automationcommands}、controller/appcontroller_automation.cpp 与 models/mergetimeline.* 纳入 DI_CONTROLLER_SOURCES。BUILD_TESTING 额外构建 merge_benchmark（不注册耗时 CTest），复用 di_app_core；Windows 链接系统 psapi 采集进程内存，无新增第三方依赖。
+
+## 配置查询与合并参考基准
+
+BUILD_TESTING=ON 额外构建 `configuration_benchmark`（tools/configuration_benchmark.cpp），链接 di_app_core，不注册默认 CTest。`merge_benchmark` 与 objectdata_test 的独立排序参考实现来自 tests/support/merge_reference.h；生产 evaluateObjects 没有参考模式参数，DataInspector 不包含该参考实现。运行及报告含义见[测试指南](testing.md)。

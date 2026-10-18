@@ -1,0 +1,39 @@
+{
+  "scope": "Synthetic configuration queries only; same current metadata serializer for both paths; eager all-candidate expansion vs summaries plus one active candidate query. Not a whole-application before/after benchmark.",
+  "toolchain": "Qt 6.8.3 LLVM-MinGW 17 Debug, Windows",
+  "reports": [
+    {
+      "build": "Debug",
+      "candidateAndSummaryEquality": true,
+      "configurations": 1,
+      "eagerCandidateEntries": 10001,
+      "eagerMedianMs": 18.9594,
+      "iterations": 15,
+      "lazyCandidateEntries": 10001,
+      "lazyMedianMs": 18.1225,
+      "rawSignals": 10000
+    },
+    {
+      "build": "Debug",
+      "candidateAndSummaryEquality": true,
+      "configurations": 16,
+      "eagerCandidateEntries": 160016,
+      "eagerMedianMs": 24.7876,
+      "iterations": 7,
+      "lazyCandidateEntries": 10001,
+      "lazyMedianMs": 19.745,
+      "rawSignals": 10000
+    },
+    {
+      "build": "Debug",
+      "candidateAndSummaryEquality": true,
+      "configurations": 64,
+      "eagerCandidateEntries": 640064,
+      "eagerMedianMs": 89.3774,
+      "iterations": 7,
+      "lazyCandidateEntries": 10001,
+      "lazyMedianMs": 60.5264,
+      "rawSignals": 10000
+    }
+  ]
+}

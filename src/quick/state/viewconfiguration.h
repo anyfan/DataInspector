@@ -52,6 +52,5 @@ struct ViewConfiguration
 };
 QJsonObject viewConfigurationToJson(const ViewConfiguration &view);
 bool viewConfigurationFromJson(const QJsonObject &json, int signalCount,
-    ViewConfiguration *view, QString *error, int legacyVersion = 6,
-    const QVector<QColor> &legacyColors = {});
+    ViewConfiguration *view, QString *error);
 QSet<int> referencedViewSignals(const ViewConfiguration &view);

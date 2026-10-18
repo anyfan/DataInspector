@@ -14,7 +14,7 @@
 
 const QVector<QColor> &AppController::signalPalette()
 {
-    // Keep the legacy SignalBrowser / SignalPropertiesDialog palette and order.
+    // Fixed import palette; preserve this order for consistent signal colours.
     static const QVector<QColor> colors{
         QColor("#0072bd"), QColor("#d95319"), QColor("#edb120"),
         QColor("#7e2f8e"), QColor("#77ac30"), QColor("#4dbeee"),

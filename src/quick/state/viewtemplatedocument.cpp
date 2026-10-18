@@ -23,7 +23,7 @@ bool viewKeys(const QJsonObject &view)
         const auto plot = value.toObject();
         if (!keys(plot, {"signals", "yRange", "normalizeY", "lineWidth", "trajectory"})) return false;
         const auto trajectory = plot.value("trajectory").toObject();
-        if (!keys(trajectory, {"enabled", "geographic", "tracks", "active", "signals", "rotation", "viewScale", "panDepth", "axes", "camera"})) return false;
+        if (!keys(trajectory, {"enabled", "tracks", "active", "signals", "rotation", "viewScale", "panDepth", "camera"})) return false;
         for (const auto &entry : trajectory.value("tracks").toArray()) {
             const auto track = entry.toObject();
             if (!keys(track, {"id", "objectId", "name", "visible", "geographic", "color", "width", "axes", "attitude"})
@@ -61,13 +61,7 @@ bool viewTemplateFromJson(const QJsonObject &root, ViewTemplateDocument *view, Q
 {
     auto fail = [&](const QString &field) { *error = QStringLiteral("视图模板格式无效：%1").arg(field); return false; };
     if (root.value("format") != QJsonValue("DataInspectorViewTemplate")) return fail("format");
-    if (root.value("version") == QJsonValue(1)) {
-        if (!keys(root, {"format", "version", "view"}) || !root.value("view").isObject()) return fail("v1");
-        SessionDocument legacy;
-        if (!sessionFromJson(root.value("view").toObject(), &legacy, error)) return false;
-        *view = viewTemplateFromSession(legacy);
-        return true;
-    }
+
     if (root.value("version") != QJsonValue(ViewTemplateDocument::version)
         || !keys(root, {"format", "version", "signals", "view"})
         || !root.value("signals").isArray() || root.value("signals").toArray().size() > 100000

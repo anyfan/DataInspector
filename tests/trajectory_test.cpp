@@ -74,7 +74,7 @@ private slots:
     void cursorUsesRawSamplesAndDoesNotCrossGaps();
     void mixedPlotsAndCursorAndUndo();
     void removalRemapsAxesAndPreservesMode();
-    void sessionRoundTripAndLegacyAndInvalidCamera();
+    void sessionRoundTripAndInvalidCamera();
     void qmlModeSwitchAndSignalDialog_data();
     void qmlModeSwitchAndSignalDialog();
     void latestBackgroundRequestWins();
@@ -868,7 +868,7 @@ void TrajectoryTest::removalRemapsAxesAndPreservesMode()
     QCOMPARE(c.trajectorySignalOptions(0).size(), 1);
     QVERIFY(c.saveSession(dir.filePath("empty.disession")));
 }
-void TrajectoryTest::sessionRoundTripAndLegacyAndInvalidCamera()
+void TrajectoryTest::sessionRoundTripAndInvalidCamera()
 {
     QTemporaryDir dir; csv(dir.filePath("xyz.csv"), "t,lat,lon,alt\n0,40,109,1000\n1,40.01,109.01,1100\n");
     AppController source; QVERIFY(source.loadCsv(dir.filePath("xyz.csv"))); QTRY_VERIFY(!source.loading());
@@ -887,23 +887,8 @@ void TrajectoryTest::sessionRoundTripAndLegacyAndInvalidCamera()
     QVERIFY(restored.trajectoryState(0)["geographic"].toBool());
     TrajectoryItem late; late.setWidth(320); late.setHeight(240); restored.attachTrajectory(&late, 0);
     QVERIFY(late.camera() == view); QTRY_VERIFY(!late.pending()); QVERIFY(late.error().isEmpty());
-    auto legacy = sessionToJson(document); legacy["version"] = 1;
-    auto plots = legacy["plots"].toArray(); auto plot = plots[0].toObject(); plot.remove("trajectory"); plots[0] = plot; legacy["plots"] = plots;
-    SessionDocument parsed; QVERIFY(sessionFromJson(legacy, &parsed, &error)); QVERIFY(!parsed.plots[0].trajectory.enabled);
-    auto v2 = sessionToJson(document); v2["version"] = 2;
-    auto v2plots = v2["plots"].toArray(); auto v2plot = v2plots[0].toObject();
-    auto v2trajectory = v2plot["trajectory"].toObject(); v2trajectory.remove("geographic");
-    v2plot["trajectory"] = v2trajectory; v2plots[0] = v2plot; v2["plots"] = v2plots;
-    QVERIFY(sessionFromJson(v2, &parsed, &error)); QVERIFY(!parsed.plots[0].trajectory.activeEntry().geographic);
-    auto v3 = sessionToJson(document); v3["version"] = 3;
-    QVERIFY(sessionFromJson(v3, &parsed, &error)); QVERIFY(!parsed.plots[0].trajectory.camera.freeRotation);
-    auto v4 = sessionToJson(document); v4["version"] = 4;
-    auto oldPlots = v4["plots"].toArray(); auto oldPlot = oldPlots[0].toObject();
-    auto oldTrajectory = oldPlot["trajectory"].toObject(); oldTrajectory.remove("signals");
-    oldPlot["trajectory"] = oldTrajectory; oldPlots[0] = oldPlot; v4["plots"] = oldPlots;
-    QVERIFY(sessionFromJson(v4, &parsed, &error)); QVERIFY(parsed.plots[0].trajectory.camera == view);
-    QCOMPARE(parsed.plots[0].trajectory.signalIds, (QVector<int>{0, 1, 2}));
-    auto invalid = sessionToJson(document); plots = invalid["plots"].toArray(); plot = plots[0].toObject();
+    SessionDocument parsed;
+    auto invalid = sessionToJson(document); auto plots = invalid["plots"].toArray(); auto plot = plots[0].toObject();
     auto trajectory = plot["trajectory"].toObject(); trajectory["camera"] = QJsonArray{0, 25, 0, 0, 0};
     plot["trajectory"] = trajectory; plots[0] = plot; invalid["plots"] = plots;
     QVERIFY(!sessionFromJson(invalid, &parsed, &error));
@@ -1392,12 +1377,6 @@ void TrajectoryTest::multiControllerSessionRemapAndExport()
     // A malformed restore never changes the active session.
     auto broken = base; broken["version"] = 99; csv(dir.filePath("broken.disession"), QJsonDocument(broken).toJson());
     QVERIFY(!restored.restoreSession(dir.filePath("broken.disession"))); QCOMPARE(restored.signalCount(), 6);
-    for (int version = 1; version <= 5; ++version) {
-        auto legacy = base; legacy["version"] = version; SessionDocument parsed;
-        QVERIFY2(sessionFromJson(legacy, &parsed, &error), qPrintable(error));
-        QCOMPARE(parsed.plots[0].trajectory.entries().size(), 1);
-        QCOMPARE(parsed.plots[0].trajectory.activeEntry().attitude.mode, 0);
-    }
 }
 void TrajectoryTest::multiTrajectoryCost()
 {

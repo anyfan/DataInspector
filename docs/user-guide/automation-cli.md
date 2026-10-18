@@ -155,12 +155,12 @@ template_save/template_read 保存或读取独立的 version=1 JSON；mapping_pr
 
 本版未开放主题、窗口几何或任意 QObject 方法调用；help 是服务端可调用能力的完整清单。MCP 不在本次范围内。
 
-`object_create` 支持 `type: "packetloss"`；`rule_update` 支持 `operation: "packetloss"` 及 `config.samplePeriod`（秒，正数为指定周期，0 保留兼容的一次估算入口）。新增派生规则窗口选择“丢包检测”后提供“自动识别”，为 GUI 显式操作，加载原始文件和恢复会话不触发识别或创建对象。派生输出仍可用既有 samples/statistics/rules 命令分析。
+`object_create` 使用 `type: "processing"` 创建处理配置；`rule_update` 支持 `operation: "packetloss"` 及 `config.samplePeriod`（秒，正数为指定周期，0 请求初次自动估算）。新增派生规则窗口选择“丢包检测”后提供“自动识别”，为 GUI 显式操作，加载原始文件和恢复会话不触发识别或创建对象。派生输出仍可用既有 samples/statistics/rules 命令分析。
 
 `rule_update.config` 的 packetloss 规则另支持 `lossMode: "time" | "sequence" | "stride" | "rate"`，以及数值 `counterStep`、`expectedStride`、`counterModulus`、`counterRate`、`counterTolerance`。默认依次为 time、1、1、0、1、0；修改时未指定参数保留原值。按时间模式要求输入为累计实际接收帧数，频率单位为应收帧/秒；发送序号不可替代。具体公式、分母和回绕限制见对象与派生数据手册的 Y 计数检测。
 
-## 独立处理配置（会话 v15）
+## 独立处理配置
 
-`object_create` 保留原命令名，type=general/aircraft 创建对象，type=processing/packetloss 创建独立处理配置。`objects` 为兼容客户端继续列出这两类定义，可按 type 区分；规则所属的 object 参数现指处理配置 ID。新规则仅允许放在处理配置中，不能放入常规或飞机对象；规则输入支持 `raw:<信号行号>`，也可使用配置内来源 ID 或此前输出 ID。删除/重绑对象字段不改变处理结果，旧会话恢复时会拆分原对象规则。
+`object_create` 保留原命令名，type=general/aircraft 创建对象，type=processing 创建独立处理配置。`objects` 列出这两类定义，可按 type 区分；规则所属的 object 参数现指处理配置 ID。新规则仅允许放在处理配置中，不能放入常规或飞机对象；规则输入支持 `raw:<信号行号>`，也可使用配置内来源 ID 或此前输出 ID。删除/重绑对象字段不改变处理结果。会话只接受当前 v18，不迁移旧对象规则。
 
-丢包规则的 `rule_update.config` 另支持 `rateMode: "count" | "cumulative" | "window"` 及 `rateWindowSeconds`（有限正数秒，默认 1）。新规则默认 window，仅生成所选的一条输出；count 为累计帧数，另两项为对应范围的百分比。模式及时长写入 v17 会话，旧双输出会话保留原有结果；新单项规则修改保留输出身份和样式。
+丢包规则的 `rule_update.config` 另支持 `rateMode: "count" | "cumulative" | "window"` 及 `rateWindowSeconds`（有限正数秒，默认 1）。新规则默认 window，仅生成所选的一条输出；count 为累计帧数，另两项为对应范围的百分比。模式及时长写入 v18 会话；仅允许单输出规则，修改指标保留输出身份和样式。旧 packetloss 配置类型及双输出定义拒绝提交。

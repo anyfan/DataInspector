@@ -32,21 +32,9 @@ ctest --test-dir build_qt6-debug --output-on-failure
 
 ## CTest 套件
 
-`objectdata_test::independentProcessingAndLegacyMigration` 验证无对象的处理配置、直接原始输入、下游依赖、对象重绑/复制/删除不影响处理、处理复制与删除、栏目原始/派生过滤、v15 严格校验、v14 实际会话恢复迁移和文件移除清理。对象管理 QML 回归分别操作对象字段编辑器与处理规则编辑器，验证独立类型、对象分页列表/搜索/新建/鼠标选择、飞机行真实鼠标勾选航迹/样式弹窗/隐藏与重显保留颜色线宽、切回信号栏保留对象编辑状态、规则分页及丢包检测。规则内嵌编辑回归验证 Pane 无模态属性、实际鼠标勾选及点击信号名称替换 X、拒绝自身输出、应用前不改变规则/绘图绑定、返回曲线后保留草稿，以及隐藏编辑页期间删除来源后拒绝过期提交。
-
-`objectdata_test` 验证拆位/符号位段、表达式与时间基、对象归属和会话校验、来源重新绑定/移除、后台结果、保存恢复、阶梯短脉冲和对象管理 QML（选中名称可见、信号树绑定、自动命名、真实鼠标双击重命名、固定飞机参数保护与坐标/姿态配置）。设置 DI_OBJECT_UI_CAPTURE_DIR 可输出浅色、深色、飞机页面的离屏截图；截图需与所用 Scene Graph 后端一同记录。
-
-`objectdata_test::ruleInputsQml` 分别加载源码和资源 Main.qml，通过窗口鼠标事件验证所有操作共用输入槽、X/Y/Z 精确拖入、Esc 取消、选中 Y 后点击树绑定、三轴与公式缺项拒绝提交、此前结果允许拖入及自身输出拒绝绑定、合并新增/去重/替换/移除。计算检查三轴 3/4/12 得到 13，公式 x+z 得到 15，且编辑和拖拽不改变绘图绑定。QML 资源路径回归不等同真实 GPU 验收。
-
-该回归同时验证“规则1/规则2”默认命名、取消不占编号和切换类型保留手动名称。`ruleEditorLargeSignalNavigation` 用 10000 路单点合成信号记录类型切换、输入查询及来源定位耗时，并断言重复定位已可见输入不重置信号树；耗时仅作诊断，不设机器相关阈值。`signalselection_test::revealingVisibleSignalPreservesRows` 验证已可见行和持久索引保留，折叠或搜索后仍能正常定位展开。
-
-新增输入不得默认绑定首个来源：ruleInputsQml 每次新建都检查 X/Y/Z 为空，随后显式选取测试来源。大信号回归通过真实窗口鼠标事件先点击 Y/Z，再循环 X/Y/Z：空槽用选择按钮，绑定分散来源后用变量标签，并检查绑定、搜索、滚动不变且无模型重置；这与只调用 browseRuleSource 或切换规则类型的检查不同。
-
-ruleInputsQml 还单击各输入槽的四周边缘及上下留白，即刻检查目标变量，防止只有文字/按钮的小区域可点击。`trajectory_test::ruleEditorRealDataFrames` 为可选实际文件诊断：设置 `DI_RULE_UI_INPUT` 为绝对数据路径；运行该用例会加载编译 QML，按应用相同的 4 倍 MSAA 检查真实窗口及 frameSwapped。未设置时跳过，不把 GPU/大文件检查加入常规必跑范围。`DI_RULE_UI_MANUAL_MS` 为大于零的手动操作时长（毫秒），记录点击释放、处理完成和下一显示帧延迟；手动模式需要用户实际可见的桌面，沙箱隔离桌面不能代替人工复现。连续 grabWindow 会干扰 D3D11 节奏，不能用逐点击截图所得等待时间归因应用卡顿。
-
 | 套件 | 覆盖范围 |
 | --- | --- |
-| `trajectory_test` | 时间基、缺失断线、空间简化误差/尖峰、百万点旋转成本、连续请求帧更新、投影比例/精度、经纬度投影及零定位只排除自适应、双参数航迹、屏幕方向旋转与画面中心、指针缩放（含连续放大至上限、超过四视口偏移和立即拖动）、四向平移、窗口事件路由、显示帧快照、控制器来源隔离及飞机对象绑定联动、小坐标轴左键旋转、原始读数、小子图布局、v1–v5 会话（含大平移往返）及源码/编译 QML 选择飞机对象、配置折叠、对象名称及来源刷新 |
+| `trajectory_test` | 时间基、缺失断线、空间简化误差/尖峰、百万点旋转成本、连续请求帧更新、投影比例/精度、经纬度投影及零定位只排除自适应、双参数航迹、屏幕方向旋转与画面中心、指针缩放（含连续放大至上限、超过四视口偏移和立即拖动）、四向平移、窗口事件路由、显示帧快照、控制器来源隔离及飞机对象绑定联动、小坐标轴左键旋转、原始读数、小子图布局、当前会话（含大平移往返）及源码/编译 QML 选择飞机对象、配置折叠、对象名称及来源刷新 |
 | `trajectory_raster_test` | D3D11 等轴测/俯视/自由旋转轨迹像素与视角变化（GPU） |
 | `rendercore_test` | LOD 构建、极值索引、范围查询、几何生成、浮点桶边界 |
 | `plotitem_lod_test` | PlotItem LOD 调度、视窗投影 |
@@ -70,92 +58,43 @@ automation_cli_test 另验证 clear 删除全部对象/数据；merge_signals �
 
 `appcontroller_test::signalTreeDragAddsToTargetPlot` 使用实际窗口鼠标按下、移动和松开验证信号树拖拽：搜索后的源行映射、目标边框高亮、跨图添加保留原图绑定、重复添加、图外取消及无效索引。信号名称需要拖动超过 8 个逻辑像素；测试从名称区域开始，不触发复选框或线型编辑。
 
-## GPU 测试
+## 核心回归范围
 
-航迹旋转交互回归额外覆盖：四个预设视角下直接抓取 X/Y/Z 环（含侧视退化投影），固定轴方向不变，平移/缩放/深度偏移后投影支点保持子图中心，拖回起点恢复方向与平移；环的命中容差、固定屏幕尺寸、小视口裁剪及连续两圈角度；源码及编译 QML 通过窗口事件验证直接拖环、环内自由旋转、环外平移、Shift 平移、Alt 自由旋转和中心参考显隐。二维无操纵器且中键不改变相机。`trajectory_raster_test` 另验证硬件绘制的环高亮增粗和实际拖环后的视角变化。
+- `session_test`：当前 v18 往返；全部旧版本/非法版本拒绝；失败保留、原子保存、重定位、修改状态、退出确认；独立 v3 模板匹配/撤销/严格引用校验，拒绝旧 v1/v2。
+- `objectdata_test`：独立处理与对象生命周期隔离、增量依赖/取消/预算、来源移除闭包及图例清理；规则参数严格校验；X/Y 丢包三指标、窗口边界/回绕/歧义、单输出及双输出拒绝；规则 Pane 的真实鼠标绑定、草稿与大信号树导航。
+- `trajectory_test`：多航迹、公共原点/缓存、位置/姿态时间基、相机与操纵环、来源重映射和当前格式往返；源码及编译 QML 两种加载方式。
+- `automation_test` / `automation_cli_test`：协议和任务状态、幂等/取消、飞机映射、合并冲突的整批拒绝、逻辑导出、实际程序与标准库 CLI 集成。
+- `appcontroller_test` / `signalselection_test`：游标原始吸附/同步、实际跨图拖拽、树展开/搜索/定位与来源隔离。
 
-角落合并控件额外验证：默认收起、靠近展开、拖动离开仍展开、松开后自动收起、resize 后清除旧悬停状态、普通画布中央左键平移。GPU 检查环收起后红色覆盖明显减少，且画面中央区域像素保持完全相同，证明控件不覆盖中央航迹。
+具体断言以 `tests/` 内测试函数为准。新增行为更新对应套件，不将每次开发记录追加为现行测试规范。`DI_OBJECT_UI_CAPTURE_DIR` 可输出对象页面离屏截图。
 
-旋转方向/读数回归：鼠标进入或稀疏事件跨过环中心不引入半圈；新旋转手势拒绝上一轮待显示帧；绝对 Rz·Ry·Rx 欧拉角在普通/±90° Y 姿态可重建相机方向，连续两次抓取、松开、适应视图不重置，正视 YZ 回到 NED 零姿态（北内/东右/地下），俯视为 Y=90°、侧视为 Z=90°，三轴单独正转读数为正；源码/编译 QML 读数跟随实际已显示帧。
+## GPU 与真实数据
 
-密集测试可追加 `--compressed`，将 Y 轴设为约 -8000–198000，使 GPS 毫秒曲线只有约 4 像素高；仍检查两种宽度、五档亚像素偏移下的上下沿一致性。
+GPU 光栅测试默认关闭，需要硬件 Scene Graph 后端；配置 `-DENABLE_GPU_TESTS=ON` 后构建并运行。离屏 software 测试不能替代此检查。渲染相关修改须按 `plotitem_raster_test` 参数选择阶跃、密集、压缩视窗、中间缩放或选中加粗场景；`trajectory_raster_test` 验证多航迹、姿态和旋转环像素行为。
 
-`plotitem_raster_test --dense` 检查 247511 点合成锯齿波；`--dense-csv path` 读取带表头的 time,value 两列 CSV，检查 3300–3900 秒恒定极值区间，适用于 `11040237.DAT.mat` 的 GPS 毫秒信号。CPU `denseEnvelopeOnlyAddsCoverage` 对振荡、阶跃、单调和孤立尖峰逐顶点验证原几何保留，同时检查 NaN 分段、虚线与放大禁用条件。
+百万/千万点、真实数据、SG 上传、GPU 帧率和 HiDPI 观感需独立验收，默认 CTest 不承诺这些结果。部署包还需干净 Windows 环境启动检查。
 
-`plotitem_raster_test --step-csv path` 可读取带表头的 time,signal1,signal2 三列 CSV，在 290–1010 秒视窗内验证两条信号最大跳变的连线覆盖；用于发动机负载测试的航向/俯仰回归。默认不带参数仍运行原有光栅覆盖测试。CPU 套件的 `lodGeometryPreservesStepConnections` 检查上升/下降阶跃在 LOD 桶边界附近的几何连续性。
+## 配置查询基准
 
-阶跃 GPU 检查同时按像素灰度积分测量竖线宽度：2 逻辑像素画笔允许不超过 `2×DPR+0.75` 物理像素的覆盖宽度，防止“连线还在但已加粗”的回归。`denseEnvelopeOnlyAddsCoverage` 还覆盖带微小交替抖动的阶跃，要求跨越阶跃的桶不生成包络，最终几何与普通折线路径一致。
-
-默认 offscreen 平台运行，不等同人工 GUI 验收。需要 GPU 回归时：
+`configuration_benchmark` 随 BUILD_TESTING 构建，不注册默认 CTest。合成原始信号和处理配置，在相同当前元数据序列化基础上比较全量候选展开与摘要加一个活动配置查询；先逐项核对全部配置摘要/候选一致，再交替顺序计时，预热一次，报告中位数与候选列表条目数。
 
 ```powershell
-cmake -S . -B build_gpu -DENABLE_GPU_TESTS=ON
+./build_qt6-debug/configuration_benchmark.exe -platform offscreen --signals 10000 --configs 16 --iterations 7 --output build_qt6-debug/configuration-query.json
 ```
 
-GPU 测试需要真实 Scene Graph 后端。
+数值只代表该合成配置查询，不包含 GPU、交互延迟或真实数据加载；候选条目数不等同进程内存。
 
-## 验证边界
+## 合并性能基准
 
-`appcontroller_test::aboutPageShowsBuildInfoAndReleaseNotes` 覆盖关于按钮打开/关闭、构建信息与离线更新记录显示、构建信息复制。
-
-受限环境若默认临时目录无法写入，可将 `TEMP`/`TMP` 指向构建目录下自行创建的 `test-temp` 后运行测试。Windows 上需要捕获 Qt 测试输出时可设置 `QT_FORCE_STDERR_LOGGING=1`。
-
-- 离屏 QML 加载测试能捕获绑定错误和类型错误，但不能验证帧率、字体渲染、HiDPI 观感。
-- 百万/千万点帧率基准需要专门测试数据，默认回归不跑。
-- 部署包需在干净 Windows 环境上人工启动确认无缺失 DLL。
-
-航迹默认绑定回归：新视图经纬度默认、按勾选顺序填空轴、三轴满后不覆盖、取消/再勾选补空轴、手动留空与模式往返保持、已有时间图来源自动填轴、子图隔离；源码/编译 QML 验证各角度数值始终使用对应轴色。
-
-## 多航迹与测量姿态回归
-
-trajectory_test 增加公共原点和范围、不同起点与采样率、错误/隐藏隔离、缓存复用和删除原点重建、活动列表管理、文件来源重映射、v1–v5 单航迹迁移、v6 列表/样式/姿态往返和严格拒绝、导出源列去重及失败恢复保留。姿态覆盖 NED/FRD 零位、三轴 ±90°、复合 Rz·Ry·Rx/Rx·Ry·Rz、度/弧度、wxyz/xyzw、正反变换、归一化四元数、缺口与独立采样时间差、相机不替代测量、固定像素大小。源码与编译 QML 通过管理控件添加、配置姿态、选择、隐藏和删除航迹。
-
-trajectory_raster_test 在原 CAD 环光栅用例后，验证两条不同起点路径的颜色覆盖、姿态开关的像素差异、实际航向变化和缺失姿态消除模型；Windows 使用 QSG_RHI_BACKEND=d3d11。独立窗口测试不等同人工全功能验收。
-
-multiTrajectoryCost 使用 8 条各 100000 点合成地理路径，记录准备和 20 次交互预览耗时，无固定帧率断言；不能沿用百万点单航迹结果承诺多航迹性能。原始 Store、路径缓存、级别索引、后台任务及 SG 上传都计入实际使用成本，仍需真实数据/硬件专项测试。
-
-姿态显示修复回归：源码/编译 QML 检查旋转顺序下拉两个可见选项均有文字、表单宽度不溢出、底部方向设置可滚动到达、重开恢复顶部；D3D11 对飞机实际像素差异测量逻辑尺寸不超过 42 像素并验证深色描边覆盖，继续检查测量航向变化和缺失隐藏。
-
-中间缩放回归：`plotitem_raster_test --dense --zoomed` 使用 1250–2700 秒视窗，追加 `--compressed` 检查共享 Y 轴。`--dense-csv path --zoomed` 用同样 1450 秒跨度的 3250–4700 秒视窗，在已知恒定极值的 3300–3900 秒区间检查；原始 GPS 数据约 2152.14 秒的真实高样本不作为幽灵凸点删除。CPU `denseOscillationAcrossBucketBoundaries` 检查单桶不足一周期时仍识别振荡，现有阶跃/抖动/NaN/虚线/放大回归继续保留。
-
-选中加粗回归：`plotitem_selected_dense_raster_test` 使用 `--dense --narrow --selected --stepped-millis`，模拟 40 ms 采样、100 ms 平台保持的毫秒锯齿波，在 2600–3100 秒范围检查选中后的四像素线宽。`--dense-csv hmillisec.csv --narrow --selected` 对用户 p3 H_milliSec 原始列运行同一检查；`--compressed` 可同时检查共享大范围 Y 轴。CPU `denseEnvelopeUsesEffectiveStrokeWidth` 覆盖多尺度候选及两档实际线宽，要求原折线顶点完整保留。
-
-## UI 配置复用回归
-
-飞机字段生命周期回归检查默认仅经纬高、按启用配置创建 XYZ/姿态字段、飞机→常规→飞机不增字段且名称/身份保留、常规副本恢复飞机、预置参数置顶及删除保护、关闭/重启配置复用已有字段、v10 常规预置角色会话往返。规则窗口检查 footer 只有两个按钮，避免标准按钮和自定义按钮同时出现。
-
-对象与航迹来源交互：`objectdata_test::objectManagerQml` 检查对象自动命名、真实双击重命名、切换对象后的信号树勾选隔离、真实鼠标拖到字段绑定（无需预选字段），以及展开的下拉选项在浅色/深色模式下可见。设置 `DI_OBJECT_UI_CAPTURE_DIR` 可保存离屏 software 截图。`trajectory_test::qmlModeSwitchAndSignalDialog` 在源码和编译 QML 下检查飞机对象选择、对象来源与名称更新、添加多对象航迹和样式配置。旧航迹直接来源 API 仍有控制器和内核覆盖，当前 UI 的位置及姿态来源统一通过对象编辑。
-
-`appcontroller_test::preciseCursorInputSnapsSynchronizesAndCancels` 检查原始样本吸附、ΔT、无效输入、真实双击示数/Enter/Esc 与视窗外定位。`session_test::viewTemplatesMatchRemapAndUndo` 检查换文件/换列序、仅匹配引用信号、重复/非整数映射拒绝、航迹映射、固定/自适应范围及一次撤销；现有 Main QML 用例检查匹配对话框的完成状态与应用。`trajectory_test::qmlModeSwitchAndSignalDialog` 在源码和 qmlcachegen 两种模式下检查配置折叠、画布尺寸、子图偏好隔离及游标输入。
-
-状态收敛回归：session_test::trajectorySelectionKeepsSingleState 检查活动/非活动航迹编辑、切换及 JSON 往返；objectdata_test::editsPreserveUnrelatedResultsAndMergePendingObjects 检查无关结果和错误保留、连续编辑取消后的对象合并重算；表达式用例检查保留值数组仍计入预算。plotitem_lod_test 检查取消在途 LOD 后继续原始样本吸附/读数，以及恢复曲线后的视窗几何。既有文件移除、派生输出删除和会话恢复用例覆盖统一引用重映射。
-规则依赖回归：objectdata_test::dependencyPlanPreservesIndependentBranches 覆盖同对象独立分支、下游传播、仅子规则参数失效、取消不安装状态、显示名称/画笔不重算及保留分支预算。session_test::viewTemplateSchemaIsIndependentAndMigratesLegacy 覆盖精简模板 v2、旧 v1 迁移、未引用来源剔除、重复/缺失引用和未知字段拒绝；现有模板匹配/撤销、会话迁移与实际 QML 鼠标事件用例验证拆分后的行为。
-
-## Agent 工作流与合并性能
-
-automation_cli_test 使用实际 exe 和标准库 CLI，覆盖任务真实失败、幂等请求与冲突、模板读写/歧义/单位、飞机批量绑定及姿态可见、逻辑导出包/目录碰撞、已有规则更新、冲突预览/执行/去重与协作取消加载。合成 XLSX 含正常片段和冲突片段，不依赖用户数据。objectManagerQml 验证 25 条规则的分页、搜索和状态筛选。mergeSharedTimelineMatchesLegacy 对非单调时间、同时间重复、缺失、冲突、偏移和取消比较旧路径与缓存路径，并验证时间数组共享。
-
-性能测量不注册进默认 CTest，需显式提供数据并串行运行，记录配置、结果哈希及内存；加载耗时与 evaluationMs 分开：
+`merge_benchmark` 不注册进默认 CTest，显式提供数据并串行比较：
 
 ```powershell
 ./build_qt6-debug/merge_benchmark.exe --input D:/data/log.mat --mode legacy --output ./build_qt6-debug/merge-old.json
 ./build_qt6-debug/merge_benchmark.exe --input D:/data/log.mat --mode shared --output ./build_qt6-debug/merge-new.json
 ```
 
-前后比较必须核对 rawSignals、mergeRules、outputSamples、errorCount 和 sha256；不能把某文件的耗时收益外推到无共享时间数组的数据。Windows peakWorkingSetBytes 为整个进程历史峰值，含加载阶段。
+核对 rawSignals、mergeRules、outputSamples、errorCount 和 sha256，再比较 evaluationMs；加载耗时单独报告。peakWorkingSetBytes 是进程历史峰值，包含加载。不能将共享时间轴收益外推到无共享时间数组的数据。
 
-`objectdata_test::packetLoss` 覆盖自动周期、时间偏移、缺失信号值、时间抖动、手动周期、单点、重复/倒退/无效时间、极端计数、取消及 schema 拒绝；`packetLossLifecycle` 验证编辑重算、输出身份、会话恢复和对象复制。`objectManagerQml` 通过真实 QML 对话框提交检测、检查周期数值预填及非法/有效手动周期。
+## 受限环境
 
-`identifyPacketLoss` 验证导入不创建对象、显式丢包检测对象、按时间基识别、跨文件隔离、重复识别与代表列复用、手动周期不覆盖、继续导入后主动补充、会话/复制保留类型、v12 拒绝新类型、超限整批拒绝、清空取消及单点修复。`objectManagerQml` 验证对象类型选择、“自动识别”按钮、重复点击和可编辑周期数值。导入、导出、航迹及旧会话测试恢复既有原始数据断言，不再为自动对象调整 fixture。
-
-`objectdata_test::removingFilesCleansDerivedSignalsAndLegends` 用同名不同路径的两个文件创建合并、丢包检测和多层下游，验证删除一个文件时独立分支/诊断、来源身份和周期配置保留，真实 PlotLegend 的 entryCount/visible 与 C++ 绑定同步清理；保存恢复不带失效输出，删除末个文件或取消在途计算后信号树、图例和 Store 保持为空。`controllerLifecycleAndRestore` 同步验证移除文件后派生输出数量为 0；手动解绑仍保留规则并可重新绑定恢复。
-
-`objectdata_test::packetLossCounters` 覆盖 Y 逐帧/固定抽样/按时间频率、重复值分母、非单位步长、正常与跨缺口回绕、半范围及多圈歧义、整数/越界/非法时间、超预期接收、容差和 v14 严格类型。packetLossLifecycle 验证计数参数保存恢复与复制；objectManagerQml 验证真实编辑器切换 Y 模式、参数提交及复制保留。
-
-受限 Windows 沙箱若 QTemporaryDir 能建目录但内部文件 open 失败，将当前测试进程的 TEMP/TMP 指向仓库可写的 build_qt6-debug/test-temp 后重跑；不需放宽生产代码文件权限。QtTest stdout 不可见时可用 `-o build_qt6-debug/result.txt,txt` 保存断言日志。
-
-`session_test::qmlRestoresToolbarAndPlotStates` 另覆盖最小化/隐藏/最大化时的退出确认、保存取消、重复退出不叠加、放弃后不被延迟激活重新打开。Windows 平台下创建另一个前台窗口并检查退出请求后主窗口激活；该用例使用非原生文件选择器，避免本机 shell 插件影响窗口状态回归。
-
-`objectdata_test::packetLossRateModes` 覆盖累计/窗口百分比、X 和全部 Y 模式、左开右闭边界、重复与回绕、窗口参数拒绝、旧 v15 默认与 v16 严格字段、模式编辑身份/样式保留、保存恢复和自动识别按模式/窗口去重。QML 交互回归验证统计方式选择及窗口时长校验。
-
-丢包输出三选一补充覆盖：新单输出在 count/cumulative/window 的数值、输出数量与默认 window；v17 单项恢复；旧双输出恢复/复制；真实 QML 三选项编辑和窗口参数校验；文件删除后单输出图例及行号重映射。
+若 QTemporaryDir 能创建目录但文件 open 失败，先在构建目录创建 test-temp，将当前进程 TEMP/TMP 指向该绝对路径；不要放宽生产代码权限。QtTest 输出不可见时使用 `-o 路径,txt`，或设置 QT_FORCE_STDERR_LOGGING=1。

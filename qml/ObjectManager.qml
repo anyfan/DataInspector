@@ -479,7 +479,7 @@ Pane {
                         }
                     }
                     ColumnLayout {
-                        Button { text: "新增派生规则…"; objectName: "addObjectRuleButton"; enabled: !!manager.selected && manager.selected.inputs.length > 0 && !manager.blocked; onClicked: manager.editRule(null) }
+                        Button { text: "新增派生规则…"; objectName: "addObjectRuleButton"; enabled: !!manager.selected && manager.appController.signalCount > 0 && !manager.blocked; onClicked: manager.editRule(null) }
                         RowLayout {
                             Layout.fillWidth: true
                             TextField { id: ruleSearch; objectName: "ruleSearch"; placeholderText: "搜索规则或来源…"; Layout.fillWidth: true; Layout.minimumWidth: 0; onTextChanged: manager.rulePage = 0 }
@@ -637,25 +637,8 @@ Pane {
         readonly property string operation: String(operationCombo.currentValue)
         onOperationChanged: { manager.selectedRuleInput = operation === "merge" ? "merge" : "x"; estimatePeriod() }
         readonly property var inputOptions: {
-            if (!manager.selected) return []
-            if (ruleId.length === 0) return manager.selected.inputs
-            const options = []
-            if (manager.processingMode) {
-                const outputIds = new Set()
-                for (const rule of manager.selected.rules)
-                    for (const output of rule.outputs) outputIds.add(output.id)
-                for (const input of manager.selected.inputs)
-                    if (!outputIds.has(input.id)) options.push(input)
-            } else {
-                const fields = manager.selected.fields
-                for (let i = 0; i < fields.length; ++i) options.push({id: fields[i].id, name: fields[i].name})
-            }
-            const rules = manager.selected.rules
-            for (let i = 0; i < rules.length; ++i) {
-                if (rules[i].id === ruleId) break
-                for (let j = 0; j < rules[i].outputs.length; ++j) options.push({id: rules[i].outputs[j].id, name: rules[i].outputs[j].name})
-            }
-            return options
+            const selection = manager.selected
+            return editing && selection ? manager.appController.processingRuleInputs(selection.id, ruleId) : []
         }
         // Build once per allowed-source snapshot, rather than scan the full
         // QVariant list on every label update, checkbox binding or drag move.

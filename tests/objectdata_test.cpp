@@ -1,6 +1,7 @@
 #include "controller/appcontroller.h"
 #include "items/plotitem.h"
 #include "models/objectdefinition.h"
+#include "support/merge_reference.h"
 #include "qmltypes.h"
 #include "io/xlsxreader.h"
 #include "io/xlsxwriter.h"
@@ -42,8 +43,9 @@ private slots:
     void ruleInputsQml_data();
     void ruleInputsQml();
     void ruleEditorLargeSignalNavigation();
+    void configurationQueriesStayLocal();
     void objectFieldPolicy();
-    void independentProcessingAndLegacyMigration();
+    void independentProcessingAndSessionValidation();
 };
 static ObjectRule bitRule(int width, int start, int bits, bool split = true, bool signedValue = false)
 {
@@ -58,7 +60,41 @@ static PlotSeriesSnapshot rawSnapshot(QVector<double> values)
     for (qsizetype i = 0; i < values.size(); ++i) input.time.append(double(i));
     PlotSeriesStore store; store.appendSeries({input}); return store.snapshot({0});
 }
-void ObjectDataTest::independentProcessingAndLegacyMigration()
+void ObjectDataTest::configurationQueriesStayLocal()
+{
+    QTemporaryDir dir; QFile file(dir.filePath("inputs.csv")); QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("time,A,B,C\n0,1,2,3\n1,4,5,6\n"); file.close();
+    AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+    const auto plane = controller.createDataObject("plane", "aircraft");
+    const auto first = controller.createDataObject("first", "processing");
+    const auto second = controller.createDataObject("second", "processing");
+    QVERIFY(controller.createDataObject("obsolete", "packetloss").isEmpty());
+    const auto parent = controller.addObjectRule(first, {{"name", "parent"}, {"operation", "scale"}, {"inputs", QVariantList{"raw:0"}}});
+    QVERIFY(!parent.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    const auto parentOutput = controller.processingConfigurations()[0].toMap()["rules"].toList()[0].toMap()["outputs"].toList()[0].toMap()["id"].toString();
+    const auto child = controller.addObjectRule(first, {{"name", "child"}, {"operation", "scale"}, {"inputs", QVariantList{parentOutput}}});
+    QVERIFY(!child.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    QVERIFY(!controller.addObjectRule(second, {{"name", "other"}, {"operation", "scale"}, {"inputs", QVariantList{"raw:1"}}}).isEmpty());
+    QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.objectConfigurations().size(), 1);
+    QCOMPARE(controller.objectConfigurations()[0].toMap()["id"].toString(), plane);
+    const auto summaries = controller.processingConfigurations(); QCOMPARE(summaries.size(), 2);
+    for (const auto &summary : summaries) QVERIFY(summary.toMap()["inputs"].toList().isEmpty());
+    auto ids = [](const QVariantList &inputs) { QStringList result; for (const auto &input : inputs) result.append(input.toMap()["id"].toString()); return result; };
+    QCOMPARE(ids(controller.processingRuleInputs(first, parent)), (QStringList{"raw:0", "raw:1", "raw:2"}));
+    QCOMPARE(ids(controller.processingRuleInputs(first, child)), (QStringList{"raw:0", "raw:1", "raw:2", parentOutput}));
+    QCOMPARE(controller.processingRuleInputs(first).size(), 5); // All raw inputs and this configuration's two outputs.
+    QCOMPARE(controller.processingRuleInputs(second).size(), 4);
+    QVERIFY(controller.processingRuleInputs(plane).isEmpty());
+    QVERIFY(controller.processingRuleInputs("missing").isEmpty());
+    QVERIFY(controller.processingRuleInputs(first, "missing").isEmpty());
+    QVERIFY(controller.renameSignal(0, "renamed"));
+    QVERIFY(controller.processingRuleInputs(first, parent)[0].toMap()["name"].toString().endsWith("renamed"));
+    QVERIFY(controller.removeObjectRule(first, child)); QTRY_VERIFY(!controller.deriving());
+    QVERIFY(controller.processingRuleInputs(first, child).isEmpty());
+    QCOMPARE(controller.processingRuleInputs(first).size(), 4);
+}
+void ObjectDataTest::independentProcessingAndSessionValidation()
 {
     QTemporaryDir dir;
     const auto sourcePath = dir.filePath("independent.csv");
@@ -111,7 +147,7 @@ void ObjectDataTest::independentProcessingAndLegacyMigration()
     controller.setSignalBrowserSection(0); QVERIFY(!controller.sessionModified());
     QFile saved(sessionPath); QVERIFY(saved.open(QIODevice::ReadOnly));
     const auto json = QJsonDocument::fromJson(saved.readAll()).object();
-    QCOMPARE(json["version"].toInt(), 17);
+    QCOMPARE(json["version"].toInt(), 18);
     QVERIFY(json["objects"].toArray().isEmpty());
     QCOMPARE(json["processing"].toArray().size(), 1);
     QCOMPARE(json["signals"].toArray()[2].toObject()["processingId"].toString(), processing);
@@ -124,28 +160,9 @@ void ObjectDataTest::independentProcessingAndLegacyMigration()
     bad["processingId"] = "missing"; signalEntries[2] = bad; invalid["signals"] = signalEntries;
     QVERIFY(!sessionFromJson(invalid, &parsed, &error));
 
-    // Rebuild an actual v14 object-owned fixture from the same raw identities.
-    auto legacy = json; legacy["version"] = 14; legacy.remove("processing");
-    auto definition = json["processing"].toArray()[0].toObject(); definition["type"] = "general";
-    legacy["objects"] = QJsonArray{definition};
-    signalEntries = legacy["signals"].toArray();
-    for (int i = 0; i < signalEntries.size(); ++i) {
-        auto signal = signalEntries[i].toObject(); signal["objectId"] = signal.take("processingId"); signalEntries[i] = signal;
-    }
-    legacy["signals"] = signalEntries;
-    QVERIFY2(sessionFromJson(legacy, &parsed, &error), qPrintable(error));
-    QCOMPARE(parsed.objects.size(), 2);
-    QVERIFY(parsed.objects[0].rules.isEmpty());
-    QCOMPARE(parsed.objects[1].rules[0].id, rule);
-    QCOMPARE(parsed.objects[1].rules[0].outputs[0].id, output["id"].toString());
-    QVERIFY(parsed.objects[0].fields[0].id != parsed.objects[1].fields[0].id);
-    const auto legacyPath = dir.filePath("legacy.disession");
-    QFile old(legacyPath); QVERIFY(old.open(QIODevice::WriteOnly)); old.write(QJsonDocument(legacy).toJson()); old.close();
     AppController restored;
-    QVERIFY(restored.restoreSession(legacyPath)); QTRY_VERIFY(!restored.loading() && !restored.deriving());
+    QVERIFY(restored.restoreSession(sessionPath)); QTRY_VERIFY(!restored.loading() && !restored.deriving());
     QCOMPARE(restored.processingConfigurations().size(), 1);
-    QVERIFY(restored.removeDataObject(processing)); QTRY_VERIFY(!restored.deriving()); // Old object id, not new processing id.
-    QCOMPARE(restored.signalCount(), 4);
     QCOMPARE(restored.processingConfigurations()[0].toMap()["rules"].toList().last().toMap()["outputs"].toList().first().toMap()["preview"].toString(), QString("12 / 18"));
     QVERIFY(restored.removeFile("independent.csv")); QTRY_VERIFY(!restored.deriving());
     QCOMPARE(restored.signalCount(), 0);
@@ -168,7 +185,7 @@ void ObjectDataTest::identifyPacketLoss()
     AppController controller; QVERIFY(controller.loadCsv(path)); QTRY_VERIFY(!controller.loading() && !controller.deriving());
     QCOMPARE(controller.signalCount(), 5); QCOMPARE(controller.dataObjects().size(), 0);
     QVERIFY(!controller.identifyPacketLoss("missing"));
-    const auto detector = controller.createDataObject("丢包检测", "packetloss"); QVERIFY(!detector.isEmpty());
+    const auto detector = controller.createDataObject("丢包检测", "processing"); QVERIFY(!detector.isEmpty());
     QVERIFY(controller.identifyPacketLoss(detector, "count")); QTRY_VERIFY(!controller.deriving());
     QCOMPARE(controller.signalCount(), 8); QCOMPARE(controller.dataObjects().size(), 1);
     auto object = controller.dataObjects()[0].toMap(); const auto objectId = object["id"].toString();
@@ -205,11 +222,11 @@ void ObjectDataTest::identifyPacketLoss()
     auto legacy = sessionToJson(document); legacy["version"] = 12;
     SessionDocument parsed; QVERIFY(!sessionFromJson(legacy, &parsed, &reason));
     const auto copy = restored.duplicateDataObject(detector); QVERIFY(!copy.isEmpty()); QTRY_VERIFY(!restored.deriving());
-    QCOMPARE(restored.dataObjects().last().toMap()["type"].toString(), QString("packetloss"));
+    QCOMPARE(restored.dataObjects().last().toMap()["type"].toString(), QString("processing"));
     QCOMPARE(restored.dataObjects().last().toMap()["rules"].toList()[0].toMap()["samplePeriod"].toDouble(), .5);
     controller.clear(); QCOMPARE(controller.dataObjects().size(), 0);
     QVERIFY(controller.loadCsv(other.fileName())); QTRY_VERIFY(!controller.loading());
-    const auto full = controller.createDataObject("full", "packetloss");
+    const auto full = controller.createDataObject("full", "processing");
     for (int i = 0; i < 256; ++i) QVERIFY(!controller.addDataObjectField(full).isEmpty());
     QVERIFY(controller.identifyPacketLoss(full, "count")); QTRY_VERIFY(!controller.deriving());
     QCOMPARE(controller.dataObjects()[0].toMap()["fields"].toList().size(), 256);
@@ -224,7 +241,7 @@ void ObjectDataTest::identifyPacketLoss()
     QFile single(dir.filePath("single.csv")); QVERIFY(single.open(QIODevice::WriteOnly)); single.write("time,value\n1,2\n"); single.close();
     QVERIFY(controller.loadCsv(single.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
     QCOMPARE(controller.dataObjects().size(), 0); QCOMPARE(controller.signalCount(), 1);
-    const auto singleObject = controller.createDataObject("single", "packetloss");
+    const auto singleObject = controller.createDataObject("single", "processing");
     QVERIFY(controller.identifyPacketLoss(singleObject)); QTRY_VERIFY(!controller.deriving());
     object = controller.dataObjects()[0].toMap(); const auto singleRule = object["rules"].toList()[0].toMap();
     QVERIFY(!singleRule["error"].toString().isEmpty()); QCOMPARE(controller.signalCount(), 2);
@@ -233,16 +250,28 @@ void ObjectDataTest::identifyPacketLoss()
         {"inputs", singleRule["inputIds"]}, {"samplePeriod", 1}})); QTRY_VERIFY(!controller.deriving());
     QVERIFY(controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap()["error"].toString().isEmpty());
 }
+// Compare count and rate using two independent current-format single-output rules.
+static ObjectEvaluation evaluatePacketLossMetrics(DataObject object, const PlotSeriesSnapshot &snapshot,
+    const std::atomic_bool &cancelled)
+{
+    auto count = object.rules[0]; count.rateMode = "count";
+    auto rate = object.rules[0]; rate.id += "-rate";
+    rate.rateMode = rate.rateMode == "count" ? "cumulative" : rate.rateMode;
+    rate.outputs[0].id += "-rate"; ++rate.outputs[0].series;
+    object.rules = {count, rate};
+    return evaluateObjects({object}, snapshot, cancelled);
+}
 void ObjectDataTest::packetLoss()
 {
     ObjectRule rule; rule.id = "loss"; rule.name = "loss"; rule.operation = "packetloss";
-    rule.inputs = {"input"}; rule.outputs = {{"lost", "lost", 1}, {"rate", "rate", 2}};
+    rule.rateMode = "count";
+    rule.inputs = {"input"}; rule.outputs = {{"lost", "lost", 1}};
     DataObject object{"o", "object", {{"input", "input", "scalar", 0}}, {rule}};
     std::atomic_bool cancel{false}; QString error;
     auto run = [&](QVector<double> time, double period = 0) {
         PlotSeriesInput raw; raw.id = 0; raw.time = time; raw.values.fill(qQNaN(), time.size()); raw.timeOffset = 10;
         PlotSeriesStore store; store.appendSeries({raw}); object.rules[0].samplePeriod = period;
-        return evaluateObjects({object}, store.snapshot({0}), cancel);
+        return evaluatePacketLossMetrics(object, store.snapshot({0}), cancel);
     };
     auto result = run({0, .1, .2, .5, .6, .7});
     QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series.size(), 2);
@@ -266,7 +295,6 @@ void ObjectDataTest::packetLoss()
     QVERIFY(validateObjects({object}, 3, &error));
     QVector<DataObject> restored; const auto json = objectsToJson({object});
     QVERIFY(objectsFromJson(json, 3, &restored, &error)); QCOMPARE(restored[0].rules[0].samplePeriod, .1);
-    QVERIFY(!objectsFromJson(json, 3, &restored, &error, 11));
     auto bad = json[0].toObject(); auto rules = bad["rules"].toArray(); auto r = rules[0].toObject();
     r["samplePeriod"] = "0.1"; rules[0] = r; bad["rules"] = rules;
     QVERIFY(!objectsFromJson(QJsonArray{bad}, 3, &restored, &error));
@@ -276,14 +304,15 @@ void ObjectDataTest::packetLoss()
 void ObjectDataTest::packetLossRateModes()
 {
     ObjectRule rule; rule.id = "loss"; rule.name = "loss"; rule.operation = "packetloss";
-    rule.samplePeriod = 1; rule.inputs = {"input"}; rule.outputs = {{"lost", "lost", 1}, {"rate", "rate", 2}};
+    rule.samplePeriod = 1; rule.inputs = {"input"}; rule.outputs = {{"lost", "lost", 1}};
     DataObject object{"o", "processing", {{"input", "input", "scalar", 0}}, {rule}}; object.type = "processing";
     std::atomic_bool cancel{false};
+    bool compareMetrics = true;
     auto run = [&](QVector<double> time, QVector<double> values = {}) {
         PlotSeriesInput raw; raw.id = 0; raw.time = time; raw.values = values.isEmpty() ? QVector<double>(time.size(), qQNaN()) : values;
         raw.timeOffset = 100;
         PlotSeriesStore store; store.appendSeries({raw});
-        return evaluateObjects({object}, store.snapshot({0}), cancel);
+        return compareMetrics ? evaluatePacketLossMetrics(object, store.snapshot({0}), cancel) : evaluateObjects({object}, store.snapshot({0}), cancel);
     };
     auto &r = object.rules[0];
     const QVector<double> time{0, 1, 2, 5, 6, 7, 8};
@@ -315,17 +344,19 @@ void ObjectDataTest::packetLossRateModes()
     QString error; QVector<DataObject> restored;
     auto json = objectsToJson({object}); QVERIFY(objectsFromJson(json, 3, &restored, &error));
     QCOMPARE(restored[0].rules[0].rateMode, QString("window")); QCOMPARE(restored[0].rules[0].rateWindowSeconds, 2.0);
-    QVERIFY(!objectsFromJson(json, 3, &restored, &error, 15));
-    auto legacy = json[0].toObject(); auto rules = legacy["rules"].toArray(); auto legacyRule = rules[0].toObject();
-    legacyRule.remove("rateMode"); legacyRule.remove("rateWindowSeconds"); rules[0] = legacyRule; legacy["rules"] = rules;
-    QVERIFY(objectsFromJson(QJsonArray{legacy}, 3, &restored, &error, 15));
-    QCOMPARE(restored[0].rules[0].rateMode, QString("cumulative"));
-    QVERIFY(!objectsFromJson(QJsonArray{legacy}, 3, &restored, &error, 16));
+    for (const auto &key : {"rateMode", "rateWindowSeconds"}) {
+        auto incomplete = json[0].toObject(); auto rules = incomplete["rules"].toArray();
+        auto incompleteRule = rules[0].toObject(); incompleteRule.remove(key); rules[0] = incompleteRule;
+        incomplete["rules"] = rules;
+        QVERIFY(!objectsFromJson(QJsonArray{incomplete}, 3, &restored, &error));
+        QCOMPARE(restored[0].rules[0].rateMode, QString("window"));
+    }
     for (double invalid : {0.0, -1.0, qInf(), qQNaN()}) {
         r.rateWindowSeconds = invalid; QVERIFY(!validateObjects({object}, 3, &error));
     }
     r.rateWindowSeconds = 2; r.rateMode = "invalid"; QVERIFY(!validateObjects({object}, 3, &error));
 
+    compareMetrics = false;
     r = rule; r.outputs.resize(1); r.rateWindowSeconds = 2;
     for (const auto &mode : {QString("count"), QString("cumulative"), QString("window")}) {
         r.rateMode = mode;
@@ -334,7 +365,7 @@ void ObjectDataTest::packetLossRateModes()
         if (mode == "count") QCOMPARE(result.series[0]->values, cumulative.series[0]->values);
         else if (mode == "cumulative") QCOMPARE(result.series[0]->values, cumulative.series[1]->values);
         else { QVERIFY(qAbs(result.series[0]->values[3] - 200.0 / 3) < 1e-10); QCOMPARE(result.series[0]->values.last(), 0.0); }
-        QVERIFY(!objectsFromJson(objectsToJson({object}), 2, &restored, &error, 16));
+        QVERIFY(objectsFromJson(objectsToJson({object}), 2, &restored, &error));
     }
 
     QTemporaryDir dir; QFile file(dir.filePath("loss.csv")); QVERIFY(file.open(QIODevice::WriteOnly));
@@ -356,18 +387,13 @@ void ObjectDataTest::packetLossRateModes()
     const auto recoveredRule = recovered.processingConfigurations()[0].toMap()["rules"].toList()[0].toMap();
     QCOMPARE(recoveredRule["rateMode"].toString(), QString("window")); QCOMPARE(recoveredRule["rateWindowSeconds"].toDouble(), 2.0);
     QCOMPARE(recovered.signalColor(row), QColor("magenta"));
-    SessionDocument legacyDocument; QVERIFY(readSessionDocument(path, &legacyDocument, &error));
-    auto &legacyPair = legacyDocument.objects[0].rules[0];
-    const int legacyCountRow = legacyDocument.series.size();
-    legacyPair.outputs.prepend({"legacyLost", QStringLiteral("loss.累计丢包数"), legacyCountRow});
-    auto legacySignal = legacyDocument.series[row]; legacySignal.outputId = "legacyLost";
-    legacySignal.name = legacySignal.originalName = QStringLiteral("loss.累计丢包数");
-    legacyDocument.series.append(legacySignal);
-    const auto legacyPath = dir.filePath("legacy-pair.disession"); QVERIFY(writeSessionDocument(legacyPath, legacyDocument, &error));
-    AppController legacyController; QVERIFY(legacyController.restoreSession(legacyPath)); QTRY_VERIFY(!legacyController.loading() && !legacyController.deriving());
-    const auto legacyId = legacyController.processingConfigurations()[0].toMap()["id"].toString();
-    QVERIFY(!legacyController.duplicateDataObject(legacyId).isEmpty()); QTRY_VERIFY(!legacyController.deriving());
-    QCOMPARE(legacyController.processingConfigurations().last().toMap()["rules"].toList()[0].toMap()["outputs"].toList().size(), 2);
+    SessionDocument invalidDocument; QVERIFY(readSessionDocument(path, &invalidDocument, &error));
+    auto &invalidRule = invalidDocument.objects[0].rules[0];
+    invalidRule.outputs.append({"extra", "extra", int(invalidDocument.series.size())});
+    auto extra = invalidDocument.series[row]; extra.outputId = "extra"; invalidDocument.series.append(extra);
+    QVERIFY(!writeSessionDocument(dir.filePath("invalid-pair.disession"), invalidDocument, &error));
+    invalidDocument.objects[0].type = "packetloss";
+    QVERIFY(!sessionFromJson(sessionToJson(invalidDocument), &invalidDocument, &error));
 
     const auto defaultId = controller.createDataObject("default", "processing");
     QVERIFY(controller.identifyPacketLoss(defaultId)); QTRY_VERIFY(!controller.deriving());
@@ -383,15 +409,16 @@ void ObjectDataTest::packetLossRateModes()
 void ObjectDataTest::packetLossCounters()
 {
     ObjectRule rule; rule.id = "loss"; rule.name = "loss"; rule.operation = "packetloss";
+    rule.rateMode = "count";
     rule.lossMode = "sequence"; rule.inputs = {"input"};
-    rule.outputs = {{"lost", "lost", 1}, {"rate", "rate", 2}};
+    rule.outputs = {{"lost", "lost", 1}};
     DataObject object{"o", "object", {{"input", "input", "scalar", 0}}, {rule}};
     std::atomic_bool cancel{false}; QString error;
     auto run = [&](QVector<double> values, QVector<double> time = {}) {
         if (time.isEmpty()) for (int i = 0; i < values.size(); ++i) time.append(i);
         PlotSeriesInput raw; raw.id = 0; raw.time = time; raw.values = values; raw.timeOffset = 10;
         PlotSeriesStore store; store.appendSeries({raw});
-        return evaluateObjects({object}, store.snapshot({0}), cancel);
+        return evaluatePacketLossMetrics(object, store.snapshot({0}), cancel);
     };
     auto &r = object.rules[0];
     auto result = run({10, 11, 14, 14, 15});
@@ -431,14 +458,12 @@ void ObjectDataTest::packetLossCounters()
     QVERIFY(objectsFromJson(json, 3, &restored, &error));
     QCOMPARE(restored[0].rules[0].lossMode, QString("rate")); QCOMPARE(restored[0].rules[0].counterRate, 1000.0);
     QCOMPARE(restored[0].rules[0].counterModulus, 256.0); QCOMPARE(restored[0].rules[0].counterTolerance, 1.0);
-    QVERIFY(!objectsFromJson(json, 3, &restored, &error, 13));
-    auto legacyObject = json[0].toObject(); auto legacyRules = legacyObject["rules"].toArray();
-    auto legacyRule = legacyRules[0].toObject();
-    for (const auto &key : {"lossMode", "counterStep", "expectedStride", "counterModulus", "counterRate", "counterTolerance"}) legacyRule.remove(key);
-    legacyRules[0] = legacyRule; legacyObject["rules"] = legacyRules;
-    QVERIFY(objectsFromJson(QJsonArray{legacyObject}, 3, &restored, &error, 13));
-    QCOMPARE(restored[0].rules[0].lossMode, QString("time"));
-    QVERIFY(!objectsFromJson(QJsonArray{legacyObject}, 3, &restored, &error, 14));
+    for (const auto &key : {"lossMode", "counterStep", "expectedStride", "counterModulus", "counterRate", "counterTolerance"}) {
+        auto incomplete = json[0].toObject(); auto rules = incomplete["rules"].toArray();
+        auto incompleteRule = rules[0].toObject(); incompleteRule.remove(key); rules[0] = incompleteRule;
+        incomplete["rules"] = rules;
+        QVERIFY(!objectsFromJson(QJsonArray{incomplete}, 3, &restored, &error));
+    }
     PlotSeriesInput input; input.id = 0; input.time = {0, .01}; input.values = {250, 4};
     PlotSeriesStore keyStore; keyStore.appendSeries({input}); const auto snapshot = keyStore.snapshot({0});
     const auto evaluated = evaluateObjects({object}, snapshot, cancel);
@@ -515,7 +540,7 @@ void ObjectDataTest::mergeSharedTimelineMatchesLegacy()
     }
     PlotSeriesStore store; store.appendSeries(raw); const auto snapshot = store.snapshot(ids); std::atomic_bool cancel{false};
     QVERIFY(snapshot.series[0]->time.constData() == snapshot.series[2]->time.constData());
-    const auto legacy = evaluateObjects(objects, snapshot, cancel, 0, nullptr, false);
+    const auto legacy = evaluateMergeReference(objects, snapshot, cancel);
     const auto shared = evaluateObjects(objects, snapshot, cancel);
     QCOMPARE(shared.errors, legacy.errors); QVERIFY(shared.mergeTimelineHits >= 3); QCOMPARE(shared.series.size(), legacy.series.size());
     for (int i = 0; i < shared.series.size(); ++i) {
@@ -528,7 +553,7 @@ void ObjectDataTest::mergeSharedTimelineMatchesLegacy()
     QVERIFY(shared.series[0]->time.constData() == shared.series[1]->time.constData());
     auto invalid = std::make_shared<PlotSeriesData>(*snapshot.series[0]); invalid->time[0] = qQNaN();
     auto invalidSnapshot = snapshot; invalidSnapshot.series[0] = invalid;
-    QCOMPARE(evaluateObjects(objects, invalidSnapshot, cancel).errors, evaluateObjects(objects, invalidSnapshot, cancel, 0, nullptr, false).errors);
+    QCOMPARE(evaluateObjects(objects, invalidSnapshot, cancel).errors, evaluateMergeReference(objects, invalidSnapshot, cancel).errors);
     cancel.store(true); QVERIFY(evaluateObjects(objects, snapshot, cancel).series.isEmpty());
 }
 void ObjectDataTest::mergeSamples()
@@ -542,7 +567,7 @@ void ObjectDataTest::mergeSamples()
     rule.inputs = {"a", "b", "c", "d"}; rule.outputs = {{"out", "merged", 4}}; object.rules = {rule};
     QString error; QVERIFY2(validateObjects({object}, 5, &error), qPrintable(error));
     QVector<DataObject> restored;
-    QVERIFY2(objectsFromJson(objectsToJson({object}), 5, &restored, &error, 11), qPrintable(error));
+    QVERIFY2(objectsFromJson(objectsToJson({object}), 5, &restored, &error), qPrintable(error));
     QCOMPARE(restored.first().rules.first().inputs, rule.inputs);
     std::atomic_bool cancel{false};
     auto result = evaluateObjects(restored, store.snapshot({0, 1, 2, 3}), cancel);
@@ -699,25 +724,15 @@ void ObjectDataTest::ownershipAndSchema()
     SessionSignal raw; raw.file = 0; raw.table = raw.column = 0; raw.name = raw.originalName = "A"; raw.color = Qt::red;
     state.series = {raw};
     DataObject object{"obj", "device", {{"source", "word", "scalar", 0}}, {bitRule(8, 0, 1)}};
+    object.type = "processing";
     state.objects = {object}; SessionSignal output = raw; output.file = -1; output.objectId = "obj"; output.outputId = "out0"; state.series.append(output);
     SessionDocument parsed; QString error;
     QVERIFY2(sessionFromJson(sessionToJson(state), &parsed, &error), qPrintable(error));
-    QCOMPARE(parsed.objects.size(), 2);
-    QCOMPARE(parsed.objects[0].type, QStringLiteral("general"));
-    QVERIFY(parsed.objects[0].rules.isEmpty());
-    QCOMPARE(parsed.objects[1].type, QStringLiteral("processing"));
-    auto old = sessionToJson(state); old["version"] = 7;
-    old["objects"] = objectsToJson(state.objects); old.remove("processing");
-    auto legacySignals = old["signals"].toArray();
-    for (int i = 0; i < legacySignals.size(); ++i) {
-        auto signal = legacySignals[i].toObject(); signal.remove("processingId");
-        signal["objectId"] = state.series[i].objectId; legacySignals[i] = signal;
-    }
-    old["signals"] = legacySignals;
-    auto oldObjects = old["objects"].toArray(); auto oldObject = oldObjects[0].toObject(); oldObject.remove("type"); oldObjects[0] = oldObject; old["objects"] = oldObjects;
-    QVERIFY(sessionFromJson(old, &parsed, &error));
-    old["version"] = 8; QVERIFY(!sessionFromJson(old, &parsed, &error));
-    state.objects[0].type = "invalid"; QVERIFY(!sessionFromJson(sessionToJson(state), &parsed, &error)); state.objects[0].type = "general";
+    QCOMPARE(parsed.objects.size(), 1);
+    QCOMPARE(parsed.objects[0].type, QStringLiteral("processing"));
+    state.objects[0].type = "general"; // Current schema rejects object-owned rules instead of migrating them.
+    QVERIFY(!sessionFromJson(sessionToJson(state), &parsed, &error));
+    state.objects[0].type = "processing";
     state.series[1].objectId = "missing";
     QVERIFY(!sessionFromJson(sessionToJson(state), &parsed, &error));
     state.series[1].objectId = "obj"; state.objects[0].rules[0].inputs = {"out0"};
@@ -796,7 +811,7 @@ void ObjectDataTest::removingFilesCleansDerivedSignalsAndLegends()
     const auto keepId = controller.addObjectRule(objectId, {{"name", "independent"}, {"operation", "scale"}, {"inputs", QVariantList{survivingField}}, {"factor", 2}});
     const auto warningId = controller.addObjectRule(objectId, {{"name", "existing diagnostic"}, {"operation", "expression"}, {"inputs", QVariantList{survivingField}}, {"expression", "1/0"}});
     QVERIFY(!downId.isEmpty() && !keepId.isEmpty() && !warningId.isEmpty()); QTRY_VERIFY(!controller.deriving());
-    const auto detector = controller.createDataObject("detection", "packetloss");
+    const auto detector = controller.createDataObject("detection", "processing");
     QVERIFY(controller.identifyPacketLoss(detector)); QTRY_VERIFY(!controller.deriving());
     const auto detected = definition(detector)["rules"].toList(); QCOMPARE(detected.size(), 2);
     const auto lostOutput = detected[0].toMap()["outputs"].toList()[0].toMap();
@@ -1755,11 +1770,10 @@ void ObjectDataTest::objectFieldPolicy()
     parsed.objects[0].type = "aircraft"; QVERIFY(ensureAircraftFields(parsed.objects[0]));
     QCOMPARE(parsed.objects[0].fields.size(), 7);
     session.objects[0].type = "aircraft";
-    auto legacy = sessionToJson(session); legacy["version"] = 8;
-    auto objects = legacy["objects"].toArray(); auto plane = objects[0].toObject(); plane.remove("aircraft");
-    auto legacyFields = plane["fields"].toArray(); while (legacyFields.size() > 6) legacyFields.removeLast(); plane["fields"] = legacyFields; objects[0] = plane; legacy["objects"] = objects;
-    QVERIFY(sessionFromJson(legacy, &parsed, &error)); QCOMPARE(parsed.objects[0].fields.size(), 12);
-    legacy["version"] = 9; QVERIFY(!sessionFromJson(legacy, &parsed, &error));
+    auto incomplete = sessionToJson(session);
+    auto objects = incomplete["objects"].toArray(); auto plane = objects[0].toObject();
+    plane.remove("aircraft"); objects[0] = plane; incomplete["objects"] = objects;
+    QVERIFY(!sessionFromJson(incomplete, &parsed, &error));
     session.objects[0].fields.removeFirst(); QVERIFY(!sessionFromJson(sessionToJson(session), &parsed, &error));
 }
 QTEST_MAIN(ObjectDataTest)

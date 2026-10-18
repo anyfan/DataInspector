@@ -38,9 +38,8 @@ struct DataObject {
 // have their own lifecycle and are stored outside the session's objects array.
 inline bool isProcessingConfiguration(const DataObject &definition)
 {
-    return definition.type == "processing" || definition.type == "packetloss";
+    return definition.type == "processing";
 }
-QHash<QString, QString> detachObjectProcessing(QVector<DataObject> &definitions);
 struct ObjectRuleState {
     QJsonObject definition;
     QVector<PlotSeriesDataPtr> inputs;
@@ -62,12 +61,12 @@ QString validateObjectExpression(const QString &expression, int inputCount);
 ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects,
     const PlotSeriesSnapshot &snapshot, const std::atomic_bool &cancelled,
     qsizetype retainedValues = 0, const QSet<QString> *rulesToEvaluate = nullptr,
-    bool reuseMergeTimeline = true, std::atomic<int> *completedRules = nullptr);
+    std::atomic<int> *completedRules = nullptr);
 QJsonArray objectsToJson(const QVector<DataObject> &objects);
 QStringList aircraftFieldRoles();
 QStringList activeAircraftFieldRoles(const DataObject &object);
 bool ensureAircraftFields(DataObject &object);
-bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error, int version = 17);
+bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error);
 
 struct PacketLossGroup {
     QVector<int> sources;

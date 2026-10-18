@@ -56,8 +56,8 @@ DataInspector 是面向工程时间序列数据的高性能查看器，基于 Qt
 | [QML 工具与静态检查](dev/qml-tooling.md) | qmllint、qmltypes、编辑器导入路径 |
 | [测试](dev/testing.md) | CTest 套件一览、GPU 测试开关 |
 
-## 开发日志与历史归档
+## 开发日志与历史归档（按需溯源）
 
-[`dev-log/`](dev-log/) 下保留了历次功能开发与缺陷修复的原始记录（`mcp-*.md`），按主题索引见 [dev-log/README.md](dev-log/README.md)。这些记录是当时实现的第一手说明，已被上面的 Wiki 页面吸收为长期文档；遇到"为什么这么做"的问题时可以回查。
+[`dev-log/`](dev-log/) 下保留了历次功能开发与缺陷修复的原始记录（`mcp-*.md`），按主题索引见 [dev-log/README.md](dev-log/README.md)。这些记录只描述当时状态，可能与当前代码冲突。默认检索现行文档和源码，仅在追查具体决策时阅读相关历史文件。
 
 该目录还收纳了更早的**历史归档**：重构进度快照（`refactoring-status.md`）、渲染器选型调研（`renderer_research.md`），以及 superpowers 时代的实施计划/设计（`superpowers/plans` + `superpowers/specs`）。**这些不是待办，勿据此实现**；状态与现行对应文档见 [dev-log/README.md](dev-log/README.md) 末尾的"历史归档"小节。

@@ -116,7 +116,7 @@ QJsonArray automationCatalog()
         add("merge_preview", "Check grouping, existing rules, conflicts and output counts without modifying data", object({{"policy?", policy()}}), false, true);
         add("merge_plan", "Read an existing checked merge plan", object({{"id", text(128)}}));
         add("merge_execute", "Execute a checked plan once", object({{"id", text(128)}}), true, true);
-        add("object_create", "Create an object or independent processing configuration", object({{"name", text()}, {"type", enumeration({"general", "aircraft", "processing", "packetloss"})}}), true);
+        add("object_create", "Create an object or independent processing configuration", object({{"name", text()}, {"type", enumeration({"general", "aircraft", "processing"})}}), true);
         add("aircraft_configure", "Configure aircraft conventions", object({{"object", text()}, {"geographic", flag()}, {"attitudeMode", integer(0, 2)}, {"radians", flag()}, {"order", integer(0, 1)}, {"scalarLast", flag()}, {"navigationToBody", flag()}}), true);
         add("object_bind_field", "Bind one existing field", object({{"generation", generation}, {"object", text()}, {"field", text()}, {"signal", integer(-1)}}), true);
         add("aircraft_setup", "Atomically create/update conventions and all bindings; optionally show trajectory and cursor", object({{"generation", generation}, {"object?", text()}, {"name?", text()}, {"config", config()}, {"bindings", bindings()}, {"plot?", plot}, {"cursorTime?", number()}}), true, true);

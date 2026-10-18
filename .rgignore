@@ -1,0 +1,3 @@
+# Historical snapshots and superseded plans are opt-in search material.
+# Read a linked file directly, or use: rg --no-ignore <pattern> docs/dev-log/
+/docs/dev-log/
