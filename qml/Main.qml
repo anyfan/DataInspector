@@ -81,6 +81,7 @@ ApplicationWindow {
     readonly property bool signalTreeDragging: signalTreeDragPreview.visible
     function cancelSignalTreeDrag() {
         objectManager.dropFieldId = ""
+        processingManager.dropRuleInput = ""
         ++signalDragRevision
         if (signalDragDestination) signalDragDestination.dropHighlighted = false
         signalDragDestination = null
@@ -89,6 +90,7 @@ ApplicationWindow {
     }
     function updateSignalTreeDrag(source, x, y, rowItem, pressPoint) {
         if (signalDragDestination) signalDragDestination.dropHighlighted = false
+        processingManager.dropRuleInput = ""
         signalDragDestination = null
         signalDragRow = rowItem.signalIndex
         signalTreeDragPreview.signalName = rowItem.signalName
@@ -97,6 +99,14 @@ ApplicationWindow {
         signalTreeDragPreview.x = point.x - pressPoint.x - 22
         signalTreeDragPreview.y = point.y - pressPoint.y - 6
         signalTreeDragPreview.visible = true
+        if (processingManager.visible) {
+            const position = source.mapToItem(processingManager, x, y)
+            const slot = processingManager.ruleInputAt(position.x, position.y)
+            processingManager.dropRuleInput = slot
+            processingManager.dropRuleAllowed = processingManager.ruleSourceAllowed(signalDragRow)
+            if (slot.length > 0) signalDragDestination = processingManager
+            return
+        }
         if (objectManager.visible) {
             const position = source.mapToItem(objectManager, x, y)
             const fieldId = objectManager.fieldAt(position.x, position.y)
@@ -122,8 +132,10 @@ ApplicationWindow {
         const destination = signalDragDestination
         const row = signalDragRow
         const fieldId = objectManager.dropFieldId
+        const ruleInput = processingManager.dropRuleInput
         cancelSignalTreeDrag()
         if (destination === objectManager) objectManager.dropSource(row, fieldId)
+        else if (destination === processingManager) processingManager.bindRuleSource(row, ruleInput, false)
         else if (destination) {
             const state = window.appController.trajectoryState(destination.plotIndex)
             if (state.enabled) { window.appController.setActivePlot(destination.plotIndex); if (state.objectId.length > 0) objectManager.selectedId = state.objectId; objectManager.open() }

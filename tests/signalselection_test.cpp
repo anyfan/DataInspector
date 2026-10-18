@@ -22,8 +22,26 @@ private slots:
     void ancestorPathReportsVisibleGroupChain();
     void groupChangesKeepPersistentRowsWithoutReset();
     void removingFileGroupReindexesPlotBindings();
+    void revealingVisibleSignalPreservesRows();
 };
 
+void SignalSelectionTest::revealingVisibleSignalPreservesRows()
+{
+    SignalModel model;
+    model.setNames(QStringList{"A", "B"}, QStringList{"file/table", "file/table"});
+    const int row = model.revealSignal(1); QVERIFY(row >= 0);
+    QSignalSpy resets(&model, &QAbstractItemModel::modelReset);
+    QPersistentModelIndex persistent(model.index(row));
+    for (int i = 0; i < 10; ++i) QCOMPARE(model.revealSignal(1), row);
+    QCOMPARE(resets.count(), 0); QVERIFY(persistent.isValid());
+    model.toggleGroup("file/table"); resets.clear();
+    const int expanded = model.revealSignal(1); QVERIFY(expanded >= 0);
+    QCOMPARE(resets.count(), 1);
+    QCOMPARE(model.data(model.index(expanded), SignalModel::IndexRole).toInt(), 1);
+    model.setFilter("A"); resets.clear();
+    QVERIFY(model.revealSignal(1) >= 0); QCOMPARE(resets.count(), 1);
+    resets.clear(); QVERIFY(model.revealSignal(0) >= 0); QCOMPARE(resets.count(), 0);
+}
 void SignalSelectionTest::matTitlesIgnoreLeadingTimeColumn()
 {
     const QStringList names = composeMatSignalNames(

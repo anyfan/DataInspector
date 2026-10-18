@@ -74,6 +74,19 @@ Rectangle {
         objectEditor.open()
     }
     Connections {
+        target: signalBrowser.processingEditor
+        function onSourcesRequested(): void {
+            // Choosing X/Y/Z changes the binding target only. Keep the user's
+            // current search, tab, expansion and viewport while selecting inputs.
+            signalBrowser.showRequested()
+        }
+        function onSourceRequested(row: int): void {
+            signalBrowser.showRequested()
+            if (row >= 0) signalBrowser.revealSignal(row)
+            else { signalBrowser.showSection(0); signalBrowser.clearSearch(); signalBrowser.appController.filterSignals("") }
+        }
+    }
+    Connections {
         target: signalBrowser.objectEditor
         function onSourcesRequested(): void { signalBrowser.showRequested(); signalBrowser.showSection(0) }
         function onSourceRequested(row: int): void {
@@ -585,7 +598,7 @@ Rectangle {
                         objectName: "signalTreeCheck"
                         readonly property int sourceRow: signalDelegate.signalIndex
                         visible: !signalDelegate.groupNode
-                        checked: browserTabs.currentIndex === 1 ? signalDelegate.signalChecked : signalBrowser.objectEditor.visible ? signalBrowser.objectEditor.sourceChecked(signalDelegate.signalIndex) : signalBrowser.activeTrajectoryObject ? signalBrowser.activeTrajectoryObject.fields.some(field => field.series === signalDelegate.signalIndex) : signalDelegate.signalChecked
+                        checked: signalBrowser.processingEditor.choosingRuleSource ? signalBrowser.processingEditor.ruleSourceChecked(signalDelegate.signalIndex) : browserTabs.currentIndex === 1 ? signalDelegate.signalChecked : signalBrowser.objectEditor.visible ? signalBrowser.objectEditor.sourceChecked(signalDelegate.signalIndex) : signalBrowser.activeTrajectoryObject ? signalBrowser.activeTrajectoryObject.fields.some(field => field.series === signalDelegate.signalIndex) : signalDelegate.signalChecked
                         Layout.preferredWidth: 24
                         Layout.preferredHeight: 24
                         palette.window: signalBrowser.panelColor
@@ -596,7 +609,8 @@ Rectangle {
                         palette.highlightedText: "#ffffff"
                         onClicked: {
                             signalList.currentIndex = signalDelegate.index
-                            if (browserTabs.currentIndex === 1) {
+                            if (signalBrowser.processingEditor.choosingRuleSource) signalBrowser.processingEditor.selectRuleSource(signalDelegate.signalIndex)
+                            else if (browserTabs.currentIndex === 1) {
                                 if (signalBrowser.appController.trajectoryState(signalBrowser.appController.activePlotIndex).enabled) signalBrowser.processingEditor.open()
                                 else signalBrowser.appController.toggleSignal(signalDelegate.signalIndex)
                             }
@@ -660,6 +674,8 @@ Rectangle {
                                 signalList.currentIndex = signalDelegate.index
                                 if (signalDelegate.groupNode)
                                     signalList.toggleGroup(signalDelegate.groupName, signalDelegate.index)
+                                else if (signalBrowser.processingEditor.choosingRuleSource)
+                                    signalBrowser.processingEditor.selectRuleSource(signalDelegate.signalIndex)
                                 else if (mapToItem(penPreview, mouse.x, mouse.y).x >= 0)
                                     signalBrowser.editSignalRequested(signalDelegate.signalIndex)
                             }

@@ -6,6 +6,7 @@
 #include "io/xlsxwriter.h"
 #include "render/plotgeometrybuilder.h"
 #include <QFile>
+#include <QElapsedTimer>
 #include <QDir>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -38,6 +39,9 @@ private slots:
     void linkedTrajectoriesAndRuleEdits();
     void staircaseKeepsPulse();
     void objectManagerQml();
+    void ruleInputsQml_data();
+    void ruleInputsQml();
+    void ruleEditorLargeSignalNavigation();
     void objectFieldPolicy();
     void independentProcessingAndLegacyMigration();
 };
@@ -1095,21 +1099,56 @@ void ObjectDataTest::objectManagerQml()
     auto *ruleFooter = processor->findChild<QObject *>("objectRuleDialog")->property("footer").value<QObject *>();
     QVERIFY(ruleFooter); QCOMPARE(ruleFooter->property("count").toInt(), 2);
     processor->findChild<QObject *>("objectRuleName")->setProperty("text", "flags");
+    QVERIFY(QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 0)));
     QVERIFY(QMetaObject::invokeMethod(processor->findChild<QObject *>("objectRuleDialog"), "submit"));
     QTRY_VERIFY(!controller.deriving()); QCOMPARE(controller.signalCount(), 10);
     // Editing can select any raw signal, not only sources previously used by the configuration.
     QQmlExpression editFirstRule(QQmlEngine::contextForObject(processor), processor, "editRule(selected.rules[0])");
     editFirstRule.evaluate(); QVERIFY(!editFirstRule.hasError());
-    auto *inputSelector = processor->findChild<QObject *>("objectRuleInputX"); QVERIFY(inputSelector);
-    QCOMPARE(inputSelector->property("count").toInt(), 2);
-    QCOMPARE(inputSelector->property("currentValue").toString(), QString("raw:0"));
-    inputSelector->setProperty("currentIndex", 1);
+    auto *inputSelector = processor->findChild<QObject *>("objectRuleDialog"); QVERIFY(inputSelector);
+    QCOMPARE(inputSelector->property("inputOptions").toList().size(), 2);
+    QCOMPARE(inputSelector->property("inputXId").toString(), QString("raw:0"));
+    QVERIFY(QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 2)));
+    QCOMPARE(inputSelector->property("inputXId").toString(), QString("raw:0"));
+    QVERIFY(!processor->findChild<QObject *>("objectRuleDialog")->property("errorText").toString().isEmpty());
+    auto *inlineEditor = qobject_cast<QQuickItem *>(processor->findChild<QObject *>("objectRuleDialog"));
+    QVERIFY(inlineEditor); QVERIFY(inlineEditor->isVisible());
+    QCOMPARE(inlineEditor->metaObject()->indexOfProperty("modal"), -1); // A Pane has no popup modality.
+    QCOMPARE(tabs->property("currentIndex").toInt(), 0);
+    QQuickItem *inputCheck = nullptr;
+    auto findInputCheck = [&](int row) {
+        QList<QQuickItem *> pending{quickWindow->contentItem()};
+        while (!pending.isEmpty()) {
+            auto *item = pending.takeLast(); pending.append(item->childItems());
+            if (item->objectName() == "signalTreeCheck" && item->property("sourceRow").toInt() == row && item->isVisible()) {
+                inputCheck = item; return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY(findInputCheck(1));
+    QTest::mouseClick(quickWindow, Qt::LeftButton, Qt::NoModifier,
+        inputCheck->mapToScene(QPointF(inputCheck->width() / 2, inputCheck->height() / 2)).toPoint());
+    QTRY_COMPARE(inputSelector->property("inputXId").toString(), QString("raw:1"));
+    QCOMPARE(controller.processingConfigurations()[0].toMap()["rules"].toList()[0].toMap()["inputIds"].toStringList(), QStringList{"raw:0"});
+    QVERIFY(controller.plotSignalEnabled(0, 0));
+    QVERIFY(!controller.plotSignalEnabled(0, 1));
+    capture("processing-inline-editor-light");
+    root->setProperty("darkTheme", true); capture("processing-inline-editor-dark");
+    root->setProperty("darkTheme", false);
+    // Navigation retains the draft; applying is the only configuration mutation.
+    QVERIFY(QMetaObject::invokeMethod(processor, "close"));
+    QVERIFY(QMetaObject::invokeMethod(processor, "open"));
+    QCOMPARE(inputSelector->property("inputXId").toString(), QString("raw:1"));
     QVERIFY(QMetaObject::invokeMethod(processor->findChild<QObject *>("objectRuleDialog"), "submit"));
     QTRY_VERIFY(!controller.deriving());
     QCOMPARE(controller.processingConfigurations()[0].toMap()["rules"].toList()[0].toMap()["inputIds"].toStringList(), QStringList{"raw:1"});
     editFirstRule.evaluate(); QVERIFY(!editFirstRule.hasError());
-    QCOMPARE(inputSelector->property("currentValue").toString(), QString("raw:1"));
-    inputSelector->setProperty("currentIndex", 0);
+    QCOMPARE(inputSelector->property("inputXId").toString(), QString("raw:1"));
+    auto *inputName = visualItem("signalTreeName", QStringLiteral("A")); QVERIFY(inputName);
+    QTest::mouseClick(quickWindow, Qt::LeftButton, Qt::NoModifier,
+        inputName->mapToScene(QPointF(10, inputName->height() / 2)).toPoint());
+    QTRY_COMPARE(inputSelector->property("inputXId").toString(), QString("raw:0"));
     QVERIFY(QMetaObject::invokeMethod(processor->findChild<QObject *>("objectRuleDialog"), "submit"));
     QTRY_VERIFY(!controller.deriving());
     QVERIFY(controller.configureTrajectory(0, true, 0, -1, -1, false));
@@ -1316,6 +1355,7 @@ void ObjectDataTest::objectManagerQml()
     // Exercise the actual dialog: estimated numeric prefill and editable positive period.
     QQmlExpression createLoss(QQmlEngine::contextForObject(processor), processor, "editRule(null)");
     createLoss.evaluate(); QVERIFY(!createLoss.hasError());
+    QVERIFY(QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 0)));
     auto *operation = processor->findChild<QObject *>("objectRuleOperation"); QVERIFY(operation);
     operation->setProperty("currentIndex", 6);
     processor->findChild<QObject *>("objectRuleName")->setProperty("text", "packet loss");
@@ -1375,7 +1415,9 @@ void ObjectDataTest::objectManagerQml()
     QQmlExpression newRule(QQmlEngine::contextForObject(processor), processor, "editRule(null)");
     newRule.evaluate(); QVERIFY(!newRule.hasError());
     processor->findChild<QObject *>("objectRuleName")->setProperty("text", "stale input");
+    QVERIFY(QMetaObject::invokeMethod(processor, "close"));
     QVERIFY(controller.removeFile("qml.csv")); QTRY_VERIFY(!controller.deriving());
+    QVERIFY(QMetaObject::invokeMethod(processor, "open"));
     QCOMPARE(controller.signalCount(), 1); // Remaining C has shifted into former A's row.
     QVERIFY(QMetaObject::invokeMethod(dialog, "submit"));
     QVERIFY(dialog->property("visible").toBool());
@@ -1394,6 +1436,267 @@ void ObjectDataTest::objectManagerQml()
     QVERIFY(manager->property("visible").toBool());
     QVERIFY(!processor->property("visible").toBool());
     QCoreApplication::processEvents(); QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+}
+void ObjectDataTest::ruleInputsQml_data()
+{
+    QTest::addColumn<QUrl>("mainUrl");
+    QTest::newRow("source") << QUrl::fromLocalFile(QStringLiteral(DI_SOURCE_DIR "/qml/Main.qml"));
+    QTest::newRow("resource") << QUrl("qrc:/qt/qml/DataInspector/Main.qml");
+}
+void ObjectDataTest::ruleInputsQml()
+{
+    QFETCH(QUrl, mainUrl);
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    QTemporaryDir dir; QFile file(dir.filePath("inputs.csv")); QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("time,A,B,C\n0,3,4,12\n1,3,4,12\n"); file.close();
+    AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+    const auto config = controller.createDataObject("input binding", "processing"); QVERIFY(!config.isEmpty());
+    QQmlEngine engine; QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) { for (const auto &error : errors) warnings.append(error.toString()); });
+    QQmlComponent component(&engine, mainUrl); QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"appController", QVariant::fromValue(&controller)}}));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+    auto *window = qobject_cast<QQuickWindow *>(root.get()); QVERIFY(window);
+    auto *processor = root->findChild<QObject *>("processingManager"); QVERIFY(processor);
+    processor->setProperty("selectedId", config); QVERIFY(QMetaObject::invokeMethod(processor, "open"));
+    auto *editor = processor->findChild<QObject *>("objectRuleDialog"); QVERIFY(editor);
+    auto *operation = processor->findChild<QObject *>("objectRuleOperation"); QVERIFY(operation);
+    auto findItem = [&](const QString &name, const QString &text = QString()) -> QQuickItem * {
+        QList<QQuickItem *> pending{window->contentItem()};
+        while (!pending.isEmpty()) {
+            auto *item = pending.takeLast(); pending.append(item->childItems());
+            if (item->isVisible() && item->objectName() == name && (text.isEmpty() || item->property("text").toString() == text)) return item;
+        }
+        return nullptr;
+    };
+    auto start = [&](int op) {
+        QQmlExpression expression(QQmlEngine::contextForObject(processor), processor, "editRule(null)");
+        expression.evaluate(); if (expression.hasError()) return false;
+        if (!editor->property("inputXId").toString().isEmpty() || !editor->property("inputYId").toString().isEmpty() || !editor->property("inputZId").toString().isEmpty()) return false;
+        operation->setProperty("currentIndex", op);
+        if (op != 5 && !QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 0))) return false;
+        processor->findChild<QObject *>("objectRuleName")->setProperty("text", "binding rule " + QString::number(op));
+        QTest::qWait(50); return true;
+    };
+    auto drag = [&](const QString &sourceName, const QString &slot, bool cancel = false) {
+        QTest::qWait(30); // Let newly added merge rows finish their layout before the next gesture.
+        auto *source = findItem("signalTreeName", sourceName);
+        auto *target = findItem(slot == "merge" ? "ruleMergeDropArea" : "ruleInputSlot_" + slot);
+        if (!source || !target) return false;
+        const auto from = source->mapToScene(QPointF(20, source->height() / 2)).toPoint();
+        const auto to = target->mapToScene(QPointF(25, target->height() / 2)).toPoint();
+        QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, from);
+        QTest::mouseMove(window, from + QPoint(12, 0), 20);
+        QTest::mouseMove(window, to, 20);
+        const bool hit = processor->property("dropRuleInput").toString() == slot;
+        if (!hit) qWarning() << "Drag target not hit" << operation->property("currentIndex") << sourceName << slot << from << to << processor->property("dropRuleInput");
+        if (cancel) QTest::keyClick(window, Qt::Key_Escape);
+        QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, to);
+        return hit;
+    };
+    auto rules = [&] { return controller.processingConfigurations().first().toMap()["rules"].toList(); };
+    auto preview = [&] { return rules().last().toMap()["outputs"].toList().first().toMap()["preview"].toString(); };
+    QVERIFY(start(3)); // Magnitude: explicit X/Y/Z slots, exact drag target, no preselected target needed.
+    QVERIFY(findItem("ruleInputSlot_x")); QVERIFY(findItem("ruleInputSlot_y")); QVERIFY(findItem("ruleInputSlot_z"));
+    // The whole card is an input target. One click on padding/blank space must
+    // select it immediately, without requiring a second click on the text.
+    processor->setProperty("selectedRuleInput", "z");
+    for (int region = 0; region < 5; ++region) for (const auto &slot : {QString("x"), QString("y"), QString("z")}) {
+        auto *card = findItem("ruleInputSlot_" + slot); QVERIFY(card);
+        const auto point = region == 0 ? QPointF(4, 4)
+            : region == 1 ? QPointF(card->width() / 2, 4)
+            : region == 2 ? QPointF(card->width() / 2, card->height() - 4)
+            : region == 3 ? QPointF(4, card->height() / 2)
+            : QPointF(card->width() - 4, card->height() / 2);
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, card->mapToScene(point).toPoint());
+        if (processor->property("selectedRuleInput").toString() != slot) {
+            auto *hit = window->contentItem();
+            const auto scene = card->mapToScene(point);
+            while (auto *child = hit->childAt(hit->mapFromScene(scene).x(), hit->mapFromScene(scene).y())) hit = child;
+            qInfo() << "Missed input card" << slot << region << card->position() << card->size() << scene << "hit" << hit->metaObject()->className() << hit->objectName();
+        }
+        QCOMPARE(processor->property("selectedRuleInput").toString(), slot);
+    }
+    QCOMPARE(editor->property("inputXId").toString(), QString("raw:0"));
+    QVERIFY(editor->property("inputYId").toString().isEmpty()); QVERIFY(editor->property("inputZId").toString().isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(editor, "submit")); QVERIFY(rules().isEmpty());
+    QVERIFY(editor->property("errorText").toString().contains(QStringLiteral("三个输入")));
+    QVERIFY(drag("C", "z")); QCOMPARE(editor->property("inputZId").toString(), QString("raw:2"));
+    QVERIFY(drag("B", "y")); QCOMPARE(editor->property("inputYId").toString(), QString("raw:1"));
+    QVERIFY(drag("B", "x", true)); QCOMPARE(editor->property("inputXId").toString(), QString("raw:0"));
+    QVERIFY(rules().isEmpty()); QCOMPARE(controller.signalCount(), 3);
+    QVERIFY(QMetaObject::invokeMethod(editor, "submit")); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(rules().size(), 1); QCOMPARE(preview(), QString("13 / 13"));
+    const auto magnitude = rules().first().toMap();
+    QCOMPARE(magnitude["inputIds"].toStringList(), (QStringList{"raw:0", "raw:1", "raw:2"}));
+    // Every single-input operation uses the same drag slot and hides Y/Z.
+    for (const int op : {0, 1, 2, 6}) {
+        QVERIFY(start(op)); QVERIFY(findItem("ruleInputSlot_x"));
+        QVERIFY(!findItem("ruleInputSlot_y")); QVERIFY(!findItem("ruleInputSlot_z"));
+        QVERIFY(drag("B", "x")); QCOMPARE(editor->property("inputXId").toString(), QString("raw:1"));
+        QVERIFY(QMetaObject::invokeMethod(editor, "close")); QCOMPARE(rules().size(), 1);
+    }
+    QVERIFY(start(4)); // Expressions must never silently shift Z into Y when Y is absent.
+    QVERIFY(drag("C", "z"));
+    processor->findChild<QObject *>("objectRuleExpression")->setProperty("text", "x+z");
+    QVERIFY(QMetaObject::invokeMethod(editor, "submit")); QCOMPARE(rules().size(), 1);
+    QVERIFY(editor->property("errorText").toString().contains(QStringLiteral("先绑定 Y")));
+    // Select Y using the slot's real button, then bind it by clicking the tree name.
+    auto *ySlot = findItem("ruleInputSlot_y"); QVERIFY(ySlot);
+    QQuickItem *chooseY = nullptr;
+    for (auto *item : ySlot->findChildren<QQuickItem *>())
+        if (item->property("text").toString() == QStringLiteral("从信号树选择")) { chooseY = item; break; }
+    QVERIFY(chooseY);
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, chooseY->mapToScene(QPointF(chooseY->width() / 2, chooseY->height() / 2)).toPoint());
+    QCOMPARE(processor->property("selectedRuleInput").toString(), QString("y"));
+    auto *bName = findItem("signalTreeName", "B"); QVERIFY(bName);
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, bName->mapToScene(QPointF(20, bName->height() / 2)).toPoint());
+    QCOMPARE(editor->property("inputYId").toString(), QString("raw:1"));
+    QVERIFY(QMetaObject::invokeMethod(editor, "submit")); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(preview(), QString("15 / 15"));
+    // Previously computed outputs can be bound from the processing tree.
+    QVERIFY(start(2));
+    auto *tabs = root->findChild<QObject *>("signalBrowserTabs"); QVERIFY(tabs); tabs->setProperty("currentIndex", 1);
+    const auto output = magnitude["outputs"].toList().first().toMap();
+    controller.signalModel()->revealSignal(output["series"].toInt()); QCoreApplication::processEvents();
+    QVERIFY(drag(output["name"].toString(), "x")); QCOMPARE(editor->property("inputXId").toString(), output["id"].toString());
+    QVERIFY(QMetaObject::invokeMethod(editor, "submit")); QTRY_VERIFY(!controller.deriving()); QCOMPARE(preview(), QString("13 / 13"));
+    QQmlExpression editMagnitude(QQmlEngine::contextForObject(processor), processor, "editRule(selected.rules[0])");
+    editMagnitude.evaluate(); QVERIFY(!editMagnitude.hasError());
+    tabs->setProperty("currentIndex", 1); controller.signalModel()->revealSignal(output["series"].toInt());
+    QVERIFY(drag(output["name"].toString(), "x")); // Own output is highlighted as invalid and rejected.
+    QVERIFY(!processor->property("dropRuleAllowed").toBool());
+    QCOMPARE(editor->property("inputXId").toString(), QString("raw:0"));
+    QVERIFY(!editor->property("errorText").toString().isEmpty());
+    QVERIFY(QMetaObject::invokeMethod(processor, "clearRuleInput", Q_ARG(QString, QString("y"))));
+    processor->setProperty("selectedRuleInput", "y");
+    bool invalidChecked = true;
+    QVERIFY(QMetaObject::invokeMethod(processor, "ruleSourceChecked", Q_RETURN_ARG(bool, invalidChecked), Q_ARG(int, output["series"].toInt())));
+    QVERIFY(!invalidChecked); // An unbound slot must not check forbidden outputs with no indexed ID.
+    // Merge adds without duplicates; a drop onto a numbered input replaces that entry.
+    QVERIFY(start(5)); QVERIFY(drag("A", "merge")); QVERIFY(drag("A", "merge"));
+    QCOMPARE(editor->property("mergeInputs").toList().size(), 1);
+    auto *remainingMerge = findItem("ruleInputSlot_merge:0"); QVERIFY(remainingMerge);
+    QQuickItem *removeInput = nullptr;
+    for (auto *item : remainingMerge->findChildren<QQuickItem *>())
+        if (item->property("text").toString() == QStringLiteral("移除")) { removeInput = item; break; }
+    QVERIFY(removeInput);
+    QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, removeInput->mapToScene(QPointF(removeInput->width() / 2, removeInput->height() / 2)).toPoint());
+    QCOMPARE(editor->property("mergeInputs").toList().size(), 0);
+    QVERIFY(drag("A", "merge"));
+    QVERIFY(drag("B", "merge")); QCOMPARE(editor->property("mergeInputs").toList().size(), 2);
+    QVERIFY(drag("C", "merge:1")); QCOMPARE(editor->property("mergeInputs").toList().last().toString(), QString("raw:2"));
+    QVERIFY(drag("A", "merge:1")); QCOMPARE(editor->property("mergeInputs").toList().last().toString(), QString("raw:2"));
+    QVERIFY(editor->property("errorText").toString().contains(QStringLiteral("不能重复")));
+    QVERIFY(QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 0)));
+    QCOMPARE(editor->property("mergeInputs").toList().size(), 1);
+    QVERIFY(QMetaObject::invokeMethod(editor, "submit")); QCOMPARE(rules().size(), 3);
+    QVERIFY(editor->property("errorText").toString().contains(QStringLiteral("两个输入")));
+    QVERIFY(QMetaObject::invokeMethod(editor, "close"));
+    for (int row = 0; row < controller.signalCount(); ++row) QVERIFY(!controller.plotSignalEnabled(0, row));
+    // New rules receive an unused default name; changing type never overwrites edits.
+    QQmlExpression namedRule(QQmlEngine::contextForObject(processor), processor, "editRule(null)");
+    auto *name = processor->findChild<QObject *>("objectRuleName"); QVERIFY(name);
+    for (int number = 1; number <= 2; ++number) {
+        namedRule.evaluate(); QVERIFY(!namedRule.hasError());
+        QCOMPARE(name->property("text").toString(), QStringLiteral("规则%1").arg(number));
+        operation->setProperty("currentIndex", 2);
+        QVERIFY(QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 0)));
+        QCOMPARE(name->property("text").toString(), QStringLiteral("规则%1").arg(number));
+        QVERIFY(QMetaObject::invokeMethod(editor, "submit")); QTRY_VERIFY(!controller.deriving());
+        QCOMPARE(rules().last().toMap()["name"].toString(), QStringLiteral("规则%1").arg(number));
+    }
+    namedRule.evaluate(); QVERIFY(!namedRule.hasError()); QCOMPARE(name->property("text").toString(), QStringLiteral("规则3"));
+    name->setProperty("text", QStringLiteral("手动命名")); operation->setProperty("currentIndex", 3);
+    QCOMPARE(name->property("text").toString(), QStringLiteral("手动命名"));
+    QVERIFY(QMetaObject::invokeMethod(editor, "close"));
+    namedRule.evaluate(); QVERIFY(!namedRule.hasError()); QCOMPARE(name->property("text").toString(), QStringLiteral("规则3"));
+    QCoreApplication::processEvents(); QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+}
+void ObjectDataTest::ruleEditorLargeSignalNavigation()
+{
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    QTemporaryDir dir; QFile file(dir.filePath("large-inputs.csv")); QVERIFY(file.open(QIODevice::WriteOnly));
+    QByteArray header("time"), values("0");
+    for (int i = 0; i < 10000; ++i) { header += ",s" + QByteArray::number(i); values += ",1"; }
+    file.write(header + '\n' + values + '\n'); file.close();
+    AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+    QCOMPARE(controller.signalCount(), 10000);
+    const auto config = controller.createDataObject("large inputs", "processing"); QVERIFY(!config.isEmpty());
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl::fromLocalFile(QStringLiteral(DI_SOURCE_DIR "/qml/Main.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"appController", QVariant::fromValue(&controller)}}));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+    auto *processor = root->findChild<QObject *>("processingManager"); QVERIFY(processor);
+    processor->setProperty("selectedId", config); QVERIFY(QMetaObject::invokeMethod(processor, "open"));
+    QQmlExpression open(QQmlEngine::contextForObject(processor), processor, "editRule(null)");
+    open.evaluate(); QVERIFY(!open.hasError()); QTest::qWait(50);
+    auto *editor = processor->findChild<QObject *>("objectRuleDialog"); QVERIFY(editor);
+    QVERIFY(editor->property("inputXId").toString().isEmpty());
+    QVERIFY(editor->property("inputYId").toString().isEmpty());
+    QVERIFY(editor->property("inputZId").toString().isEmpty());
+    QElapsedTimer elapsed; elapsed.start();
+    auto *operation = processor->findChild<QObject *>("objectRuleOperation"); QVERIFY(operation);
+    for (int i = 0; i < 10; ++i) { operation->setProperty("currentIndex", 3); QCoreApplication::processEvents(); operation->setProperty("currentIndex", 2); QCoreApplication::processEvents(); }
+    const auto typesMs = elapsed.nsecsElapsed() / 1e6;
+    QQmlExpression lookup(QQmlEngine::contextForObject(processor), processor,
+        "for (let i = 0; i < 100; ++i) { ruleInputName(''); ruleInputName('raw:9999'); ruleSourceAllowed(9999); }");
+    elapsed.restart(); lookup.evaluate(); QVERIFY(!lookup.hasError()); const auto lookupMs = elapsed.nsecsElapsed() / 1e6;
+    QSignalSpy resets(controller.signalModel(), &QAbstractItemModel::modelReset);
+    QVERIFY(QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 0)));
+    elapsed.restart();
+    for (int i = 0; i < 10; ++i) QVERIFY(QMetaObject::invokeMethod(processor, "browseRuleSource"));
+    const auto browseMs = elapsed.nsecsElapsed() / 1e6;
+    operation->setProperty("currentIndex", 4); QTest::qWait(50);
+    auto *window = qobject_cast<QQuickWindow *>(root.get()); QVERIFY(window);
+    auto *list = root->findChild<QQuickItem *>("signalList"); QVERIFY(list);
+    auto clickSlot = [&](const QString &slot, bool label = false) {
+        QQuickItem *item = nullptr;
+        QList<QQuickItem *> pending{window->contentItem()};
+        while (!pending.isEmpty()) {
+            auto *candidate = pending.takeLast(); pending.append(candidate->childItems());
+            if (candidate->isVisible() && candidate->objectName() == (label ? "ruleInputLabel_" : "chooseRuleInput_") + slot) { item = candidate; break; }
+        }
+        if (!item) return false;
+        // Click the actual input-selection button, not a property setter or navigation method.
+        const auto point = item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint();
+        QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, point);
+        QCoreApplication::processEvents();
+        return processor->property("selectedRuleInput").toString() == slot;
+    };
+    QVERIFY(QMetaObject::invokeMethod(processor, "clearRuleInput", Q_ARG(QString, QString("x"))));
+    QVERIFY(clickSlot("y")); QVERIFY(clickSlot("z"));
+    QElapsedTimer clicks; clicks.start();
+    for (int i = 0; i < 10; ++i) { QVERIFY(clickSlot("x")); QVERIFY(clickSlot("y")); QVERIFY(clickSlot("z")); }
+    const auto clickMs = clicks.nsecsElapsed() / 1e6;
+    QVERIFY(editor->property("inputXId").toString().isEmpty());
+    QVERIFY(editor->property("inputYId").toString().isEmpty());
+    QVERIFY(editor->property("inputZId").toString().isEmpty());
+    // Bound, widely separated sources must not force re-navigation on every slot click.
+    for (const auto &entry : {qMakePair(0, QString("x")), qMakePair(5000, QString("y")), qMakePair(9999, QString("z"))})
+        QVERIFY(QMetaObject::invokeMethod(processor, "bindRuleSource", Q_ARG(int, entry.first), Q_ARG(QString, entry.second), Q_ARG(bool, false)));
+    auto *search = root->findChild<QObject *>("signalSearch"); QVERIFY(search);
+    search->setProperty("text", "s"); QTest::qWait(200);
+    list->setProperty("contentY", 3000.0); QTest::qWait(50);
+    const auto scrollY = list->property("contentY").toDouble(); resets.clear();
+    clicks.restart();
+    for (int i = 0; i < 10; ++i) { QVERIFY(clickSlot("x", true)); QVERIFY(clickSlot("y", true)); QVERIFY(clickSlot("z", true)); }
+    const auto boundClickMs = clicks.nsecsElapsed() / 1e6;
+    QCOMPARE(search->property("text").toString(), QString("s"));
+    QCOMPARE(list->property("contentY").toDouble(), scrollY);
+    QCOMPARE(editor->property("inputXId").toString(), QString("raw:0"));
+    QCOMPARE(editor->property("inputYId").toString(), QString("raw:5000"));
+    QCOMPARE(editor->property("inputZId").toString(), QString("raw:9999"));
+    qInfo() << "10000 signals: Y/Z then 30 empty-slot clicks=" << clickMs << "ms; 30 bound-slot clicks=" << boundClickMs << "ms; tree resets=" << resets.count();
+    qInfo().nospace() << "10000 signals: 20 type switches=" << typesMs << " ms; 100 input lookups=" << lookupMs << " ms; 10 source navigations=" << browseMs << " ms; tree resets=" << resets.count();
+    QCOMPARE(resets.count(), 0);
 }
 void ObjectDataTest::objectFieldPolicy()
 {

@@ -480,6 +480,12 @@ int SignalModel::visibleModelRow(int sourceRow) const
 int SignalModel::revealSignal(int sourceRow)
 {
     if (sourceRow < 0 || sourceRow >= m_names.size()) return -1;
+    // Re-selecting an input already in the unfiltered tree only needs its row.
+    // Keep delegates, scroll state and persistent indices alive on this path.
+    if (m_filter.isEmpty()) {
+        const int existing = visibleModelRow(sourceRow);
+        if (existing >= 0) return existing;
+    }
     beginResetModel();
     m_filter.clear();
     QString prefix;

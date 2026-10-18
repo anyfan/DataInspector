@@ -10,14 +10,59 @@
 #include "io/dataloadworker.h"
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QQmlExpression>
 #include <QQuickWindow>
+#include <QSGRendererInterface>
+#include <QSurfaceFormat>
+#include <QTimer>
 #include <QElapsedTimer>
 #include <QMouseEvent>
 #include <QtMath>
 
+class RuleInputClickProbe : public QObject {
+public:
+    RuleInputClickProbe(QQuickWindow *window, QObject *processor) : QObject(window), m_window(window), m_processor(processor) {
+        m_clock.start(); window->installEventFilter(this);
+        connect(window, &QQuickWindow::frameSwapped, this, [this] {
+            if (m_pending < 0) return;
+            qInfo() << "INPUT FIRST FRAME ms" << (m_clock.nsecsElapsed() - m_pending) / 1e6 << "selected" << m_processor->property("selectedRuleInput");
+            m_pending = -1;
+        });
+    }
+protected:
+    bool eventFilter(QObject *object, QEvent *event) override {
+        if (object == m_window && event->type() == QEvent::MouseButtonRelease) {
+            auto *mouse = static_cast<QMouseEvent *>(event);
+            QString slot;
+            QList<QQuickItem *> pending{m_window->contentItem()};
+            while (!pending.isEmpty()) {
+                auto *item = pending.takeLast(); pending.append(item->childItems());
+                if (item->isVisible() && item->objectName().startsWith("ruleInputSlot_")) {
+                    const auto point = item->mapFromScene(mouse->position());
+                    if (item->contains(point)) slot = item->objectName();
+                }
+            }
+            if (!slot.isEmpty()) {
+                m_pending = m_clock.nsecsElapsed(); const auto requested = m_pending;
+                qInfo() << "INPUT RELEASE" << mouse->position() << slot << "spontaneous" << mouse->spontaneous() << "before" << m_processor->property("selectedRuleInput");
+                QTimer::singleShot(0, this, [this, requested] {
+                    qInfo() << "INPUT HANDLED ms" << (m_clock.nsecsElapsed() - requested) / 1e6 << "selected" << m_processor->property("selectedRuleInput");
+                });
+            }
+        }
+        return QObject::eventFilter(object, event);
+    }
+private:
+    QQuickWindow *m_window;
+    QObject *m_processor;
+    QElapsedTimer m_clock;
+    qint64 m_pending = -1;
+};
+
 class TrajectoryTest : public QObject {
     Q_OBJECT
 private slots:
+    void ruleEditorRealDataFrames();
     void sharedFrameAndErrorIsolation();
     void measurementAttitudeConventionsAndGaps();
     void multiControllerSessionRemapAndExport();
@@ -50,6 +95,82 @@ private slots:
     void indexedSimplificationPreservesSpikesAndGaps();
     void continuousCameraRequestsPublishFrames();
 };
+
+void TrajectoryTest::ruleEditorRealDataFrames()
+{
+    const auto path = qEnvironmentVariable("DI_RULE_UI_INPUT");
+    if (path.isEmpty()) QSKIP("Set DI_RULE_UI_INPUT for the optional real-data, rendered-frame diagnostic");
+    auto format = QSurfaceFormat::defaultFormat(); format.setSamples(4); QSurfaceFormat::setDefaultFormat(format);
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, TrajectoryItemQmlRegistration,
+        AppControllerQmlRegistration, SignalModelQmlRegistration>("DataInspector", 1);
+    AppController controller;
+    qInfo() << "Loading real rule-editor input" << path;
+    QVERIFY(controller.loadCsv(path)); QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 240000);
+    QVERIFY(controller.signalCount() > 0); qInfo() << "Loaded" << controller.signalCount() << "signals";
+    controller.selectSignal(0);
+    QQmlEngine engine;
+    QQmlComponent component(&engine, QUrl("qrc:/qt/qml/DataInspectorTrajectoryTest/Main.qml"));
+    QTRY_VERIFY_WITH_TIMEOUT(component.status() != QQmlComponent::Loading, 5000);
+    QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"appController", QVariant::fromValue(&controller)}}));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+    auto *window = qobject_cast<QQuickWindow *>(root.get()); QVERIFY(window);
+    window->raise(); window->requestActivate();
+    QTest::qWait(300);
+    auto *processor = root->findChild<QObject *>("processingManager"); QVERIFY(processor);
+    const auto id = controller.createDataObject("real-data diagnostic", "processing"); QVERIFY(!id.isEmpty());
+    processor->setProperty("selectedId", id); QVERIFY(QMetaObject::invokeMethod(processor, "open"));
+    QQmlExpression open(QQmlEngine::contextForObject(processor), processor, "editRule(null)");
+    open.evaluate(); QVERIFY2(!open.hasError(), qPrintable(open.error().toString()));
+    processor->findChild<QObject *>("objectRuleOperation")->setProperty("currentIndex", 4);
+    QTest::qWait(200);
+    QVERIFY(!window->grabWindow().isNull());
+    qInfo() << "Renderer API" << window->rendererInterface()->graphicsApi() << "MSAA" << window->format().samples() << "active" << window->isActive() << "exposed" << window->isExposed();
+    QSignalSpy frames(window, &QQuickWindow::frameSwapped);
+    QElapsedTimer idle; idle.start(); QTest::qWait(100); qInfo() << "Idle 100ms actual" << idle.elapsed();
+    const int manualMs = qEnvironmentVariableIntValue("DI_RULE_UI_MANUAL_MS");
+    if (manualMs > 0) {
+        RuleInputClickProbe clickProbe(window, processor);
+        QElapsedTimer traceClock; traceClock.start(); qint64 lastTick = 0;
+        QTimer heartbeat; heartbeat.setInterval(20);
+        connect(&heartbeat, &QTimer::timeout, &controller, [&] {
+            const auto now = traceClock.elapsed();
+            if (lastTick && now - lastTick > 100) qInfo() << "GUI event loop delayed ms" << now - lastTick << "at ms" << now;
+            lastTick = now;
+        });
+        heartbeat.start();
+        connect(processor, SIGNAL(sourcesRequested()), &heartbeat, SLOT(start()));
+        window->setTitle(QStringLiteral("DataInspector 输入切换诊断窗口 · 请反复点击 X/Y/Z"));
+        qInfo() << "MANUAL INPUT TRACE READY ms" << manualMs;
+        QTest::qWait(manualMs);
+        qInfo() << "MANUAL INPUT TRACE FINISHED";
+        return;
+    }
+    QSignalSpy resets(controller.signalModel(), &QAbstractItemModel::modelReset);
+    for (int scenario = 0; scenario < 2; ++scenario) {
+        if (scenario) for (int i = 0; i < qMin(3, controller.signalCount()); ++i)
+            QVERIFY(QMetaObject::invokeMethod(processor, "bindRuleSource", Q_ARG(int, i), Q_ARG(QString, (QStringList{"x", "y", "z"}[i])), Q_ARG(bool, false)));
+        for (int click = 0; click < 14; ++click) {
+            const auto slot = click < 2 ? QStringList{"y", "z"}[click] : QStringList{"x", "y", "z"}[(click - 2) % 3];
+            QQuickItem *target = nullptr;
+            QList<QQuickItem *> pending{window->contentItem()};
+            while (!pending.isEmpty()) {
+                auto *item = pending.takeLast(); pending.append(item->childItems());
+                if (item->isVisible() && item->objectName() == "chooseRuleInput_" + slot) { target = item; break; }
+            }
+            QVERIFY(target);
+            QElapsedTimer elapsed; elapsed.start();
+            const auto framesBefore = frames.count();
+            QTest::mouseClick(window, Qt::LeftButton, Qt::NoModifier, target->mapToScene(QPointF(target->width() / 2, target->height() / 2)).toPoint());
+            const auto handlerMs = elapsed.nsecsElapsed() / 1e6;
+            window->update();
+            const auto frameMs = elapsed.nsecsElapsed() / 1e6;
+            QTest::qWait(60);
+            qInfo() << "Rule input click" << scenario << click << slot << "handler ms" << handlerMs << "frame ms" << frameMs << "settled ms" << elapsed.nsecsElapsed() / 1e6 << "frames" << frames.count() - framesBefore;
+        }
+    }
+    QCOMPARE(resets.count(), 0);
+}
 static std::array<PlotSeriesDataPtr, 3> axes(const QVector<double> &time,
     const QVector<double> &x, const QVector<double> &y, const QVector<double> &z)
 {
