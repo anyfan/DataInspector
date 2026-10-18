@@ -4,6 +4,7 @@
 #include <QFileInfo>
 #include <map>
 #include <tuple>
+#include <utility>
 #include <QRegularExpression>
 #include <cmath>
 #include <functional>
@@ -203,7 +204,9 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
         for (const auto &rule : object.rules) {
             if (!identity(rule.id) || !nameValid(rule.name) || rule.inputs.isEmpty() || rule.inputs.size() > (rule.operation == "merge" ? 256 : 3)
                 || !std::isfinite(rule.factor) || !std::isfinite(rule.bias)
-                || !std::isfinite(rule.samplePeriod) || rule.samplePeriod < 0) return fail(QStringLiteral("派生规则无效"));
+                || !std::isfinite(rule.samplePeriod) || rule.samplePeriod < 0
+                || !QStringList{"count", "cumulative", "window"}.contains(rule.rateMode)
+                || !std::isfinite(rule.rateWindowSeconds) || rule.rateWindowSeconds <= 0) return fail(QStringLiteral("派生规则无效"));
             for (const auto &input : rule.inputs) if (!available.contains(input))
                 return fail(QStringLiteral("处理规则只能引用本配置来源或此前处理结果，禁止循环依赖"));
             int count = 1;
@@ -226,7 +229,8 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
                     || !std::isfinite(rule.counterRate) || rule.counterRate <= 0 || rule.counterRate > 4294967296.0
                     || !std::isfinite(rule.counterTolerance) || rule.counterTolerance < 0 || rule.counterTolerance > 4294967296.0)
                     return fail(QStringLiteral("计数检测模式、步长、抽样间隔、回绕模数、频率或容差无效"));
-                count = 2;
+                count = rule.outputs.size() == 2 ? 2 : 1;
+                if (count == 2 && rule.rateMode == "count") return fail(QStringLiteral("累计丢包数需使用单项输出规则"));
             } else if (rule.operation == "merge") {
                 if (rule.inputs.size() < 2 || QSet<QString>(rule.inputs.begin(), rule.inputs.end()).size() != rule.inputs.size())
                     return fail(QStringLiteral("时间合并需要至少两个不同输入"));
@@ -257,7 +261,7 @@ QJsonObject calculationKey(const ObjectRule &rule)
     return {{"operation", rule.operation}, {"expression", rule.expression},
         {"inputs", QJsonArray::fromStringList(rule.inputs)}, {"outputs", outputs},
         {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
-        {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}};
+        {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}};
 }
 bool sameSamples(const PlotSeriesDataPtr &a, const PlotSeriesDataPtr &b)
 {
@@ -419,6 +423,11 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
             }
             double samplePeriod = rule.samplePeriod;
             qsizetype duplicateSamples = 0;
+            const auto writePacketLoss = [&](qsizetype index, double lost, double received) {
+                const double rate = lost + received > 0 ? 100.0 * lost / (lost + received) : 0;
+                if (outputs.size() == 2) { outputs[0]->values[index] = lost; outputs[1]->values[index] = rate; }
+                else outputs[0]->values[index] = rule.rateMode == "count" ? lost : rate;
+            };
             if (error.isEmpty() && rule.operation == "packetloss" && rule.lossMode == "time") {
                 const auto &source = inputs.first();
                 // Bound estimator memory; calculation below validates every timestamp.
@@ -443,8 +452,7 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                         }
                         lost += missing;
                     }
-                    outputs[0]->values[i] = lost;
-                    outputs[1]->values[i] = 100.0 * lost / (lost + double(i) + 1);
+                    writePacketLoss(i, lost, double(i) + 1);
                 }
             }
             if (error.isEmpty() && rule.operation == "packetloss" && rule.lossMode != "time") {
@@ -502,10 +510,42 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                         }
                         lost += missing; received += accepted;
                     }
-                    outputs[0]->values[i] = lost;
-                    outputs[1]->values[i] = lost + received > 0 ? 100.0 * lost / (lost + received) : 0;
+                    writePacketLoss(i, lost, received);
                 }
             }
+            if (error.isEmpty() && rule.operation == "packetloss" && rule.rateMode == "window") {
+                const auto &source = inputs.first();
+                // Recompute interval counts from validated raw samples, so single-output
+                // window rules need no hidden loss array or extra per-sample cache.
+                const auto countsAt = [&](qsizetype index) -> std::pair<double, double> {
+                    if (index == 0) return {0, rule.lossMode == "rate" ? 0 : 1};
+                    const auto point = source->pointAt(index), previous = source->pointAt(index - 1);
+                    if (rule.lossMode == "time")
+                        return {qMax(0.0, std::floor((point.x() - previous.x()) / samplePeriod + 0.5) - 1), 1};
+                    double delta = point.y() - previous.y();
+                    if (delta < 0 && rule.counterModulus > 0) delta += rule.counterModulus;
+                    const double frames = delta / rule.counterStep;
+                    if (rule.lossMode == "rate") {
+                        const double deficit = std::floor((point.x() - previous.x()) * rule.counterRate + 0.5) - frames;
+                        return {deficit > rule.counterTolerance ? qMax(0.0, deficit) : 0, frames};
+                    }
+                    const double expected = rule.lossMode == "stride" ? rule.expectedStride : 1;
+                    return frames > 0 ? std::pair<double, double>{frames - expected, expected} : std::pair<double, double>{0, 0};
+                };
+                qsizetype first = 0;
+                double received = 0, lost = 0;
+                for (qsizetype i = 0; i < count; ++i) {
+                    if ((i & 4095) == 0 && cancelled.load()) return {};
+                    const auto current = countsAt(i); lost += current.first; received += current.second;
+                    const double cutoff = source->pointAt(i).x() - rule.rateWindowSeconds;
+                    while (first <= i && source->pointAt(first).x() <= cutoff) {
+                        if ((first & 4095) == 0 && cancelled.load()) return {};
+                        const auto expired = countsAt(first++); lost -= expired.first; received -= expired.second;
+                    }
+                    outputs[outputs.size() == 2 ? 1 : 0]->values[i] = lost + received > 0 ? 100.0 * lost / (lost + received) : 0;
+                }
+            }
+
             if (error.isEmpty() && rule.operation != "merge" && rule.operation != "packetloss") for (qsizetype i = 0; i < count; ++i) {
                 if ((i & 4095) == 0 && cancelled.load()) return {};
                 double values[3] = {}; bool valid = true;
@@ -568,7 +608,7 @@ QJsonArray objectsToJson(const QVector<DataObject> &objects)
             for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"name", output.name}, {"series", output.series}});
             rules.append(QJsonObject{{"id", rule.id}, {"name", rule.name}, {"operation", rule.operation}, {"expression", rule.expression},
                 {"inputs", inputs}, {"outputs", outputs}, {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
-                {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}});
+                {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}});
         }
         array.append(QJsonObject{{"id", object.id}, {"name", object.name}, {"type", object.type}, {"fields", fields}, {"rules", rules},
             {"aircraft", QJsonObject{{"geographic", object.geographic}, {"attitudeMode", object.attitude.mode}, {"radians", object.attitude.radians},
@@ -655,6 +695,10 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
                 if (!r["counterTolerance"].isDouble()) return fail();
                 rule.counterTolerance = r["counterTolerance"].toDouble();
             } else if (r.contains("lossMode") && r["lossMode"].toString() != "time") return fail();
+            if (version >= 16) {
+                if (!string(r["rateMode"], &rule.rateMode) || !r["rateWindowSeconds"].isDouble()) return fail();
+                rule.rateWindowSeconds = r["rateWindowSeconds"].toDouble();
+            } else if (r.contains("rateMode") && r["rateMode"].toString() != "cumulative") return fail();
             rule.signedField = r["signedField"].toBool(); rule.factor = r["factor"].toDouble(); rule.bias = r["bias"].toDouble();
             for (const auto &input : r["inputs"].toArray()) { QString id; if (!string(input, &id)) return fail(); rule.inputs.append(id); }
             for (const auto &ov : r["outputs"].toArray()) {
@@ -663,6 +707,7 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
                 if (!string(o["id"], &output.id) || !string(o["name"], &output.name) || !integer(o["series"], &output.series)) return fail();
                 rule.outputs.append(output);
             }
+            if (rule.operation == "packetloss" && version < 17 && (rule.outputs.size() != 2 || rule.rateMode == "count")) return fail();
             object.rules.append(rule);
         }
         parsed.append(object);

@@ -64,9 +64,15 @@ Pane {
     }
     background: Rectangle { color: manager.palette.window; border.width: manager.dropHighlighted ? 2 : 0; border.color: manager.palette.highlight }
     signal sourcesRequested()
+    signal sourceRequested(int row)
+    function browseFieldSource(field: var): void {
+        if (blocked || !selected || !field) return
+        selectedFieldId = field.id
+        sourceRequested(field.series)
+    }
     function createObject(): void {
         if (blocked) return
-        const id = appController.addDataObject(processingMode ? "processing" : "general")
+        const id = appController.addDataObject(processingMode ? "processing" : "aircraft")
         if (id.length > 0) { selectedId = id; errorText = "" } else errorText = appController.status
     }
     function duplicateObject(): void {
@@ -197,6 +203,8 @@ Pane {
         signedField.checked = rule ? rule.signedField : false
         factor.text = rule ? String(rule.factor) : "1"; bias.text = rule ? String(rule.bias) : "0"
         samplePeriod.text = rule && (rule.samplePeriod > 0 || rule.effectiveSamplePeriod > 0) ? String(rule.samplePeriod > 0 ? rule.samplePeriod : rule.effectiveSamplePeriod) : ""
+        rateMode.currentIndex = rule ? Math.max(0, ["count", "cumulative", "window"].indexOf(rule.rateMode)) : 2
+        rateWindow.text = rule ? String(rule.rateWindowSeconds) : "1"
         lossMode.currentIndex = rule ? Math.max(0, ["time", "sequence", "stride", "rate"].indexOf(rule.lossMode)) : 0
         counterStep.text = rule ? String(rule.counterStep) : "1"
         expectedStride.text = rule ? String(rule.expectedStride) : "1"
@@ -317,7 +325,17 @@ Pane {
                                         text: fieldRow.fieldData.name; color: manager.textColor; Layout.preferredWidth: 120; elide: Text.ElideRight
                                         MouseArea { anchors.fill: parent; onClicked: manager.selectedFieldId = fieldRow.fieldData.id; onDoubleClicked: if (!manager.blocked) manager.editField(fieldRow.fieldData, -1) }
                                     }
-                                    Label { objectName: "objectFieldRowSource"; text: fieldRow.fieldData.source; color: manager.textColor; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideMiddle }
+                                    Label {
+                                        objectName: "objectFieldRowSource"
+                                        text: fieldRow.fieldData.source; color: manager.textColor
+                                        Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideMiddle
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            enabled: !manager.blocked
+                                            cursorShape: Qt.PointingHandCursor
+                                            onClicked: manager.browseFieldSource(fieldRow.fieldData)
+                                        }
+                                    }
                                     Button { text: "删除"; visible: !fieldRow.fieldData.fixed; enabled: !manager.blocked; onClicked: { if (!manager.appController.removeObjectField(manager.selectedId, fieldRow.fieldData.id)) manager.errorText = manager.appController.status } }
                                     }
                                 }
@@ -381,6 +399,11 @@ Pane {
                                             : ruleRow.modelData.operation === "bits" || ruleRow.modelData.operation === "bitfield"
                                                 ? ruleRow.modelData.wordBits + " 位 · bit" + ruleRow.modelData.startBit + " 起，共 " + ruleRow.modelData.bitCount + " 位" + (ruleRow.modelData.signedField ? " · 有符号" : "") : ruleRow.modelData.operation === "merge" ? "按时间合并同源采样点" : ruleRow.modelData.operation === "packetloss" ? (ruleRow.modelData.lossMode !== "time" ? "Y 计数 · " + ({sequence: "逐帧", stride: "固定抽样", rate: "按时间与频率"})[ruleRow.modelData.lossMode] + (ruleRow.modelData.lossMode !== "rate" ? " · 重复采样 " + ruleRow.modelData.duplicateSamples : "") : "采样周期：" + (ruleRow.modelData.samplePeriod > 0 ? ruleRow.modelData.samplePeriod + " 秒" : ruleRow.modelData.effectiveSamplePeriod > 0 ? ruleRow.modelData.effectiveSamplePeriod + " 秒" : "未能估算，请编辑输入")) : "三轴模长"
                                         Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
+                                    }
+                                    Label {
+                                        visible: ruleRow.modelData.operation === "packetloss"
+                                        text: ruleRow.modelData.rateMode === "window" ? "窗口丢包率(%) · " + ruleRow.modelData.rateWindowSeconds + " 秒" : ruleRow.modelData.rateMode === "count" ? "累计丢包数" : "累计丢包率(%)"
+                                        Layout.fillWidth: true; wrapMode: Text.WordWrap
                                     }
                                     Label { text: ruleRow.modelData.error; visible: text.length > 0; color: "#df4652"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
                                     Repeater {
@@ -511,7 +534,7 @@ Pane {
                     onClicked: {
                         if (ruleDialog.sourcesChanged) { ruleDialog.errorText = "数据来源已变更，请重新打开规则并确认输入信号"; return }
                         ruleDialog.submitting = true
-                        const accepted = manager.appController.identifyPacketLoss(manager.selectedId)
+                        const accepted = manager.appController.identifyPacketLoss(manager.selectedId, ["count", "cumulative", "window"][rateMode.currentIndex], rateMode.currentIndex === 2 ? Number(rateWindow.text) : 1)
                         ruleDialog.submitting = false
                         if (accepted) ruleDialog.close()
                         else ruleDialog.errorText = manager.appController.status
@@ -579,6 +602,23 @@ Pane {
             ColumnLayout {
                 visible: ruleDialog.operation === "packetloss"
                 Layout.fillWidth: true
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: "输出指标" }
+                    ObjectCombo { id: rateMode; objectName: "objectRuleRateMode"; model: ["累计丢包数", "累计丢包率(%)", "窗口丢包率(%)"]; Layout.fillWidth: true }
+                }
+                RowLayout {
+                    visible: rateMode.currentIndex === 2
+                    Label { text: "窗口时长（秒）" }
+                    TextField { id: rateWindow; objectName: "objectRuleRateWindow"; text: "1"; Layout.fillWidth: true; maximumLength: 64 }
+                }
+                Label {
+                    text: rateMode.currentIndex === 2
+                        ? "统计最近窗口内的丢失帧 /（丢失帧 + 收到帧）×100%。缺失计入发现它的采样时刻；窗口为左开右闭，不插值或均摊缺失。仅生成所选的窗口丢包率结果。"
+                        : rateMode.currentIndex === 0 ? "仅生成从记录起点累计的丢失帧数，单位为帧。"
+                        : "仅生成从记录起点累计的丢包百分比：丢失帧 /（丢失帧 + 收到帧）×100%，不是每秒丢包数。"
+                    Layout.fillWidth: true; wrapMode: Text.WordWrap
+                }
                 ComboBox {
                     id: lossMode; objectName: "objectRuleLossMode"; Layout.fillWidth: true
                     model: ["X 采样时间", "Y 计数：逐帧", "Y 计数：固定间隔抽样", "Y 计数：按时间与频率"]
@@ -623,7 +663,7 @@ Pane {
                 }
                 Label {
                     visible: lossMode.currentIndex === 0
-                    text: "采样周期已按原始时间间隔估算，可直接修改；多数间隔缺包或变频采样时请手动核定。\n丢包数 = max(四舍五入(时间差 / 周期) − 1, 0)；丢包率 = 累计丢包 / (已收到点数 + 累计丢包) × 100%。时间戳须严格递增，首点为 0，不推断首尾以外的丢包。"
+                    text: "采样周期已按原始时间间隔估算，可直接修改；多数间隔缺包或变频采样时请手动核定。\n丢包数 = max(四舍五入(时间差 / 周期) − 1, 0)；丢包率按上方选择的累计或窗口范围计算。时间戳须严格递增，首点为 0，不推断首尾以外的丢包。"
                     Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
                 }
             }
@@ -645,7 +685,10 @@ Pane {
             if (operation === "packetloss" && lossMode.currentIndex === 0 && (!isFinite(Number(samplePeriod.text)) || Number(samplePeriod.text) <= 0)) {
                 errorText = "采样周期必须为正数秒数"; return
             }
-            const config = {lossMode: ["time", "sequence", "stride", "rate"][lossMode.currentIndex], counterStep: Number(counterStep.text), expectedStride: Number(expectedStride.text), counterModulus: Number(counterModulus.text), counterRate: Number(counterRate.text), counterTolerance: Number(counterTolerance.text), samplePeriod: operation === "packetloss" && lossMode.currentIndex === 0 ? Number(samplePeriod.text) : 0, name: ruleName.text, operation: operation, inputs: inputs, wordBits: Number(wordWidth.currentText), startBit: startBit.value, bitCount: bitCount.value, signedField: signedField.checked, factor: Number(factor.text), bias: Number(bias.text), expression: expression.text}
+            if (operation === "packetloss" && rateMode.currentIndex === 2 && (!isFinite(Number(rateWindow.text)) || Number(rateWindow.text) <= 0)) {
+                errorText = "窗口时长必须为正数秒数"; return
+            }
+            const config = {rateMode: ["count", "cumulative", "window"][rateMode.currentIndex], rateWindowSeconds: isFinite(Number(rateWindow.text)) && Number(rateWindow.text) > 0 ? Number(rateWindow.text) : 1, lossMode: ["time", "sequence", "stride", "rate"][lossMode.currentIndex], counterStep: Number(counterStep.text), expectedStride: Number(expectedStride.text), counterModulus: Number(counterModulus.text), counterRate: Number(counterRate.text), counterTolerance: Number(counterTolerance.text), samplePeriod: operation === "packetloss" && lossMode.currentIndex === 0 ? Number(samplePeriod.text) : 0, name: ruleName.text, operation: operation, inputs: inputs, wordBits: Number(wordWidth.currentText), startBit: startBit.value, bitCount: bitCount.value, signedField: signedField.checked, factor: Number(factor.text), bias: Number(bias.text), expression: expression.text}
             submitting = true
             const success = ruleId.length > 0 ? manager.appController.editObjectRule(manager.selectedId, ruleId, config)
                 : manager.appController.addObjectRule(manager.selectedId, config).length > 0

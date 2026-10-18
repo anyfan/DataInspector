@@ -125,3 +125,7 @@ Y 计数检测复用 packetloss 的对象工作池、取消、值预算和两条
 ## 信号、处理与对象栏目
 
 SignalBrowser 通过控制器的运行期 signalBrowserSection 选择原始或派生行，再与逻辑结果筛选组合交给 SignalModel.setVisibleSources，行号与 Store 不变。定位信号自动切换栏目。ObjectManager.qml 分别实例化为对象字段编辑器和 processingMode=true 的处理编辑器；后者从 processingConfigurations 读取配置，输入直接选择原始信号或本配置此前输出。对象编辑器读取 objectConfigurations，只管理字段及飞机参数。为兼容现有 CLI，dataObjects 仍返回包含两类 type 的总表；会话格式严格分开两类集合。跨线程快照、取消、样本查询及 SG 渲染路径不变。
+
+丢包率在规则值配置中保存 rateMode/rateWindowSeconds，v16 会话严格校验、旧版默认累计。窗口模式用双指针及经校验的原始样本重算、扣除区间缺失与接收增量，O(n) 时间、O(1) 额外空间，不增加逐样本缓存或改变快照边界。自动识别任务捕获统计模式及时长，回填按组/模式/窗口去重；规则增量失效键包含这两个参数。
+
+v17 新建丢包规则采用单项输出，rateMode=count/cumulative/window，默认 window；旧双输出规则继续兼容，不静默删除或改动旧输出身份。单输出计算只分配一个输出数组，窗口模式不生成隐藏累计数组，值缓存预算按真实输出数计入。

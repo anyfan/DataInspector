@@ -368,8 +368,11 @@ void AppController::appendLoadedTables(const QString &path, const QVector<Loaded
 
     const int firstSignalId = m_signalColors.size();
     QVector<QColor> colors(names.size());
+    int fileColorIndex = 0;
     for (QColor &color : colors) {
-        color = signalPalette().at(m_nextColorIndex);
+        // Raw defaults depend only on the signal's position within this file.
+        color = signalPalette().at(fileColorIndex);
+        fileColorIndex = (fileColorIndex + 1) % signalPalette().size();
         m_nextColorIndex = (m_nextColorIndex + 1) % signalPalette().size();
     }
 

@@ -4,19 +4,24 @@
 #include <QScopedValueRollback>
 #include <QThreadPool>
 #include <QTimer>
+#include <cmath>
 
 struct AppController::ObjectJob {
     std::atomic_bool cancelled{false}, done{false};
     ObjectEvaluation result;
-    QString discoveryObject;
+    QString discoveryObject, discoveryRateMode;
+    double discoveryRateWindowSeconds = 1;
     quint64 discoveryGeneration = 0;
     QVector<PacketLossGroup> discoveryGroups;
     std::atomic<int> completed{0};
     int total = 0;
 };
-bool AppController::identifyPacketLoss(const QString &objectId)
+bool AppController::identifyPacketLoss(const QString &objectId, const QString &rateMode, double rateWindowSeconds)
 {
     if (m_loading || m_exporting || deriving() || sessionInteractionBlocked()) return false;
+    if ((rateMode != "count" && rateMode != "cumulative" && rateMode != "window") || !std::isfinite(rateWindowSeconds) || rateWindowSeconds <= 0) {
+        setStatus(QStringLiteral("丢包率模式无效，窗口时长必须为正数秒数")); return false;
+    }
     bool found = false;
     for (const auto &object : m_objects) if (object.id == objectId && isProcessingConfiguration(object)) found = true;
     if (!found) { setStatus(QStringLiteral("请先选择独立处理配置")); return false; }
@@ -28,6 +33,7 @@ bool AppController::identifyPacketLoss(const QString &objectId)
     if (ids.isEmpty()) { setStatus(QStringLiteral("请先加载需要检测的原始数据")); return false; }
     const auto snapshot = m_seriesStore->snapshot(ids);
     const auto job = std::make_shared<ObjectJob>(); job->discoveryObject = objectId;
+    job->discoveryRateMode = rateMode; job->discoveryRateWindowSeconds = rateWindowSeconds;
     job->discoveryGeneration = m_seriesStore->generation(); job->total = ids.size(); m_objectJob = job;
     QThreadPool::globalInstance()->start([job, snapshot] {
         job->discoveryGroups = identifyPacketLossGroups(snapshot, job->cancelled, &job->completed);
@@ -126,7 +132,7 @@ void AppController::pollObjectEvaluation()
         if (job->cancelled.load() || job->discoveryGeneration != m_seriesStore->generation()) {
             setStatus(QStringLiteral("识别期间数据已变更，请重新自动识别")); emit objectsChanged(); return;
         }
-        if (!applyPacketLossGroups(job->discoveryObject, job->discoveryGroups)) emit objectsChanged();
+        if (!applyPacketLossGroups(job->discoveryObject, job->discoveryGroups, job->discoveryRateMode, job->discoveryRateWindowSeconds)) emit objectsChanged();
         return;
     }
     const auto &result = job->result;

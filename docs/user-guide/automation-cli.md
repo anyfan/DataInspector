@@ -162,3 +162,5 @@ template_save/template_read 保存或读取独立的 version=1 JSON；mapping_pr
 ## 独立处理配置（会话 v15）
 
 `object_create` 保留原命令名，type=general/aircraft 创建对象，type=processing/packetloss 创建独立处理配置。`objects` 为兼容客户端继续列出这两类定义，可按 type 区分；规则所属的 object 参数现指处理配置 ID。新规则仅允许放在处理配置中，不能放入常规或飞机对象；规则输入支持 `raw:<信号行号>`，也可使用配置内来源 ID 或此前输出 ID。删除/重绑对象字段不改变处理结果，旧会话恢复时会拆分原对象规则。
+
+丢包规则的 `rule_update.config` 另支持 `rateMode: "count" | "cumulative" | "window"` 及 `rateWindowSeconds`（有限正数秒，默认 1）。新规则默认 window，仅生成所选的一条输出；count 为累计帧数，另两项为对应范围的百分比。模式及时长写入 v17 会话，旧双输出会话保留原有结果；新单项规则修改保留输出身份和样式。

@@ -22,6 +22,8 @@ struct ObjectRule {
     QString lossMode = QStringLiteral("time"); // time / sequence / stride / rate
     double counterStep = 1, expectedStride = 1, counterModulus = 0;
     double counterRate = 1, counterTolerance = 0; // Frames/second and frames.
+    QString rateMode = QStringLiteral("cumulative"); // count / cumulative / window
+    double rateWindowSeconds = 1;
     QVector<ObjectOutput> outputs;
 };
 struct DataObject {
@@ -65,7 +67,7 @@ QJsonArray objectsToJson(const QVector<DataObject> &objects);
 QStringList aircraftFieldRoles();
 QStringList activeAircraftFieldRoles(const DataObject &object);
 bool ensureAircraftFields(DataObject &object);
-bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error, int version = 15);
+bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObject> *objects, QString *error, int version = 17);
 
 struct PacketLossGroup {
     QVector<int> sources;

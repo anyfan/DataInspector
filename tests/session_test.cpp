@@ -11,6 +11,7 @@
 #include <QQmlContext>
 #include <QQmlEngine>
 #include <QSignalSpy>
+#include <QScopeGuard>
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QtTest>
@@ -314,6 +315,11 @@ static QList<PlotItem *> visualPlots(QObject *root)
 
 void SessionTest::qmlRestoresToolbarAndPlotStates()
 {
+    const bool nativeDialogsDisabled = QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    const auto restoreDialogSetting = qScopeGuard([nativeDialogsDisabled] {
+        QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, nativeDialogsDisabled);
+    });
     qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
@@ -385,16 +391,64 @@ void SessionTest::qmlRestoresToolbarAndPlotStates()
     QVERIFY(controller.sessionModified());
     auto *prompt = root->findChild<QObject *>("unsavedSessionDialog");
     QVERIFY(prompt);
+    host->showMinimized();
+    QTRY_COMPARE(host->windowState(), Qt::WindowMinimized);
+    QWindow foregroundWindow;
+    if (QGuiApplication::platformName() == "windows") {
+        foregroundWindow.setTitle("DataInspector exit focus regression");
+        foregroundWindow.show();
+        foregroundWindow.requestActivate();
+        QTRY_VERIFY(foregroundWindow.isActive());
+    }
     host->close();
     QTRY_VERIFY(prompt->property("visible").toBool());
     QVERIFY(host->isVisible());
+    QTRY_VERIFY(host->windowState() != Qt::WindowMinimized);
+    if (QGuiApplication::platformName() == "windows") {
+        QTRY_VERIFY(host->isActive());
+        foregroundWindow.hide();
+    }
+    QVERIFY(prompt->property("focus").toBool());
+    QTest::mouseClick(host, Qt::LeftButton, Qt::NoModifier, QPoint(5, 5));
+    QTest::keyClick(host, Qt::Key_Escape);
+    QCoreApplication::processEvents();
+    QVERIFY(prompt->property("visible").toBool());
+    QCOMPARE(root->property("pendingUnsavedAction").toString(), QStringLiteral("close"));
     QVERIFY(QMetaObject::invokeMethod(prompt, "reject"));
     QCOMPARE(root->property("pendingUnsavedAction").toString(), QString());
     QVERIFY(host->isVisible());
+    host->hide();
+    host->close();
+    QTRY_VERIFY(host->isVisible());
+    QTRY_VERIFY(prompt->property("visible").toBool());
+    host->showMaximized();
+    QTRY_COMPARE(host->windowState(), Qt::WindowMaximized);
+    host->showMinimized();
+    host->close(); // Repeated close must bring the existing prompt back into view.
+    QTRY_COMPARE(host->windowState(), Qt::WindowMaximized);
+    QVERIFY(prompt->property("visible").toBool());
+    auto *saveDialog = root->findChild<QObject *>("saveSessionDialog"); QVERIFY(saveDialog);
+    QVERIFY(QMetaObject::invokeMethod(prompt, "accept"));
+    QTRY_VERIFY(saveDialog->property("visible").toBool());
+    QCOMPARE(saveDialog->property("parentWindow").value<QObject *>(), host);
+    host->close();
+    QVERIFY(!prompt->property("visible").toBool());
+    QVERIFY(saveDialog->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(saveDialog, "reject"));
+    QCOMPARE(root->property("pendingUnsavedAction").toString(), QString());
+    QVERIFY(host->isVisible());
+    host->close();
+    QTRY_VERIFY(prompt->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(prompt, "discarded"));
+    QCoreApplication::processEvents();
+    QTRY_VERIFY(!host->isVisible()); // Queued activation must not reopen a discarded session.
+    root->setProperty("allowClose", false);
+    host->show();
     QVERIFY(controller.saveSession(path));
     QVERIFY(!controller.sessionModified());
     host->close();
     QTRY_VERIFY(!host->isVisible());
+    QVERIFY2(qmlWarnings.isEmpty(), qPrintable(qmlWarnings.join('\n')));
 }
 
 void SessionTest::restoredSessionsContinuePaletteSafely()
@@ -423,8 +477,8 @@ void SessionTest::restoredSessionsContinuePaletteSafely()
         QVERIFY(restored.loadCsv(dir.filePath("extra.csv")));
         QTRY_VERIFY_WITH_TIMEOUT(!restored.loading(), 5000);
         QCOMPARE(restored.signalCount(), count + 2);
-        QCOMPARE(restored.signalColor(count), palette.at(count % paletteSize));
-        QCOMPARE(restored.signalColor(count + 1), palette.at((count + 1) % paletteSize));
+        QCOMPARE(restored.signalColor(count), palette.at(0));
+        QCOMPARE(restored.signalColor(count + 1), palette.at(1));
         QCOMPARE(restored.signalColor(0), QColor("magenta"));
         QCOMPARE(restored.signalWidth(0), 4.5);
     }

@@ -75,7 +75,16 @@ Rectangle {
     }
     Connections {
         target: signalBrowser.objectEditor
-        function onSourcesRequested(): void { signalBrowser.showSection(0) }
+        function onSourcesRequested(): void { signalBrowser.showRequested(); signalBrowser.showSection(0) }
+        function onSourceRequested(row: int): void {
+            signalBrowser.showRequested()
+            if (row >= 0) signalBrowser.revealSignal(row)
+            else {
+                signalBrowser.showSection(0)
+                signalBrowser.clearSearch()
+                signalBrowser.appController.filterSignals("")
+            }
+        }
     }
     Binding {
         target: signalBrowser.objectEditor
@@ -83,6 +92,7 @@ Rectangle {
         value: browserTabs.currentIndex === 2
     }
     signal hideRequested()
+    signal showRequested()
     Component.onCompleted: {
         appController.migrateObjectProcessing()
         appController.setSignalBrowserSection(0)
@@ -299,7 +309,7 @@ Rectangle {
             spacing: 8
             Button {
                 objectName: "createSidebarObjectButton"
-                text: "新建飞机"
+                text: "新建对象"
                 Layout.fillWidth: true
                 enabled: !signalBrowser.objectEditor.blocked && !signalBrowser.appController.imageExporting
                 onClicked: {
@@ -419,7 +429,7 @@ Rectangle {
                     color: signalBrowser.secondaryTextColor
                     visible: sidebarObjects.count === 0
                     text: signalBrowser.appController.objectConfigurations.length === 0
-                        ? "尚无对象，点击“新建飞机”添加" : "没有匹配的对象"
+                        ? "尚无对象，点击“新建对象”添加" : "没有匹配的对象"
                 }
             }
         }

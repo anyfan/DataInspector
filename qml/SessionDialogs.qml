@@ -11,11 +11,15 @@ Item {
     required property real hostWidth
     required property real hostHeight
     signal closeRequested()
+    signal attentionRequested()
     property string pendingUnsavedAction: ""
     function requestClose() {
         if (!appController.sessionModified) return true
+        attentionRequested()
         pendingUnsavedAction = "close"
+        if (saveSessionDialog.visible) return false
         unsavedSessionDialog.open()
+        unsavedSessionDialog.forceActiveFocus()
         return false
     }
     function saveSession() { saveSessionDialog.open() }
@@ -59,18 +63,26 @@ Item {
     Dialog {
         id: unsavedSessionDialog
         objectName: "unsavedSessionDialog"
+        parent: Overlay.overlay
         title: "当前会话尚未保存"
         modal: true
+        closePolicy: Popup.NoAutoClose
+        focus: true
+        z: 1000
         anchors.centerIn: parent
         standardButtons: Dialog.Save | Dialog.Discard | Dialog.Cancel
         Label { text: "是否保存当前的信号绑定、样式和视图？\n会话文件不包含原始数据。" }
-        onAccepted: saveSessionDialog.open()
+        onAccepted: {
+            if (sessionDialogs.pendingUnsavedAction === "close") sessionDialogs.attentionRequested()
+            saveSessionDialog.open()
+        }
         onDiscarded: sessionDialogs.continueUnsavedAction()
         onRejected: sessionDialogs.pendingUnsavedAction = ""
     }
     FileDialog {
         id: saveSessionDialog
         objectName: "saveSessionDialog"
+        parentWindow: sessionDialogs.Window.window
         title: "保存会话（不包含原始数据）"
         nameFilters: ["DataInspector 会话 (*.disession)", "JSON 文件 (*.json)"]
         fileMode: FileDialog.SaveFile

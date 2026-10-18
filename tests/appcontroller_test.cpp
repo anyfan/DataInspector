@@ -47,6 +47,7 @@ private slots:
     void loadedSignalsBindOnlyToTheActivePlot();
     void expandingLayoutKeepsExistingPlotAttached();
     void multipleFilesAppendAndPreserveExistingBindings();
+    void importedColorsAreIndependentOfWorkspaceHistory();
     void customLayoutSupportsLegacyEightByEightRange();
     void replacingAPlotDelegateRestoresItsCurves();
     void qmlUrlListImportsLocalFiles();
@@ -639,6 +640,49 @@ void AppControllerTest::expandingLayoutKeepsExistingPlotAttached()
 
     QCOMPARE(firstPlot.visibleSeriesIds(), QVector<PlotSeriesId>({0, 1}));
     QVERIFY(secondPlot.visibleSeriesIds().isEmpty());
+}
+
+void AppControllerTest::importedColorsAreIndependentOfWorkspaceHistory()
+{
+    QTemporaryDir dir;
+    const auto &palette = AppController::signalPalette();
+    const int count = palette.size() + 3;
+    QByteArray header("time"), values("0");
+    for (int i = 0; i < count; ++i) {
+        header += ",S" + QByteArray::number(i);
+        values += "," + QByteArray::number(i);
+    }
+    const auto target = dir.filePath("target.csv"), other = dir.filePath("other.csv");
+    QFile targetFile(target); QVERIFY(targetFile.open(QIODevice::WriteOnly));
+    targetFile.write(header + "\n" + values + "\n"); targetFile.close();
+    QFile otherFile(other); QVERIFY(otherFile.open(QIODevice::WriteOnly));
+    otherFile.write("time,A,B\n0,1,2\n1,3,4\n"); otherFile.close();
+    auto verifyColors = [&](AppController &controller, int offset) {
+        for (int i = 0; i < count; ++i)
+            QCOMPARE(controller.signalColor(offset + i), palette.at(i % palette.size()));
+    };
+    AppController clean;
+    QVERIFY(clean.loadCsv(target)); QTRY_VERIFY(!clean.loading());
+    verifyColors(clean, 0);
+    AppController mixed;
+    QVERIFY(mixed.loadCsv(other)); QTRY_VERIFY(!mixed.loading());
+    const auto processing = mixed.createDataObject("bits", "processing");
+    QVERIFY(!mixed.addObjectRule(processing, {{"name", "flags"}, {"operation", "bits"},
+        {"inputs", QVariantList{"raw:0"}}, {"bitCount", 8}}).isEmpty());
+    QTRY_VERIFY(!mixed.deriving());
+    int offset = mixed.signalCount();
+    QVERIFY(mixed.loadCsv(target)); QTRY_VERIFY(!mixed.loading());
+    verifyColors(mixed, offset);
+    mixed.setSignalPen(0, QColor("magenta"), 3, Qt::DashLine);
+    QVERIFY(mixed.removeFile("target.csv")); QTRY_VERIFY(!mixed.deriving());
+    offset = mixed.signalCount();
+    QVERIFY(mixed.loadCsv(target)); QTRY_VERIFY(!mixed.loading());
+    verifyColors(mixed, offset);
+    QCOMPARE(mixed.signalColor(0), QColor("magenta"));
+    QCOMPARE(mixed.signalWidth(0), 3.0);
+    mixed.clear();
+    QVERIFY(mixed.loadCsv(target)); QTRY_VERIFY(!mixed.loading());
+    verifyColors(mixed, 0);
 }
 
 void AppControllerTest::multipleFilesAppendAndPreserveExistingBindings()

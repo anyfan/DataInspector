@@ -73,7 +73,7 @@ private slots:
         const auto field = controller.addDataObjectField(object);
         QVERIFY(!controller.bindObjectField(object, field, "count", "scalar", 0).isEmpty());
         const auto rule = controller.addObjectRule(object, {{"name", "loss"}, {"operation", "packetloss"},
-            {"inputs", QVariantList{field}}, {"samplePeriod", 1}});
+            {"inputs", QVariantList{field}}, {"samplePeriod", 1}, {"rateMode", "count"}});
         QVERIFY(!rule.isEmpty()); QTRY_VERIFY(!controller.deriving());
         const auto listed = call(conn, "signals")["result"].toObject();
         QJsonObject config{{"name", "loss"}, {"operation", "packetloss"}, {"inputs", QJsonArray{field}},

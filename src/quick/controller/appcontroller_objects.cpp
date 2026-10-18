@@ -11,8 +11,14 @@
 namespace {
 QString newId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 bool validName(const QString &name) { return !name.trimmed().isEmpty() && name.size() <= 256 && !name.contains(QChar::Null); }
+QString packetLossOutputName(const ObjectRule &rule) {
+    return rule.name + (rule.rateMode == "count" ? QStringLiteral(".累计丢包数")
+        : rule.rateMode == "window" ? QStringLiteral(".窗口丢包率(%)") : QStringLiteral(".累计丢包率(%)"));
+}
 bool readCounterConfig(const QVariantMap &config, ObjectRule &rule)
 {
+    rule.rateMode = config.value("rateMode", rule.rateMode).toString();
+    { bool ok = true; rule.rateWindowSeconds = config.value("rateWindowSeconds", rule.rateWindowSeconds).toDouble(&ok); if (!ok) return false; }
     rule.lossMode = config.value("lossMode", rule.lossMode).toString();
     { bool ok = true; rule.counterStep = config.value("counterStep", rule.counterStep).toDouble(&ok); if (!ok) return false; }
     { bool ok = true; rule.expectedStride = config.value("expectedStride", rule.expectedStride).toDouble(&ok); if (!ok) return false; }
@@ -188,7 +194,7 @@ QVariantMap AppController::mergeSignals(const QVariantList &groups)
     return {{"outputs", created}, {"accepted", true}, {"completed", false}};
 }
 
-bool AppController::applyPacketLossGroups(const QString &objectId, const QVector<PacketLossGroup> &groups)
+bool AppController::applyPacketLossGroups(const QString &objectId, const QVector<PacketLossGroup> &groups, const QString &rateMode, double rateWindowSeconds)
 {
     auto next = m_objects;
     auto target = std::find_if(next.begin(), next.end(), [&](const DataObject &object) { return object.id == objectId && isProcessingConfiguration(object); });
@@ -204,7 +210,8 @@ bool AppController::applyPacketLossGroups(const QString &objectId, const QVector
         for (const auto &field : target->fields) if (sourceRows.contains(field.series)) matchingFields.append(field.id);
         bool exists = false;
         for (const auto &rule : target->rules)
-            if (rule.operation == "packetloss" && rule.lossMode == "time" && rule.inputs.size() == 1 && matchingFields.contains(rule.inputs.first())) exists = true;
+            if (rule.operation == "packetloss" && rule.lossMode == "time" && rule.rateMode == rateMode
+                && (rateMode != "window" || rule.rateWindowSeconds == rateWindowSeconds) && rule.inputs.size() == 1 && matchingFields.contains(rule.inputs.first())) exists = true;
         if (exists) continue; // Preserve identities, edited periods and downstream references.
         QString field;
         if (!matchingFields.isEmpty()) field = matchingFields.first();
@@ -214,8 +221,9 @@ bool AppController::applyPacketLossGroups(const QString &objectId, const QVector
         }
         ObjectRule rule; rule.id = newId(); rule.name = group.name; rule.operation = "packetloss";
         rule.inputs = {field}; rule.samplePeriod = group.samplePeriod;
-        for (int k = 0; k < 2; ++k) {
-            const QString name = group.name + (k == 0 ? QStringLiteral(".累计丢包数") : QStringLiteral(".丢包率(%)"));
+        rule.rateMode = rateMode; rule.rateWindowSeconds = rateWindowSeconds;
+        for (int k = 0; k < 1; ++k) {
+            const QString name = packetLossOutputName(rule);
             const int row = signalCount() + placeholders.size();
             rule.outputs.append({newId(), name, row});
             PlotSeriesInput input; input.id = row; input.sourceFile = "object:" + target->id;
@@ -304,7 +312,7 @@ QVariantList AppController::dataObjects() const
             }
             rules.append(QVariantMap{{"id", rule.id}, {"name", rule.name}, {"operation", rule.operation},
                 {"duplicateSamples", m_objectEvaluationStates.value(rule.id).duplicateSamples}, {"effectiveSamplePeriod", m_objectEvaluationStates.value(rule.id).samplePeriod}, {"inputIds", rule.inputs},
-                {"sources", sources.join("、")}, {"expression", rule.expression}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance},
+                {"sources", sources.join("、")}, {"expression", rule.expression}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance},
                 {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
                 {"signedField", rule.signedField}, {"outputs", outputs}, {"error", m_objectErrors.value(rule.id)},
                 {"warning", hasSamples && !m_objectErrors.value(rule.id).isEmpty()},
@@ -450,11 +458,14 @@ QString AppController::addObjectRule(const QString &objectId, const QVariantMap 
     rule.factor = config.value("factor", 1).toDouble(&factorOk); rule.bias = config.value("bias", 0).toDouble(&biasOk);
     rule.samplePeriod = config.value("samplePeriod", 0).toDouble(&periodOk);
     if (!factorOk || !biasOk || !periodOk || !readCounterConfig(config, rule)) return {};
-    const int count = rule.operation == "bits" ? rule.bitCount : rule.operation == "packetloss" ? 2 : 1;
+    if (rule.operation == "packetloss" && !config.contains("rateMode")) rule.rateMode = "window";
     const auto names = config.value("outputNames").toStringList();
+    // Internal duplication preserves both identities of legacy dual-output rules.
+    const bool legacyPair = rule.operation == "packetloss" && m_batchObjectChanges && names.size() == 2;
+    const int count = rule.operation == "bits" ? rule.bitCount : legacyPair ? 2 : 1;
     for (int k = 0; k < count; ++k) rule.outputs.append({newId(), names.value(k,
         rule.operation == "bits" ? rule.name + ".bit" + QString::number(rule.startBit + k)
-            : rule.operation == "packetloss" ? rule.name + (k == 0 ? QStringLiteral(".累计丢包数") : QStringLiteral(".丢包率(%)")) : rule.name), signalCount() + k});
+            : rule.operation == "packetloss" ? (legacyPair && k == 0 ? rule.name + QStringLiteral(".累计丢包数") : packetLossOutputName(rule)) : rule.name), signalCount() + k});
     bool found = false;
     for (auto &object : next) if (object.id == objectId && isProcessingConfiguration(object)) {
         if (!normalizeProcessingInputs(object, rule)) { setStatus(QStringLiteral("请选择有效的原始信号来源")); return {}; }
@@ -480,6 +491,7 @@ bool AppController::editObjectRule(const QString &objectId, const QString &ruleI
     if (m_loading || m_exporting || sessionInteractionBlocked()) return false;
     auto next = m_objects; bool found = false;
     for (auto &object : next) if (object.id == objectId && isProcessingConfiguration(object)) for (auto &rule : object.rules) if (rule.id == ruleId) {
+        const auto previous = rule;
         found = true; rule.name = config.value("name").toString().trimmed(); rule.operation = config.value("operation").toString();
         rule.expression = config.value("expression").toString(); rule.inputs.clear();
         for (const auto &v : config.value("inputs").toList()) rule.inputs.append(v.toString());
@@ -496,12 +508,24 @@ bool AppController::editObjectRule(const QString &objectId, const QString &ruleI
         rule.signedField = config.value("signedField", rule.signedField).toBool();
         rule.samplePeriod = config.value("samplePeriod", rule.samplePeriod).toDouble(&periodOk);
         if (!ok || !factorOk || !biasOk || !periodOk || !readCounterConfig(config, rule)) { setStatus(QStringLiteral("派生参数必须为合法数值")); return false; }
-        const int count = rule.operation == "bits" ? rule.bitCount : rule.operation == "packetloss" ? 2 : 1;
+        const int count = rule.operation == "bits" ? rule.bitCount : rule.operation == "packetloss" && previous.operation == "packetloss" ? previous.outputs.size() : 1;
         if (count != rule.outputs.size()) { setStatus(QStringLiteral("修改规则保留输出身份和数量；改变输出数量请新建规则")); return false; }
+        if (rule.operation == "packetloss" && previous.operation == "packetloss") {
+            if (previous.outputs.size() == 2 && rule.rateMode == "count") {
+                setStatus(QStringLiteral("旧版双输出规则保留原输出；如需单独累计丢包数，请新建规则")); return false;
+            }
+            const int index = previous.outputs.size() == 2 ? 1 : 0;
+            const auto oldName = previous.outputs[index].name;
+            if (oldName == previous.name + ".丢包率(%)" || oldName == previous.name + ".累计丢包数" || oldName == previous.name + ".累计丢包率(%)" || oldName == previous.name + ".窗口丢包率(%)")
+                rule.outputs[index].name = packetLossOutputName(rule);
+        }
     }
     QString error;
     if (!found || !validateObjects(next, signalCount(), &error)) { setStatus(error); return false; }
-    m_objects = next; markSessionModified(); scheduleObjectEvaluation(); return true;
+    m_objects = next;
+    for (const auto &object : m_objects) for (const auto &rule : object.rules) if (rule.id == ruleId)
+        for (const auto &output : rule.outputs) m_signals->renameSignal(output.series, output.name);
+    markSessionModified(); scheduleObjectEvaluation(); return true;
 }
 
 void AppController::removeObjectSeries(const QSet<int> &rows)
@@ -558,7 +582,7 @@ QString AppController::duplicateDataObject(const QString &id)
         for (const auto &output : rule.outputs) names.append(signalName(output.series));
         const QString created = addObjectRule(target, {{"name", rule.name}, {"operation", rule.operation}, {"inputs", inputs},
             {"expression", rule.expression}, {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
-            {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}, {"outputNames", names}});
+            {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}, {"outputNames", names}});
         if (created.isEmpty()) {
             removeDataObject(target);
             m_batchObjectChanges = false;

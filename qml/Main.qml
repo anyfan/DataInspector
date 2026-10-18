@@ -19,6 +19,20 @@ ApplicationWindow {
     color: window.panelColor
     onActiveChanged: if (!active) window.cancelSignalTreeDrag()
     property bool allowClose: false
+    property int lastShownVisibility: Window.Windowed
+    onVisibilityChanged: {
+        if (window.visibility === Window.Windowed || window.visibility === Window.Maximized || window.visibility === Window.FullScreen)
+            window.lastShownVisibility = window.visibility
+    }
+    function presentSessionPrompt(): void {
+        if (visibility === Window.Minimized || visibility === Window.Hidden) {
+            if (lastShownVisibility === Window.Maximized) showMaximized()
+            else if (lastShownVisibility === Window.FullScreen) showFullScreen()
+            else showNormal()
+        }
+        raise()
+        requestActivate()
+    }
     AboutDialog {
         id: aboutDialog
         parent: Overlay.overlay
@@ -450,6 +464,13 @@ ApplicationWindow {
         appController: window.appController
         hostWidth: window.width
         hostHeight: window.height
+        onAttentionRequested: {
+            window.presentSessionPrompt()
+            // Repeat after the close event and popup have finished processing.
+            Qt.callLater(() => {
+                if (sessionDialogs.pendingUnsavedAction === "close") window.presentSessionPrompt()
+            })
+        }
         onCloseRequested: { window.allowClose = true; window.close() }
     }
     FileDialog {
@@ -952,6 +973,7 @@ ApplicationWindow {
             onEditSignalRequested: row => window.editSignalPen(row)
             onRemoveFileRequested: group => window.requestRemoveFile(group)
             onHideRequested: window.signalTreeVisible = false
+            onShowRequested: window.signalTreeVisible = true
             onContextRequested: (kind, row, group) => {
                 if (kind === 2) { fileContextMenu.fileName = group; fileContextMenu.popup() }
                 else if (kind === 1) { groupContextMenu.groupName = group; groupContextMenu.popup() }

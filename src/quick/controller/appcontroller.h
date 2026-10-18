@@ -79,7 +79,7 @@ public:
     Q_INVOKABLE void migrateObjectProcessing();
     int signalBrowserSection() const { return m_signalBrowserSection; }
     Q_INVOKABLE void setSignalBrowserSection(int section);
-    Q_INVOKABLE bool identifyPacketLoss(const QString &objectId);
+    Q_INVOKABLE bool identifyPacketLoss(const QString &objectId, const QString &rateMode = QStringLiteral("window"), double rateWindowSeconds = 1);
     Q_INVOKABLE double estimateObjectSamplePeriod(const QString &objectId, const QString &inputId) const;
     bool deriving() const;
     Q_INVOKABLE bool isDerivedSignal(int row) const { return isObjectOutput(row); }
@@ -264,7 +264,7 @@ private:
     static QString localSessionPath(const QVariant &value);
     struct ObjectJob;
     QVector<DataObject> m_objects;
-    bool applyPacketLossGroups(const QString &objectId, const QVector<PacketLossGroup> &groups);
+    bool applyPacketLossGroups(const QString &objectId, const QVector<PacketLossGroup> &groups, const QString &rateMode, double rateWindowSeconds);
     QHash<QString, QString> m_objectErrors;
     std::shared_ptr<ObjectJob> m_objectJob;
     QHash<QString, ObjectRuleState> m_objectEvaluationStates;

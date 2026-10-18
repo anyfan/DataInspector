@@ -145,3 +145,9 @@ automation_cli_test 使用实际 exe 和标准库 CLI，覆盖任务真实失败
 `objectdata_test::packetLossCounters` 覆盖 Y 逐帧/固定抽样/按时间频率、重复值分母、非单位步长、正常与跨缺口回绕、半范围及多圈歧义、整数/越界/非法时间、超预期接收、容差和 v14 严格类型。packetLossLifecycle 验证计数参数保存恢复与复制；objectManagerQml 验证真实编辑器切换 Y 模式、参数提交及复制保留。
 
 受限 Windows 沙箱若 QTemporaryDir 能建目录但内部文件 open 失败，将当前测试进程的 TEMP/TMP 指向仓库可写的 build_qt6-debug/test-temp 后重跑；不需放宽生产代码文件权限。QtTest stdout 不可见时可用 `-o build_qt6-debug/result.txt,txt` 保存断言日志。
+
+`session_test::qmlRestoresToolbarAndPlotStates` 另覆盖最小化/隐藏/最大化时的退出确认、保存取消、重复退出不叠加、放弃后不被延迟激活重新打开。Windows 平台下创建另一个前台窗口并检查退出请求后主窗口激活；该用例使用非原生文件选择器，避免本机 shell 插件影响窗口状态回归。
+
+`objectdata_test::packetLossRateModes` 覆盖累计/窗口百分比、X 和全部 Y 模式、左开右闭边界、重复与回绕、窗口参数拒绝、旧 v15 默认与 v16 严格字段、模式编辑身份/样式保留、保存恢复和自动识别按模式/窗口去重。QML 交互回归验证统计方式选择及窗口时长校验。
+
+丢包输出三选一补充覆盖：新单输出在 count/cumulative/window 的数值、输出数量与默认 window；v17 单项恢复；旧双输出恢复/复制；真实 QML 三选项编辑和窗口参数校验；文件删除后单输出图例及行号重映射。
