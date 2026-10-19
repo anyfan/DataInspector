@@ -84,6 +84,7 @@ void AppController::applyTemplateState(const SessionDocument &state)
         const auto &s = state.series[id];
         m_seriesStore->updateSeriesPen(id, s.color, s.width, Qt::PenStyle(s.style));
         m_signalColors[id] = s.color;
+        m_signalEnums.insert(id, s.enums);
         m_signals->renameSignal(id, s.name);
         m_signals->setSignalPen(id, s.color, s.width, Qt::PenStyle(s.style));
     }
@@ -130,10 +131,11 @@ bool AppController::applyViewTemplate(const QVariant &filePath, const QVariantMa
     for (int id : required) {
         const auto &style = saved.series[id];
         auto &target = state.series[remap[id]];
-        target.name = style.name; target.color = style.color; target.width = style.width; target.style = style.style;
+        target.enums = style.enums; target.name = style.name; target.color = style.color; target.width = style.width; target.style = style.style;
     }
     QSet<int> visible;
     for (auto &plot : state.plots) {
+        for (auto &lane : plot.states.lanes) { lane.source = remap[lane.source]; if (plot.states.enabled && lane.visible) visible.insert(lane.source); }
         for (int &id : plot.seriesIds) { id = remap[id]; if (!plot.trajectory.enabled) visible.insert(id); }
         auto &trajectory = plot.trajectory;
         for (int &id : trajectory.signalIds) id = remap[id];

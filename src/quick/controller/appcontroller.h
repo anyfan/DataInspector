@@ -172,6 +172,16 @@ public:
     Q_INVOKABLE void cancelExport();
 
     // Signal selection and styling
+    Q_INVOKABLE bool configureSignalProperties(int row, const QVariantMap &properties);
+    Q_INVOKABLE QVariantList signalEnums(int row) const;
+    Q_INVOKABLE bool setSignalEnums(int row, const QVariantList &values);
+    Q_INVOKABLE bool addStateSignal(int plot, int row);
+    Q_INVOKABLE QVariantMap stateTimelineState(int index) const;
+    Q_INVOKABLE bool configureStateLane(int index, int lane, const QVariantMap &config);
+    Q_INVOKABLE bool removeStateLane(int index, int lane);
+    Q_INVOKABLE bool moveStateLane(int index, int lane, int direction);
+    Q_INVOKABLE void setStateTimelineEnabled(int index, bool enabled);
+    Q_INVOKABLE void attachStateTimeline(QObject *item, int index);
     Q_INVOKABLE void selectSignal(int row);
     Q_INVOKABLE void addSignalToPlot(int plotIndex, int row);
     Q_INVOKABLE void toggleSignal(int row);
@@ -281,6 +291,7 @@ private:
     void cancelObjectEvaluation();
     void remapSignalReferences(const QVector<int> &removed);
     void syncObjectTrajectories();
+    void appendRuleOutputs(const DataObject &object, const ObjectRule &rule, int existingCount);
     void removeObjectSeries(const QSet<int> &rows);
     bool isObjectOutput(int row) const;
     QString objectOutputGroup(const DataObject &object) const;
@@ -329,6 +340,7 @@ private:
     void syncSignalSelection(bool refresh = false);
     bool setTrajectorySignal(int index, int row, bool selected);
     void refreshPlot(int index, bool fitY = true);
+    void refreshStateTimeline(int index);
     void refreshTrajectory(int index);
     void syncTrajectoryCursors();
     bool unbindPlotSignals(int plotIndex);
@@ -351,6 +363,8 @@ private:
     QVector<QVector<LoadedTable>> m_stagedSessionTables;
     bool m_restoringSession = false, m_applyingSession = false;
     QHash<int, SessionPlot> m_plotViews;
+    QHash<int, QPointer<QObject>> m_stateTimelineItems;
+    QHash<int, SignalEnums> m_signalEnums;
     SessionCursor m_sessionCursor;
     bool m_haveCursorState = false;
     SignalModel *m_signals;

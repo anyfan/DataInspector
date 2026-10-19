@@ -8,10 +8,11 @@ struct ViewTemplateSignal {
     int table = 0, style = 1;
     QColor color;
     double width = 2.0;
+    SignalEnums enums;
 };
 // Independent of data paths, time offsets, object definitions and session version.
 struct ViewTemplateDocument : ViewConfiguration {
-    static constexpr int version = 3;
+    static constexpr int version = 5;
     QMap<int, ViewTemplateSignal> series;
 };
 ViewTemplateDocument viewTemplateFromSession(const SessionDocument &session);

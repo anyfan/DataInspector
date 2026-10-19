@@ -15,7 +15,7 @@ cmake --build build_qt6-debug --target DataInspector_qmllint
 
 ## 类型元数据
 
-- `src/quick/qmltypes.h` 用 `QML_FOREIGN` 声明 `PlotItem`、`TrajectoryItem`、`AppController`、`SignalModel`。
+- `src/quick/qmltypes.h` 用 `QML_FOREIGN` 声明 `PlotItem`、`TrajectoryItem`、`StateTimelineItem`、`AppController`、`SignalModel`。
 - CMake 自动生成注册代码和 `.qmltypes` 到 `<构建目录>/qml/DataInspector`。
 - 主程序用 `QQmlApplicationEngine::setInitialProperties` 注入控制器；测试用 `createWithInitialProperties`。
 - `Main.qml` 通过 `required property AppController appController` 接收，不依赖隐式上下文变量。

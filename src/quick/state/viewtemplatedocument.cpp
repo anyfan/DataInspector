@@ -21,7 +21,7 @@ bool viewKeys(const QJsonObject &view)
         || !keys(view.value("layout").toObject(), {"rows", "columns", "active", "solo"})) return false;
     for (const auto &value : view.value("plots").toArray()) {
         const auto plot = value.toObject();
-        if (!keys(plot, {"signals", "yRange", "normalizeY", "lineWidth", "trajectory"})) return false;
+        if (!keys(plot, {"signals", "yRange", "normalizeY", "lineWidth", "trajectory", "states"})) return false;
         const auto trajectory = plot.value("trajectory").toObject();
         if (!keys(trajectory, {"enabled", "tracks", "active", "signals", "rotation", "viewScale", "panDepth", "camera"})) return false;
         for (const auto &entry : trajectory.value("tracks").toArray()) {
@@ -41,7 +41,7 @@ ViewTemplateDocument viewTemplateFromSession(const SessionDocument &session)
     for (int id : referencedViewSignals(view)) if (id >= 0 && id < session.series.size()) {
         const auto &signal = session.series[id];
         view.series.insert(id, {signal.objectId.isEmpty() ? QFileInfo(session.files.value(signal.file)).fileName() : QStringLiteral("对象"),
-            signal.tableName, signal.originalName, signal.name, signal.table, signal.style, signal.color, signal.width});
+            signal.tableName, signal.originalName, signal.name, signal.table, signal.style, signal.color, signal.width, signal.enums});
     }
     return view;
 }
@@ -52,7 +52,7 @@ QJsonObject viewTemplateToJson(const ViewTemplateDocument &view)
         const auto &s = it.value();
         signalRows.append(QJsonObject{{"id", it.key()}, {"source", s.sourceName}, {"table", s.table},
             {"tableName", s.tableName}, {"originalName", s.originalName}, {"name", s.name},
-            {"color", s.color.name(QColor::HexArgb)}, {"width", s.width}, {"style", s.style}});
+            {"color", s.color.name(QColor::HexArgb)}, {"width", s.width}, {"style", s.style}, {"enums", signalEnumsToJson(s.enums)}});
     }
     return {{"format", "DataInspectorViewTemplate"}, {"version", ViewTemplateDocument::version},
         {"signals", signalRows}, {"view", viewConfigurationToJson(view)}};
@@ -71,7 +71,7 @@ bool viewTemplateFromJson(const QJsonObject &root, ViewTemplateDocument *view, Q
         if (!value.isObject()) return fail("signals[]");
         const auto obj = value.toObject(); int id = -1; QString color;
         ViewTemplateSignal signal;
-        if (!keys(obj, {"id", "source", "table", "tableName", "originalName", "name", "color", "width", "style"})
+        if (!keys(obj, {"id", "source", "table", "tableName", "originalName", "name", "color", "width", "style", "enums"})
             || !integer(obj.value("id"), 0, 99999, &id) || parsed.series.contains(id)
             || !integer(obj.value("table"), 0, 100000, &signal.table)
             || !text(obj.value("source"), &signal.sourceName, true)
@@ -80,7 +80,8 @@ bool viewTemplateFromJson(const QJsonObject &root, ViewTemplateDocument *view, Q
             || !text(obj.value("name"), &signal.name)
             || !text(obj.value("color"), &color) || !(signal.color = QColor(color)).isValid()
             || !number(obj.value("width"), &signal.width) || signal.width < 1 || signal.width > 20
-            || !integer(obj.value("style"), 1, 5, &signal.style)) return fail("signals[]");
+            || !integer(obj.value("style"), 1, 5, &signal.style)
+            || !signalEnumsFromJson(obj.value("enums"), &signal.enums)) return fail("signals[]");
         parsed.series.insert(id, signal);
     }
     const auto configuration = root.value("view").toObject();

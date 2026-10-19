@@ -4,6 +4,7 @@
 #include "controller/appcontroller.h"
 #include "items/plotitem.h"
 #include "items/trajectoryitem.h"
+#include "items/statetimelineitem.h"
 #include "models/signalmodel.h"
 
 // Keep QML registration and tooling metadata together without coupling the
@@ -13,6 +14,11 @@ struct PlotItemQmlRegistration
     Q_GADGET
     QML_FOREIGN(PlotItem)
     QML_NAMED_ELEMENT(PlotItem)
+};
+struct StateTimelineItemQmlRegistration {
+    Q_GADGET
+    QML_FOREIGN(StateTimelineItem)
+    QML_NAMED_ELEMENT(StateTimelineItem)
 };
 
 struct AppControllerQmlRegistration

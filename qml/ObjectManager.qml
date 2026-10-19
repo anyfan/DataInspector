@@ -313,6 +313,15 @@ Pane {
         while (names.has("规则" + number)) ++number
         return "规则" + number
     }
+    function startBitExtraction(row: int): void {
+        if (blocked || !processingMode) return
+        if (appController.isDerivedSignal(row)) revealOutput(row)
+        else open()
+        if (!selected) createObject()
+        if (!selected) return
+        editRule(null)
+        selectRuleSource(row)
+    }
     function revealOutput(row: int): void {
         for (let i = 0; i < objects.length; ++i) for (let j = 0; j < objects[i].rules.length; ++j) {
             const outputs = objects[i].rules[j].outputs
@@ -320,6 +329,8 @@ Pane {
         }
         open()
     }
+    ListModel { id: outputRows; objectName: "processingOutputRows" }
+    function addOutput(): void { outputRows.append({outputId:"",name:"",fromBit:0,widthBit:1,signedValue:false,formula:"x"}) }
     function editRule(rule: var): void {
         ruleDialog.initializing = true
         ruleDialog.sourcesChanged = false
@@ -328,14 +339,17 @@ Pane {
         ruleDialog.mergeInputs = rule ? rule.inputIds.slice() : []
         ruleName.text = rule ? rule.name : nextRuleName()
         operationCombo.currentIndex = 0
-        if (rule) for (let i = 0; i < operationCombo.model.length; ++i) if (operationCombo.model[i].id === rule.operation) operationCombo.currentIndex = i
+        if (rule) for (let i = 0; i < operationCombo.model.length; ++i) if (operationCombo.model[i].id === (rule.operation === "bits" ? "bitfield" : rule.operation)) operationCombo.currentIndex = i
+        outputRows.clear()
+        if(rule && (rule.operation === "bitfield" || rule.operation === "bits" || rule.operation === "expression"))
+            for(const output of rule.outputs) outputRows.append({outputId:output.id,name:output.name,fromBit:output.startBit,widthBit:output.bitCount,signedValue:output.signedField,formula:output.expression.length>0 ? output.expression : "x"})
+        else addOutput()
+        automaticWord.checked=rule ? rule.autoWordBits : true
+        byteOrder.currentIndex=rule && rule.byteOrder === "big" ? 1 : 0
         ruleDialog.inputXId = rule ? rule.inputIds[0] || "" : ""
         ruleDialog.inputYId = rule ? rule.inputIds[1] || "" : ""
         ruleDialog.inputZId = rule ? rule.inputIds[2] || "" : ""
         wordWidth.currentIndex = rule ? [8, 16, 32].indexOf(rule.wordBits) : 0
-        startBit.value = rule ? rule.startBit : 0
-        bitCount.value = rule ? rule.bitCount : 8
-        signedField.checked = rule ? rule.signedField : false
         factor.text = rule ? String(rule.factor) : "1"; bias.text = rule ? String(rule.bias) : "0"
         samplePeriod.text = rule && (rule.samplePeriod > 0 || rule.effectiveSamplePeriod > 0) ? String(rule.samplePeriod > 0 ? rule.samplePeriod : rule.effectiveSamplePeriod) : ""
         rateMode.currentIndex = rule ? Math.max(0, ["count", "cumulative", "window"].indexOf(rule.rateMode)) : 2
@@ -346,7 +360,6 @@ Pane {
         counterModulus.text = rule ? String(rule.counterModulus) : "0"
         counterRate.text = rule ? String(rule.counterRate) : "1"
         counterTolerance.text = rule ? String(rule.counterTolerance) : "0"
-        expression.text = rule && rule.expression.length > 0 ? rule.expression : "x"
         ruleDialog.initializing = false
         if (samplePeriod.text.length === 0) ruleDialog.estimatePeriod()
         ruleDialog.errorText = ""; ruleDialog.open()
@@ -530,10 +543,10 @@ Pane {
                                     }
                                     Label { text: "输入：" + ruleRow.modelData.sources; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideMiddle }
                                     Label {
-                                        text: ruleRow.modelData.operation === "expression" ? "公式：" + ruleRow.modelData.expression
+                                        text: ruleRow.modelData.operation === "expression" ? ruleRow.modelData.outputs.length + " 条公式输出"
                                             : ruleRow.modelData.operation === "scale" ? "换算：x × " + ruleRow.modelData.factor + " + " + ruleRow.modelData.bias
                                             : ruleRow.modelData.operation === "bits" || ruleRow.modelData.operation === "bitfield"
-                                                ? ruleRow.modelData.wordBits + " 位 · bit" + ruleRow.modelData.startBit + " 起，共 " + ruleRow.modelData.bitCount + " 位" + (ruleRow.modelData.signedField ? " · 有符号" : "") : ruleRow.modelData.operation === "merge" ? "按时间合并同源采样点" : ruleRow.modelData.operation === "packetloss" ? (ruleRow.modelData.lossMode !== "time" ? "Y 计数 · " + ({sequence: "逐帧", stride: "固定抽样", rate: "按时间与频率"})[ruleRow.modelData.lossMode] + (ruleRow.modelData.lossMode !== "rate" ? " · 重复采样 " + ruleRow.modelData.duplicateSamples : "") : "采样周期：" + (ruleRow.modelData.samplePeriod > 0 ? ruleRow.modelData.samplePeriod + " 秒" : ruleRow.modelData.effectiveSamplePeriod > 0 ? ruleRow.modelData.effectiveSamplePeriod + " 秒" : "未能估算，请编辑输入")) : "三轴模长"
+                                                ? (ruleRow.modelData.autoWordBits ? "自动字宽 " + (ruleRow.modelData.effectiveWordBits || "待计算") : ruleRow.modelData.wordBits) + " 位 · " + ruleRow.modelData.outputs.length + " 条输出 · " + (ruleRow.modelData.byteOrder === "big" ? "大端" : "小端") : ruleRow.modelData.operation === "merge" ? "按时间合并同源采样点" : ruleRow.modelData.operation === "packetloss" ? (ruleRow.modelData.lossMode !== "time" ? "Y 计数 · " + ({sequence: "逐帧", stride: "固定抽样", rate: "按时间与频率"})[ruleRow.modelData.lossMode] + (ruleRow.modelData.lossMode !== "rate" ? " · 重复采样 " + ruleRow.modelData.duplicateSamples : "") : "采样周期：" + (ruleRow.modelData.samplePeriod > 0 ? ruleRow.modelData.samplePeriod + " 秒" : ruleRow.modelData.effectiveSamplePeriod > 0 ? ruleRow.modelData.effectiveSamplePeriod + " 秒" : "未能估算，请编辑输入")) : "三轴模长"
                                         Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
                                     }
                                     Label {
@@ -673,7 +686,7 @@ Pane {
             TextField { id: ruleName; objectName: "objectRuleName"; Layout.fillWidth: true; Layout.minimumWidth: 0; maximumLength: 256 }
             ObjectCombo {
                 id: operationCombo; objectName: "objectRuleOperation"; textRole: "name"; valueRole: "id"; Layout.fillWidth: true
-                model: [{id: "bits", name: "状态字拆位"}, {id: "bitfield", name: "提取位段"}, {id: "scale", name: "比例与偏置换算"}, {id: "magnitude", name: "三轴模长"}, {id: "expression", name: "自定义公式"}, {id: "merge", name: "按时间合并同源信号"}, {id: "packetloss", name: "丢包检测"}]
+                model: [{id: "bitfield", name: "位提取（bit／位段）"}, {id: "scale", name: "比例与偏置换算"}, {id: "magnitude", name: "三轴模长"}, {id: "expression", name: "自定义公式"}, {id: "merge", name: "按时间合并同源信号"}, {id: "packetloss", name: "丢包检测"}]
             }
             RowLayout {
                 visible: ruleDialog.operation === "packetloss" && ruleDialog.ruleId.length === 0
@@ -744,16 +757,70 @@ Pane {
                 Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
             }
             RowLayout {
-                visible: ruleDialog.operation === "bits" || ruleDialog.operation === "bitfield"
-                Label { text: "字宽" }
-                ObjectCombo { id: wordWidth; model: [8, 16, 32]; onActivated: { startBit.value = Math.min(startBit.value, Number(currentText) - 1); bitCount.value = Number(currentText) - startBit.value } }
-                Label { text: "起始 bit" }
-                SpinBox { id: startBit; from: 0; to: Number(wordWidth.currentText) - 1 }
-                Label { text: "位数" }
-                SpinBox { id: bitCount; from: 1; to: Number(wordWidth.currentText) - startBit.value; value: 8 }
+                visible: ruleDialog.operation === "bitfield"
+                CheckBox { id: automaticWord; objectName: "automaticWordBits"; text: "自动字宽"; checked: true }
+                ObjectCombo { id: wordWidth; model: [8,16,32]; enabled: !automaticWord.checked }
             }
-            CheckBox { id: signedField; text: "位段按二补码有符号整数解释"; visible: ruleDialog.operation === "bitfield" }
-            Label { text: "bit0 为最低有效位；仅接受合法整数，缺失或越界样本留空。"; visible: ruleDialog.operation === "bits" || ruleDialog.operation === "bitfield"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
+            ObjectCombo { id: byteOrder; objectName: "bitByteOrder"; Layout.fillWidth: true; visible: ruleDialog.operation === "bitfield"; model: ["小端（bit0 为最低有效位）","大端（先按字宽交换字节）"] }
+            Label { text: "字宽自动按有效整数和提取范围选择 8/16/32 位；不代表源文件的真实存储类型。小端直接按数值取位，大端按所选字宽交换字节后取位。"; visible: ruleDialog.operation === "bitfield"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            ColumnLayout {
+                visible: ruleDialog.operation === "bitfield" || ruleDialog.operation === "expression"
+                Layout.fillWidth: true
+                RowLayout {
+                    Label { text: "输出列表"; font.bold: true; Layout.fillWidth: true }
+                    Button { objectName: "addProcessingOutput"; text: "+ 添加输出"; enabled: outputRows.count<32; onClicked: manager.addOutput() }
+                }
+                Repeater {
+                    model: outputRows
+                    delegate: Frame {
+                        id: outputEntry
+                        required property int index
+                        required property string outputId
+                        required property string name
+                        required property int fromBit
+                        required property int widthBit
+                        required property bool signedValue
+                        required property string formula
+                        Layout.fillWidth: true
+                        contentItem: ColumnLayout {
+                            RowLayout {
+                                Label { text: String(outputEntry.index+1) }
+                                TextField { text: outputEntry.name; placeholderText: "输出名称（留空自动）"; Layout.fillWidth: true; maximumLength: 256; onTextEdited: outputRows.setProperty(outputEntry.index,"name",text) }
+                                Button { text: "×"; enabled: outputRows.count>1; onClicked: outputRows.remove(outputEntry.index) }
+                            }
+                            RowLayout {
+                                visible: ruleDialog.operation === "bitfield"
+                                Label { text: "起始 bit" }
+                                SpinBox { from: 0; to: 31; value: outputEntry.fromBit; editable: true; onValueModified: outputRows.setProperty(outputEntry.index,"fromBit",value) }
+                                Label { text: "位数" }
+                                SpinBox { from: 1; to: 32-outputEntry.fromBit; value: outputEntry.widthBit; editable: true; onValueModified: outputRows.setProperty(outputEntry.index,"widthBit",value) }
+                            }
+                            CheckBox { visible: ruleDialog.operation === "bitfield"; text: "按二补码有符号解释"; checked: outputEntry.signedValue; onToggled: outputRows.setProperty(outputEntry.index,"signedValue",checked) }
+                            Label { text: "表达式"; visible: ruleDialog.operation === "expression" }
+                            TextArea {
+                                id: formulaEditor
+                                objectName: "ruleOutputFormula"+outputEntry.index
+                                visible: ruleDialog.operation === "expression"
+                                text: outputEntry.formula
+                                placeholderText: "例如 x * 0.1 + 2"
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 80
+                                padding: 10
+                                selectByMouse: true
+                                wrapMode: TextEdit.Wrap
+                                background: Rectangle {
+                                    color: manager.palette.base
+                                    radius: 3
+                                    border.color: formulaEditor.activeFocus ? manager.palette.highlight : manager.palette.mid
+                                    border.width: formulaEditor.activeFocus ? 2 : 1
+                                }
+                                onTextChanged: { if(activeFocus) outputRows.setProperty(outputEntry.index,"formula",text) }
+                            }
+                        }
+                    }
+                }
+                Label { text: ruleDialog.operation === "bitfield" ? "b0～b3：起始 0，位数 4；单独 b1：起始 1，位数 1。" : "各输出共用已绑定的 x/y/z，分别填写表达式；同条规则的输出不能相互引用。"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            }
             RowLayout {
                 visible: ruleDialog.operation === "scale"
                 Label { text: "比例" }
@@ -829,11 +896,17 @@ Pane {
                     Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
                 }
             }
-            TextField { id: expression; objectName: "objectRuleExpression"; visible: ruleDialog.operation === "expression"; text: "sqrt(x*x+y*y+z*z)"; Layout.fillWidth: true; Layout.minimumWidth: 0; maximumLength: 1024 }
             Label {
                 text: ruleDialog.operation === "magnitude" ? "计算 sqrt(x*x+y*y+z*z)，X、Y、Z 均须绑定，且时间基相同。"
                     : "支持 + − * /、比较、&& / || / !、括号、abs/sqrt/min/max；输入按 X、Y、Z 连续绑定，使用 Z 时须先绑定 Y；多输入要求相同时间基。"
                 visible: manager.multipleRuleInputs; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
+            }
+            Label {
+                visible: ruleDialog.operation === "expression"
+                text: "公式示例（只使用已绑定的变量）：\n比例与偏置：x * 0.1 + 2\n差值绝对值：abs(x - y)\n三轴模长：sqrt(x*x + y*y + z*z)\n条件判断（结果为 0/1）：(x > 10) && (y < 5)\n限幅到 0～100：min(max(x, 0), 100)"
+                Layout.fillWidth: true
+                Layout.minimumWidth: 0
+                wrapMode: Text.WordWrap
             }
             Label { text: ruleDialog.errorText; visible: text.length > 0; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap; color: "#df4652" }
         }
@@ -865,7 +938,16 @@ Pane {
             if (operation === "packetloss" && rateMode.currentIndex === 2 && (!isFinite(Number(rateWindow.text)) || Number(rateWindow.text) <= 0)) {
                 errorText = "窗口时长必须为正数秒数"; return
             }
-            const config = {rateMode: ["count", "cumulative", "window"][rateMode.currentIndex], rateWindowSeconds: isFinite(Number(rateWindow.text)) && Number(rateWindow.text) > 0 ? Number(rateWindow.text) : 1, lossMode: ["time", "sequence", "stride", "rate"][lossMode.currentIndex], counterStep: Number(counterStep.text), expectedStride: Number(expectedStride.text), counterModulus: Number(counterModulus.text), counterRate: Number(counterRate.text), counterTolerance: Number(counterTolerance.text), samplePeriod: operation === "packetloss" && lossMode.currentIndex === 0 ? Number(samplePeriod.text) : 0, name: ruleName.text, operation: operation, inputs: inputs, wordBits: Number(wordWidth.currentText), startBit: startBit.value, bitCount: bitCount.value, signedField: signedField.checked, factor: Number(factor.text), bias: Number(bias.text), expression: expression.text}
+            const config = {rateMode: ["count", "cumulative", "window"][rateMode.currentIndex], rateWindowSeconds: isFinite(Number(rateWindow.text)) && Number(rateWindow.text) > 0 ? Number(rateWindow.text) : 1, lossMode: ["time", "sequence", "stride", "rate"][lossMode.currentIndex], counterStep: Number(counterStep.text), expectedStride: Number(expectedStride.text), counterModulus: Number(counterModulus.text), counterRate: Number(counterRate.text), counterTolerance: Number(counterTolerance.text), samplePeriod: operation === "packetloss" && lossMode.currentIndex === 0 ? Number(samplePeriod.text) : 0, name: ruleName.text, operation: operation, inputs: inputs, wordBits: Number(wordWidth.currentText), startBit: 0, bitCount: 1, signedField: false, factor: Number(factor.text), bias: Number(bias.text), expression: outputRows.count>0 ? outputRows.get(0).formula : "x"}
+            config.autoWordBits=automaticWord.checked
+            config.byteOrder=byteOrder.currentIndex === 1 ? "big" : "little"
+            if(operation === "bitfield" || operation === "expression") {
+                config.outputs=[]
+                for(let i=0;i<outputRows.count;++i) {
+                    const output=outputRows.get(i)
+                    config.outputs.push({id:output.outputId,name:output.name,startBit:output.fromBit,bitCount:output.widthBit,signedField:output.signedValue,expression:output.formula})
+                }
+            }
             submitting = true
             const success = ruleId.length > 0 ? manager.appController.editObjectRule(manager.selectedId, ruleId, config)
                 : manager.appController.addObjectRule(manager.selectedId, config).length > 0

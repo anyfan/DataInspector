@@ -8,6 +8,7 @@ import QtQuick.Dialogs as Dialogs
 import DataInspector
 Rectangle {
     id: signalBrowser
+    objectName: "signalBrowser"
     required property AppController appController
     required property ObjectManager objectEditor
     required property ObjectManager processingEditor
@@ -27,6 +28,19 @@ Rectangle {
         const revision = signalBrowser.appController.plotStateRevision
         const state = signalBrowser.appController.trajectoryState(signalBrowser.appController.activePlotIndex)
         return state.enabled ? signalBrowser.appController.dataObjects.find(object => object.id === state.objectId) || null : null
+    }
+    property SignalPropertiesPane propertiesEditor
+    property int statePickTarget: -1
+    function editSignalProperties(row) { statePickTarget=-1; objectEditor.close(); processingEditor.close(); signalBrowser.propertiesEditor.editSignal(row) }
+    function editStateRows(plot) { statePickTarget=-1; objectEditor.close(); processingEditor.close(); signalBrowser.propertiesEditor.showStates(plot) }
+    function followSignalProperties(row) {
+        if (propertiesEditor && propertiesEditor.visible && propertiesEditor.mode !== "states"
+            && statePickTarget < 0 && !processingEditor.choosingRuleSource && !objectEditor.visible
+            && (propertiesEditor.mode !== "signal" || propertiesEditor.sourceRow !== row))
+            propertiesEditor.editSignal(row)
+    }
+    function addPickedState(row) {
+        if (appController.addStateSignal(statePickTarget,row)) { const plot=statePickTarget; statePickTarget=-1; signalBrowser.propertiesEditor.showStates(plot) }
     }
     signal dragCancelRequested()
     signal dragFinishRequested()
@@ -250,6 +264,12 @@ Rectangle {
                 ToolTip.visible: hovered && !signalBrowser.signalTreeDragging
                 ToolTip.text: "隐藏信号树（可从设置恢复）"
             }
+        }
+        RowLayout {
+            visible: signalBrowser.statePickTarget >= 0
+            Layout.fillWidth: true
+            Label { text: "为子图 " + (signalBrowser.statePickTarget+1) + " 选择状态信号"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Button { text: "取消"; onClicked: { const plot=signalBrowser.statePickTarget; signalBrowser.statePickTarget=-1; signalBrowser.propertiesEditor.showStates(plot) } }
         }
         Button { objectName: "objectManagerButton"; visible: browserTabs.currentIndex === 1; text: "管理处理规则…"; Layout.fillWidth: true; enabled: !signalBrowser.appController.restoringSession && !signalBrowser.appController.imageExporting; onClicked: { if (browserTabs.currentIndex === 1) signalBrowser.processingEditor.open(); else signalBrowser.objectEditor.open() } }
         CheckBox {
@@ -608,7 +628,8 @@ Rectangle {
                         palette.highlightedText: "#ffffff"
                         onClicked: {
                             signalList.currentIndex = signalDelegate.index
-                            if (signalBrowser.processingEditor.choosingRuleSource) signalBrowser.processingEditor.selectRuleSource(signalDelegate.signalIndex)
+                            if (signalBrowser.statePickTarget >= 0) signalBrowser.addPickedState(signalDelegate.signalIndex)
+                            else if (signalBrowser.processingEditor.choosingRuleSource) signalBrowser.processingEditor.selectRuleSource(signalDelegate.signalIndex)
                             else if (browserTabs.currentIndex === 1) {
                                 if (signalBrowser.appController.trajectoryState(signalBrowser.appController.activePlotIndex).enabled) signalBrowser.processingEditor.open()
                                 else signalBrowser.appController.toggleSignal(signalDelegate.signalIndex)
@@ -620,6 +641,7 @@ Rectangle {
                                 signalBrowser.objectEditor.selectSource(signalDelegate.signalIndex)
                             }
                             else signalBrowser.appController.toggleSignal(signalDelegate.signalIndex)
+                            signalBrowser.followSignalProperties(signalDelegate.signalIndex)
                         }
                     }
                     Label {
@@ -673,8 +695,11 @@ Rectangle {
                                 signalList.currentIndex = signalDelegate.index
                                 if (signalDelegate.groupNode)
                                     signalList.toggleGroup(signalDelegate.groupName, signalDelegate.index)
+                                else if (signalBrowser.statePickTarget >= 0) signalBrowser.addPickedState(signalDelegate.signalIndex)
                                 else if (signalBrowser.processingEditor.choosingRuleSource)
                                     signalBrowser.processingEditor.selectRuleSource(signalDelegate.signalIndex)
+                                else if (signalBrowser.propertiesEditor && signalBrowser.propertiesEditor.visible && signalBrowser.propertiesEditor.mode !== "states")
+                                    signalBrowser.followSignalProperties(signalDelegate.signalIndex)
                                 else if (mapToItem(penPreview, mouse.x, mouse.y).x >= 0)
                                     signalBrowser.editSignalRequested(signalDelegate.signalIndex)
                             }
@@ -745,6 +770,7 @@ Rectangle {
                         } else if (signalDelegate.groupNode) {
                             signalBrowser.contextRequested(1, -1, signalDelegate.groupName)
                         } else {
+                            signalBrowser.followSignalProperties(signalDelegate.signalIndex)
                             signalBrowser.contextRequested(0, signalDelegate.signalIndex, "")
                         }
                     }

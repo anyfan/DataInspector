@@ -101,7 +101,7 @@ void TrajectoryTest::ruleEditorRealDataFrames()
     const auto path = qEnvironmentVariable("DI_RULE_UI_INPUT");
     if (path.isEmpty()) QSKIP("Set DI_RULE_UI_INPUT for the optional real-data, rendered-frame diagnostic");
     auto format = QSurfaceFormat::defaultFormat(); format.setSamples(4); QSurfaceFormat::setDefaultFormat(format);
-    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, TrajectoryItemQmlRegistration,
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration,
         AppControllerQmlRegistration, SignalModelQmlRegistration>("DataInspector", 1);
     AppController controller;
     qInfo() << "Loading real rule-editor input" << path;
@@ -923,7 +923,7 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
 {
     QFETCH(bool, compiled);
     static const bool registered = [] {
-        qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, TrajectoryItemQmlRegistration,
+        qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration,
             AppControllerQmlRegistration, SignalModelQmlRegistration>("DataInspector", 1);
         return true;
     }();

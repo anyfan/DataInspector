@@ -1,6 +1,7 @@
 #include "appcontroller.h"
 #include "items/plotitem.h"
 #include "items/trajectoryitem.h"
+#include "items/statetimelineitem.h"
 #include "io/dataexportworker.h"
 #include <QQuickItem>
 #include <QQuickItemGrabResult>
@@ -38,6 +39,8 @@ bool AppController::exportPlotImage(QObject *object, const QVariant &filePath, i
         bool pending = false;
         for (const auto &plot : m_plots) if (plot && plot->lodPending()) pending = true;
         for (const auto &plot : m_trajectoryPlots) if (plot && plot->isVisible() && plot->pending()) pending = true;
+        for (const auto &object : m_stateTimelineItems) if (auto *plot = qobject_cast<StateTimelineItem *>(object))
+            if (plot->isVisible() && plot->pending()) pending = true;
         if (!m_imageExportCancelled && pending && ++attempts < 300) return;
         timer->stop(); timer->deleteLater();
         const auto finish = [this](bool success, const QString &message) {

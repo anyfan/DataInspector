@@ -14,10 +14,11 @@ struct SessionSignal
     QColor color;
     double width = 2.0, timeOffset = 0.0;
     int style = 1;
+    SignalEnums enums;
 };
 struct SessionDocument : ViewConfiguration
 {
-    static constexpr int version = 18;
+    static constexpr int version = 21;
     QStringList files; // Relative to the session document, or absolute.
     QVector<SessionSignal> series;
     QVector<DataObject> objects;

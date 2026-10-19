@@ -23,7 +23,7 @@ QJsonObject sessionToJson(const SessionDocument &s)
             {"processingId", signal.objectId}, {"outputId", signal.outputId},
             {"originalName", signal.originalName}, {"name", signal.name},
             {"color", signal.color.name(QColor::HexArgb)}, {"width", signal.width},
-            {"style", signal.style}, {"timeOffset", signal.timeOffset}});
+            {"style", signal.style}, {"timeOffset", signal.timeOffset}, {"enums", signalEnumsToJson(signal.enums)}});
     }
     auto root = viewConfigurationToJson(s);
     root.insert("format", "DataInspectorSession"); root.insert("version", SessionDocument::version);
@@ -77,7 +77,8 @@ bool sessionFromJson(const QJsonObject &root, SessionDocument *session, QString 
             || !(signal.color = QColor(color)).isValid()
             || !number(obj.value("width"), &signal.width) || signal.width < 1 || signal.width > 20
             || !integer(obj.value("style"), 1, 5, &signal.style)
-            || !number(obj.value("timeOffset"), &signal.timeOffset)) return fail("signals[]");
+            || !number(obj.value("timeOffset"), &signal.timeOffset)
+            || !signalEnumsFromJson(obj.value("enums"), &signal.enums)) return fail("signals[]");
         const QString key = derived ? QStringLiteral("object:%1:%2").arg(signal.objectId, signal.outputId)
             : QStringLiteral("%1:%2:%3").arg(signal.file).arg(signal.table).arg(signal.column);
         if (identities.contains(key)) return fail("duplicate signal identity");

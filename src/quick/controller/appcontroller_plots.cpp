@@ -67,6 +67,21 @@ void AppController::undoView()
 void AppController::selectSignal(int row)
 {
     if (sessionInteractionBlocked()) return;
+    const int active = activePlotIndex();
+    if (!m_trajectories.value(active).enabled && m_plotViews.value(active).states.enabled) {
+        if (row < 0 || row >= signalCount()) return;
+        auto &lanes = m_plotViews[active].states.lanes;
+        bool found = false;
+        for (auto &lane : lanes) if (lane.source == row) { lane.visible = true; found = true; }
+        if (!found) {
+            if (lanes.size() >= 64) { setStatus(QStringLiteral("每个状态子图最多 64 行")); return; }
+            StateLane lane; lane.source = row; lane.name = signalName(row);
+            lane.values.insert(0, {QStringLiteral("0"), QColor("#687887")});
+            lane.values.insert(1, {QStringLiteral("1"), QColor("#278451")});
+            lanes.append(lane);
+        }
+        refreshPlot(active); notifyPlotBindingsChanged(); return;
+    }
     if (m_trajectories.value(m_signals->activePlot()).enabled) {
         setTrajectorySignal(m_signals->activePlot(), row, true); return;
     }
@@ -89,6 +104,11 @@ void AppController::toggleSignal(int row)
     if (sessionInteractionBlocked()) return;
     const int plotIndex = m_signals->activePlot();
     if (plotIndex < 0 || row < 0) return;
+    if (!m_trajectories.value(plotIndex).enabled && m_plotViews.value(plotIndex).states.enabled) {
+        if (!plotSignalEnabled(plotIndex, row)) { selectSignal(row); return; }
+        for (auto &lane : m_plotViews[plotIndex].states.lanes) if (lane.source == row) lane.visible = false;
+        refreshPlot(plotIndex, false); notifyPlotBindingsChanged(); return;
+    }
     if (m_trajectories.value(plotIndex).enabled) {
         setTrajectorySignal(plotIndex, row, !plotSignalEnabled(plotIndex, row)); return;
     }
@@ -107,6 +127,10 @@ bool AppController::plotSignalEnabled(int plotIndex, int row) const
 {
     const auto state = m_trajectories.value(plotIndex);
     if (state.enabled) return state.signalIds.contains(row);
+    if (m_plotViews.value(plotIndex).states.enabled) {
+        for (const auto &lane : m_plotViews.value(plotIndex).states.lanes) if (lane.visible && lane.source == row) return true;
+        return false;
+    }
     return m_signals->plotRows(plotIndex).contains(row);
 }
 
@@ -120,7 +144,10 @@ bool AppController::renameSignal(int row, const QString &name)
     if (sessionInteractionBlocked()) return false;
     const QString previous = m_signals->nameAt(row);
     if (!m_signals->renameSignal(row, name)) return false;
+    for (auto &view : m_plotViews) for (auto &lane : view.states.lanes)
+        if (lane.source == row) lane.name = m_signals->nameAt(row);
     if (m_signals->nameAt(row) == previous) return true;
+    for (int i=0; i<m_plotRows*m_plotColumns; ++i) refreshStateTimeline(i);
     // Legends read names through the controller, so bump the revision the
     // same way a pen edit does to rebuild their entries.
     notifyPlotBindingsChanged();
@@ -197,6 +224,10 @@ bool AppController::applyTimeOffset(int scope, int row, const QString &group, do
 QVariantList AppController::plotSignalRows(int plotIndex) const
 {
     QVariantList rows;
+    if (!m_trajectories.value(plotIndex).enabled && m_plotViews.value(plotIndex).states.enabled) {
+        for (const auto &lane : m_plotViews.value(plotIndex).states.lanes) if (lane.visible && !rows.contains(lane.source)) rows.append(lane.source);
+        return rows;
+    }
     for (int row : m_signals->plotRows(plotIndex)) rows.append(row);
     return rows;
 }
@@ -275,6 +306,10 @@ void AppController::clearAllPlotSignals()
 
 bool AppController::unbindPlotSignals(int plotIndex)
 {
+    if (!m_trajectories.value(plotIndex).enabled && m_plotViews.value(plotIndex).states.enabled) {
+        if (m_plotViews.value(plotIndex).states.lanes.isEmpty()) return false;
+        m_plotViews[plotIndex].states.lanes.clear(); refreshPlot(plotIndex, false); return true;
+    }
     const QVector<int> rows = m_signals->plotRows(plotIndex);
     bool trajectoryChanged = false;
     auto &trajectory = m_trajectories[plotIndex];
@@ -513,6 +548,10 @@ QVector<PlotSeriesId> AppController::fitSourceRows(bool allPlots) const
     QVector<PlotSeriesId> ids;
     for (int index = 0; index < m_plotRows * m_plotColumns; ++index) {
         if (!fitScopeIncludes(index, allPlots) || m_trajectories.value(index).enabled) continue;
+        if (m_plotViews.value(index).states.enabled) {
+            for (const auto &lane : m_plotViews.value(index).states.lanes) if (lane.visible && !ids.contains(lane.source)) ids.append(lane.source);
+            continue;
+        }
         for (int id : m_signals->plotRows(index))
             if (!ids.contains(id)) ids.append(id);
     }
@@ -521,11 +560,17 @@ QVector<PlotSeriesId> AppController::fitSourceRows(bool allPlots) const
 
 void AppController::refreshPlot(int index, bool fitY)
 {
+    refreshStateTimeline(index);
     refreshTrajectory(index);
     if (index < 0 || index >= m_plots.size() || !m_plots.at(index)) return;
     PlotItem *plot = m_plots.at(index);
     if (m_trajectories.value(index).enabled) plot->setCurveRenderingEnabled(false);
     QVector<int> sortedRows = m_signals->plotRows(index);
+    const bool statesEnabled = m_plotViews.value(index).states.enabled && !m_trajectories.value(index).enabled;
+    if (statesEnabled) {
+        sortedRows.clear();
+        for (const auto &lane : m_plotViews.value(index).states.lanes) if (lane.visible && !sortedRows.contains(lane.source)) sortedRows.append(lane.source);
+    }
     if (m_trajectories.value(index).enabled) {
         sortedRows.clear();
         for (const auto &track : m_trajectories.value(index).entries()) if (track.visible) {
@@ -539,7 +584,7 @@ void AppController::refreshPlot(int index, bool fitY)
         if (row >= 0 && row < m_signalColors.size()) visibleIds.append(row);
     plot->setVisibleSeries(visibleIds);
     if (m_trajectories.value(index).enabled) return;
-    plot->setCurveRenderingEnabled(true);
+    plot->setCurveRenderingEnabled(!statesEnabled);
     if (fitY && !m_initialSignalFitDone && !visibleIds.isEmpty() && !m_applyingSession) {
         m_initialSignalFitDone = true;
         // fitView emits rangeChanged, synchronizing the first time fit to all plots.

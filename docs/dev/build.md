@@ -1,5 +1,7 @@
 # 构建
 
+状态时间轴的 `statetimeline.*` 纳入 `DI_RENDER_SOURCES`，`statetimelineitem.*` 纳入 `DI_PLOTITEM_SOURCES`，`appcontroller_states.cpp` 纳入 `DI_CONTROLLER_SOURCES`，`SignalPropertiesPane.qml` 纳入 `DI_QML_FILES`。类型注册继续集中在 `qmltypes.h`，无新增第三方依赖。
+
 ## CLI 自动化
 
 自动化服务 `automation/automationserver.*` 纳入 DI_CONTROLLER_SOURCES，di_app_core 新增 Qt6::Network 依赖。Qt SDK 需含 Network 模块，部署脚本随 Qt DLL 一起复制，并将 `datainspector_cli.py` 放在 exe 旁；CLI 用户另需 Python 3.9+ 标准库。没有新增第三方库。使用与协议见[CLI 文档](../user-guide/automation-cli.md)。

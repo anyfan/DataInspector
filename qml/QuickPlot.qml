@@ -16,8 +16,29 @@ Rectangle {
     // 0: disabled, 1: X/Y region, 2: X only, 3: Y only.
     property int graphZoomMode: 0
     property bool trajectoryMode: root.controller.trajectoryState(root.plotIndex).enabled
+    property bool stateMode: false
+    property int selectedStateRow: 0
+    signal stateConfigurationRequested(int plot)
+    signal signalPropertiesRequested(int row)
+    function configureStateSource(source) {
+        if (controller.addStateSignal(root.plotIndex,source)) signalPropertiesRequested(source)
+    }
+    function jumpState(direction) {
+        if (plotItem.cursorMode === 0) root.controller.setCursorMode(1)
+        const cursor = plotItem.activeCursorIndex
+        const time = cursor === 2 ? plotItem.cursorX2 : plotItem.cursorX1
+        const next = stateItem.transition(root.selectedStateRow, time, direction)
+        if (next !== undefined && next !== null) {
+            plotItem.editCursorTime(Number(next), cursor)
+            if (next < plotItem.xMinimum || next > plotItem.xMaximum) {
+                const span = plotItem.xMaximum - plotItem.xMinimum
+                plotItem.setXRange(Number(next)-span/2, Number(next)+span/2)
+            }
+        }
+    }
     function refreshTrajectoryMode() {
         if (root.controller) root.trajectoryMode = root.controller.trajectoryState(root.plotIndex).enabled
+        if (root.controller) root.stateMode = root.controller.stateTimelineState(root.plotIndex).enabled
     }
     onPlotIndexChanged: refreshTrajectoryMode()
     onControllerChanged: refreshTrajectoryMode()
@@ -45,7 +66,8 @@ Rectangle {
     readonly property real yTickLabelMargin: 6
     // Width this subplot needs on its own; the parent may widen it via
     // sharedAxisLeft so all subplots keep identical X-axis extents.
-    readonly property real measuredAxisLeft: root.trajectoryMode ? 0 : Math.ceil(yTickMetrics.advanceWidth) + yTickLabelMargin + 2
+    // Fixed gutter for glyph and active-cursor value; names live in the legend.
+    readonly property real measuredAxisLeft: root.trajectoryMode ? 0 : root.stateMode ? 60 : Math.ceil(yTickMetrics.advanceWidth) + yTickLabelMargin + 2
     property real sharedAxisLeft: 0
     readonly property real axisLeft: Math.max(measuredAxisLeft, sharedAxisLeft)
     TextMetrics {
@@ -54,7 +76,7 @@ Rectangle {
         text: root.widestYTickLabel
     }
     readonly property real axisRight: 1
-    readonly property real axisTop: Math.max(20, legend.implicitHeight + 2)
+    readonly property real axisTop: root.stateMode ? Math.max(38, stateLegend.y + stateLegend.height + 4) : Math.max(20, legend.implicitHeight + 2)
     // Keep compact labels for ordinary ranges, but do not show identical text
     // on different ticks when a large Y offset is viewed through a narrow window.
     readonly property bool compactYTicksDistinct: {
@@ -494,7 +516,7 @@ Rectangle {
         }
 
         Repeater {
-            model: root.trajectoryMode ? [] : plotItem.yTicks
+            model: root.trajectoryMode || root.stateMode ? [] : plotItem.yTicks
             delegate: Rectangle {
                 required property var modelData
                 y: root.yPixel(modelData.value)
@@ -505,6 +527,27 @@ Rectangle {
             }
         }
 
+        StateTimelineItem {
+            id: stateItem
+            objectName: "stateTimelineItem"
+            width: axisRect.width
+            height: Math.max(axisRect.height, rowNames.length * rowHeight)
+            y: -stateScroll.position * height
+            visible: root.stateMode
+            minimum: plotItem.xMinimum
+            maximum: plotItem.xMaximum
+            Component.onCompleted: root.controller.attachStateTimeline(stateItem, root.plotIndex)
+        }
+        Repeater {
+            model: root.stateMode ? stateItem.labels : []
+            delegate: Label {
+                required property var modelData
+                x: modelData.x + 3; y: stateItem.y + modelData.y
+                width: Math.max(0, modelData.width - 6); height: modelData.height
+                verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignHCenter
+                text: modelData.text; color: modelData.color; font.pixelSize: 11; elide: Text.ElideRight
+            }
+        }
         PlotItem {
             id: plotItem
             anchors.fill: parent
@@ -520,6 +563,21 @@ Rectangle {
                 id: graphHover
                 objectName: "graphHoverHandler"
             }
+            TapHandler {
+                enabled: root.stateMode
+                onTapped: point => {
+                    root.selectedStateRow = Math.max(0, Math.min(stateItem.rowNames.length - 1,
+                        Math.floor((point.position.y-stateItem.y) / stateItem.rowHeight)))
+                }
+            }
+            readonly property string hoveredStateDetails: root.stateMode && graphHover.hovered && stateItem.hasFrame
+                && (graphHover.point.position.y-stateItem.y) % stateItem.rowHeight >= stateItem.headerHeight
+                ? stateItem.inspect(Math.floor((graphHover.point.position.y-stateItem.y) / stateItem.rowHeight),
+                    plotItem.xMinimum + graphHover.point.position.x / Math.max(1, axisRect.width) * (plotItem.xMaximum-plotItem.xMinimum)) : ""
+            readonly property bool stateInspectionVisible: hoveredStateDetails.length > 0
+            ToolTip.visible: plotItem.stateInspectionVisible
+            ToolTip.delay: 500
+            ToolTip.text: plotItem.hoveredStateDetails
         }
 
         Rectangle {
@@ -566,15 +624,25 @@ Rectangle {
         }
 
         Rectangle {
+            objectName: "numericAxisFrame"
+            visible: !root.stateMode
             anchors.fill: parent
             color: "transparent"
             border.color: root.axisColor
             border.width: 1
             z: 2
         }
+        Item {
+            visible: root.stateMode
+            anchors.fill: parent
+            z: 2
+            Rectangle { objectName: "stateXAxisLine"; anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.axisColor }
+            Rectangle { anchors.top: parent.top; width: parent.width; height: 1; color: root.axisColor }
+            Rectangle { anchors.right: parent.right; height: parent.height; width: 1; color: root.axisColor }
+        }
 
         Repeater {
-            model: plotItem.cursorReadouts
+            model: root.stateMode ? [] : plotItem.cursorReadouts
             delegate: Rectangle {
                 required property var modelData
                 objectName: "cursorSampleMarker"
@@ -589,7 +657,7 @@ Rectangle {
         }
 
         Repeater {
-            model: root.positionedReadouts
+            model: root.stateMode ? [] : root.positionedReadouts
             delegate: Label {
                 id: cursorValueLabel
                 required property var modelData
@@ -698,7 +766,7 @@ Rectangle {
     }
 
     Repeater {
-        model: root.trajectoryMode ? [] : plotItem.yTicks
+        model: root.trajectoryMode || root.stateMode ? [] : plotItem.yTicks
         delegate: Item {
             id: yTick
             required property var modelData
@@ -726,6 +794,130 @@ Rectangle {
         }
     }
 
+    function stateIdentityColor(row) {
+        const colors = root.controller.presetColors
+        return colors.length > 0 ? colors[row % colors.length] : root.textColor
+    }
+    function selectStateRow(row) {
+        root.selectedStateRow = row
+        const top = row * stateItem.rowHeight
+        const offset = stateScroll.position * stateItem.height
+        let desired = offset
+        if (top < offset) desired = top
+        else if (top + stateItem.rowHeight > offset + axisRect.height) desired = top + stateItem.rowHeight-axisRect.height
+        stateScroll.position = Math.max(0,Math.min(1-stateScroll.size,desired/Math.max(1,stateItem.height)))
+    }
+    readonly property int stateReadoutCursor: plotItem.activeCursorIndex === 2 ? 2 : 1
+    readonly property var stateCursorValues: {
+        // Track source/visible-lane configuration changes as well as cursor time.
+        const rows = stateItem.rowNames
+        if (!root.stateMode || plotItem.cursorMode === 0 || rows.length === 0) return []
+        return stateItem.cursorValues(root.stateReadoutCursor === 2 ? plotItem.cursorX2 : plotItem.cursorX1)
+    }
+    component StateCurveGlyph: Item {
+        id: glyph
+        property color strokeColor: "#0072bd"
+        Rectangle { x: 1; y: 12; width: 8; height: 2; color: glyph.strokeColor }
+        Rectangle { x: 7; y: 5; width: 2; height: 9; color: glyph.strokeColor }
+        Rectangle { x: 7; y: 5; width: 9; height: 2; color: glyph.strokeColor }
+        Rectangle { x: 14; y: 5; width: 2; height: 9; color: glyph.strokeColor }
+        Rectangle { x: 14; y: 12; width: 9; height: 2; color: glyph.strokeColor }
+    }
+    Item {
+        visible: root.stateMode
+        x: 0; y: axisRect.y; width: root.axisLeft; height: axisRect.height; clip: true; z: 3
+        Repeater {
+            model: root.stateMode ? stateItem.rowNames : []
+            delegate: Item {
+                id: stateRowIcon
+                objectName: "stateTimelineRow" + index
+                required property int index
+                required property string modelData
+                x: Math.max(0,root.axisLeft-59); y: stateItem.y + index * stateItem.rowHeight
+                width: 58; height: stateItem.rowHeight
+                StateCurveGlyph { x: 1; anchors.verticalCenter: parent.verticalCenter; width: 24; height: 20; strokeColor: root.stateIdentityColor(stateRowIcon.index) }
+                Label {
+                    objectName: "stateTimelineValue" + stateRowIcon.index
+                    x: 28; width: 26; height: parent.height
+                    text: root.stateCursorValues[stateRowIcon.index] ?? "—"
+                    color: root.textColor; font.pixelSize: 11
+                    verticalAlignment: Text.AlignVCenter; horizontalAlignment: Text.AlignLeft
+                    elide: Text.ElideRight
+                }
+                Rectangle { x: 0; y: 5; width: 2; height: parent.height-10; color: root.textColor; visible: stateRowIcon.index === root.selectedStateRow }
+                TapHandler { onTapped: root.selectStateRow(stateRowIcon.index) }
+                HoverHandler { id: stateRowHover }
+                ToolTip.visible: stateRowHover.hovered
+                ToolTip.delay: 400
+                ToolTip.text: stateRowIcon.modelData + (plotItem.cursorMode === 0 ? "" : "\nT" + root.stateReadoutCursor + "：" + (root.stateCursorValues[stateRowIcon.index] ?? "—"))
+            }
+        }
+    }
+    Flow {
+        id: stateLegend
+        objectName: "stateTimelineLegend"
+        visible: root.stateMode
+        readonly property bool besideToolbar: root.width-stateToolbar.width-35 >= 200
+        x: besideToolbar ? stateToolbar.x+stateToolbar.width+8 : 28
+        y: besideToolbar ? 2 : stateToolbar.y+stateToolbar.height+3
+        width: Math.max(1,root.width-x-8)
+        spacing: 4
+        z: 6
+        Repeater {
+            model: root.stateMode ? stateItem.rowNames : []
+            delegate: Item {
+                id: stateLegendEntry
+                objectName: "stateLegendEntry" + index
+                required property int index
+                required property string modelData
+                width: Math.min(stateLegend.width,stateLegendText.implicitWidth+34)
+                height: 22
+                StateCurveGlyph { x: 2; width: 24; height: 20; anchors.verticalCenter: parent.verticalCenter; strokeColor: root.stateIdentityColor(stateLegendEntry.index) }
+                Label {
+                    id: stateLegendText
+                    x: 30; width: Math.max(0,parent.width-32); height: parent.height
+                    text: stateLegendEntry.modelData; color: root.textColor
+                    font.pixelSize: 11; font.bold: stateLegendEntry.index === root.selectedStateRow
+                    verticalAlignment: Text.AlignVCenter; elide: Text.ElideRight
+                }
+                TapHandler { onTapped: root.selectStateRow(stateLegendEntry.index) }
+                HoverHandler { id: stateLegendHover }
+                ToolTip.visible: stateLegendHover.hovered
+                ToolTip.delay: 400
+                ToolTip.text: stateLegendEntry.modelData
+            }
+        }
+    }
+    MouseArea {
+        visible: root.stateMode
+        x: 0; y: axisRect.y; width: root.axisLeft; height: axisRect.height
+        acceptedButtons: Qt.NoButton
+        onWheel: wheel => { stateScroll.position = Math.max(0, Math.min(1-stateScroll.size, stateScroll.position-wheel.angleDelta.y/120*stateItem.rowHeight/stateItem.height)) }
+    }
+    ScrollBar {
+        id: stateScroll; objectName: "stateTimelineScrollBar"
+        visible: root.stateMode && size < 1
+        x: axisRect.x + axisRect.width - width; y: axisRect.y; height: axisRect.height; z: 7
+        orientation: Qt.Vertical
+        size: Math.min(1, axisRect.height / Math.max(1,stateItem.height))
+        policy: ScrollBar.AlwaysOn
+        onSizeChanged: position = Math.max(0,Math.min(position,1-size))
+    }
+    Row {
+        id: stateToolbar
+        visible: root.stateMode; x: 25; y: 2; spacing: 3; z: 6
+        Button { text: "状态行…"; height: 30; onClicked: root.stateConfigurationRequested(root.plotIndex) }
+        Button { text: "上次变化"; height: 30; enabled: stateItem.hasFrame; onClicked: root.jumpState(-1) }
+        Button { text: "下次变化"; height: 30; enabled: stateItem.hasFrame; onClicked: root.jumpState(1) }
+        Button { text: "曲线视图"; height: 30; onClicked: root.controller.setStateTimelineEnabled(root.plotIndex, false) }
+    }
+    Label {
+        objectName: "stateTimelineStatusMessage"
+        visible: root.stateMode && ((stateItem.pending && !stateItem.hasFrame) || stateItem.error.length > 0 || stateItem.rowNames.length === 0)
+        x: axisRect.x + 8; y: axisRect.y + 8; width: Math.max(1, axisRect.width - 16); z: 5
+        color: root.textColor; wrapMode: Text.WordWrap
+        text: stateItem.pending && !stateItem.hasFrame ? "正在准备状态区间…" : stateItem.error.length > 0 ? stateItem.error : "点击‘状态行…’，再从信号树添加来源"
+    }
     Loader {
         anchors.fill: parent
         anchors.margins: 2
@@ -784,6 +976,7 @@ Rectangle {
     Menu {
         id: plotContextMenu
         objectName: "plotContextMenu"
+        MenuItem { text: "切换为状态时间轴"; onTriggered: { root.controller.setStateTimelineEnabled(root.plotIndex, true); root.stateConfigurationRequested(root.plotIndex) } }
         MenuItem { text: "切换为航迹视图"; objectName: "trajectoryModeMenuItem"; onTriggered: trajectoryDialog.open() }
         MenuSeparator { }
         MenuItem {
@@ -839,7 +1032,7 @@ Rectangle {
     }
     PlotAxisArea {
         objectName: "yAxisArea"
-        visible: !root.trajectoryMode
+        visible: !root.trajectoryMode && !root.stateMode
         axis: 1
         plot: root
         renderer: plotItem
@@ -848,7 +1041,7 @@ Rectangle {
     }
     PlotLegend {
         id: legend
-        visible: !root.trajectoryMode
+        visible: !root.trajectoryMode && !root.stateMode
         x: 30
         y: 1
         width: Math.max(1, root.width - 36)

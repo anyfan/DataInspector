@@ -166,6 +166,8 @@ bool AppController::collectExportTables(int scope, QVector<DataExportTable> *tab
                     for (int row : track.axes) if (row >= 0) uniqueRows.insert(row);
                     if (track.attitude.mode) for (int a = 0; a < (track.attitude.mode == 1 ? 3 : 4); ++a) { const int row = track.attitude.sources[a]; if (row >= 0) uniqueRows.insert(row); }
                 }
+            } else if (m_plotViews.value(plotIndex).states.enabled) {
+                for (const auto &lane : m_plotViews.value(plotIndex).states.lanes) if (lane.visible) uniqueRows.insert(lane.source);
             } else for (int row : plotRows) uniqueRows.insert(row);
         }
         rows = QVector<int>(uniqueRows.cbegin(), uniqueRows.cend());

@@ -179,88 +179,6 @@ ApplicationWindow {
 
     function highlightedSearchText(value) { return signalBrowser.highlightedSearchText(value) }
 
-    ListModel {
-        id: lineStyleModel
-        ListElement { text: "实线"; value: 1 }
-        ListElement { text: "虚线"; value: 2 }
-        ListElement { text: "点线"; value: 3 }
-        ListElement { text: "点划线"; value: 4 }
-        ListElement { text: "双点划线"; value: 5 }
-    }
-
-    Dialog {
-        id: signalPropertiesDialog
-        title: "信号属性"
-        modal: true
-        anchors.centerIn: parent
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        width: 300
-        onAccepted: window.appController.setSignalPen(
-            window.editingSignalIndex, colorButton.selectedColor,
-            widthSpin.value, lineStyleModel.get(styleCombo.currentIndex).value)
-
-        ColumnLayout {
-            width: parent.width
-            spacing: 10
-            Label { text: window.editingSignalIndex >= 0 ? window.appController.signalName(window.editingSignalIndex) : ""; color: window.treeTextColor; font.weight: Font.DemiBold; Layout.fillWidth: true; elide: Text.ElideRight }
-            RowLayout {
-                Label { text: "颜色"; color: window.treeTextColor; Layout.preferredWidth: 54 }
-                Rectangle {
-                    id: colorButton
-                    property color selectedColor: "#4ea1ff"
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 26
-                    color: selectedColor
-                    border.color: window.borderColor
-                    radius: 2
-                    MouseArea {
-                        anchors.fill: parent
-                        onClicked: {
-                            colorDialog.selectedColor = colorButton.selectedColor
-                            colorDialog.open()
-                        }
-                    }
-                }
-            }
-            Grid {
-                columns: 7
-                spacing: 6
-                Layout.alignment: Qt.AlignHCenter
-                Repeater {
-                    model: window.appController.presetColors
-                    delegate: Rectangle {
-                        required property color modelData
-                        width: 28; height: 24; radius: 2
-                        color: modelData
-                        border.width: colorButton.selectedColor === modelData ? 3 : 1
-                        border.color: colorButton.selectedColor === modelData
-                                      ? window.treeTextColor : window.borderColor
-                        MouseArea {
-                            anchors.fill: parent
-                            onClicked: colorButton.selectedColor = parent.modelData
-                        }
-                    }
-                }
-            }
-            RowLayout {
-                Label { text: "宽度"; color: window.treeTextColor; Layout.preferredWidth: 54 }
-                SpinBox { id: widthSpin; from: 1; to: 20; editable: true; Layout.fillWidth: true }
-                Label { text: "px"; color: window.treeTextColor }
-            }
-            RowLayout {
-                Label { text: "线型"; color: window.treeTextColor; Layout.preferredWidth: 54 }
-                ComboBox { id: styleCombo; model: lineStyleModel; textRole: "text"; Layout.fillWidth: true }
-            }
-        }
-    }
-
-    ColorDialog {
-        id: colorDialog
-        title: "选择信号颜色"
-        selectedColor: "#4ea1ff"
-        onAccepted: colorButton.selectedColor = selectedColor
-    }
-
     Menu {
         id: fileContextMenu
         property string fileName: ""
@@ -279,21 +197,15 @@ ApplicationWindow {
         id: signalContextMenu
         property int signalIndex: -1
         MenuItem {
-            text: window.appController.isDerivedSignal(signalContextMenu.signalIndex) ? "管理处理规则…" : "绑定到对象…"
+            text: "信号属性"
             enabled: !window.appController.loading && !window.appController.exporting
-            onTriggered: {
-                if (window.appController.isDerivedSignal(signalContextMenu.signalIndex)) processingManager.revealOutput(signalContextMenu.signalIndex)
-                else objectManager.bindSource(signalContextMenu.signalIndex)
-            }
+            onTriggered: window.editSignalPen(signalContextMenu.signalIndex)
         }
         MenuItem {
-            text: "时间偏移…"
-            enabled: !window.appController.loading && !window.appController.exporting && !window.appController.isDerivedSignal(signalContextMenu.signalIndex)
-            onTriggered: window.requestTimeOffset(0, signalContextMenu.signalIndex, "")
-        }
-        MenuItem {
-            text: "重命名…"
-            onTriggered: window.requestRenameSignal(signalContextMenu.signalIndex)
+            text: "管理处理规则…"
+            visible: window.appController.isDerivedSignal(signalContextMenu.signalIndex)
+            enabled: !window.appController.loading && !window.appController.exporting
+            onTriggered: processingManager.revealOutput(signalContextMenu.signalIndex)
         }
     }
 
@@ -308,126 +220,8 @@ ApplicationWindow {
     }
 
     function requestTimeOffset(scope, row, group) {
-        timeOffsetDialog.scope = scope
-        timeOffsetDialog.signalIndex = row
-        timeOffsetDialog.groupName = group
-        timeOffsetDialog.open()
-    }
-
-    Dialog {
-        id: timeOffsetDialog
-        property int scope: 0
-        property bool mixedOffsets: false
-        property int signalIndex: -1
-        property string groupName: ""
-        readonly property bool valueValid: offsetField.acceptableInput
-            && offsetField.text.trim().length > 0 && isFinite(Number(offsetField.text))
-        objectName: "timeOffsetDialog"
-        title: "设置时间偏移"
-        modal: true
-        anchors.centerIn: parent
-        width: 420
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        onAboutToShow: {
-            const current = window.appController.timeOffsetForScope(scope, signalIndex, groupName)
-            mixedOffsets = current === undefined || current === null
-            offsetField.text = mixedOffsets ? "" : String(current)
-            const button = standardButton(Dialog.Ok)
-            if (button) button.enabled = Qt.binding(function() {
-                return timeOffsetDialog.valueValid && !window.appController.loading && !window.appController.exporting
-            })
-            offsetField.selectAll()
-            offsetField.forceActiveFocus()
-        }
-        onAccepted: window.appController.setTimeOffset(scope, signalIndex, groupName, Number(offsetField.text))
-        ColumnLayout {
-            width: parent.width
-            spacing: 10
-            Label {
-                text: "目标：" + (timeOffsetDialog.scope === 0
-                    ? window.appController.signalName(timeOffsetDialog.signalIndex) : timeOffsetDialog.groupName)
-                Layout.fillWidth: true
-                elide: Text.ElideMiddle
-            }
-            Label {
-                visible: timeOffsetDialog.mixedOffsets
-                text: "当前偏移不一致，输入后将统一设置。"
-            }
-            Label {
-                text: "设置相对原始时间的偏移：正值向右，负值向左。\n组和文件操作包含未勾选、被搜索隐藏的信号。"
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-            }
-            TextField {
-                id: offsetField
-                objectName: "timeOffsetField"
-                Layout.fillWidth: true
-                placeholderText: "时间偏移（秒）"
-                selectByMouse: true
-                validator: DoubleValidator { locale: "C"; notation: DoubleValidator.ScientificNotation }
-                onAccepted: if (timeOffsetDialog.valueValid && !window.appController.loading && !window.appController.exporting)
-                    timeOffsetDialog.accept()
-            }
-            Button {
-                objectName: "resetTimeOffsetButton"
-                text: "重置为 0"
-                onClicked: offsetField.text = "0"
-            }
-            Label {
-                text: "点击确定后应用修改或重置。"
-                opacity: 0.7
-            }
-        }
-    }
-
-    Dialog {
-        id: renameSignalDialog
-        objectName: "renameSignalDialog"
-        property int signalIndex: -1
-        readonly property bool nameValid: renameField.text.trim().length > 0
-        title: "重命名信号"
-        modal: true
-        anchors.centerIn: parent
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        width: 380
-        onAboutToShow: {
-            // The footer buttons exist by now; keep OK disabled for blank names.
-            const okButton = standardButton(Dialog.Ok)
-            if (okButton) okButton.enabled = Qt.binding(function() { return renameSignalDialog.nameValid })
-            renameField.text = window.appController.signalName(signalIndex)
-            renameField.selectAll()
-            renameField.forceActiveFocus()
-        }
-        onAccepted: window.appController.renameSignal(signalIndex, renameField.text)
-        ColumnLayout {
-            width: parent.width
-            spacing: 8
-            Label {
-                text: "原名称：" + (renameSignalDialog.signalIndex >= 0
-                                   ? window.appController.originalSignalName(renameSignalDialog.signalIndex) : "")
-                color: window.treeTextColor
-                opacity: 0.78
-                elide: Text.ElideRight
-                Layout.fillWidth: true
-            }
-            TextField {
-                id: renameField
-                objectName: "renameSignalField"
-                Layout.fillWidth: true
-                placeholderText: "新名称"
-                selectByMouse: true
-                onAccepted: if (renameSignalDialog.nameValid) renameSignalDialog.accept()
-            }
-            Button {
-                objectName: "resetSignalNameButton"
-                text: "重置为原名称"
-                onClicked: renameField.text = window.appController.originalSignalName(renameSignalDialog.signalIndex)
-            }
-            Label {
-                text: "点击确定后应用修改或重置。"
-                opacity: 0.7
-            }
-        }
+        objectManager.close(); processingManager.close()
+        propertiesPane.editTimeOffset(scope,row,group)
     }
 
     Dialog {
@@ -449,14 +243,7 @@ ApplicationWindow {
 
     function editSignalPen(signalIndex) {
         editingSignalIndex = signalIndex
-        colorButton.selectedColor = window.appController.signalColor(signalIndex)
-        widthSpin.value = Math.round(window.appController.signalWidth(signalIndex))
-        const style = window.appController.signalStyle(signalIndex)
-        let found = 0
-        for (let index = 0; index < lineStyleModel.count; ++index)
-            if (lineStyleModel.get(index).value === style) found = index
-        styleCombo.currentIndex = found
-        signalPropertiesDialog.open()
+        signalBrowser.editSignalProperties(signalIndex)
     }
 
     function requestRemoveFile(fileName) {
@@ -466,8 +253,8 @@ ApplicationWindow {
 
     function requestRenameSignal(signalIndex) {
         if (signalIndex < 0) return
-        renameSignalDialog.signalIndex = signalIndex
-        renameSignalDialog.open()
+        window.editSignalPen(signalIndex)
+        propertiesPane.focusSignalName()
     }
 
     SessionDialogs {
@@ -968,6 +755,7 @@ ApplicationWindow {
             appController: window.appController
             objectEditor: objectManager
             processingEditor: processingManager
+            propertiesEditor: propertiesPane
             panelColor: window.panelColor
             borderColor: window.borderColor
             accentColor: window.accentColor
@@ -1033,6 +821,8 @@ ApplicationWindow {
                         onVisibleChanged: plotPanel.updateSharedAxisLeft()
                         Component.onCompleted: plotPanel.updateSharedAxisLeft()
                         Component.onDestruction: Qt.callLater(plotPanel.updateSharedAxisLeft)
+                        onStateConfigurationRequested: plot => signalBrowser.editStateRows(plot)
+                        onSignalPropertiesRequested: row => window.editSignalPen(row)
                         graphLineWidth: 2
                         graphCursorMode: window.selectedCursorMode
                         graphZoomMode: window.activeZoomMode
@@ -1092,6 +882,16 @@ ApplicationWindow {
                     ToolTip.text: "取消导出"
                 }
             }
+        }
+        SignalPropertiesPane {
+            id: propertiesPane
+            controller: window.appController
+            darkTheme: window.darkTheme
+            SplitView.preferredWidth: 320
+            SplitView.minimumWidth: 260
+            SplitView.maximumWidth: Math.max(260,window.width-560)
+            onChooseStateSource: plot => { window.signalTreeVisible=true; signalBrowser.statePickTarget=plot; signalBrowser.showSection(0) }
+            onExtractBits: row => { signalBrowser.showSection(1); processingManager.startBitExtraction(row) }
         }
     }
 }

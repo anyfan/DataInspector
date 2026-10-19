@@ -161,6 +161,8 @@ template_save/template_read 保存或读取独立的 version=1 JSON；mapping_pr
 
 ## 独立处理配置
 
-`object_create` 保留原命令名，type=general/aircraft 创建对象，type=processing 创建独立处理配置。`objects` 列出这两类定义，可按 type 区分；规则所属的 object 参数现指处理配置 ID。新规则仅允许放在处理配置中，不能放入常规或飞机对象；规则输入支持 `raw:<信号行号>`，也可使用配置内来源 ID 或此前输出 ID。删除/重绑对象字段不改变处理结果。会话只接受当前 v18，不迁移旧对象规则。
+`object_create` 保留原命令名，type=general/aircraft 创建对象，type=processing 创建独立处理配置。`objects` 列出这两类定义，可按 type 区分；规则所属的 object 参数现指处理配置 ID。新规则仅允许放在处理配置中，不能放入常规或飞机对象；规则输入支持 `raw:<信号行号>`，也可使用配置内来源 ID 或此前输出 ID。删除/重绑对象字段不改变处理结果。会话只接受当前 v21，不迁移旧对象规则。
 
-丢包规则的 `rule_update.config` 另支持 `rateMode: "count" | "cumulative" | "window"` 及 `rateWindowSeconds`（有限正数秒，默认 1）。新规则默认 window，仅生成所选的一条输出；count 为累计帧数，另两项为对应范围的百分比。模式及时长写入 v18 会话；仅允许单输出规则，修改指标保留输出身份和样式。旧 packetloss 配置类型及双输出定义拒绝提交。
+丢包规则的 `rule_update.config` 另支持 `rateMode: "count" | "cumulative" | "window"` 及 `rateWindowSeconds`（有限正数秒，默认 1）。新规则默认 window，仅生成所选的一条输出；count 为累计帧数，另两项为对应范围的百分比。模式及时长写入 v21 会话；仅允许单输出规则，修改指标保留输出身份和样式。旧 packetloss 配置类型及双输出定义拒绝提交。
+
+rule_update.config 支持 autoWordBits、byteOrder，以及位提取／公式的 outputs 数组（1–32 项）。每项包含既有输出 id（新输出省略或空字符串）、name、startBit、bitCount、signedField、expression；按运算类型使用各字段。保留 id 维护原系列、画笔与引用；删掉仍被下游引用的输出会拒绝整个更新。bitfield 每行定义独立位段，expression 每行定义独立公式，共用 inputs。

@@ -134,6 +134,8 @@ void AppController::clear()
     clearViewHistory();
     cancelObjectEvaluation(); m_objects.clear(); m_objectErrors.clear(); m_objectEvaluationStates.clear(); emit objectsChanged();
     m_seriesStore->clear();
+    for (auto &view : m_plotViews) view.states = {};
+    for (auto it = m_stateTimelineItems.cbegin(); it != m_stateTimelineItems.cend(); ++it) refreshStateTimeline(it.key());
     for (auto &state : m_trajectories) {
         auto tracks = state.entries();
         for (auto &track : tracks) { track.axes.fill(-1); track.attitude.sources.fill(-1); }
@@ -141,7 +143,7 @@ void AppController::clear()
     }
     for (int i = 0; i < m_trajectoryPlots.size(); ++i) refreshTrajectory(i);
     m_initialSignalFitDone = false;
-    m_signalColors.clear();
+    m_signalColors.clear(); m_signalEnums.clear();
     m_nextColorIndex = 0;
     m_signals->setNames({});
     m_loadedPaths.clear();

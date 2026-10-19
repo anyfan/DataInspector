@@ -60,13 +60,26 @@ automation_cli_test 另验证 clear 删除全部对象/数据；merge_signals �
 
 ## 核心回归范围
 
-- `session_test`：当前 v18 往返；全部旧版本/非法版本拒绝；失败保留、原子保存、重定位、修改状态、退出确认；独立 v3 模板匹配/撤销/严格引用校验，拒绝旧 v1/v2。
+- `session_test` 的状态时间轴回归覆盖信号级枚举、缺失与未定义值、单采样短脉冲、严格时间校验、取消、变化定位、QML 配置入口与游标、会话保存／恢复、模板来源映射／撤销、删除来源后重映射与清空。
+
+- `session_test`：当前 v21 往返；全部旧版本/非法版本拒绝；失败保留、原子保存、重定位、修改状态、退出确认；独立 v5 模板匹配/撤销/严格引用校验，拒绝旧 v1/v2/v3/v4。
 - `objectdata_test`：独立处理与对象生命周期隔离、增量依赖/取消/预算、来源移除闭包及图例清理；规则参数严格校验；X/Y 丢包三指标、窗口边界/回绕/歧义、单输出及双输出拒绝；规则 Pane 的真实鼠标绑定、草稿与大信号树导航。
 - `trajectory_test`：多航迹、公共原点/缓存、位置/姿态时间基、相机与操纵环、来源重映射和当前格式往返；源码及编译 QML 两种加载方式。
 - `automation_test` / `automation_cli_test`：协议和任务状态、幂等/取消、飞机映射、合并冲突的整批拒绝、逻辑导出、实际程序与标准库 CLI 集成。
 - `appcontroller_test` / `signalselection_test`：游标原始吸附/同步、实际跨图拖拽、树展开/搜索/定位与来源隔离。
 
 具体断言以 `tests/` 内测试函数为准。新增行为更新对应套件，不将每次开发记录追加为现行测试规范。`DI_OBJECT_UI_CAPTURE_DIR` 可输出对象页面离屏截图。
+
+状态时间轴的硬件场景检查可单独运行（先让 PATH 包含 Qt bin，设置 Fusion 和可写 TEMP/TMP）：
+
+```powershell
+$env:QSG_RHI_BACKEND = 'd3d11'
+$env:QSG_INFO = '1'
+$env:DI_STATE_GPU_CAPTURE_PATH = "$PWD/build_qt6-debug/state-timeline-gpu.png"
+./build_qt6-debug/session_test.exe stateTimelineQmlConfiguration -platform windows -o "$PWD/build_qt6-debug/state-timeline-gpu-results.txt,txt"
+```
+
+截图路径变量启用像素断言；检查日志确认实际硬件适配器。默认 CTest 不设置该变量，不将离屏 QML 行为检查当作 GPU 验证。
 
 ## GPU 与真实数据
 
@@ -98,3 +111,7 @@ GPU 光栅测试默认关闭，需要硬件 Scene Graph 后端；配置 `-DENABL
 ## 受限环境
 
 若 QTemporaryDir 能创建目录但文件 open 失败，先在构建目录创建 test-temp，将当前进程 TEMP/TMP 指向该绝对路径；不要放宽生产代码权限。QtTest 输出不可见时使用 `-o 路径,txt`，或设置 QT_FORCE_STDERR_LOGGING=1。
+
+信号枚举回归还覆盖侧栏属性的草稿保留、表格应用、多个状态图同步、来源重映射、会话恢复和模板匹配／撤销；Main 界面验证属性页不隐藏图面、状态行管理跳转和从信号树添加。objectdata_test 通过统一输出列表配置多条位数为 1 的输出，并检查新输出默认 0/1 枚举。
+
+多输出回归覆盖独立位段与公式、8/16/32 自动字宽、字节端序与符号解释、逻辑输出阶梯、单表达式无效值隔离、输出增删保留身份／样式、复制保留逐输出定义与枚举及内部依赖、下游引用删除保护、v21 会话定义严格校验与恢复、源码和资源规则编辑提交。

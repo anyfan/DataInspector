@@ -21,6 +21,7 @@ QString AppController::localSessionPath(const QVariant &value)
 SessionPlot AppController::capturePlotView(PlotItem *plot) const
 {
     SessionPlot state;
+    state.states = m_plotViews.value(m_plots.indexOf(plot)).states;
     if (plot) {
         state.yMinimum = plot->yMinimum(); state.yMaximum = plot->yMaximum();
         state.normalizeY = plot->normalizeY(); state.lineWidth = plot->lineWidth();
@@ -69,6 +70,7 @@ SessionDocument AppController::captureSession(const QString &path) const
         signal.tableName = data->sourceTableName;
         signal.originalName = m_signals->originalNameAt(data->id);
         signal.name = m_signals->nameAt(data->id);
+        signal.enums = m_signalEnums.value(data->id);
         signal.color = data->color; signal.width = data->lineWidth;
         signal.style = int(data->lineStyle); signal.timeOffset = data->timeOffset;
         for (const auto &object : m_objects) for (const auto &rule : object.rules) for (const auto &output : rule.outputs)
@@ -289,6 +291,7 @@ void AppController::finishSessionRestore()
     m_plotViews.clear(); m_trajectories.clear();
     for (int i = 0; i < state.plots.size(); ++i) {
         m_plotViews.insert(i, state.plots.at(i));
+        for (auto &lane : m_plotViews[i].states.lanes) lane.source = savedToCurrent.at(lane.source);
         auto trajectory = state.plots.at(i).trajectory;
         auto tracks = trajectory.entries();
         for (auto &track : tracks) {
@@ -304,6 +307,7 @@ void AppController::finishSessionRestore()
     setLayout(state.rows, state.columns);
     for (int i = 0; i < state.series.size(); ++i) {
         const auto &s = state.series.at(i); const int id = savedToCurrent.at(i);
+        m_signalEnums.insert(id, s.enums);
         m_signals->renameSignal(id, s.name);
         m_signals->setSignalPen(id, s.color, s.width, Qt::PenStyle(s.style));
     }

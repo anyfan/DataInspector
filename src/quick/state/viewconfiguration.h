@@ -4,6 +4,7 @@
 #include <QSet>
 #include <QVector>
 #include "render/trajectorybuilder.h"
+#include "render/statetimeline.h"
 struct SessionCursor
 {
     int mode = 0;
@@ -39,6 +40,7 @@ struct SessionTrajectory
 };
 struct SessionPlot
 {
+    StateTimelineConfig states;
     SessionTrajectory trajectory;
     QVector<int> seriesIds;
     double yMinimum = -1.0, yMaximum = 1.0, lineWidth = 2.0;

@@ -1,5 +1,6 @@
 #include "controller/appcontroller.h"
 #include "items/plotitem.h"
+#include "items/statetimelineitem.h"
 #include "qmltypes.h"
 #include "state/sessiondocument.h"
 #include <QDir>
@@ -10,6 +11,7 @@
 #include <QQmlComponent>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QQmlExpression>
 #include <QSignalSpy>
 #include <QScopeGuard>
 #include <QQuickWindow>
@@ -21,6 +23,12 @@ class SessionTest final : public QObject
 {
     Q_OBJECT
 private slots:
+    void stateTimelineIntervalsAndMissingValues();
+    void stateTimelineViewChangesKeepFrame();
+    void stateTimelinePersistenceAndSourceRemoval();
+    void stateTimelineQmlConfiguration();
+    void signalEnumsInlineEditorAndSharedViews();
+    void mixedStateAndCurveLayout();
     void trajectorySelectionKeepsSingleState();
     void roundTripWithDuplicateNamesAndLateDelegates();
     void restoredSessionsContinuePaletteSafely();
@@ -326,7 +334,7 @@ void SessionTest::qmlRestoresToolbarAndPlotStates()
     const auto restoreDialogSetting = qScopeGuard([nativeDialogsDisabled] {
         QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, nativeDialogsDisabled);
     });
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
     qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
@@ -615,7 +623,7 @@ void SessionTest::viewTemplateSchemaIsIndependent()
     const auto view = viewTemplateFromSession(session);
     const auto json = viewTemplateToJson(view);
     const auto bytes = QJsonDocument(json).toJson();
-    QCOMPARE(json["version"].toInt(), 3);
+    QCOMPARE(json["version"].toInt(), ViewTemplateDocument::version);
     QCOMPARE(json["signals"].toArray().size(), 1);
     const auto trajectory = json["view"].toObject()["plots"].toArray()[0].toObject()["trajectory"].toObject();
     QVERIFY(!trajectory.contains("axes")); QVERIFY(!trajectory.contains("geographic"));
@@ -653,7 +661,399 @@ void SessionTest::viewTemplateSchemaIsIndependent()
     QCOMPARE(QJsonDocument::fromJson(unchanged.readAll()).object(), legacy); unchanged.close();
     QVERIFY(writeViewTemplate(path, restored, &error));
     QFile updated(path); QVERIFY(updated.open(QIODevice::ReadOnly));
-    QCOMPARE(QJsonDocument::fromJson(updated.readAll()).object()["version"].toInt(), 3);
+    QCOMPARE(QJsonDocument::fromJson(updated.readAll()).object()["version"].toInt(), ViewTemplateDocument::version);
 }
+void SessionTest::stateTimelineIntervalsAndMissingValues()
+{
+    PlotSeriesInput input; input.id = 0; input.timeOffset = 10;
+    input.time = {0, 1, 2, 3, 4, 5, 6, 7, 8};
+    input.values = {0, 0, 1, 1, qQNaN(), 2, 7, 7, 3};
+    PlotSeriesStore store; store.replaceSeries({input});
+    StateLane lane; lane.source = 0; lane.name = QStringLiteral("模式");
+    lane.values = {{0, {QStringLiteral("关"), QColor("gray")}}, {1, {QStringLiteral("开"), QColor("green")}},
+        {2, {QStringLiteral("复位"), QColor("blue")}}, {3, {QStringLiteral("故障"), QColor("red")}}};
+    StateTimelineConfig config{true, {lane}}; std::atomic_bool cancel{false};
+    const auto snapshot = store.snapshot({0});
+    const auto data = StateTimeline::build(config, snapshot, cancel);
+    QVERIFY(data); QCOMPARE(data->lanes.size(), 1);
+    const auto &row = data->lanes[0]; QCOMPARE(row.runs.size(), 6);
+    QCOMPARE(row.runs[0].start, 10.); QCOMPARE(row.runs[0].end, 12.); QVERIFY(row.runs[0].leftOpen);
+    QCOMPARE(StateTimeline::at(row, 12.)->value, 1.);
+    QVERIFY(!StateTimeline::at(row, 14.)->known);
+    QCOMPARE(StateTimeline::text(lane, *StateTimeline::at(row, 16.)), QStringLiteral("未定义(7)"));
+    QVERIFY(!StateTimeline::at(row, 9.)); QVERIFY(!StateTimeline::at(row, 19.));
+    QVERIFY(row.runs.last().rightOpen); QCOMPARE(row.runs.last().start, 18.);
+    StateTimelineItem item; item.setWidth(400); item.setHeight(80); item.setMinimum(10); item.setMaximum(18);
+    item.setSources(config, snapshot); QTRY_VERIFY_WITH_TIMEOUT(!item.pending(), 5000);
+    QCOMPARE(item.transition(0, 10, 1).toDouble(), 12.);
+    QCOMPARE(item.transition(0, 12, 1).toDouble(), 14.);
+    QCOMPARE(item.transition(0, 14, -1).toDouble(), 12.);
+    QVERIFY(!item.transition(0, 12, -1).isValid());
+    QVERIFY(item.inspect(0, 14).contains(QStringLiteral("未知")));
+    // A single-sample pulse survives exact indexing even when subpixel on screen.
+    input.time = {0, 1, 1.000001, 2}; input.values = {0, 1, 0, 0}; store.replaceSeries({input});
+    const auto pulse = StateTimeline::build(config, store.snapshot({0}), cancel);
+    QCOMPARE(pulse->lanes[0].runs.size(), 3); QCOMPARE(pulse->lanes[0].runs[1].end, 11.000001);
+    input.time = {0,1,2,3,4}; input.values = {6,256,-1,1.5,0}; store.replaceSeries({input});
+    const auto extracted = StateTimeline::build(config, store.snapshot({0}), cancel);
+    QCOMPARE(extracted->lanes[0].runs[0].value, 6.); QVERIFY(extracted->lanes[0].runs[1].known);
+    QVERIFY(!extracted->lanes[0].runs[3].known);
+    input.time = {0,1,1}; input.values = {0,1,2}; store.replaceSeries({input});
+    const auto duplicate = StateTimeline::build(config, store.snapshot({0}), cancel);
+    QVERIFY(!duplicate->lanes[0].error.isEmpty()); QVERIFY(duplicate->lanes[0].runs.isEmpty());
+    cancel = true; QVERIFY(!StateTimeline::build(config, store.snapshot({0}), cancel));
+}
+
+
+void SessionTest::stateTimelineViewChangesKeepFrame()
+{
+    PlotSeriesInput input; input.id=0; input.time={0,5,10}; input.values={0,1,1};
+    PlotSeriesStore store; store.replaceSeries({input});
+    StateLane lane; lane.source=0; lane.name="mode";
+    lane.values={{0,{"off",QColor("gray")}},{1,{"on",QColor("green")}}};
+    StateTimelineConfig config{true,{lane}};
+    StateTimelineItem item; item.setWidth(400); item.setHeight(80); item.setMaximum(10);
+    item.setSources(config,store.snapshot({0}));
+    QCOMPARE(item.cursorValues(4),QStringList{"1"}); // Nearest original sample, not held interval/LOD.
+    QCOMPARE(item.cursorValues(0),QStringList{"0"});
+    QCOMPARE(item.cursorValues(qQNaN()),QStringList{QStringLiteral("—")});
+    QCOMPARE(StateTimeline::decode(5).value(),5.);
+    QVERIFY(!StateTimeline::decode(1.5).has_value());
+    QCOMPARE(StateTimeline::decode(-1).value(),-1.);
+    QTRY_VERIFY_WITH_TIMEOUT(!item.pending(),5000);
+    QVERIFY(item.hasFrame()); QCOMPARE(item.labels().size(),2);
+    item.setMinimum(1); item.setMaximum(11);
+    QVERIFY(item.pending()); QVERIFY(item.hasFrame()); QCOMPARE(item.labels().size(),2);
+    QVERIFY(qAbs(item.labels()[0].toMap()["width"].toDouble()-160)<.1);
+    item.setWidth(600);
+    QVERIFY(item.hasFrame()); QVERIFY(qAbs(item.labels()[0].toMap()["width"].toDouble()-240)<.1);
+    // Repeated requests keep a visible frame, and eventually publish the latest view.
+    for(int i=0;i<30;++i) {
+        item.setMinimum(1+i*.01); item.setMaximum(11+i*.01);
+        QVERIFY(item.hasFrame()); QVERIFY(!item.labels().isEmpty());
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(!item.pending(),5000);
+    QVERIFY(item.hasFrame());
+    const double expected=(5-item.minimum())/(item.maximum()-item.minimum())*item.width();
+    QVERIFY(qAbs(item.labels()[0].toMap()["width"].toDouble()-expected)<.1);
+    // Source/config changes must discard the previous frame and any queued source job.
+    config.lanes[0].name="replacement";
+    item.setSources(config,store.snapshot({0}));
+    QVERIFY(!item.hasFrame()); QVERIFY(item.labels().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!item.pending(),5000);
+    QCOMPARE(item.rowNames(),QStringList{"replacement"}); QVERIFY(item.hasFrame());
+}
+
+void SessionTest::stateTimelinePersistenceAndSourceRemoval()
+{
+    QTemporaryDir dir;
+    const auto a = dir.filePath("a.csv"), b = dir.filePath("b.csv");
+    writeFile(a, "time,A\n0,0\n1,1\n2,2\n"); writeFile(b, "time,B\n0,3\n1,0\n2,1\n");
+    AppController controller; QCOMPARE(controller.loadFiles(QVariantList{a,b}), 2);
+    QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    StateLane lane; lane.source = 1; lane.name = QStringLiteral("工作状态"); lane.values = {{0, {QStringLiteral("关"), QColor("gray")}}, {1, {QStringLiteral("开"), QColor("green")}}};
+    const auto map = stateTimelineToJson({true, {lane}})["lanes"].toArray()[0].toObject().toVariantMap();
+    QVERIFY(controller.setSignalEnums(1,signalEnumsToJson(lane.values).toVariantList()));
+    QVERIFY(controller.configureStateLane(0, -1, map)); QVERIFY(controller.sessionModified());
+    PlotItem plot; controller.attachPlot(&plot, 0); plot.setYRange(-2,2); // Caching view changes must retain state definitions.
+    QCOMPARE(controller.stateTimelineState(0)["lanes"].toList().size(), 1);
+    QVERIFY(controller.plotSignalEnabled(0,1)); controller.toggleSignal(1); QVERIFY(!controller.plotSignalEnabled(0,1));
+    controller.toggleSignal(1); QVERIFY(controller.plotSignalEnabled(0,1));
+    auto bad = map; bad["source"] = -1; QVERIFY(!controller.configureStateLane(0,0,bad));
+    auto mappings = controller.signalEnums(1); mappings.append(mappings.first());
+    QVERIFY(!controller.setSignalEnums(1,mappings));
+    const auto path = dir.filePath("states.disession"), view = dir.filePath("states.diview");
+    QVERIFY(controller.saveSession(path)); QVERIFY(controller.saveViewTemplate(view));
+    SessionDocument doc; QString error; QVERIFY2(readSessionDocument(path, &doc, &error), qPrintable(error));
+    QCOMPARE(doc.plots[0].states.lanes[0].source, 1); QCOMPARE(doc.series[1].enums[1].text, QStringLiteral("开"));
+    auto json = sessionToJson(doc); auto plots = json["plots"].toArray(); auto p = plots[0].toObject(); p.remove("states"); plots[0] = p; json["plots"] = plots;
+    QVERIFY(!sessionFromJson(json, &doc, &error));
+    AppController restored; QVERIFY(restored.restoreSession(path)); QTRY_VERIFY_WITH_TIMEOUT(!restored.restoringSession(), 5000);
+    QCOMPARE(restored.stateTimelineState(0)["lanes"].toList().size(), 1);
+    QCOMPARE(restored.signalEnums(1),controller.signalEnums(1));
+    // Template source identity is remapped, and undo restores the previous configuration.
+    QVERIFY(controller.applyViewTemplate(view, QVariantMap{{"1",0}}));
+    QCOMPARE(controller.stateTimelineState(0)["lanes"].toList()[0].toMap()["source"].toInt(), 0);
+    QCOMPARE(controller.signalEnums(0),controller.signalEnums(1));
+    QVERIFY(controller.undoViewTemplate());
+    QVERIFY(controller.signalEnums(0).isEmpty());
+    QCOMPARE(controller.stateTimelineState(0)["lanes"].toList()[0].toMap()["source"].toInt(), 1);
+    QVERIFY(controller.removeFile("a.csv"));
+    QCOMPARE(controller.stateTimelineState(0)["lanes"].toList()[0].toMap()["source"].toInt(), 0);
+    QVERIFY(!controller.signalEnums(0).isEmpty());
+    QVERIFY(controller.removeFile("b.csv")); QVERIFY(controller.stateTimelineState(0)["lanes"].toList().isEmpty());
+    QVERIFY(controller.signalEnums(0).isEmpty());
+    restored.clear(); QVERIFY(restored.stateTimelineState(0)["lanes"].toList().isEmpty());
+}
+
+void SessionTest::signalEnumsInlineEditorAndSharedViews()
+{
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration,
+        AppControllerQmlRegistration, SignalModelQmlRegistration>("DataInspector", 1);
+    QTemporaryDir dir; const auto path=dir.filePath("enum.csv");
+    writeFile(path,"time,Mode,Other\n0,0,3\n1,1,4\n2,0,3\n");
+    AppController controller; QVERIFY(controller.loadCsv(path)); QTRY_VERIFY(!controller.loading());
+    controller.setLayout(2,1); QVERIFY(controller.addStateSignal(0,0)); QVERIFY(controller.addStateSignal(1,0));
+    const QVariantList values{QVariantMap{{"value",0},{"text","off"},{"color","#ff687887"}},QVariantMap{{"value",1},{"text","on"},{"color","#ff278451"}}};
+    QVERIFY(controller.setSignalEnums(0,values));
+    StateTimelineItem a,b; a.setWidth(400); b.setWidth(400); a.setHeight(80); b.setHeight(80); a.setMaximum(2); b.setMaximum(2);
+    controller.attachStateTimeline(&a,0); controller.attachStateTimeline(&b,1);
+    QTRY_VERIFY(!a.pending() && !b.pending()); QVERIFY(a.inspect(0,1).contains("on")); QVERIFY(b.inspect(0,1).contains("on"));
+    auto invalid=values; invalid.append(values.first()); QVERIFY(!controller.setSignalEnums(0,invalid)); QCOMPARE(controller.signalEnums(0),values);
+    QQmlEngine engine; QStringList warnings;
+    connect(&engine,&QQmlEngine::warnings,&engine,[&](const QList<QQmlError>& errors){for(const auto&e:errors) warnings.append(e.toString());});
+    const QDir qmlDir(QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml"));
+    QQmlComponent component(&engine,QUrl::fromLocalFile(qmlDir.filePath("SignalPropertiesPane.qml")));
+    QQuickWindow host; host.resize(340,760);
+    std::unique_ptr<QObject> pane(component.createWithInitialProperties({{"controller",QVariant::fromValue(&controller)},{"darkTheme",false},{"width",340},{"height",760}}));
+    QVERIFY2(pane,qPrintable(component.errorString())); qobject_cast<QQuickItem*>(pane.get())->setParentItem(host.contentItem()); host.show();
+    QVERIFY(QMetaObject::invokeMethod(pane.get(),"editSignal",Q_ARG(QVariant,0),Q_ARG(QVariant,-1)));
+    auto *name=pane->findChild<QObject*>("signalPropertyName"); QVERIFY(name); name->setProperty("text","mode draft");
+    QVERIFY(QMetaObject::invokeMethod(pane.get(),"close")); QCOMPARE(controller.signalName(0),QString("Mode"));
+    QVERIFY(QMetaObject::invokeMethod(pane.get(),"editSignal",Q_ARG(QVariant,1),Q_ARG(QVariant,-1)));
+    QVERIFY(QMetaObject::invokeMethod(pane.get(),"editSignal",Q_ARG(QVariant,0),Q_ARG(QVariant,-1)));
+    QCOMPARE(name->property("text").toString(),QString("mode draft"));
+    QQmlExpression change(QQmlEngine::contextForObject(pane.get()),pane.get(),"enumRows.setProperty(1, 'title', 'RUNNING')");
+    change.evaluate(); QVERIFY2(!change.hasError(),qPrintable(change.error().toString()));
+    QVERIFY(QMetaObject::invokeMethod(pane.get(),"apply")); QCOMPARE(controller.signalName(0),QString("mode draft"));
+    QTRY_VERIFY(!a.pending() && !b.pending()); QVERIFY(a.inspect(0,1).contains("RUNNING")); QVERIFY(b.inspect(0,1).contains("RUNNING"));
+    QVERIFY(QMetaObject::invokeMethod(pane.get(),"showStates",Q_ARG(QVariant,0))); QCOMPARE(pane->property("mode").toString(),QString("states"));
+    const auto session=dir.filePath("enum.disession"); QVERIFY(controller.saveSession(session));
+    AppController restored; QVERIFY(restored.restoreSession(session)); QTRY_VERIFY(!restored.restoringSession());
+    QCOMPARE(restored.signalEnums(0),controller.signalEnums(0));
+    const auto capture=qEnvironmentVariable("DI_ENUM_EDITOR_CAPTURE_PATH");
+    if(!capture.isEmpty()) {
+        QVERIFY(QMetaObject::invokeMethod(pane.get(),"editSignal",Q_ARG(QVariant,0),Q_ARG(QVariant,-1)));
+        host.requestUpdate(); QTest::qWait(100); QVERIFY(host.grabWindow().save(capture));
+    }
+    QCOMPARE(warnings,QStringList{});
+}
+
+void SessionTest::stateTimelineQmlConfiguration()
+{
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration,
+        AppControllerQmlRegistration, SignalModelQmlRegistration>("DataInspector", 1);
+    QTemporaryDir dir; const auto path = dir.filePath("states.csv");
+    writeFile(path, "time,Mode\n0,0\n1,2\n2,1\n3,3\n4,0\n");
+    AppController controller; QVERIFY(controller.loadCsv(path)); QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(), 5000);
+    QQmlEngine engine; QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) { for (const auto &e : errors) warnings.append(e.toString()); });
+    const QDir qmlDir(QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml"));
+    QQmlComponent component(&engine, QUrl::fromLocalFile(qmlDir.filePath("QuickPlot.qml")));
+    QQuickWindow stateWindow;
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"plotIndex",0}, {"controller", QVariant::fromValue(&controller)}, {"width",800}, {"height",300}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    if (auto *itemRoot = qobject_cast<QQuickItem *>(root.get())) itemRoot->setParentItem(stateWindow.contentItem());
+    stateWindow.resize(800,300); stateWindow.show();
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "configureStateSource", Q_ARG(QVariant,0)));
+    QVERIFY(controller.renameSignal(0,QStringLiteral("设备状态")));
+    QVERIFY(controller.setSignalEnums(0,{{QVariantMap{{"value",0},{"text",QStringLiteral("关")},{"color","#687887"}}},
+        {QVariantMap{{"value",1},{"text",QStringLiteral("开")},{"color","#278451"}}},
+        {QVariantMap{{"value",2},{"text",QStringLiteral("复位")},{"color","#2563b0"}}},
+        {QVariantMap{{"value",3},{"text",QStringLiteral("故障")},{"color","#bc3545"}}}}));
+    QTRY_VERIFY(root->property("stateMode").toBool());
+    auto *item = root->findChild<StateTimelineItem *>("stateTimelineItem"); QVERIFY(item);
+    QTRY_VERIFY_WITH_TIMEOUT(!item->pending(), 5000);
+    QCOMPARE(item->rowNames(), QStringList{QStringLiteral("设备状态")}); QVERIFY(!item->labels().isEmpty());
+    QVERIFY(item->inspect(0,1.5).contains(QStringLiteral("复位")));
+    auto *hoverPlot = root->findChild<PlotItem *>(); QVERIFY(hoverPlot);
+    auto *numericFrame = root->findChild<QQuickItem *>("numericAxisFrame"); QVERIFY(numericFrame);
+    QVERIFY(!numericFrame->isVisible());
+    auto *stateXAxis = root->findChild<QQuickItem *>("stateXAxisLine"); QVERIFY(stateXAxis);
+    QVERIFY(stateXAxis->isVisible());
+    QTest::mouseMove(&stateWindow, hoverPlot->mapToScene(QPointF(hoverPlot->width()*.3,item->headerHeight()+16)).toPoint());
+    QTRY_VERIFY(hoverPlot->property("stateInspectionVisible").toBool());
+    QTest::mouseMove(&stateWindow, hoverPlot->mapToScene(QPointF(hoverPlot->width()*.3,100)).toPoint());
+    QTRY_VERIFY(!hoverPlot->property("stateInspectionVisible").toBool());
+    QVERIFY(hoverPlot->property("hoveredStateDetails").toString().isEmpty());
+    controller.setCursorMode(1);
+    auto *plot = root->findChild<PlotItem *>(); QVERIFY(plot); plot->setCursorPosition(0);
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "jumpState", Q_ARG(QVariant,1)));
+    QCOMPARE(plot->cursorX1(), 1.);
+    QTRY_COMPARE(root->property("stateCursorValues").toStringList(),QStringList{"2"});
+    plot->editCursorTime(2.,1);
+    QTRY_COMPARE(root->property("stateCursorValues").toStringList(),QStringList{"1"});
+    plot->setCursorMode(PlotItem::DoubleCursor);
+    plot->editCursorTime(0.,2); plot->setActiveCursorIndex(2);
+    QTRY_COMPARE(root->property("stateCursorValues").toStringList(),QStringList{"0"});
+    plot->setActiveCursorIndex(1);
+    QTRY_COMPARE(root->property("stateCursorValues").toStringList(),QStringList{"1"});
+    plot->setCursorMode(PlotItem::SingleCursor); plot->editCursorTime(1.,1);
+
+    const auto capture = qEnvironmentVariable("DI_STATE_GPU_CAPTURE_PATH");
+    if (!capture.isEmpty()) {
+        stateWindow.requestUpdate(); QTest::qWait(250);
+        const auto image = stateWindow.grabWindow(); QVERIFY(!image.isNull());
+        QVERIFY(image.save(capture));
+        const auto position = item->mapToScene(QPointF(item->width()*.375, item->headerHeight()+5));
+        const auto pixel = image.pixelColor(qRound(position.x()*image.devicePixelRatio()), qRound(position.y()*image.devicePixelRatio()));
+        QCOMPARE(pixel, QColor("#2563b0"));
+        const double initialMinimum=plot->xMinimum(), initialMaximum=plot->xMaximum();
+        auto *statusLabel=root->findChild<QQuickItem *>("stateTimelineStatusMessage"); QVERIFY(statusLabel);
+        for(int i=1;i<=6;++i) {
+            plot->setXRange(initialMinimum+i*.05,initialMaximum+i*.05);
+            QVERIFY(item->hasFrame()); QVERIFY(!statusLabel->isVisible());
+            stateWindow.requestUpdate();
+            const auto duringDrag=stateWindow.grabWindow(); QVERIFY(!duringDrag.isNull());
+            const double px=(1.5-plot->xMinimum())/(plot->xMaximum()-plot->xMinimum())*item->width();
+            const auto sample=item->mapToScene(QPointF(px,5));
+            QCOMPARE(duringDrag.pixelColor(qRound(sample.x()*duringDrag.devicePixelRatio()),qRound(sample.y()*duringDrag.devicePixelRatio())),QColor("#2563b0"));
+        }
+        plot->setXRange(initialMinimum,initialMaximum);
+        QTRY_VERIFY_WITH_TIMEOUT(!item->pending(),5000);
+    }
+    // A replacement source/config must invalidate an in-flight frame.
+    controller.toggleSignal(0); QTRY_VERIFY_WITH_TIMEOUT(!item->pending(),5000); QVERIFY(item->rowNames().isEmpty());
+    controller.toggleSignal(0); QTRY_VERIFY_WITH_TIMEOUT(!item->pending(),5000); QCOMPARE(item->rowNames().size(),1);
+    const auto baseLane = controller.stateTimelineState(0)["lanes"].toList()[0].toMap();
+    for (int i=1; i<10; ++i) {
+        auto lane = baseLane; lane["name"] = QStringLiteral("状态行 %1").arg(i+1);
+        QVERIFY(controller.configureStateLane(0,-1,lane));
+    }
+    QTRY_VERIFY_WITH_TIMEOUT(!item->pending(),5000);
+    auto *scroll = root->findChild<QObject *>("stateTimelineScrollBar"); QVERIFY(scroll);
+    QVERIFY(scroll->property("visible").toBool());
+    scroll->setProperty("position", 1-scroll->property("size").toDouble());
+    QQuickItem *lastLabel = nullptr;
+    const auto findLastLabel = [&] {
+        QList<QQuickItem *> pending{qobject_cast<QQuickItem *>(root.get())};
+        while (!pending.isEmpty()) {
+            auto *child = pending.takeLast();
+            if (child->objectName() == "stateTimelineRow9") return child;
+            pending.append(child->childItems());
+        }
+        return static_cast<QQuickItem *>(nullptr);
+    };
+    QTRY_VERIFY((lastLabel = findLastLabel()));
+    QTest::mouseClick(&stateWindow, Qt::LeftButton, Qt::NoModifier, lastLabel->mapToScene(QPointF(lastLabel->width()/2,16)).toPoint());
+    QCOMPARE(root->property("selectedStateRow").toInt(),9);
+    QCOMPARE(item->rowHeight(),32); QCOMPARE(item->headerHeight(),0);
+    QQuickItem *legendEntry = nullptr;
+    QList<QQuickItem *> pendingLegend{qobject_cast<QQuickItem *>(root.get())};
+    while (!pendingLegend.isEmpty()) {
+        auto *child = pendingLegend.takeLast();
+        if (child->objectName() == "stateLegendEntry1") { legendEntry = child; break; }
+        pendingLegend.append(child->childItems());
+    }
+    QVERIFY(legendEntry);
+    QTest::mouseClick(&stateWindow, Qt::LeftButton, Qt::NoModifier, legendEntry->mapToScene(QPointF(10,10)).toPoint());
+    QCOMPARE(root->property("selectedStateRow").toInt(),1);
+    QVERIFY(scroll->property("position").toDouble()<.5);
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
+}
+
+void SessionTest::mixedStateAndCurveLayout()
+{
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration,
+        AppControllerQmlRegistration, SignalModelQmlRegistration>("DataInspector", 1);
+    const QDir qmlDir(QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml"));
+    qmlRegisterType(QUrl::fromLocalFile(qmlDir.filePath("QuickPlot.qml")), "DataInspector", 1, 0, "QuickPlot");
+    AppController controller;
+    controller.setLayout(2,1);
+    controller.setStateTimelineEnabled(0,true);
+    QQmlEngine engine; QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) {
+        for (const auto &error : errors) warnings.append(error.toString());
+    });
+    QQmlComponent component(&engine, QUrl::fromLocalFile(qmlDir.filePath("Main.qml")));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"visible",true}, {"width",1100}, {"height",800}, {"appController",QVariant::fromValue(&controller)}}));
+    QVERIFY2(root,qPrintable(component.errorString()));
+    auto *window = qobject_cast<QQuickWindow *>(root.get()); QVERIFY(window);
+    QVERIFY(QTest::qWaitForWindowExposed(window));
+    const auto plotOwner = [&](int index) -> QQuickItem * {
+        for (auto *renderer : visualPlots(root.get())) {
+            auto *owner = renderer->parentItem();
+            while (owner && !owner->property("plotIndex").isValid()) owner = owner->parentItem();
+            if (owner && owner->property("plotIndex").toInt() == index) return owner;
+        }
+        return nullptr;
+    };
+    QTRY_VERIFY(plotOwner(0) && plotOwner(1));
+    auto *state = plotOwner(0), *curve = plotOwner(1);
+    QTRY_VERIFY(qAbs(state->height()-curve->height())<=1);
+    QCOMPARE(state->property("measuredAxisLeft").toDouble(),60.);
+    QVERIFY(curve->property("axisLeft").toDouble() < 80);
+    QCOMPARE(state->property("axisLeft"),curve->property("axisLeft"));
+    QTemporaryDir dir; const auto path = dir.filePath("mixed.csv");
+    writeFile(path,"time,Mode,Speed\n0,0,10\n1,2,20\n2,1,15\n3,3,30\n4,0,25\n");
+    QVERIFY(controller.loadCsv(path)); QTRY_VERIFY_WITH_TIMEOUT(!controller.loading(),5000);
+    controller.setActivePlot(1); controller.selectSignal(1);
+    StateLane lane; lane.source=0; lane.name=QStringLiteral("模式");
+    lane.values={{0,{QStringLiteral("关"),QColor("gray")}},{1,{QStringLiteral("开"),QColor("green")}},
+        {2,{QStringLiteral("复位"),QColor("blue")}},{3,{QStringLiteral("故障"),QColor("red")}}};
+    auto mapping=stateTimelineToJson({true,{lane}})["lanes"].toArray()[0].toObject().toVariantMap();
+    QVERIFY(controller.configureStateLane(0,-1,mapping));
+    QTRY_VERIFY(qAbs(state->height()-curve->height())<=1);
+    QTRY_COMPARE(state->property("axisLeft"),curve->property("axisLeft"));
+    QVERIFY(curve->property("axisLeft").toDouble() < 80);
+    const double oneRowHeight=state->height();
+    const double shortNameMargin=curve->property("axisLeft").toDouble();
+    mapping["name"]=QStringLiteral("这是一个用于验证长状态行名称和滚动布局的状态");
+    for(int i=0;i<10;++i) QVERIFY(controller.configureStateLane(0,-1,mapping));
+    QTRY_VERIFY(qAbs(state->height()-oneRowHeight)<=1);
+    QTRY_VERIFY(qAbs(state->height()-curve->height())<=1);
+    QTRY_COMPARE(state->property("axisLeft"),curve->property("axisLeft"));
+    QCOMPARE(state->property("measuredAxisLeft").toDouble(),60.);
+    QTRY_COMPARE(curve->property("axisLeft").toDouble(),shortNameMargin);
+    auto *stateRenderer=state->findChild<PlotItem *>();
+    auto *curveRenderer=curve->findChild<PlotItem *>();
+    QVERIFY(stateRenderer && curveRenderer);
+    QTRY_VERIFY(qAbs(stateRenderer->mapToScene(QPointF()).x()-curveRenderer->mapToScene(QPointF()).x())<.01);
+    QTRY_VERIFY(qAbs(stateRenderer->width()-curveRenderer->width())<.01);
+    controller.setCursorMode(2);
+    const auto renderers=visualPlots(root.get()); QVERIFY(renderers.size()==2);
+    renderers[0]->setXRange(1,3);
+    QTRY_COMPARE(renderers[1]->xMinimum(),1.);
+    renderers[0]->setCursorPosition(2);
+    QTRY_COMPARE(renderers[1]->cursorX1(),2.);
+    controller.setStateTimelineEnabled(0,false);
+    QTRY_VERIFY(qAbs(state->height()-curve->height())<=1);
+    controller.setStateTimelineEnabled(0,true);
+    controller.setActivePlot(0); root->setProperty("subplotMaximized",true);
+    QTRY_VERIFY(!curve->isVisible());
+    QTRY_VERIFY(state->height()>oneRowHeight+100);
+    root->setProperty("subplotMaximized",false);
+    QTRY_VERIFY(curve->isVisible());
+    QTRY_VERIFY(qAbs(state->height()-curve->height())<=1);
+    controller.setLayout(1,2);
+    QTRY_VERIFY(plotOwner(0) && plotOwner(1));
+    QTRY_VERIFY(qAbs(plotOwner(0)->height()-plotOwner(1)->height())<=1);
+    controller.setLayout(2,1);
+    QTRY_VERIFY(plotOwner(0) && plotOwner(1));
+    QTRY_VERIFY(plotOwner(0)->height()<=plotOwner(1)->height()+2);
+    for(int i=10;i>0;--i) QVERIFY(controller.removeStateLane(0,i));
+    QTRY_VERIFY(qAbs(plotOwner(0)->height()-plotOwner(1)->height())<=1);
+    controller.setActivePlot(1);
+    QVERIFY(controller.setSignalEnums(0,signalEnumsToJson(lane.values).toVariantList()));
+    QVERIFY(QMetaObject::invokeMethod(root.get(),"editSignalPen",Q_ARG(QVariant,0)));
+    auto *properties=root->findChild<QQuickItem *>("signalPropertiesPane"); QVERIFY(properties);
+    QTRY_VERIFY(properties->isVisible()); QVERIFY(plotOwner(0)->isVisible()); QVERIFY(plotOwner(1)->isVisible());
+    QVERIFY(!root->findChild<QObject *>("stateDisplayDialog"));
+    auto *browser=root->findChild<QQuickItem *>("signalBrowser"); QVERIFY(browser);
+    QVERIFY(browser->isVisible());
+    QTRY_VERIFY(properties->mapToScene(QPointF()).x() >= plotOwner(0)->mapToScene(QPointF(plotOwner(0)->width(),0)).x()-1);
+    QVERIFY(properties->width()>=260);
+    const auto sidebarCapture=qEnvironmentVariable("DI_RIGHT_PROPERTIES_CAPTURE_PATH");
+    if(!sidebarCapture.isEmpty()) {
+        window->requestUpdate(); QTest::qWait(200); QVERIFY(window->grabWindow().save(sidebarCapture));
+    }
+    QVERIFY(QMetaObject::invokeMethod(browser,"editStateRows",Q_ARG(QVariant,0)));
+    QCOMPARE(properties->property("mode").toString(),QString("states"));
+    QVERIFY(QMetaObject::invokeMethod(properties,"chooseStateSource",Q_ARG(int,0)));
+    QCOMPARE(browser->property("statePickTarget").toInt(),0);
+    QVERIFY(QMetaObject::invokeMethod(browser,"addPickedState",Q_ARG(QVariant,1)));
+    QCOMPARE(controller.stateTimelineState(0)["lanes"].toList().size(),2);
+    QVERIFY(properties->isVisible());
+    QVERIFY(controller.removeStateLane(0,1));
+    QVERIFY(QMetaObject::invokeMethod(properties,"close"));
+    const auto capture=qEnvironmentVariable("DI_MIXED_STATE_CAPTURE_PATH");
+    if(!capture.isEmpty()) {
+        for(auto *timeline : root->findChildren<StateTimelineItem *>()) QTRY_VERIFY_WITH_TIMEOUT(!timeline->pending(),5000);
+        window->requestUpdate(); QTest::qWait(250);
+        QVERIFY(window->grabWindow().save(capture));
+    }
+    QVERIFY2(warnings.isEmpty(),qPrintable(warnings.join('\n')));
+}
+
 QTEST_MAIN(SessionTest)
 #include "session_test.moc"

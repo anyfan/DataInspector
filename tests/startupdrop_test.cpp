@@ -54,7 +54,7 @@ static void dropFileOnWindow(QQuickWindow *window, const QString &path)
 
 void StartupDropTest::initTestCase()
 {
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0,
                                               "AppController", "Owned by C++");

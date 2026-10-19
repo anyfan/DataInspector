@@ -55,7 +55,7 @@ QJsonObject viewConfigurationToJson(const ViewConfiguration &s)
         if (plot.trajectory.camera.freeRotation)
             for (double component : plot.trajectory.camera.rotation) rotation.append(component);
         for (int signal : plot.seriesIds) bindings.append(signal);
-        plots.append(QJsonObject{{"signals", bindings},
+        plots.append(QJsonObject{{"states", stateTimelineToJson(plot.states)}, {"signals", bindings},
             {"yRange", QJsonArray{plot.yMinimum, plot.yMaximum}},
             {"normalizeY", plot.normalizeY}, {"lineWidth", plot.lineWidth},
             {"trajectory", QJsonObject{{"enabled", plot.trajectory.enabled},
@@ -88,6 +88,7 @@ bool viewConfigurationFromJson(const QJsonObject &root, int signalCount,
     for (const auto &entry : root.value("plots").toArray()) {
         const auto obj = entry.toObject();
         SessionPlot plot;
+        if (!obj.value("states").isObject() || !stateTimelineFromJson(obj.value("states").toObject(), signalCount, &plot.states)) return fail("plots.states");
         if (!range(obj.value("yRange"), &plot.yMinimum, &plot.yMaximum)
             || !obj.value("normalizeY").isBool()
             || !number(obj.value("lineWidth"), &plot.lineWidth) || plot.lineWidth < 1 || plot.lineWidth > 12
@@ -157,6 +158,7 @@ QSet<int> referencedViewSignals(const ViewConfiguration &view)
 {
     QSet<int> ids;
     for (const auto &plot : view.plots) {
+        for (const auto &lane : plot.states.lanes) ids.insert(lane.source);
         for (int id : plot.seriesIds) ids.insert(id);
         for (int id : plot.trajectory.signalIds) ids.insert(id);
         for (const auto &track : plot.trajectory.entries()) {

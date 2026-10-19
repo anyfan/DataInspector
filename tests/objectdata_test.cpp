@@ -24,6 +24,9 @@ class ObjectDataTest : public QObject {
     Q_OBJECT
 private slots:
     void bitsAndSignedFields();
+    void multipleOutputKernels();
+    void multipleOutputEditingAndPersistence();
+    void multipleOutputEditorQml();
     void mergeSamples();
     void identifyPacketLoss();
     void packetLoss();
@@ -94,6 +97,128 @@ void ObjectDataTest::configurationQueriesStayLocal()
     QVERIFY(controller.processingRuleInputs(first, child).isEmpty());
     QCOMPARE(controller.processingRuleInputs(first).size(), 4);
 }
+void ObjectDataTest::multipleOutputKernels()
+{
+    ObjectRule rule; rule.id="r"; rule.name="fields"; rule.operation="bitfield"; rule.inputs={"source"}; rule.autoWordBits=true;
+    ObjectOutput low{"low","low",1}; low.bitCount=4;
+    ObjectOutput bit{"flag","flag",2}; bit.startBit=1; bit.bitCount=1;
+    ObjectOutput high{"high","high",3}; high.startBit=8; high.bitCount=8; high.signedField=true;
+    rule.outputs={low,bit,high};
+    DataObject object{"object","processing",{{"source","word","scalar",0}},{rule}}; object.type="processing";
+    QString error; QVERIFY2(validateObjects({object},4,&error),qPrintable(error));
+    std::atomic_bool cancel{false};
+    auto result=evaluateObjects({object},rawSnapshot({0x1234,0x80ff,0xffff,qQNaN(),1.5}),cancel);
+    QCOMPARE(result.states["r"].effectiveWordBits,16);
+    QCOMPARE(result.series[0]->values.mid(0,3),QVector<double>({4,15,15}));
+    QCOMPARE(result.series[1]->values.mid(0,3),QVector<double>({0,1,1}));
+    QCOMPARE(result.series[2]->values.mid(0,3),QVector<double>({18,-128,-1}));
+    QVERIFY(std::isnan(result.series[0]->values[3])); QVERIFY(std::isnan(result.series[2]->values[4]));
+    object.rules[0].byteOrder="big";
+    result=evaluateObjects({object},rawSnapshot({0x1234}),cancel);
+    QCOMPARE(result.series[0]->values[0],2.); QCOMPARE(result.series[1]->values[0],1.); QCOMPARE(result.series[2]->values[0],52.);
+    object.rules[0].outputs[0].startBit=24; object.rules[0].byteOrder="little";
+    result=evaluateObjects({object},rawSnapshot({0}),cancel); QCOMPARE(result.states["r"].effectiveWordBits,32);
+    object.rules[0].autoWordBits=false; object.rules[0].wordBits=8;
+    QVERIFY(!validateObjects({object},4,&error));
+    ObjectRule formula; formula.id="formula"; formula.name="formulas"; formula.operation="expression"; formula.inputs={"source"};
+    ObjectOutput sum{"sum","sum",1}; sum.expression="x+1";
+    ObjectOutput inverse{"inverse","inverse",2}; inverse.expression="1/(x-2)";
+    ObjectOutput condition{"condition","condition",3}; condition.expression="x>2";
+    formula.outputs={sum,inverse,condition}; object.rules={formula};
+    QVERIFY2(validateObjects({object},4,&error),qPrintable(error));
+    result=evaluateObjects({object},rawSnapshot({1,2,3}),cancel);
+    QCOMPARE(result.series[0]->values,QVector<double>({2,3,4}));
+    QVERIFY(std::isnan(result.series[1]->values[1])); QCOMPARE(result.series[2]->values,QVector<double>({0,0,1}));
+    QVERIFY(!result.series[0]->step); QVERIFY(result.series[2]->step);
+    const auto json=objectsToJson({object}); QVector<DataObject> parsed;
+    QVERIFY2(objectsFromJson(json,4,&parsed,&error),qPrintable(error)); QCOMPARE(parsed[0].rules[0].outputs[1].expression,QString("1/(x-2)"));
+    auto damaged=json; auto definition=damaged[0].toObject(); auto rules=definition["rules"].toArray(); auto entry=rules[0].toObject(); entry.remove("byteOrder"); rules[0]=entry; definition["rules"]=rules; damaged[0]=definition;
+    QVERIFY(!objectsFromJson(damaged,4,&parsed,&error));
+    formula.outputs[1].expression="unbound"; object.rules={formula}; QVERIFY(!validateObjects({object},4,&error));
+}
+
+void ObjectDataTest::multipleOutputEditingAndPersistence()
+{
+    QTemporaryDir directory; const auto file=directory.filePath("multi.csv");
+    QFile source(file); QVERIFY(source.open(QIODevice::WriteOnly)); source.write("time,Word\n0,4660\n1,33023\n"); source.close();
+    AppController controller; QVERIFY(controller.loadCsv(file)); QTRY_VERIFY(!controller.loading());
+    const auto owner=controller.createDataObject("multi","processing");
+    QVariantList outputs{QVariantMap{{"name","low"},{"startBit",0},{"bitCount",4}},QVariantMap{{"name","flag"},{"startBit",1},{"bitCount",1}}};
+    QVariantMap config{{"name","fields"},{"operation","bitfield"},{"inputs",QVariantList{"raw:0"}},{"autoWordBits",true},{"outputs",outputs}};
+    const auto id=controller.addObjectRule(owner,config); QVERIFY2(!id.isEmpty(),qPrintable(controller.status())); QTRY_VERIFY(!controller.deriving());
+    auto rule=[&]{return controller.processingConfigurations()[0].toMap()["rules"].toList()[0].toMap();};
+    auto saved=rule()["outputs"].toList(); QCOMPARE(saved.size(),2); QCOMPARE(rule()["effectiveWordBits"].toInt(),16);
+    const auto first=saved[0].toMap(); const int firstRow=first["series"].toInt();
+    controller.setSignalPen(firstRow,QColor("purple"),5,Qt::DashLine);
+    saved.append(QVariantMap{{"name","upper"},{"startBit",8},{"bitCount",8},{"signedField",true}}); config["outputs"]=saved;
+    QVERIFY2(controller.editObjectRule(owner,id,config),qPrintable(controller.status())); QTRY_VERIFY(!controller.deriving());
+    QCOMPARE(controller.signalCount(),4); QCOMPARE(rule()["outputs"].toList()[0].toMap()["id"],first["id"]);
+    QCOMPARE(controller.signalColor(firstRow),QColor("purple")); QCOMPARE(controller.signalWidth(firstRow),5.);
+    auto retained=rule()["outputs"].toList(); retained.removeLast(); config["outputs"]=retained;
+    QVERIFY(controller.editObjectRule(owner,id,config)); QTRY_VERIFY(!controller.deriving()); QCOMPARE(controller.signalCount(),3);
+    const auto flag=rule()["outputs"].toList()[1].toMap()["id"].toString();
+    QVERIFY(!controller.addObjectRule(owner,{{"name","child"},{"operation","scale"},{"inputs",QVariantList{flag}}}).isEmpty()); QTRY_VERIFY(!controller.deriving());
+    const auto count=controller.signalCount(); retained.removeLast(); config["outputs"]=retained;
+    QVERIFY(!controller.editObjectRule(owner,id,config)); QCOMPARE(controller.signalCount(),count); QCOMPARE(rule()["outputs"].toList().size(),2);
+    const auto session=directory.filePath("multi.disession"); QVERIFY(controller.saveSession(session));
+    AppController restored; QVERIFY(restored.restoreSession(session)); QTRY_VERIFY(!restored.restoringSession());
+    QCOMPARE(restored.signalCount(),count); QCOMPARE(restored.processingConfigurations()[0].toMap()["rules"].toList()[0].toMap()["outputs"].toList().size(),2);
+    const auto formulaId=restored.addObjectRule(owner,{{"name","formulas"},{"operation","expression"},
+        {"inputs",QVariantList{"raw:0"}},{"outputs",QVariantList{
+            QVariantMap{{"name","plus"},{"expression","x+1"}},QVariantMap{{"name","twice"},{"expression","x*2"}}}}});
+    QVERIFY(!formulaId.isEmpty()); QTRY_VERIFY(!restored.deriving());
+    QVERIFY(restored.setSignalEnums(firstRow,{QVariantMap{{"value",4},{"text","自定义"},{"color","#123456"}}}));
+    const auto originalRules=restored.processingConfigurations()[0].toMap()["rules"].toList();
+    const auto copied=restored.duplicateDataObject(owner); QVERIFY(!copied.isEmpty()); QTRY_VERIFY(!restored.deriving());
+    const auto copiedRules=restored.processingConfigurations()[1].toMap()["rules"].toList();
+    QCOMPARE(copiedRules.size(),originalRules.size());
+    for(int r=0;r<originalRules.size();++r) {
+        const auto original=originalRules[r].toMap()["outputs"].toList();
+        const auto duplicate=copiedRules[r].toMap()["outputs"].toList();
+        QCOMPARE(duplicate.size(),original.size());
+        for(int k=0;k<original.size();++k) {
+            const auto sourceOutput=original[k].toMap(), copyOutput=duplicate[k].toMap();
+            QVERIFY(sourceOutput["id"]!=copyOutput["id"]);
+            for(const auto &key:{"name","startBit","bitCount","signedField","expression","preview"})
+                QCOMPARE(copyOutput[key],sourceOutput[key]);
+            QCOMPARE(restored.signalEnums(copyOutput["series"].toInt()),restored.signalEnums(sourceOutput["series"].toInt()));
+        }
+    }
+}
+
+void ObjectDataTest::multipleOutputEditorQml()
+{
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration,StateTimelineItemQmlRegistration,TrajectoryItemQmlRegistration,AppControllerQmlRegistration,SignalModelQmlRegistration>("DataInspector",1);
+    QTemporaryDir directory; const auto path=directory.filePath("ui.csv"); QFile source(path); QVERIFY(source.open(QIODevice::WriteOnly)); source.write("time,Word\n0,5\n1,6\n"); source.close();
+    AppController controller; QVERIFY(controller.loadCsv(path)); QTRY_VERIFY(!controller.loading()); const auto owner=controller.createDataObject("UI","processing");
+    QQmlEngine engine; QStringList warnings;
+    connect(&engine,&QQmlEngine::warnings,&engine,[&](const QList<QQmlError>&errors){for(const auto &e:errors) warnings.append(e.toString());});
+    QQmlComponent component(&engine,QUrl::fromLocalFile(QStringLiteral(DI_SOURCE_DIR "/qml/ObjectManager.qml")));
+    QQuickWindow window; window.resize(800,720);
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"appController",QVariant::fromValue(&controller)},{"processingMode",true},{"darkTheme",false},{"selectedId",owner},{"width",800},{"height",720}}));
+    QVERIFY2(root,qPrintable(component.errorString()));
+    qobject_cast<QQuickItem*>(root.get())->setParentItem(window.contentItem()); window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    auto js=[&](const QString &code) { QQmlExpression expression(QQmlEngine::contextForObject(root.get()),root.get(),code); expression.evaluate(); if(expression.hasError()) qWarning()<<expression.error(); return !expression.hasError(); };
+    QVERIFY(js("open(); editRule(null)")); QVERIFY(QMetaObject::invokeMethod(root.get(),"selectRuleSource",Q_ARG(int,0)));
+    QVERIFY(root->findChild<QObject*>("automaticWordBits")->property("checked").toBool());
+    QCOMPARE(root->findChild<QObject*>("bitByteOrder")->property("currentIndex").toInt(),0);
+    QVERIFY(js("outputRows.setProperty(0,'widthBit',4); addOutput(); outputRows.setProperty(1,'fromBit',1)"));
+    auto *editor=root->findChild<QObject*>("objectRuleDialog"); QVERIFY(editor); QVERIFY(QMetaObject::invokeMethod(editor,"submit")); QTRY_VERIFY(!controller.deriving());
+    QVERIFY2(controller.processingConfigurations()[0].toMap()["rules"].toList().size()==1,qPrintable(editor->property("errorText").toString()));
+    QCOMPARE(controller.processingConfigurations()[0].toMap()["rules"].toList()[0].toMap()["outputs"].toList().size(),2);
+    QVERIFY(js("editRule(null)")); root->findChild<QObject*>("objectRuleOperation")->setProperty("currentIndex",3);
+    QVERIFY(QMetaObject::invokeMethod(root.get(),"selectRuleSource",Q_ARG(int,0)));
+    QVERIFY(js("outputRows.setProperty(0,'formula','x+1'); addOutput(); outputRows.setProperty(1,'formula','x*2')"));
+    QVERIFY(QMetaObject::invokeMethod(editor,"submit")); QTRY_VERIFY(!controller.deriving());
+    const auto rules=controller.processingConfigurations()[0].toMap()["rules"].toList(); QCOMPARE(rules.size(),2); QCOMPARE(rules[1].toMap()["outputs"].toList().size(),2);
+    const auto capture=qEnvironmentVariable("DI_MULTI_OUTPUT_CAPTURE_PATH");
+    if(!capture.isEmpty()) {
+        QVERIFY(js("editRule(selected.rules[1])")); QTest::qWait(150); QVERIFY(window.grabWindow().save(capture));
+    }
+    QCOMPARE(warnings,QStringList{});
+}
+
 void ObjectDataTest::independentProcessingAndSessionValidation()
 {
     QTemporaryDir dir;
@@ -147,7 +272,7 @@ void ObjectDataTest::independentProcessingAndSessionValidation()
     controller.setSignalBrowserSection(0); QVERIFY(!controller.sessionModified());
     QFile saved(sessionPath); QVERIFY(saved.open(QIODevice::ReadOnly));
     const auto json = QJsonDocument::fromJson(saved.readAll()).object();
-    QCOMPARE(json["version"].toInt(), 18);
+    QCOMPARE(json["version"].toInt(), SessionDocument::version);
     QVERIFY(json["objects"].toArray().isEmpty());
     QCOMPARE(json["processing"].toArray().size(), 1);
     QCOMPARE(json["signals"].toArray()[2].toObject()["processingId"].toString(), processing);
@@ -988,7 +1113,7 @@ void ObjectDataTest::objectManagerQml()
     qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     QTemporaryDir dir; QFile file(dir.filePath("qml.csv")); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,A,B\n0,5,8\n1,7,9\n"); file.close();
     AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading() && !controller.deriving());
     QQmlEngine engine; QStringList warnings;
@@ -1114,9 +1239,19 @@ void ObjectDataTest::objectManagerQml()
     auto *ruleFooter = processor->findChild<QObject *>("objectRuleDialog")->property("footer").value<QObject *>();
     QVERIFY(ruleFooter); QCOMPARE(ruleFooter->property("count").toInt(), 2);
     processor->findChild<QObject *>("objectRuleName")->setProperty("text", "flags");
+    // Each single-bit output uses the same editable field list.
+    QVERIFY(!processor->findChild<QObject *>("bitExtractionOutputMode"));
+    auto *bitOutputs = processor->findChild<QObject *>("processingOutputRows");
+    QVERIFY(bitOutputs);
+    for (int bit = 1; bit < 8; ++bit) {
+        QVERIFY(QMetaObject::invokeMethod(processor, "addOutput"));
+        QVERIFY(QMetaObject::invokeMethod(bitOutputs, "setProperty", Q_ARG(int, bit),
+                                         Q_ARG(QString, QString("fromBit")), Q_ARG(QVariant, QVariant(bit))));
+    }
     QVERIFY(QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 0)));
     QVERIFY(QMetaObject::invokeMethod(processor->findChild<QObject *>("objectRuleDialog"), "submit"));
     QTRY_VERIFY(!controller.deriving()); QCOMPARE(controller.signalCount(), 10);
+    QCOMPARE(controller.signalEnums(2).size(),2);
     // Editing can select any raw signal, not only sources previously used by the configuration.
     QQmlExpression editFirstRule(QQmlEngine::contextForObject(processor), processor, "editRule(selected.rules[0])");
     editFirstRule.evaluate(); QVERIFY(!editFirstRule.hasError());
@@ -1356,7 +1491,7 @@ void ObjectDataTest::objectManagerQml()
     auto *autoDialog = processor->findChild<QObject *>("objectRuleDialog"); QVERIFY(autoDialog);
     auto *identify = processor->findChild<QObject *>("identifyPacketLossButton"); QVERIFY(identify);
     QVERIFY(!identify->property("visible").toBool());
-    autoOperation->setProperty("currentIndex", 6);
+    autoOperation->setProperty("currentIndex", 5);
     QVERIFY(identify->property("visible").toBool());
     QVERIFY(QMetaObject::invokeMethod(identify, "clicked")); QTRY_VERIFY(!controller.deriving());
     QCOMPARE(controller.dataObjects().last().toMap()["rules"].toList().size(), 1);
@@ -1364,7 +1499,7 @@ void ObjectDataTest::objectManagerQml()
     QCOMPARE(discovered["samplePeriod"].toDouble(), 1.0);
     QVERIFY(!autoDialog->property("visible").toBool());
     QCOMPARE(controller.dataObjects().last().toMap()["type"].toString(), QString("processing"));
-    autoLoss.evaluate(); QVERIFY(!autoLoss.hasError()); autoOperation->setProperty("currentIndex", 6);
+    autoLoss.evaluate(); QVERIFY(!autoLoss.hasError()); autoOperation->setProperty("currentIndex", 5);
     QVERIFY(QMetaObject::invokeMethod(identify, "clicked")); QTRY_VERIFY(!controller.deriving());
     QCOMPARE(controller.dataObjects().last().toMap()["rules"].toList().size(), 1);
     // Exercise the actual dialog: estimated numeric prefill and editable positive period.
@@ -1372,7 +1507,7 @@ void ObjectDataTest::objectManagerQml()
     createLoss.evaluate(); QVERIFY(!createLoss.hasError());
     QVERIFY(QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 0)));
     auto *operation = processor->findChild<QObject *>("objectRuleOperation"); QVERIFY(operation);
-    operation->setProperty("currentIndex", 6);
+    operation->setProperty("currentIndex", 5);
     processor->findChild<QObject *>("objectRuleName")->setProperty("text", "packet loss");
     auto *dialog = processor->findChild<QObject *>("objectRuleDialog"); QVERIFY(dialog);
     QVERIFY(QMetaObject::invokeMethod(dialog, "submit")); QTRY_VERIFY(!controller.deriving());
@@ -1464,7 +1599,7 @@ void ObjectDataTest::ruleInputsQml()
     qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     QTemporaryDir dir; QFile file(dir.filePath("inputs.csv")); QVERIFY(file.open(QIODevice::WriteOnly));
     file.write("time,A,B,C\n0,3,4,12\n1,3,4,12\n"); file.close();
     AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
@@ -1491,7 +1626,7 @@ void ObjectDataTest::ruleInputsQml()
         QQmlExpression expression(QQmlEngine::contextForObject(processor), processor, "editRule(null)");
         expression.evaluate(); if (expression.hasError()) return false;
         if (!editor->property("inputXId").toString().isEmpty() || !editor->property("inputYId").toString().isEmpty() || !editor->property("inputZId").toString().isEmpty()) return false;
-        operation->setProperty("currentIndex", op);
+        operation->setProperty("currentIndex", op > 0 ? op-1 : 0);
         if (op != 5 && !QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 0))) return false;
         processor->findChild<QObject *>("objectRuleName")->setProperty("text", "binding rule " + QString::number(op));
         QTest::qWait(50); return true;
@@ -1556,7 +1691,8 @@ void ObjectDataTest::ruleInputsQml()
     }
     QVERIFY(start(4)); // Expressions must never silently shift Z into Y when Y is absent.
     QVERIFY(drag("C", "z"));
-    processor->findChild<QObject *>("objectRuleExpression")->setProperty("text", "x+z");
+    auto *outputModel=processor->findChild<QObject *>("processingOutputRows"); QVERIFY(outputModel);
+    QVERIFY(QMetaObject::invokeMethod(outputModel,"setProperty",Q_ARG(int,0),Q_ARG(QString,QString("formula")),Q_ARG(QVariant,QVariant("x+z"))));
     QVERIFY(QMetaObject::invokeMethod(editor, "submit")); QCOMPARE(rules().size(), 1);
     QVERIFY(editor->property("errorText").toString().contains(QStringLiteral("先绑定 Y")));
     // Select Y using the slot's real button, then bind it by clicking the tree name.
@@ -1618,14 +1754,14 @@ void ObjectDataTest::ruleInputsQml()
     for (int number = 1; number <= 2; ++number) {
         namedRule.evaluate(); QVERIFY(!namedRule.hasError());
         QCOMPARE(name->property("text").toString(), QStringLiteral("规则%1").arg(number));
-        operation->setProperty("currentIndex", 2);
+        operation->setProperty("currentIndex", 1);
         QVERIFY(QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 0)));
         QCOMPARE(name->property("text").toString(), QStringLiteral("规则%1").arg(number));
         QVERIFY(QMetaObject::invokeMethod(editor, "submit")); QTRY_VERIFY(!controller.deriving());
         QCOMPARE(rules().last().toMap()["name"].toString(), QStringLiteral("规则%1").arg(number));
     }
     namedRule.evaluate(); QVERIFY(!namedRule.hasError()); QCOMPARE(name->property("text").toString(), QStringLiteral("规则3"));
-    name->setProperty("text", QStringLiteral("手动命名")); operation->setProperty("currentIndex", 3);
+    name->setProperty("text", QStringLiteral("手动命名")); operation->setProperty("currentIndex", 2);
     QCOMPARE(name->property("text").toString(), QStringLiteral("手动命名"));
     QVERIFY(QMetaObject::invokeMethod(editor, "close"));
     namedRule.evaluate(); QVERIFY(!namedRule.hasError()); QCOMPARE(name->property("text").toString(), QStringLiteral("规则3"));
@@ -1636,7 +1772,7 @@ void ObjectDataTest::ruleEditorLargeSignalNavigation()
     qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     QTemporaryDir dir; QFile file(dir.filePath("large-inputs.csv")); QVERIFY(file.open(QIODevice::WriteOnly));
     QByteArray header("time"), values("0");
     for (int i = 0; i < 10000; ++i) { header += ",s" + QByteArray::number(i); values += ",1"; }
@@ -1659,7 +1795,7 @@ void ObjectDataTest::ruleEditorLargeSignalNavigation()
     QVERIFY(editor->property("inputZId").toString().isEmpty());
     QElapsedTimer elapsed; elapsed.start();
     auto *operation = processor->findChild<QObject *>("objectRuleOperation"); QVERIFY(operation);
-    for (int i = 0; i < 10; ++i) { operation->setProperty("currentIndex", 3); QCoreApplication::processEvents(); operation->setProperty("currentIndex", 2); QCoreApplication::processEvents(); }
+    for (int i = 0; i < 10; ++i) { operation->setProperty("currentIndex", 2); QCoreApplication::processEvents(); operation->setProperty("currentIndex", 1); QCoreApplication::processEvents(); }
     const auto typesMs = elapsed.nsecsElapsed() / 1e6;
     QQmlExpression lookup(QQmlEngine::contextForObject(processor), processor,
         "for (let i = 0; i < 100; ++i) { ruleInputName(''); ruleInputName('raw:9999'); ruleSourceAllowed(9999); }");
@@ -1669,7 +1805,7 @@ void ObjectDataTest::ruleEditorLargeSignalNavigation()
     elapsed.restart();
     for (int i = 0; i < 10; ++i) QVERIFY(QMetaObject::invokeMethod(processor, "browseRuleSource"));
     const auto browseMs = elapsed.nsecsElapsed() / 1e6;
-    operation->setProperty("currentIndex", 4); QTest::qWait(50);
+    operation->setProperty("currentIndex", 3); QTest::qWait(50);
     auto *window = qobject_cast<QQuickWindow *>(root.get()); QVERIFY(window);
     auto *list = root->findChild<QQuickItem *>("signalList"); QVERIFY(list);
     auto clickSlot = [&](const QString &slot, bool label = false) {

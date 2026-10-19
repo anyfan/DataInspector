@@ -181,10 +181,17 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
                 return fail(QStringLiteral("处理规则只能引用本配置来源或此前处理结果，禁止循环依赖"));
             int count = 1;
             if (rule.operation == "bits" || rule.operation == "bitfield") {
-                if ((rule.wordBits != 8 && rule.wordBits != 16 && rule.wordBits != 32) || rule.startBit < 0
-                    || rule.bitCount < 1 || rule.startBit + rule.bitCount > rule.wordBits || rule.inputs.size() != 1)
+                if ((rule.wordBits != 8 && rule.wordBits != 16 && rule.wordBits != 32) || !QStringList{"little","big"}.contains(rule.byteOrder) || rule.startBit < 0
+                    || rule.bitCount < 1 || rule.startBit + rule.bitCount > (rule.autoWordBits ? 32 : rule.wordBits) || rule.inputs.size() != 1)
                     return fail(QStringLiteral("位宽或位段无效"));
                 if (rule.operation == "bits") count = rule.bitCount;
+                else {
+                    count = rule.outputs.size();
+                    for (const auto &output : rule.outputs) {
+                        const int start=outputStartBit(rule,output), bits=outputBitCount(rule,output);
+                        if(start<0 || bits<1 || start+bits>(rule.autoWordBits ? 32 : rule.wordBits)) return fail(QStringLiteral("输出位范围超出字宽"));
+                    }
+                }
             } else if (rule.operation == "scale") {
                 if (rule.inputs.size() != 1) return fail(QStringLiteral("换算需要一个输入"));
             } else if (rule.operation == "packetloss") {
@@ -205,10 +212,13 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
             } else if (rule.operation == "magnitude") {
                 if (rule.inputs.size() != 3) return fail(QStringLiteral("三轴模长需要三个输入"));
             } else if (rule.operation == "expression") {
-                const QString why = validateObjectExpression(rule.expression, rule.inputs.size());
-                if (!why.isEmpty()) return fail(why);
+                count = rule.outputs.size();
+                for (const auto &output : rule.outputs) {
+                    const QString why=validateObjectExpression(outputExpression(rule,output),rule.inputs.size());
+                    if(!why.isEmpty()) return fail(output.name + ": " + why);
+                }
             } else return fail(QStringLiteral("不支持的派生算子"));
-            if (rule.outputs.size() != count) return fail(QStringLiteral("派生输出数量无效"));
+            if (count<1 || count>32 || rule.outputs.size() != count) return fail(QStringLiteral("派生输出数量无效"));
             for (const auto &output : rule.outputs) {
                 if (!identity(output.id) || !nameValid(output.name) || output.series < 0 || output.series >= signalCount
                     || outputSeries.contains(output.series)) return fail(QStringLiteral("派生输出身份无效"));
@@ -225,10 +235,10 @@ namespace {
 QJsonObject calculationKey(const ObjectRule &rule)
 {
     QJsonArray outputs;
-    for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"series", output.series}});
+    for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"series", output.series}, {"startBit",output.startBit},{"bitCount",output.bitCount},{"signedField",output.signedField},{"expression",output.expression}});
     return {{"operation", rule.operation}, {"expression", rule.expression},
         {"inputs", QJsonArray::fromStringList(rule.inputs)}, {"outputs", outputs},
-        {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
+        {"wordBits", rule.wordBits}, {"autoWordBits",rule.autoWordBits}, {"byteOrder",rule.byteOrder}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
         {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}};
 }
 bool sameSamples(const PlotSeriesDataPtr &a, const PlotSeriesDataPtr &b)
@@ -320,15 +330,32 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                 result.budgetLimitedRules.insert(rule.id);
             }
             if (error.isEmpty()) retainedValues += count * 8 * rule.outputs.size();
-            Expression expression; const int root = rule.operation == "expression" ? expression.compile(rule.expression, inputs.size()) : -1;
+            QVector<Expression> expressions; QVector<int> roots;
+            if(rule.operation == "expression") for(const auto &output : rule.outputs) {
+                Expression parser; const int root=parser.compile(outputExpression(rule,output),inputs.size());
+                if(!parser.error.isEmpty()) error=output.name+": "+parser.error;
+                roots.append(root); expressions.append(std::move(parser));
+            }
+            int effectiveWordBits=rule.wordBits;
+            if(error.isEmpty() && rule.autoWordBits && (rule.operation=="bits" || rule.operation=="bitfield")) {
+                int required=rule.operation=="bits" ? rule.startBit+rule.bitCount : 1;
+                for(const auto &output:rule.outputs) if(rule.operation=="bitfield") required=qMax(required,outputStartBit(rule,output)+outputBitCount(rule,output));
+                double maximum=0;
+                for(qsizetype i=0;i<count;++i) {
+                    if((i & 4095)==0 && cancelled.load()) return {};
+                    const double value=inputs.first()->pointAt(i).y();
+                    if(std::isfinite(value) && value>=0 && value<=4294967295. && std::floor(value)==value) maximum=qMax(maximum,value);
+                }
+                effectiveWordBits=required<=8 && maximum<256 ? 8 : required<=16 && maximum<65536 ? 16 : 32;
+            }
             QVector<std::shared_ptr<PlotSeriesData>> outputs;
             for (int k = 0; k < rule.outputs.size(); ++k) {
                 auto output = std::make_shared<PlotSeriesData>(); output->id = rule.outputs[k].series;
                 output->sourceFile = "object:" + object.id; output->sourceTable = ruleIndex; output->sourceColumn = k;
                 output->sourceTableName = object.name + "/" + rule.name;
                 output->step = rule.operation == "bits" || rule.operation == "bitfield" || rule.operation == "packetloss";
-                if (rule.operation == "expression" && root >= 0 && expression.error.isEmpty())
-                    output->step = QStringList{"not", "&&", "||", "==", "!=", ">=", "<=", ">", "<"}.contains(expression.nodes[root].op);
+                if (rule.operation == "expression" && roots[k] >= 0 && expressions[k].error.isEmpty())
+                    output->step = QStringList{"not", "&&", "||", "==", "!=", ">=", "<=", ">", "<"}.contains(expressions[k].nodes[roots[k]].op);
                 if (error.isEmpty() && rule.operation != "merge") {
                     const auto &source = inputs.first();
                     output->timeOffset = source->timeOffset; output->monotonicTime = source->monotonicTime;
@@ -496,30 +523,42 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
                 }
                 if (!error.isEmpty()) break;
                 if (rule.operation == "bits" || rule.operation == "bitfield") {
-                    const double limit = std::ldexp(1.0, rule.wordBits);
+                    const double limit = std::ldexp(1.0, effectiveWordBits);
                     valid = valid && values[0] >= 0 && values[0] < limit && std::floor(values[0]) == values[0];
                     if (!valid) { ++invalid; continue; }
-                    const quint64 word = quint64(values[0]);
+                    quint64 word = quint64(values[0]);
+                    if(rule.byteOrder=="big") {
+                        quint64 reversed=0;
+                        for(int byte=0;byte<effectiveWordBits/8;++byte) reversed=(reversed<<8)|((word>>(byte*8))&255);
+                        word=reversed;
+                    }
                     if (rule.operation == "bits") for (int k = 0; k < outputs.size(); ++k) outputs[k]->values[i] = double((word >> (rule.startBit + k)) & 1);
                     else {
-                        const quint64 mask = (quint64(1) << rule.bitCount) - 1;
-                        const quint64 field = (word >> rule.startBit) & mask;
-                        const qint64 value = rule.signedField && (field & (quint64(1) << (rule.bitCount - 1)))
-                            ? qint64(field) - qint64(quint64(1) << rule.bitCount) : qint64(field);
-                        outputs.first()->values[i] = double(value);
+                        for(int k=0;k<outputs.size();++k) {
+                            const auto &definition=rule.outputs[k];
+                            const int bits=outputBitCount(rule,definition), start=outputStartBit(rule,definition);
+                            const quint64 field=(word>>start)&((quint64(1)<<bits)-1);
+                            const qint64 value=outputSignedField(rule,definition) && (field&(quint64(1)<<(bits-1)))
+                                ? qint64(field)-qint64(quint64(1)<<bits) : qint64(field);
+                            outputs[k]->values[i]=double(value);
+                        }
                     }
                 } else {
                     if (!valid) { ++invalid; continue; }
-                    const double value = rule.operation == "scale" ? values[0] * rule.factor + rule.bias
-                        : rule.operation == "magnitude" ? std::hypot(values[0], values[1], values[2]) : expression.eval(root, values);
-                    outputs.first()->values[i] = std::isfinite(value) ? value : qQNaN();
-                    if (!std::isfinite(value)) ++invalid;
+                    bool invalidSample=false;
+                    for(int k=0;k<outputs.size();++k) {
+                        const double value=rule.operation=="scale" ? values[0]*rule.factor+rule.bias
+                            : rule.operation=="magnitude" ? std::hypot(values[0],values[1],values[2]) : expressions[k].eval(roots[k],values);
+                        outputs[k]->values[i]=std::isfinite(value) ? value : qQNaN();
+                        invalidSample |= !std::isfinite(value);
+                    }
+                    if(invalidSample) ++invalid;
                 }
             }
             if (completedRules) completedRules->fetch_add(1, std::memory_order_relaxed);
             if (invalid && error.isEmpty()) result.errors.insert(rule.id, QStringLiteral("%1 个无效样本已留空").arg(invalid));
             if (!error.isEmpty()) result.errors.insert(rule.id, error);
-            if (!result.budgetLimitedRules.contains(rule.id)) result.states.insert(rule.id, {calculationKey(rule), inputs, samplePeriod, duplicateSamples});
+            if (!result.budgetLimitedRules.contains(rule.id)) result.states.insert(rule.id, {calculationKey(rule), inputs, samplePeriod, duplicateSamples, effectiveWordBits});
             for (int k = 0; k < outputs.size(); ++k) {
                 if (!error.isEmpty()) { outputs[k]->time.clear(); outputs[k]->values.clear(); }
                 outputs[k]->rangeIndex = PlotRangeIndex::build(*outputs[k], [&] { return cancelled.load(); });
@@ -542,9 +581,9 @@ QJsonArray objectsToJson(const QVector<DataObject> &objects)
         for (const auto &rule : object.rules) {
             QJsonArray inputs, outputs;
             for (const auto &input : rule.inputs) inputs.append(input);
-            for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"name", output.name}, {"series", output.series}});
+            for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"name", output.name}, {"series", output.series}, {"startBit",output.startBit},{"bitCount",output.bitCount},{"signedField",output.signedField},{"expression",output.expression}});
             rules.append(QJsonObject{{"id", rule.id}, {"name", rule.name}, {"operation", rule.operation}, {"expression", rule.expression},
-                {"inputs", inputs}, {"outputs", outputs}, {"wordBits", rule.wordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
+                {"inputs", inputs}, {"outputs", outputs}, {"wordBits", rule.wordBits}, {"autoWordBits",rule.autoWordBits}, {"byteOrder",rule.byteOrder}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
                 {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}});
         }
         array.append(QJsonObject{{"id", object.id}, {"name", object.name}, {"type", object.type}, {"fields", fields}, {"rules", rules},
@@ -595,6 +634,7 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
                 || !string(r["expression"], &rule.expression) || !r["inputs"].isArray() || r["inputs"].toArray().size() > (rule.operation == "merge" ? 256 : 3)
                 || !r["outputs"].isArray() || r["outputs"].toArray().size() > 32
                 || !integer(r["wordBits"], &rule.wordBits) || !integer(r["startBit"], &rule.startBit) || !integer(r["bitCount"], &rule.bitCount)
+                || !r["autoWordBits"].isBool() || !string(r["byteOrder"], &rule.byteOrder)
                 || !r["signedField"].isBool() || !r["factor"].isDouble() || !r["bias"].isDouble()) return fail();
 
             if (!r["samplePeriod"].isDouble() || !std::isfinite(r["samplePeriod"].toDouble()) || r["samplePeriod"].toDouble() < 0) return fail();
@@ -612,12 +652,16 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
             rule.counterTolerance = r["counterTolerance"].toDouble();
             if (!string(r["rateMode"], &rule.rateMode) || !r["rateWindowSeconds"].isDouble()) return fail();
             rule.rateWindowSeconds = r["rateWindowSeconds"].toDouble();
+            rule.autoWordBits=r["autoWordBits"].toBool();
             rule.signedField = r["signedField"].toBool(); rule.factor = r["factor"].toDouble(); rule.bias = r["bias"].toDouble();
             for (const auto &input : r["inputs"].toArray()) { QString id; if (!string(input, &id)) return fail(); rule.inputs.append(id); }
             for (const auto &ov : r["outputs"].toArray()) {
                 if (!ov.isObject()) return fail();
                 const auto o = ov.toObject(); ObjectOutput output;
-                if (!string(o["id"], &output.id) || !string(o["name"], &output.name) || !integer(o["series"], &output.series)) return fail();
+                if (!string(o["id"], &output.id) || !string(o["name"], &output.name) || !integer(o["series"], &output.series)
+                    || !integer(o["startBit"],&output.startBit) || !integer(o["bitCount"],&output.bitCount)
+                    || !o["signedField"].isBool() || !string(o["expression"],&output.expression)) return fail();
+                output.signedField=o["signedField"].toBool();
                 rule.outputs.append(output);
             }
 

@@ -418,9 +418,8 @@ void SignalModel::rebuildVisibleNodes()
     else {
         for (auto it = m_groupSourceRows.cbegin(); it != m_groupSourceRows.cend(); ++it) {
             QVector<int> matches;
-            const bool groupMatches = it.key().contains(m_filter, Qt::CaseInsensitive);
             for (int row : it.value()) {
-                if (groupMatches || m_names.at(row).contains(m_filter, Qt::CaseInsensitive)) matches.append(row);
+                if (m_names.at(row).contains(m_filter, Qt::CaseInsensitive)) matches.append(row);
             }
             if (!matches.isEmpty()) {
                 matchingRowsByGroup.insert(it.key(), matches);
@@ -451,8 +450,7 @@ void SignalModel::rebuildVisibleNodes()
             }
             if (!visible) continue;
         }
-        const bool groupMatches = group.contains(m_filter, Qt::CaseInsensitive);
-        if (!m_filter.isEmpty() && !groupMatches && !matchingGroups.contains(group)) continue;
+        if (!m_filter.isEmpty() && !matchingGroups.contains(group)) continue;
         const int depth = group.count(QLatin1Char('/'));
         m_groupRows.insert(group, m_visibleNodes.size());
         m_visibleNodes.append({true, -1, group, depth});

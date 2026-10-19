@@ -71,6 +71,7 @@ private slots:
     void interactingWithSubplotSelectsIt();
     void toolbarModesToggleAndRememberSelection();
     void signalSectionsKeepNestedPathsAndAlignedNames();
+    void signalSearchDoesNotMatchAncestorNames();
     void signalTreeDragAddsToTargetPlot();
     void editDialogsRememberAndResetValues();
     void realMatImportPerformanceWhenRequested();
@@ -965,7 +966,7 @@ void AppControllerTest::cursorBadgesInitializeCenteredWithDelta()
     qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     AppController controller;
     QQmlEngine engine;
     QStringList warnings;
@@ -1024,7 +1025,7 @@ void AppControllerTest::cursorBadgesInitializeCenteredWithDelta()
 void AppControllerTest::preciseCursorInputSnapsSynchronizesAndCancels()
 {
     qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, AppControllerQmlRegistration,
-        SignalModelQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
+        SignalModelQmlRegistration, StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     AppController controller;
     controller.setLayout(1, 2);
     QTemporaryDir directory;
@@ -1082,7 +1083,7 @@ void AppControllerTest::cursorBadgeDragsSelectAndMoveOneOrBoth()
     qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     AppController controller;
     QQmlEngine engine;
     const QString path = QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml/QuickPlot.qml");
@@ -1168,7 +1169,7 @@ void AppControllerTest::interactingWithSubplotSelectsIt()
     qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     AppController controller;
     controller.setLayout(1, 2);
     QQmlEngine engine;
@@ -1232,7 +1233,7 @@ void AppControllerTest::interactingWithSubplotSelectsIt()
 
 void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
 {
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
     qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
@@ -1705,7 +1706,7 @@ void AppControllerTest::quotedCsvFieldsAreImported()
 
 void AppControllerTest::signalTreeDragAddsToTargetPlot()
 {
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
     qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
@@ -1874,9 +1875,35 @@ void AppControllerTest::signalTreeDragAddsToTargetPlot()
     QCOMPARE(warnings, QStringList());
 }
 
+void AppControllerTest::signalSearchDoesNotMatchAncestorNames()
+{
+    SignalModel model;
+    model.setNames({"brake_c", "AT 油门控制模式", "AFCS_LAT", "Speed", "Pitch"},
+                   QStringList{"flight.DAT/p1", "flight.DAT/p1", "other.csv/p2", "other.csv/AT", "plain.csv/p3"});
+    model.setFilter("AT");
+    QVector<int> matched;
+    for (int row=0; row<model.rowCount(); ++row) {
+        const auto index=model.index(row);
+        if (!model.data(index,SignalModel::GroupNodeRole).toBool())
+            matched.append(model.data(index,SignalModel::IndexRole).toInt());
+    }
+    QCOMPARE(matched,(QVector<int>{1,2}));
+    QCOMPARE(model.rowCount(),6); // Two matching signals and their two-level ancestor paths.
+    model.setFilter("flight.DAT");
+    QCOMPARE(model.rowCount(),0); // File-name match alone must not reveal unrelated signals.
+    model.setFilter("pitch");
+    QCOMPARE(model.rowCount(),3); // Case-insensitive signal-name match.
+    model.setFilter("");
+    bool brakeVisible=false;
+    for(int row=0; row<model.rowCount(); ++row)
+        brakeVisible |= !model.data(model.index(row),SignalModel::GroupNodeRole).toBool()
+            && model.data(model.index(row),SignalModel::IndexRole).toInt()==0;
+    QVERIFY(brakeVisible);
+}
+
 void AppControllerTest::signalSectionsKeepNestedPathsAndAlignedNames()
 {
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
     qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
@@ -2067,7 +2094,7 @@ void AppControllerTest::signalSectionsKeepNestedPathsAndAlignedNames()
 
 void AppControllerTest::toolbarModesToggleAndRememberSelection()
 {
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
     qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
@@ -2787,7 +2814,7 @@ void AppControllerTest::timeOffsetsApplyToSignalsGroupsAndFiles()
 
 void AppControllerTest::editDialogsRememberAndResetValues()
 {
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     qmlRegisterType<PlotItem>("DataInspector", 1, 0, "PlotItem");
     qmlRegisterUncreatableType<AppController>("DataInspector", 1, 0, "AppController", "Owned by C++");
     qmlRegisterUncreatableType<SignalModel>("DataInspector", 1, 0, "SignalModel", "Owned by AppController");
@@ -2803,45 +2830,73 @@ void AppControllerTest::editDialogsRememberAndResetValues()
     QQmlComponent component(&engine, QUrl::fromLocalFile(qmlDirectory.filePath("Main.qml")));
     std::unique_ptr<QObject> object(component.createWithInitialProperties({{"visible", false}, {"appController", QVariant::fromValue(&controller)}}));
     QVERIFY2(object, qPrintable(component.errorString()));
-    auto *offsetDialog = object->findChild<QObject *>("timeOffsetDialog");
-    auto *offsetField = object->findChild<QObject *>("timeOffsetField");
-    auto *offsetReset = object->findChild<QObject *>("resetTimeOffsetButton");
-    auto *nameDialog = object->findChild<QObject *>("renameSignalDialog");
-    auto *nameField = object->findChild<QObject *>("renameSignalField");
+    auto *properties = object->findChild<QObject *>("signalPropertiesPane");
+    auto *nameField = object->findChild<QObject *>("signalPropertyName");
     auto *nameReset = object->findChild<QObject *>("resetSignalNameButton");
-    QVERIFY(offsetDialog && offsetField && offsetReset && nameDialog && nameField && nameReset);
+    auto *offsetReset = object->findChild<QObject *>("resetTimeOffsetButton");
+    QVERIFY(properties && nameField && nameReset && offsetReset);
+    QVERIFY(!object->findChild<QObject *>("timeOffsetDialog"));
+    QVERIFY(!object->findChild<QObject *>("renameSignalDialog"));
     auto openOffset = [&](int scope, int row, const QString &group) {
-        return QMetaObject::invokeMethod(object.get(), "requestTimeOffset",
-            Q_ARG(QVariant, scope), Q_ARG(QVariant, row), Q_ARG(QVariant, group));
+        return QMetaObject::invokeMethod(object.get(), "requestTimeOffset",Q_ARG(QVariant,scope),Q_ARG(QVariant,row),Q_ARG(QVariant,group));
     };
-    QVERIFY(controller.setTimeOffset(0, 0, {}, 2.5));
-    QVERIFY(openOffset(0, 0, {}));
-    QCOMPARE(offsetField->property("text").toString(), "2.5");
-    QVERIFY(QMetaObject::invokeMethod(offsetDialog, "accept"));
-    QCOMPARE(controller.signalTimeOffset(0), 2.5); // Reopening and confirming must not accumulate.
-    QVERIFY(openOffset(0, 0, {}));
-    QVERIFY(offsetField->setProperty("text", "-3.25"));
-    QVERIFY(QMetaObject::invokeMethod(offsetDialog, "accept"));
-    QCOMPARE(controller.signalTimeOffset(0), -3.25);
-    QVERIFY(openOffset(2, -1, "original.csv"));
-    QVERIFY(offsetDialog->property("mixedOffsets").toBool());
-    QCOMPARE(offsetField->property("text").toString(), "");
-    QVERIFY(QMetaObject::invokeMethod(offsetReset, "clicked"));
-    QVERIFY(QMetaObject::invokeMethod(offsetDialog, "accept"));
-    QCOMPARE(controller.signalTimeOffset(0), 0.0);
-    QCOMPARE(controller.signalTimeOffset(1), 0.0);
-    QVERIFY(controller.setTimeOffset(2, -1, "original.csv", 8));
-    QVERIFY(openOffset(1, -1, controller.signalModel()->groupAt(0)));
-    QCOMPARE(offsetField->property("text").toString(), "8");
-    QVERIFY(QMetaObject::invokeMethod(offsetDialog, "reject"));
-    QCOMPARE(controller.signalTimeOffset(0), 8.0);
-    QVERIFY(controller.renameSignal(0, "Changed"));
-    QVERIFY(QMetaObject::invokeMethod(object.get(), "requestRenameSignal", Q_ARG(QVariant, 0)));
-    QCOMPARE(nameField->property("text").toString(), "Changed");
-    QVERIFY(QMetaObject::invokeMethod(nameReset, "clicked"));
-    QCOMPARE(nameField->property("text").toString(), "A");
-    QVERIFY(QMetaObject::invokeMethod(nameDialog, "accept"));
-    QCOMPARE(controller.signalName(0), "A");
+    QVERIFY(controller.setTimeOffset(0,0,{},2.5)); QVERIFY(openOffset(0,0,{}));
+    QCOMPARE(properties->property("offsetText").toString(),"2.5");
+    QVERIFY(QMetaObject::invokeMethod(properties,"apply")); QCOMPARE(controller.signalTimeOffset(0),2.5);
+    QVERIFY(openOffset(0,0,{})); properties->setProperty("offsetText","-3.25");
+    QVERIFY(QMetaObject::invokeMethod(properties,"apply")); QCOMPARE(controller.signalTimeOffset(0),-3.25);
+    properties->setProperty("offsetText","1,000");
+    QVERIFY(QMetaObject::invokeMethod(properties,"apply")); QCOMPARE(controller.signalTimeOffset(0),-3.25);
+    properties->setProperty("offsetText","-3.25");
+    QVERIFY(openOffset(2,-1,"original.csv")); QVERIFY(properties->property("mixedOffsets").toBool());
+    QCOMPARE(properties->property("offsetText").toString(),QString{});
+    QVERIFY(QMetaObject::invokeMethod(offsetReset,"clicked"));
+    QVERIFY(QMetaObject::invokeMethod(properties,"apply")); QCOMPARE(controller.signalTimeOffset(0),0.); QCOMPARE(controller.signalTimeOffset(1),0.);
+    QVERIFY(controller.setTimeOffset(2,-1,"original.csv",8));
+    QVERIFY(openOffset(1,-1,controller.signalModel()->groupAt(0)));
+    QCOMPARE(properties->property("offsetText").toString(),"8");
+    QVERIFY(QMetaObject::invokeMethod(properties,"close")); QCOMPARE(controller.signalTimeOffset(0),8.);
+    QVERIFY(controller.renameSignal(0,"Changed"));
+    QVERIFY(QMetaObject::invokeMethod(object.get(),"requestRenameSignal",Q_ARG(QVariant,0)));
+    QCOMPARE(nameField->property("text").toString(),"Changed");
+    QVERIFY(QMetaObject::invokeMethod(nameReset,"clicked")); QCOMPARE(nameField->property("text").toString(),"A");
+    QVERIFY(QMetaObject::invokeMethod(properties,"apply")); QCOMPARE(controller.signalName(0),"A");
+    QCOMPARE(controller.signalTimeOffset(0),8.);
+    // A rejected compound draft must not partially shift the signal.
+    QVariantMap invalid{{"name","Rejected"},{"color","#0072bd"},{"width",2},{"style",1},{"timeOffset",99},
+        {"enums",QVariantList{QVariantMap{{"value",0},{"text",""},{"color","red"}}}}};
+    QVERIFY(!controller.configureSignalProperties(0,invalid)); QCOMPARE(controller.signalTimeOffset(0),8.); QCOMPARE(controller.signalName(0),"A");
+
+    // Real pointer clicks follow signals while retaining independent unapplied drafts.
+    auto *host=qobject_cast<QQuickWindow *>(object.get()); QVERIFY(host); host->show();
+    QVERIFY(QTest::qWaitForWindowExposed(host));
+    auto findName=[&](const QString &text)->QQuickItem* {
+        QList<QQuickItem *> pending{host->contentItem()};
+        while(!pending.isEmpty()) { auto *item=pending.takeLast(); pending.append(item->childItems());
+            if(item->isVisible() && item->objectName()=="signalTreeName" && item->property("text").toString()==text) return item;
+        } return nullptr;
+    };
+    nameField->setProperty("text","A draft"); properties->setProperty("offsetText","9.25");
+    QQuickItem *bLabel=nullptr; QTRY_VERIFY((bLabel=findName("B")));
+    QTest::mouseClick(host,Qt::LeftButton,Qt::NoModifier,bLabel->mapToScene(QPointF(15,bLabel->height()/2)).toPoint());
+    QTRY_COMPARE(properties->property("sourceRow").toInt(),1);
+    QCOMPARE(nameField->property("text").toString(),"B");
+    QQuickItem *aLabel=nullptr; QTRY_VERIFY((aLabel=findName("A")));
+    QTest::mouseClick(host,Qt::LeftButton,Qt::NoModifier,aLabel->mapToScene(QPointF(15,aLabel->height()/2)).toPoint());
+    QTRY_COMPARE(properties->property("sourceRow").toInt(),0);
+    QCOMPARE(nameField->property("text").toString(),"A draft"); QCOMPARE(properties->property("offsetText").toString(),"9.25");
+    QCOMPARE(controller.signalName(0),"A"); QCOMPARE(controller.signalTimeOffset(0),8.);
+    QTRY_VERIFY((bLabel=findName("B")));
+    QQuickItem *check=nullptr;
+    for(auto *child:bLabel->parentItem()->childItems()) if(QByteArray(child->metaObject()->className()).contains("CheckBox")) check=child;
+    QVERIFY(check); const bool enabled=controller.plotSignalEnabled(controller.activePlotIndex(),1);
+    QTest::mouseClick(host,Qt::LeftButton,Qt::NoModifier,check->mapToScene(QPointF(check->width()/2,check->height()/2)).toPoint());
+    QTRY_COMPARE(properties->property("sourceRow").toInt(),1);
+    QCOMPARE(controller.plotSignalEnabled(controller.activePlotIndex(),1),!enabled);
+    QVERIFY(QMetaObject::invokeMethod(properties,"close"));
+    QTRY_VERIFY((aLabel=findName("A")));
+    QTest::mouseClick(host,Qt::LeftButton,Qt::NoModifier,aLabel->mapToScene(QPointF(15,aLabel->height()/2)).toPoint());
+    QVERIFY(!properties->property("visible").toBool());
 
     SignalModel model;
     model.setNames(QStringList{"First"}, QStringList{"one.csv"});
@@ -2924,7 +2979,7 @@ void AppControllerTest::aboutPageShowsBuildInfoAndReleaseNotes()
     qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
     qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
-    qmlRegisterTypesAndRevisions<TrajectoryItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
     AppController controller;
     QQmlEngine engine;
     QStringList warnings;

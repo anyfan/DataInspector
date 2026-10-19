@@ -42,6 +42,8 @@ add_custom_target(di_build_info
     VERBATIM)
 
 set(DI_RENDER_SOURCES
+    ${DI_QUICK_DIR}/render/statetimeline.cpp
+    ${DI_QUICK_DIR}/render/statetimeline.h
     ${DI_QUICK_DIR}/render/trajectorybuilder.cpp
     ${DI_QUICK_DIR}/render/trajectorybuilder.h
     ${DI_QUICK_DIR}/render/plotaxisutils.cpp
@@ -59,6 +61,8 @@ set(DI_RENDER_SOURCES
 )
 
 set(DI_PLOTITEM_SOURCES
+    ${DI_QUICK_DIR}/items/statetimelineitem.cpp
+    ${DI_QUICK_DIR}/items/statetimelineitem.h
     ${DI_QUICK_DIR}/items/trajectoryitem.cpp
     ${DI_QUICK_DIR}/items/trajectoryitem.h
     ${DI_QUICK_DIR}/items/plotitem.cpp
@@ -93,6 +97,7 @@ set(DI_MAT_SOURCES
 )
 
 set(DI_CONTROLLER_SOURCES
+    ${DI_QUICK_DIR}/controller/appcontroller_states.cpp
     ${DI_QUICK_DIR}/automation/automationserver.cpp
     ${DI_QUICK_DIR}/automation/automationserver.h
     ${DI_QUICK_DIR}/automation/commandcatalog.cpp
@@ -160,6 +165,7 @@ set(DI_ICON_FILES
 )
 
 set(DI_QML_FILES
+    qml/SignalPropertiesPane.qml
     qml/SignalBrowser.qml
     qml/SessionDialogs.qml
     qml/AboutDialog.qml

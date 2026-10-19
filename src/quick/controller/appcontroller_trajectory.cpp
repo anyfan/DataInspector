@@ -140,6 +140,11 @@ bool AppController::bindTrajectoryAxis(int index, int axis, int row)
 void AppController::syncSignalSelection(bool refresh)
 {
     const auto state = m_trajectories.value(m_signals->activePlot());
+    if (!state.enabled && m_plotViews.value(m_signals->activePlot()).states.enabled) {
+        QSet<int> rows;
+        for (const auto &lane : m_plotViews.value(m_signals->activePlot()).states.lanes) if (lane.visible) rows.insert(lane.source);
+        m_signals->setSelectionOverride(std::move(rows), refresh); return;
+    }
     if (!state.enabled) { m_signals->setSelectionOverride(std::nullopt, refresh); return; }
     QSet<int> rows;
     for (int id : state.signalIds) if (id >= 0 && id < signalCount()) rows.insert(id);
@@ -210,10 +215,19 @@ void AppController::remapSignalReferences(const QVector<int> &removed)
     const auto remap = [&](int &id) {
         id = id >= 0 && id < mapping.size() ? mapping[id] : -1;
     };
+    QHash<int, SignalEnums> enums;
+    for (auto it = m_signalEnums.cbegin(); it != m_signalEnums.cend(); ++it) {
+        int id = it.key(); remap(id); if (id >= 0) enums.insert(id, it.value());
+    }
+    m_signalEnums = std::move(enums);
     for (auto &object : m_objects) {
         for (auto &field : object.fields) remap(field.series);
         for (auto &rule : object.rules)
             for (auto &output : rule.outputs) remap(output.series);
+    }
+    for (auto &view : m_plotViews) {
+        for (auto &lane : view.states.lanes) remap(lane.source);
+        view.states.lanes.removeIf([](const StateLane &lane) { return lane.source < 0; });
     }
     for (auto &state : m_trajectories) {
         for (auto &track : state.tracks) {
