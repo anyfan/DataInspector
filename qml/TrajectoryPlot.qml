@@ -23,7 +23,6 @@ Rectangle {
     objectName: "trajectoryView"
 
     property var configuration: root.controller.trajectoryState(root.plotIndex)
-    property bool configurationExpanded: root.controller.trajectoryConfigurationExpanded(root.plotIndex)
     readonly property bool planarMode: trajectory.planar
     property var availableSources: root.controller.trajectorySignalOptions(root.plotIndex)
     // Explicit notification survives qmlcachegen eliminating unused revision reads.
@@ -38,7 +37,7 @@ Rectangle {
         target: root.controller
         function onPlotBindingsChanged() { root.refreshBindings() }
     }
-    readonly property string selectionHint: "通过飞机对象配置位置和姿态来源；点击对象配置管理绑定。"
+    readonly property string selectionHint: "点击“配置”选择飞机对象；坐标与姿态来源在对象中配置。"
     readonly property string sourceDescription: {
         const state = root.configuration
         const labels = state.geographic ? ["纬度", "经度", "高度"] : ["X", "Y", "Z"]
@@ -58,7 +57,7 @@ Rectangle {
         id: viewport
         objectName: "trajectoryViewport"
         anchors.fill: parent
-        anchors.topMargin: root.configurationExpanded ? 56 : 30
+        anchors.topMargin: 30
         anchors.bottomMargin: 18
         clip: true
         TrajectoryItem {
@@ -180,85 +179,12 @@ Rectangle {
         }
     }
     RowLayout {
-        id: management
-        objectName: "trajectoryManagement"
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.margins: 3
-        height: 24
-        spacing: 2
-        TrackCombo {
-            id: trackSelector
-            objectName: "trajectorySelector"
-            Layout.fillWidth: true
-            Layout.minimumWidth: 60
-            implicitHeight: 24
-            model: root.configuration.tracks
-            textRole: "name"
-            currentIndex: root.configuration.active
-            onActivated: function(index) { root.controller.selectTrajectory(root.plotIndex, index) }
-        }
-        ToolButton { visible: root.configurationExpanded; objectName: "trajectoryAdd"; text: "+"; implicitHeight: 24; onClicked: root.editAxesRequested() }
-        ToolButton { visible: root.configurationExpanded; objectName: "trajectoryRemove"; text: "−"; implicitHeight: 24; onClicked: root.controller.removeTrajectory(root.plotIndex, root.configuration.active) }
-        CheckBox {
-            objectName: "trajectoryVisible"
-            text: "显示"
-            checked: root.configuration.visible
-            implicitHeight: 24
-            onClicked: root.controller.styleTrajectory(root.plotIndex, root.configuration.name, root.configuration.color, root.configuration.width, checked)
-        }
-        ToolButton { visible: root.configurationExpanded; objectName: "trajectoryProperties"; text: "样式"; implicitHeight: 24; onClicked: properties.open() }
-        ToolButton {
-            objectName: "trajectoryConfigurationToggle"
-            text: root.configurationExpanded ? "收起 ▴" : "配置 ▾"
-            implicitHeight: 24
-            onClicked: {
-                root.configurationExpanded = !root.configurationExpanded
-                root.controller.setTrajectoryConfigurationExpanded(root.plotIndex, root.configurationExpanded)
-            }
-        }
-        ToolButton {
-            text: "时间图"
-            implicitHeight: 24
-            font.pixelSize: 11
-            objectName: "trajectory2DButton"
-            onClicked: {
-                const state = root.configuration
-                root.controller.configureTrajectory(root.plotIndex, false, state.x, state.y, state.z, state.geographic)
-            }
-        }
-    }
-    RowLayout {
-        objectName: "trajectoryConfigurationRow"
-        visible: root.configurationExpanded
-        anchors.top: management.bottom
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.margins: 3
-        height: 24
-        spacing: 2
-        Label {
-            text: (root.plotIndex + 1) + (root.planarMode ? " · 2D航迹" : " · 3D航迹")
-            visible: root.width >= 700
-            color: root.textColor
-            font.pixelSize: 11
-        }
-        TrackCombo {
-            objectName: "trajectoryObjectSelector"
-            Layout.fillWidth: true
-            Layout.minimumWidth: 40
-            implicitHeight: 24
-            model: root.aircraftObjects
-            textRole: "name"
-            currentIndex: root.aircraftObjects.findIndex(object => object.id === root.configuration.objectId)
-            displayText: currentIndex >= 0 ? currentText : "选择飞机对象"
-            onActivated: function(index) { root.controller.showObjectTrajectory(root.aircraftObjects[index].id, root.plotIndex) }
-        }
-        ToolButton { text: "选择对象"; implicitHeight: 24; font.pixelSize: 11; objectName: "trajectoryAxesButton"; onClicked: { root.controller.setActivePlot(root.plotIndex); root.editAxesRequested() } }
-        ToolButton { text: "视角"; visible: !root.planarMode; implicitHeight: 24; font.pixelSize: 11; onClicked: { root.controller.setActivePlot(root.plotIndex); viewMenu.popup() } }
-        ToolButton { text: "适应"; implicitHeight: 24; font.pixelSize: 11; onClicked: { root.controller.setActivePlot(root.plotIndex); trajectory.fitView() } }
-
+        anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
+        anchors.margins: 3; height: 24
+        Label { text: root.configuration.name; color: root.textColor; elide: Text.ElideRight; Layout.fillWidth: true }
+        ToolButton { objectName: "trajectoryConfigurationToggle"; text: "配置"; implicitHeight: 24; onClicked: root.editAxesRequested() }
+        ToolButton { text: "视角"; visible: !root.planarMode; implicitHeight: 24; onClicked: viewMenu.popup() }
+        ToolButton { text: "适应"; implicitHeight: 24; onClicked: trajectory.fitView() }
     }
     Label {
         anchors.bottom: parent.bottom
@@ -281,73 +207,11 @@ Rectangle {
             anchors.fill: parent
             enabled: trajectory.error.length > 0 || trajectory.attitudeStatus.length > 0
             onClicked: {
-                root.configurationExpanded = true
-                root.controller.setTrajectoryConfigurationExpanded(root.plotIndex, true)
+                root.editAxesRequested()
             }
         }
         ToolTip.visible: detailsHover.hovered
         ToolTip.text: root.sourceDescription + "\n" + trajectory.referenceOrigin + "\n" + trajectory.error + "\n" + trajectory.attitudeStatus + "\n" + trajectory.markers.map(value => value.details).join("\n") + "\n" + root.gestureHint
-    }
-    Dialog {
-        id: properties
-        objectName: "trajectoryPropertiesDialog"
-        title: "活动航迹：样式"
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: Math.max(1, Math.min(600, root.Window.width - 24))
-        height: Math.max(1, Math.min(640, root.Window.height - 24))
-        modal: true
-        standardButtons: Dialog.Ok | Dialog.Cancel
-        property var selectedSources: [-1, -1, -1, -1]
-        onOpened: {
-            propertiesFlick.contentY = 0
-            trackName.text = root.configuration.name
-            trackColor.text = root.configuration.color.toString()
-            trackWidth.value = root.configuration.width
-        }
-        onAccepted: {
-            root.controller.styleTrajectory(root.plotIndex, trackName.text, trackColor.text, trackWidth.value, root.configuration.visible)
-        }
-        contentItem: ScrollView {
-            id: propertiesScroll
-            objectName: "trajectoryPropertiesScroll"
-            clip: true
-            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-            ScrollBar.vertical: ScrollBar {
-                objectName: "trajectoryPropertiesScrollBar"
-                policy: propertiesFlick.contentHeight > propertiesFlick.height + 1 ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
-            }
-            contentItem: Flickable {
-                id: propertiesFlick
-                objectName: "trajectoryPropertiesFlick"
-                clip: true
-                contentWidth: width
-                contentHeight: propertiesForm.implicitHeight + 8
-                boundsBehavior: Flickable.StopAtBounds
-                ColumnLayout {
-                    id: propertiesForm
-                    objectName: "trajectoryPropertiesForm"
-                    width: Math.max(1, propertiesFlick.width - propertiesScroll.effectiveScrollBarWidth - 8)
-                    spacing: 8
-                    Label { text: "航迹样式"; font.bold: true; color: root.textColor }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Label { text: "名称"; Layout.preferredWidth: 46; color: root.textColor }
-                        TextField { id: trackName; objectName: "trajectoryName"; Layout.fillWidth: true; Layout.minimumWidth: 0; maximumLength: 256; implicitHeight: 30 }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Label { text: "颜色"; Layout.preferredWidth: 46; color: root.textColor }
-                        TextField { id: trackColor; objectName: "trajectoryColor"; Layout.fillWidth: true; Layout.minimumWidth: 0; placeholderText: "#RRGGBB 或 #AARRGGBB"; implicitHeight: 30 }
-                        Label { text: "线宽"; color: root.textColor }
-                        SpinBox { id: trackWidth; from: 1; to: 12; implicitHeight: 30 }
-                    }
-                    Label { text: "位置与测量姿态使用飞机对象中的配置。"; wrapMode: Text.Wrap; Layout.fillWidth: true; color: root.textColor }
-                    Button { text: "对象配置…"; onClicked: { properties.close(); root.editObjectRequested(root.configuration.objectId) } }
-                    Label { text: trajectory.referenceOrigin; wrapMode: Text.Wrap; Layout.fillWidth: true; color: root.textColor; font.pixelSize: 12 }
-                }
-            }
-        }
     }
     Shortcut {
         sequence: "Space"
@@ -363,7 +227,12 @@ Rectangle {
     }
     Menu {
         id: contextMenu
-        MenuItem { text: "选择飞机对象…"; onTriggered: root.editAxesRequested() }
+        ViewModeMenu {
+            controller: root.controller
+            plotIndex: root.plotIndex
+            currentMode: "trajectory"
+        }
+        MenuItem { text: "航迹配置…"; onTriggered: root.editAxesRequested() }
         MenuItem { text: "适应轨迹"; onTriggered: trajectory.fitView() }
         MenuItem { text: "等轴测视角"; visible: !root.planarMode; onTriggered: trajectory.presetView(0) }
         MenuItem { text: "俯视 XY"; visible: !root.planarMode; onTriggered: trajectory.presetView(1) }

@@ -10,6 +10,8 @@ Rectangle {
 
     required property int plotIndex
     required property AppController controller
+    property TrajectoryPropertiesPane trajectoryEditor
+    signal trajectoryConfigurationRequested(int plot)
     signal editObjectRequested(string objectId)
     property real graphLineWidth: 2
     property int graphCursorMode: 0
@@ -909,7 +911,6 @@ Rectangle {
         Button { text: "状态行…"; height: 30; onClicked: root.stateConfigurationRequested(root.plotIndex) }
         Button { text: "上次变化"; height: 30; enabled: stateItem.hasFrame; onClicked: root.jumpState(-1) }
         Button { text: "下次变化"; height: 30; enabled: stateItem.hasFrame; onClicked: root.jumpState(1) }
-        Button { text: "曲线视图"; height: 30; onClicked: root.controller.setStateTimelineEnabled(root.plotIndex, false) }
     }
     Label {
         objectName: "stateTimelineStatusMessage"
@@ -933,51 +934,18 @@ Rectangle {
                 graphLineWidth: root.graphLineWidth
                 darkTheme: root.darkTheme
                 onEditObjectRequested: objectId => root.editObjectRequested(objectId)
-                onEditAxesRequested: trajectoryDialog.open()
+                onEditAxesRequested: { if(root.trajectoryEditor) root.trajectoryEditor.editPlot(root.plotIndex); root.trajectoryConfigurationRequested(root.plotIndex) }
             }
-        }
-    }
-    Dialog {
-        id: trajectoryDialog
-        objectName: "trajectoryAxesDialog"
-        title: "选择飞机对象"
-        modal: true
-        anchors.centerIn: parent
-        width: Math.max(240, Math.min(500, parent ? parent.width - 24 : root.width))
-        parent: Overlay.overlay
-        palette.text: root.textColor
-        palette.windowText: root.textColor
-        palette.buttonText: root.textColor
-        palette.base: root.darkTheme ? "#171c22" : "#ffffff"
-        property string selectionError: ""
-        readonly property var options: root.controller.dataObjects.filter(object => object.type === "aircraft")
-        onOpened: {
-            selectionError = ""
-            const id = root.controller.trajectoryState(root.plotIndex).objectId
-            objectChoice.currentIndex = Math.max(0, options.findIndex(object => object.id === id))
-        }
-        contentItem: Column {
-            spacing: 10
-            Label { text: "位置、姿态和数据来源使用飞机对象的配置。"; width: parent.width; wrapMode: Text.WordWrap }
-            ThemedComboBox { id: objectChoice; objectName: "trajectoryObjectChoice"; width: parent.width; darkTheme: root.darkTheme; model: trajectoryDialog.options; textRole: "name"; valueRole: "id"; displayText: count > 0 ? currentText : "尚无飞机对象" }
-            Button { text: "管理对象…"; onClicked: { trajectoryDialog.close(); root.editObjectRequested(String(objectChoice.currentValue || "")) } }
-            Label { text: trajectoryDialog.selectionError; color: root.darkTheme ? "#ff8892" : "#b52634"; visible: text.length > 0; width: parent.width; wrapMode: Text.WordWrap }
-        }
-        footer: DialogButtonBox {
-            Button {
-                text: "确定"; objectName: "trajectoryConfirmButton"
-                enabled: objectChoice.count > 0
-                DialogButtonBox.buttonRole: DialogButtonBox.ActionRole
-                onClicked: { if (root.controller.showObjectTrajectory(String(objectChoice.currentValue), root.plotIndex)) trajectoryDialog.close(); else trajectoryDialog.selectionError = root.controller.status }
-            }
-            Button { text: "取消"; DialogButtonBox.buttonRole: DialogButtonBox.RejectRole; onClicked: trajectoryDialog.close() }
         }
     }
     Menu {
         id: plotContextMenu
         objectName: "plotContextMenu"
-        MenuItem { text: "切换为状态时间轴"; onTriggered: { root.controller.setStateTimelineEnabled(root.plotIndex, true); root.stateConfigurationRequested(root.plotIndex) } }
-        MenuItem { text: "切换为航迹视图"; objectName: "trajectoryModeMenuItem"; onTriggered: trajectoryDialog.open() }
+        ViewModeMenu {
+            controller: root.controller
+            plotIndex: root.plotIndex
+            currentMode: root.trajectoryMode ? "trajectory" : root.stateMode ? "states" : "curve"
+        }
         MenuSeparator { }
         MenuItem {
             text: "自适应当前 Y 轴"

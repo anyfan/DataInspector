@@ -66,6 +66,7 @@ Pane {
     signal sourcesRequested()
     signal sourceRequested(int row)
     function activateRuleInput(slot: string): void {
+        if(slot.startsWith("output:")) selectMergeOutput(Number(slot.split(":")[1]))
         selectedRuleInput = slot
         sourcesRequested()
     }
@@ -99,6 +100,11 @@ Pane {
     property bool dropRuleAllowed: true
     readonly property bool multipleRuleInputs: ruleDialog.operation === "magnitude" || ruleDialog.operation === "expression"
     function ruleInputValue(slot: string): string {
+        if(slot.startsWith("output:")) {
+            const parts=slot.split(":")
+            const output=outputRows.get(Number(parts[1]))
+            return output ? JSON.parse(output.mergeSources)[Number(parts[3])] || "" : ""
+        }
         if (slot === "x") return ruleDialog.inputXId
         if (slot === "y") return ruleDialog.inputYId
         if (slot === "z") return ruleDialog.inputZId
@@ -110,6 +116,7 @@ Pane {
     }
     function clearRuleInput(slot: string): void {
         if (blocked) return
+        if(slot.startsWith("output:")) { const parts=slot.split(":"); selectMergeOutput(Number(parts[1])); slot=parts.slice(2).join(":") }
         if (slot === "x") ruleDialog.inputXId = ""
         else if (slot === "y") ruleDialog.inputYId = ""
         else if (slot === "z") ruleDialog.inputZId = ""
@@ -130,11 +137,12 @@ Pane {
         return ruleDialog.operation === "merge" ? ruleDialog.mergeInputs.indexOf(id) >= 0 : id === ruleInputValue(selectedRuleInput)
     }
     function selectRuleSource(row: int): void {
-        bindRuleSource(row, ruleDialog.operation === "merge" ? "merge" : selectedRuleInput, true)
+        bindRuleSource(row, ruleDialog.operation === "merge" && !selectedRuleInput.includes(":merge:") ? "merge" : selectedRuleInput, true)
     }
     function bindRuleSource(row: int, slot: string, toggle: bool): void {
         if (!choosingRuleSource || blocked) return
         if (ruleDialog.sourcesChanged) { ruleDialog.errorText = "数据来源已变更，请重新打开规则并确认输入信号"; return }
+        if(slot.startsWith("output:")) { const parts=slot.split(":"); selectMergeOutput(Number(parts[1])); slot=parts.slice(2).join(":") }
         const id = ruleInputId(row)
         if (!ruleSourceAllowed(row)) { ruleDialog.errorText = "请选择原始信号或本配置中此规则之前的处理结果"; return }
         if (ruleDialog.operation === "merge") {
@@ -161,15 +169,21 @@ Pane {
         if (!choosingRuleSource || blocked) return ""
         const viewport = ruleScroll.mapFromItem(manager, x, y)
         if (viewport.x < 0 || viewport.y < 0 || viewport.x >= ruleScroll.width || viewport.y >= ruleScroll.height) return ""
-        const slots = ruleDialog.operation === "merge" ? mergeSlots : variableSlots
+        if(ruleDialog.operation === "merge") {
+            for(let i=0;i<outputEntries.count;++i) {
+                const card=outputEntries.itemAt(i) as RuleOutputCard
+                if(card) { const slot=card.inputAt(x,y); if(slot.length>0) return slot }
+            }
+            return ""
+        }
+        const slots = variableSlots
         for (let i = 0; i < slots.count; ++i) {
             const item = slots.itemAt(i) as RuleInputSlot
             if (!item) continue
             const point = item.mapFromItem(manager, x, y)
             if (point.x >= 0 && point.y >= 0 && point.x < item.width && point.y < item.height) return item.slotKey
         }
-        const point = mergeDropArea.mapFromItem(manager, x, y)
-        return ruleDialog.operation === "merge" && point.x >= 0 && point.y >= 0 && point.x < mergeDropArea.width && point.y < mergeDropArea.height ? "merge" : ""
+        return ""
     }
     function browseRuleSource(): void {
         let row = -1
@@ -215,7 +229,97 @@ Pane {
                 MouseArea { anchors.fill: parent; onClicked: manager.activateRuleInput(inputSlot.slotKey) }
             }
             Button { objectName: "chooseRuleInput_" + inputSlot.slotKey; text: "从信号树选择"; enabled: !manager.blocked; onClicked: manager.activateRuleInput(inputSlot.slotKey) }
-            Button { text: inputSlot.slotKey.startsWith("merge:") ? "移除" : "解除"; enabled: !manager.blocked && manager.ruleInputValue(inputSlot.slotKey).length > 0; onClicked: manager.clearRuleInput(inputSlot.slotKey) }
+            Button { text: inputSlot.slotKey.includes("merge:") ? "移除" : "解除"; enabled: !manager.blocked && manager.ruleInputValue(inputSlot.slotKey).length > 0; onClicked: manager.clearRuleInput(inputSlot.slotKey) }
+        }
+    }
+    component RuleOutputCard: Frame {
+        id: outputEntry
+        required property int index
+        required property string outputId
+        required property string name
+        required property int fromBit
+        required property int widthBit
+        required property bool signedValue
+        required property string formula
+        required property string mergeSources
+        Layout.fillWidth: true
+        background: Rectangle {
+            color: manager.palette.base; radius: 4
+            border.width: ruleDialog.operation === "merge" && ruleDialog.mergeOutputIndex === outputEntry.index ? 2 : 1
+            border.color: ruleDialog.operation === "merge" && ruleDialog.mergeOutputIndex === outputEntry.index ? manager.palette.highlight : manager.palette.mid
+        }
+        function inputAt(x: real, y: real): string {
+            for(let i=0;i<cardInputs.count;++i) {
+                const item=cardInputs.itemAt(i) as RuleInputSlot
+                if(!item) continue
+                const point=item.mapFromItem(manager,x,y)
+                if(point.x>=0 && point.y>=0 && point.x<item.width && point.y<item.height) return item.slotKey
+            }
+            const point=cardDrop.mapFromItem(manager,x,y)
+            return point.x>=0 && point.y>=0 && point.x<cardDrop.width && point.y<cardDrop.height ? "output:"+index+":merge" : ""
+        }
+        contentItem: ColumnLayout {
+            RowLayout {
+                Label { text: String(outputEntry.index+1) }
+                TextField { text: outputEntry.name; placeholderText: "输出名称（留空自动）"; Layout.fillWidth: true; maximumLength: 256; onTextEdited: outputRows.setProperty(outputEntry.index,"name",text) }
+                Button { text: "×"; enabled: outputRows.count>1; onClicked: { outputRows.remove(outputEntry.index); if(ruleDialog.operation === "merge") manager.selectMergeOutput(Math.min(ruleDialog.mergeOutputIndex,outputRows.count-1)) } }
+            }
+            ColumnLayout {
+                visible: ruleDialog.operation === "merge"
+                Layout.fillWidth: true
+                Repeater {
+                    id: cardInputs
+                    model: JSON.parse(outputEntry.mergeSources)
+                    delegate: RuleInputSlot {
+                        required property int index
+                        slotKey: "output:"+outputEntry.index+":merge:"+index
+                        label: "输入 "+(index+1)
+                    }
+                }
+                Frame {
+                    id: cardDrop
+                    objectName: "ruleMergeDropArea_"+outputEntry.index
+                    Layout.fillWidth: true
+                    background: Rectangle {
+                        color: manager.palette.base; radius: 4
+                        border.width: manager.dropRuleInput === "output:"+outputEntry.index+":merge" ? 2 : 1
+                        border.color: manager.dropRuleInput === "output:"+outputEntry.index+":merge" ? manager.dropRuleAllowed ? manager.palette.highlight : "#df4652" : manager.palette.mid
+                    }
+                    contentItem: RowLayout {
+                        Label { text: "拖入信号添加输入"; Layout.fillWidth: true }
+                        Button { text: "从信号树添加"; enabled: !manager.blocked; onClicked: manager.activateRuleInput("output:"+outputEntry.index+":merge") }
+                    }
+                    TapHandler { onTapped: manager.activateRuleInput("output:"+outputEntry.index+":merge") }
+                }
+            }
+            RowLayout {
+                visible: ruleDialog.operation === "bitfield"
+                Label { text: "起始 bit" }
+                SpinBox { from: 0; to: 31; value: outputEntry.fromBit; editable: true; onValueModified: outputRows.setProperty(outputEntry.index,"fromBit",value) }
+                Label { text: "位数" }
+                SpinBox { from: 1; to: 32-outputEntry.fromBit; value: outputEntry.widthBit; editable: true; onValueModified: outputRows.setProperty(outputEntry.index,"widthBit",value) }
+            }
+            CheckBox { visible: ruleDialog.operation === "bitfield"; text: "按二补码有符号解释"; checked: outputEntry.signedValue; onToggled: outputRows.setProperty(outputEntry.index,"signedValue",checked) }
+            Label { text: "表达式"; visible: ruleDialog.operation === "expression" }
+            TextArea {
+                id: formulaEditor
+                objectName: "ruleOutputFormula"+outputEntry.index
+                visible: ruleDialog.operation === "expression"
+                text: outputEntry.formula
+                placeholderText: "例如 x * 0.1 + 2"
+                Layout.fillWidth: true
+                Layout.preferredHeight: 80
+                padding: 10
+                selectByMouse: true
+                wrapMode: TextEdit.Wrap
+                background: Rectangle {
+                    color: manager.palette.base
+                    radius: 3
+                    border.color: formulaEditor.activeFocus ? manager.palette.highlight : manager.palette.mid
+                    border.width: formulaEditor.activeFocus ? 2 : 1
+                }
+                onTextChanged: { if(activeFocus) outputRows.setProperty(outputEntry.index,"formula",text) }
+            }
         }
     }
     readonly property var selectedField: {
@@ -330,7 +434,20 @@ Pane {
         open()
     }
     ListModel { id: outputRows; objectName: "processingOutputRows" }
-    function addOutput(): void { outputRows.append({outputId:"",name:"",fromBit:0,widthBit:1,signedValue:false,formula:"x"}) }
+    function addOutput(): void {
+        outputRows.append({outputId:"",name:"",fromBit:0,widthBit:1,signedValue:false,formula:"x",mergeSources:"[]"})
+        if(ruleDialog.operation === "merge" && !ruleDialog.initializing) selectMergeOutput(outputRows.count-1)
+    }
+    function selectMergeOutput(index: int): void {
+        if(index<0 || index>=outputRows.count) return
+        ruleDialog.mergeOutputIndex=index
+        ruleDialog.mergeInputs=JSON.parse(outputRows.get(index).mergeSources || "[]")
+        selectedRuleInput="merge"
+    }
+    function saveMergeInputs(): void {
+        if(ruleDialog.operation === "merge" && !ruleDialog.initializing && ruleDialog.mergeOutputIndex>=0 && ruleDialog.mergeOutputIndex<outputRows.count)
+            outputRows.setProperty(ruleDialog.mergeOutputIndex,"mergeSources",JSON.stringify(ruleDialog.mergeInputs))
+    }
     function editRule(rule: var): void {
         ruleDialog.initializing = true
         ruleDialog.sourcesChanged = false
@@ -341,8 +458,8 @@ Pane {
         operationCombo.currentIndex = 0
         if (rule) for (let i = 0; i < operationCombo.model.length; ++i) if (operationCombo.model[i].id === (rule.operation === "bits" ? "bitfield" : rule.operation)) operationCombo.currentIndex = i
         outputRows.clear()
-        if(rule && (rule.operation === "bitfield" || rule.operation === "bits" || rule.operation === "expression"))
-            for(const output of rule.outputs) outputRows.append({outputId:output.id,name:output.name,fromBit:output.startBit,widthBit:output.bitCount,signedValue:output.signedField,formula:output.expression.length>0 ? output.expression : "x"})
+        if(rule && (rule.operation === "bitfield" || rule.operation === "bits" || rule.operation === "expression" || rule.operation === "merge"))
+            for(const output of rule.outputs) outputRows.append({outputId:output.id,name:output.name,fromBit:output.startBit,widthBit:output.bitCount,signedValue:output.signedField,formula:output.expression.length>0 ? output.expression : "x",mergeSources:JSON.stringify(output.inputs || [])})
         else addOutput()
         automaticWord.checked=rule ? rule.autoWordBits : true
         byteOrder.currentIndex=rule && rule.byteOrder === "big" ? 1 : 0
@@ -360,9 +477,26 @@ Pane {
         counterModulus.text = rule ? String(rule.counterModulus) : "0"
         counterRate.text = rule ? String(rule.counterRate) : "1"
         counterTolerance.text = rule ? String(rule.counterTolerance) : "0"
+        ruleDialog.mergeOutputIndex=0
+        if(ruleDialog.operation === "merge") ruleDialog.mergeInputs=JSON.parse(outputRows.get(0).mergeSources || "[]")
         ruleDialog.initializing = false
         if (samplePeriod.text.length === 0) ruleDialog.estimatePeriod()
         ruleDialog.errorText = ""; ruleDialog.open()
+    }
+    function displayNumber(value): string { return Number.isFinite(Number(value)) ? String(Number(Number(value).toPrecision(6))) : "—" }
+    function operationTitle(operation): string { return ({bits:"位提取",bitfield:"位提取",expression:"自定义公式",scale:"比例换算",magnitude:"三轴模长",merge:"时间合并",packetloss:"丢包检测"})[operation] || operation }
+    function ruleSummary(rule): string {
+        if(rule.operation === "packetloss") {
+            const metric=rule.rateMode === "window" ? "窗口丢包率 · " + displayNumber(rule.rateWindowSeconds) + " s" : rule.rateMode === "count" ? "累计丢包数" : "累计丢包率"
+            const period=rule.samplePeriod>0 ? rule.samplePeriod : rule.effectiveSamplePeriod
+            const source=rule.lossMode === "time" ? (period>0 ? "周期 " + displayNumber(period) + " s" : "周期待设置") : "Y 计数 · " + ({sequence:"逐帧",stride:"固定抽样",rate:"时间与频率"})[rule.lossMode]
+            return source + "   ·   " + metric
+        }
+        if(rule.operation === "bits" || rule.operation === "bitfield") return (rule.autoWordBits ? "自动字宽 " + (rule.effectiveWordBits || "待计算") : rule.wordBits) + " 位 · " + rule.outputs.length + " 条输出 · " + (rule.byteOrder === "big" ? "大端" : "小端")
+        if(rule.operation === "expression") return rule.outputs.length + " 条公式输出"
+        if(rule.operation === "scale") return "x × " + displayNumber(rule.factor) + " + " + displayNumber(rule.bias)
+        if(rule.operation === "merge") return "按时间合并 · " + rule.outputs.length + " 条输出"
+        return "三轴模长"
     }
     contentItem: ColumnLayout {
         visible: !ruleDialog.editing
@@ -384,7 +518,7 @@ Pane {
             Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.fillHeight: true
             ScrollView {
                 visible: manager.processingMode || !manager.sidebarNavigation
-                Layout.preferredWidth: 180; Layout.fillHeight: true
+                Layout.preferredWidth: 160; Layout.fillHeight: true
                 ListView {
                     id: objectList
                     objectName: "objectList"
@@ -410,6 +544,8 @@ Pane {
                 Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.fillHeight: true
                 RowLayout {
                     Label { text: manager.selected ? manager.selected.name : manager.processingMode ? "先新建或选择处理配置" : "先新建或选择一个对象"; font.bold: true; Layout.fillWidth: true }
+                    Button { text: "+ 新增规则"; objectName: "addObjectRuleButton"; visible: manager.processingMode; implicitHeight: 30; enabled: !!manager.selected && manager.appController.signalCount>0 && !manager.blocked; onClicked: manager.editRule(null) }
+
                     ObjectCombo {
                         objectName: "objectTypeSelector"
                         visible: !manager.processingMode
@@ -492,7 +628,6 @@ Pane {
                         }
                     }
                     ColumnLayout {
-                        Button { text: "新增派生规则…"; objectName: "addObjectRuleButton"; enabled: !!manager.selected && manager.appController.signalCount > 0 && !manager.blocked; onClicked: manager.editRule(null) }
                         RowLayout {
                             Layout.fillWidth: true
                             TextField { id: ruleSearch; objectName: "ruleSearch"; placeholderText: "搜索规则或来源…"; Layout.fillWidth: true; Layout.minimumWidth: 0; onTextChanged: manager.rulePage = 0 }
@@ -510,9 +645,9 @@ Pane {
                                         : "成功 " + (rules.length - failed) + " · 失败 " + failed + " · 警告 " + warnings + " · 匹配 " + manager.matchingRules.length
                                 }
                             }
-                            Button { objectName: "rulesPreviousPage"; text: "上一页"; enabled: manager.rulePage > 0; onClicked: --manager.rulePage }
-                            Label { text: (manager.rulePage + 1) + " / " + Math.max(1, Math.ceil(manager.matchingRules.length / manager.rulePageSize)) }
-                            Button { objectName: "rulesNextPage"; text: "下一页"; enabled: (manager.rulePage + 1) * manager.rulePageSize < manager.matchingRules.length; onClicked: ++manager.rulePage }
+                            Button { visible: manager.matchingRules.length>manager.rulePageSize; implicitHeight: 28; objectName: "rulesPreviousPage"; text: "上一页"; enabled: manager.rulePage > 0; onClicked: --manager.rulePage }
+                            Label { visible: manager.matchingRules.length>manager.rulePageSize; text: (manager.rulePage + 1) + " / " + Math.max(1, Math.ceil(manager.matchingRules.length / manager.rulePageSize)) }
+                            Button { visible: manager.matchingRules.length>manager.rulePageSize; implicitHeight: 28; objectName: "rulesNextPage"; text: "下一页"; enabled: (manager.rulePage + 1) * manager.rulePageSize < manager.matchingRules.length; onClicked: ++manager.rulePage }
                         }
                         RowLayout {
                             visible: !manager.timePlot
@@ -532,44 +667,41 @@ Pane {
                             ListView {
                                 model: manager.pageRules
                                 clip: true; spacing: 10
-                                delegate: ColumnLayout {
+                                delegate: Frame {
                                     id: ruleRow
                                     required property var modelData
                                     width: ListView.view.width
-                                    RowLayout {
-                                        Label { text: ruleRow.modelData.name + " · " + ruleRow.modelData.operation; Layout.fillWidth: true; Layout.minimumWidth: 0; font.bold: true; elide: Text.ElideRight }
-                                        Button { text: "编辑…"; enabled: !manager.blocked; onClicked: manager.editRule(ruleRow.modelData) }
-                                        Button { text: "删除规则…"; enabled: !manager.blocked; onClicked: { deleteRuleDialog.ruleId = ruleRow.modelData.id; deleteRuleDialog.ruleName = ruleRow.modelData.name; deleteRuleDialog.open() } }
-                                    }
-                                    Label { text: "输入：" + ruleRow.modelData.sources; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideMiddle }
-                                    Label {
-                                        text: ruleRow.modelData.operation === "expression" ? ruleRow.modelData.outputs.length + " 条公式输出"
-                                            : ruleRow.modelData.operation === "scale" ? "换算：x × " + ruleRow.modelData.factor + " + " + ruleRow.modelData.bias
-                                            : ruleRow.modelData.operation === "bits" || ruleRow.modelData.operation === "bitfield"
-                                                ? (ruleRow.modelData.autoWordBits ? "自动字宽 " + (ruleRow.modelData.effectiveWordBits || "待计算") : ruleRow.modelData.wordBits) + " 位 · " + ruleRow.modelData.outputs.length + " 条输出 · " + (ruleRow.modelData.byteOrder === "big" ? "大端" : "小端") : ruleRow.modelData.operation === "merge" ? "按时间合并同源采样点" : ruleRow.modelData.operation === "packetloss" ? (ruleRow.modelData.lossMode !== "time" ? "Y 计数 · " + ({sequence: "逐帧", stride: "固定抽样", rate: "按时间与频率"})[ruleRow.modelData.lossMode] + (ruleRow.modelData.lossMode !== "rate" ? " · 重复采样 " + ruleRow.modelData.duplicateSamples : "") : "采样周期：" + (ruleRow.modelData.samplePeriod > 0 ? ruleRow.modelData.samplePeriod + " 秒" : ruleRow.modelData.effectiveSamplePeriod > 0 ? ruleRow.modelData.effectiveSamplePeriod + " 秒" : "未能估算，请编辑输入")) : "三轴模长"
-                                        Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
-                                    }
-                                    Label {
-                                        visible: ruleRow.modelData.operation === "packetloss"
-                                        text: ruleRow.modelData.rateMode === "window" ? "窗口丢包率(%) · " + ruleRow.modelData.rateWindowSeconds + " 秒" : ruleRow.modelData.rateMode === "count" ? "累计丢包数" : "累计丢包率(%)"
-                                        Layout.fillWidth: true; wrapMode: Text.WordWrap
-                                    }
-                                    Label { text: ruleRow.modelData.error; visible: text.length > 0; color: "#df4652"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
-                                    Repeater {
-                                        model: ruleRow.modelData.outputs
-                                        delegate: RowLayout {
-                                            id: outputRow
-                                            required property var modelData
-                                            Layout.fillWidth: true
-                                            CheckBox {
-                                                text: outputRow.modelData.name
+                                    padding: 10
+                                    background: Rectangle { color: manager.palette.base; radius: 5; border.color: manager.darkTheme ? "#3a444f" : "#dce3eb" }
+                                    contentItem: ColumnLayout {
+                                        spacing: 4
+                                        RowLayout {
+                                            Label { text: ruleRow.modelData.name; font.bold: true; Layout.fillWidth: true; Layout.minimumWidth: 0; elide: Text.ElideMiddle; HoverHandler { id: ruleNameHover } ToolTip.visible: ruleNameHover.hovered; ToolTip.text: text }
+                                            Label { text: manager.operationTitle(ruleRow.modelData.operation); color: manager.palette.placeholderText; font.pixelSize: 12 }
+                                            Label { text: ruleRow.modelData.state === "pending" ? "计算中" : ruleRow.modelData.warning ? "警告" : ruleRow.modelData.state === "failed" ? "失败" : "成功"; color: ruleRow.modelData.state === "failed" ? "#df4652" : ruleRow.modelData.warning ? "#a86b16" : "#278451"; font.pixelSize: 12 }
+                                            ToolButton { text: "编辑"; implicitHeight: 28; enabled: !manager.blocked; onClicked: manager.editRule(ruleRow.modelData) }
+                                            ToolButton { text: "删除"; implicitHeight: 28; enabled: !manager.blocked; onClicked: { deleteRuleDialog.ruleId=ruleRow.modelData.id; deleteRuleDialog.ruleName=ruleRow.modelData.name; deleteRuleDialog.open() } }
+                                        }
+                                        Label { text: "来源：" + ruleRow.modelData.sources; color: manager.palette.placeholderText; font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideMiddle; HoverHandler { id: sourceHover } ToolTip.visible: sourceHover.hovered; ToolTip.text: text }
+                                        Label { text: manager.ruleSummary(ruleRow.modelData); font.pixelSize: 12; Layout.fillWidth: true; elide: Text.ElideRight }
+                                        Label { text: ruleRow.modelData.error; visible: text.length>0; color: ruleRow.modelData.warning ? "#a86b16" : "#df4652"; Layout.fillWidth: true; maximumLineCount: 2; wrapMode: Text.WordWrap; elide: Text.ElideRight; HoverHandler { id: errorHover } ToolTip.visible: errorHover.hovered; ToolTip.text: text }
+                                        Repeater {
+                                            model: ruleRow.modelData.outputs
+                                            delegate: RowLayout {
+                                                id: outputRow
+                                                required property var modelData
                                                 Layout.fillWidth: true
-                                                checked: { const revision = manager.appController.plotStateRevision; return manager.timePlot && manager.appController.plotSignalEnabled(manager.appController.activePlotIndex, outputRow.modelData.series) }
-                                                enabled: !manager.blocked && !manager.appController.deriving && manager.timePlot
-                                                onClicked: manager.appController.toggleSignal(outputRow.modelData.series)
+                                                Label {
+                                                    text: outputRow.modelData.name
+                                                    Layout.fillWidth: true; Layout.minimumWidth: 0
+                                                    elide: Text.ElideMiddle; color: manager.textColor
+                                                    HoverHandler { id: outputHover }
+                                                    ToolTip.visible: outputHover.hovered
+                                                    ToolTip.text: text
+                                                }
+                                                ToolButton { text: "预览"; implicitHeight: 28; HoverHandler { id: previewHover } ToolTip.visible: previewHover.hovered; ToolTip.text: outputRow.modelData.preview || "暂无有效采样" }
+                                                ToolButton { text: "改名"; implicitHeight: 28; enabled: !manager.blocked; onClicked: { outputNameDialog.series=outputRow.modelData.series; outputNameField.text=outputRow.modelData.name; outputNameDialog.open() } }
                                             }
-                                            Button { text: "改名"; enabled: !manager.blocked; onClicked: { outputNameDialog.series = outputRow.modelData.series; outputNameField.text = outputRow.modelData.name; outputNameDialog.open() } }
-                                            Label { text: outputRow.modelData.preview; Layout.preferredWidth: 170; elide: Text.ElideRight }
                                         }
                                     }
                                 }
@@ -646,9 +778,11 @@ Pane {
             const value = manager.appController.estimateObjectSamplePeriod(manager.selectedId, inputXId)
             samplePeriod.text = value > 0 ? String(value) : ""
         }
+        property int mergeOutputIndex: 0
         property var mergeInputs: []
+        onMergeInputsChanged: manager.saveMergeInputs()
         readonly property string operation: String(operationCombo.currentValue)
-        onOperationChanged: { manager.selectedRuleInput = operation === "merge" ? "merge" : "x"; estimatePeriod() }
+        onOperationChanged: { manager.selectedRuleInput = operation === "merge" ? "merge" : "x"; if(operation === "merge" && !initializing) manager.selectMergeOutput(0); estimatePeriod() }
         readonly property var inputOptions: {
             const selection = manager.selected
             return editing && selection ? manager.appController.processingRuleInputs(selection.id, ruleId) : []
@@ -710,7 +844,8 @@ Pane {
                 }
             }
             Label {
-                text: manager.multipleRuleInputs ? "输入变量（原始信号或此前处理结果）" : ruleDialog.operation === "merge" ? "合并输入" : "输入 X（原始信号或此前处理结果）"
+                visible: ruleDialog.operation !== "merge"
+                text: manager.multipleRuleInputs ? "输入变量（原始信号或此前处理结果）" : ruleDialog.operation === "merge" ? "合并输入 · 输出 " + (ruleDialog.mergeOutputIndex+1) : "输入 X（原始信号或此前处理结果）"
                 font.bold: true
             }
             Repeater {
@@ -727,35 +862,6 @@ Pane {
                 text: "点击对应输入选择来源，或将左侧信号直接拖入该输入；树中勾选表示当前正在绑定的变量。"
                 Layout.fillWidth: true; wrapMode: Text.WordWrap
             }
-            Repeater {
-                id: mergeSlots
-                model: ruleDialog.operation === "merge" ? ruleDialog.mergeInputs : []
-                delegate: RuleInputSlot {
-                    required property int index
-                    slotKey: "merge:" + index
-                    label: "输入 " + (index + 1)
-                }
-            }
-            Frame {
-                id: mergeDropArea
-                objectName: "ruleMergeDropArea"
-                visible: ruleDialog.operation === "merge"
-                Layout.fillWidth: true
-                background: Rectangle {
-                    color: manager.palette.base; radius: 4
-                    border.width: manager.dropRuleInput === "merge" ? 2 : 1
-                    border.color: manager.dropRuleInput === "merge" ? manager.dropRuleAllowed ? manager.palette.highlight : "#df4652" : manager.palette.mid
-                }
-                contentItem: RowLayout {
-                    Label { text: "从左侧勾选多个信号，或拖入此处添加输入"; Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap }
-                    Button { text: "从信号树添加"; enabled: !manager.blocked; onClicked: manager.activateRuleInput("merge") }
-                }
-            }
-            Label {
-                visible: ruleDialog.operation === "merge"
-                text: "至少两个同源输入；拖入已有输入可替换，移除或取消树中勾选可删除。按含偏移的时间排序，不插值；同时间同值去重，不同有效值报错。"
-                Layout.fillWidth: true; Layout.minimumWidth: 0; wrapMode: Text.WordWrap
-            }
             RowLayout {
                 visible: ruleDialog.operation === "bitfield"
                 CheckBox { id: automaticWord; objectName: "automaticWordBits"; text: "自动字宽"; checked: true }
@@ -764,62 +870,18 @@ Pane {
             ObjectCombo { id: byteOrder; objectName: "bitByteOrder"; Layout.fillWidth: true; visible: ruleDialog.operation === "bitfield"; model: ["小端（bit0 为最低有效位）","大端（先按字宽交换字节）"] }
             Label { text: "字宽自动按有效整数和提取范围选择 8/16/32 位；不代表源文件的真实存储类型。小端直接按数值取位，大端按所选字宽交换字节后取位。"; visible: ruleDialog.operation === "bitfield"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             ColumnLayout {
-                visible: ruleDialog.operation === "bitfield" || ruleDialog.operation === "expression"
+                visible: ruleDialog.operation === "bitfield" || ruleDialog.operation === "expression" || ruleDialog.operation === "merge"
                 Layout.fillWidth: true
                 RowLayout {
                     Label { text: "输出列表"; font.bold: true; Layout.fillWidth: true }
                     Button { objectName: "addProcessingOutput"; text: "+ 添加输出"; enabled: outputRows.count<32; onClicked: manager.addOutput() }
                 }
                 Repeater {
+                    id: outputEntries
                     model: outputRows
-                    delegate: Frame {
-                        id: outputEntry
-                        required property int index
-                        required property string outputId
-                        required property string name
-                        required property int fromBit
-                        required property int widthBit
-                        required property bool signedValue
-                        required property string formula
-                        Layout.fillWidth: true
-                        contentItem: ColumnLayout {
-                            RowLayout {
-                                Label { text: String(outputEntry.index+1) }
-                                TextField { text: outputEntry.name; placeholderText: "输出名称（留空自动）"; Layout.fillWidth: true; maximumLength: 256; onTextEdited: outputRows.setProperty(outputEntry.index,"name",text) }
-                                Button { text: "×"; enabled: outputRows.count>1; onClicked: outputRows.remove(outputEntry.index) }
-                            }
-                            RowLayout {
-                                visible: ruleDialog.operation === "bitfield"
-                                Label { text: "起始 bit" }
-                                SpinBox { from: 0; to: 31; value: outputEntry.fromBit; editable: true; onValueModified: outputRows.setProperty(outputEntry.index,"fromBit",value) }
-                                Label { text: "位数" }
-                                SpinBox { from: 1; to: 32-outputEntry.fromBit; value: outputEntry.widthBit; editable: true; onValueModified: outputRows.setProperty(outputEntry.index,"widthBit",value) }
-                            }
-                            CheckBox { visible: ruleDialog.operation === "bitfield"; text: "按二补码有符号解释"; checked: outputEntry.signedValue; onToggled: outputRows.setProperty(outputEntry.index,"signedValue",checked) }
-                            Label { text: "表达式"; visible: ruleDialog.operation === "expression" }
-                            TextArea {
-                                id: formulaEditor
-                                objectName: "ruleOutputFormula"+outputEntry.index
-                                visible: ruleDialog.operation === "expression"
-                                text: outputEntry.formula
-                                placeholderText: "例如 x * 0.1 + 2"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 80
-                                padding: 10
-                                selectByMouse: true
-                                wrapMode: TextEdit.Wrap
-                                background: Rectangle {
-                                    color: manager.palette.base
-                                    radius: 3
-                                    border.color: formulaEditor.activeFocus ? manager.palette.highlight : manager.palette.mid
-                                    border.width: formulaEditor.activeFocus ? 2 : 1
-                                }
-                                onTextChanged: { if(activeFocus) outputRows.setProperty(outputEntry.index,"formula",text) }
-                            }
-                        }
-                    }
+                    delegate: RuleOutputCard {}
                 }
-                Label { text: ruleDialog.operation === "bitfield" ? "b0～b3：起始 0，位数 4；单独 b1：起始 1，位数 1。" : "各输出共用已绑定的 x/y/z，分别填写表达式；同条规则的输出不能相互引用。"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+                Label { text: ruleDialog.operation === "bitfield" ? "b0～b3：起始 0，位数 4；单独 b1：起始 1，位数 1。" : ruleDialog.operation === "merge" ? "每个输出独立添加至少两个输入，可直接拖入；同时间同值去重，不同有效值报错。" : "各输出共用已绑定的 x/y/z，分别填写表达式；同条规则的输出不能相互引用。"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             }
             RowLayout {
                 visible: ruleDialog.operation === "scale"
@@ -926,8 +988,15 @@ Pane {
             if (operation !== "merge" && inputXId.length === 0) { errorText = "请绑定输入 X"; return }
             if (operation === "magnitude" && (inputYId.length === 0 || inputZId.length === 0)) { errorText = "三轴模长需要绑定 X、Y、Z 三个输入"; return }
             if (operation === "expression" && inputZId.length > 0 && inputYId.length === 0) { errorText = "已绑定 Z，请先绑定 Y，或解除 Z；输入必须按 X、Y、Z 连续绑定"; return }
-            if (operation === "merge" && mergeInputs.length < 2) { errorText = "合并至少需要两个输入"; return }
-            const inputs = operation === "merge" ? mergeInputs.slice() : [inputXId]
+            const inputs = operation === "merge" ? [] : [inputXId]
+            if(operation === "merge") {
+                manager.saveMergeInputs()
+                for(let i=0;i<outputRows.count;++i) {
+                    const group=JSON.parse(outputRows.get(i).mergeSources)
+                    if(group.length<2) { errorText="输出 " + (i+1) + " 至少需要两个输入"; return }
+                    for(const id of group) if(inputs.indexOf(id)<0) inputs.push(id)
+                }
+            }
             if (manager.multipleRuleInputs) {
                 if (inputYId.length > 0) inputs.push(inputYId)
                 if (inputZId.length > 0) inputs.push(inputZId)
@@ -941,11 +1010,11 @@ Pane {
             const config = {rateMode: ["count", "cumulative", "window"][rateMode.currentIndex], rateWindowSeconds: isFinite(Number(rateWindow.text)) && Number(rateWindow.text) > 0 ? Number(rateWindow.text) : 1, lossMode: ["time", "sequence", "stride", "rate"][lossMode.currentIndex], counterStep: Number(counterStep.text), expectedStride: Number(expectedStride.text), counterModulus: Number(counterModulus.text), counterRate: Number(counterRate.text), counterTolerance: Number(counterTolerance.text), samplePeriod: operation === "packetloss" && lossMode.currentIndex === 0 ? Number(samplePeriod.text) : 0, name: ruleName.text, operation: operation, inputs: inputs, wordBits: Number(wordWidth.currentText), startBit: 0, bitCount: 1, signedField: false, factor: Number(factor.text), bias: Number(bias.text), expression: outputRows.count>0 ? outputRows.get(0).formula : "x"}
             config.autoWordBits=automaticWord.checked
             config.byteOrder=byteOrder.currentIndex === 1 ? "big" : "little"
-            if(operation === "bitfield" || operation === "expression") {
+            if(operation === "bitfield" || operation === "expression" || operation === "merge") {
                 config.outputs=[]
                 for(let i=0;i<outputRows.count;++i) {
                     const output=outputRows.get(i)
-                    config.outputs.push({id:output.outputId,name:output.name,startBit:output.fromBit,bitCount:output.widthBit,signedField:output.signedValue,expression:output.formula})
+                    config.outputs.push({id:output.outputId,name:output.name,startBit:output.fromBit,bitCount:output.widthBit,signedField:output.signedValue,expression:output.formula,inputs:operation === "merge" ? JSON.parse(output.mergeSources) : []})
                 }
             }
             submitting = true

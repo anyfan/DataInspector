@@ -4,7 +4,7 @@
 
 ## 使用与支持范围
 
-“会话 → 保存会话…”（Ctrl+S）保存 `.disession`；“恢复会话…”（Ctrl+Shift+O）打开已有会话。文件为 JSON，不复制原始数据。当前只支持 `format = "DataInspectorSession"`、`version = 21`；旧版本及未来版本明确拒绝读取，不执行迁移。已有旧文件保持原样。
+“会话 → 保存会话…”（Ctrl+S）保存 `.disession`；“恢复会话…”（Ctrl+Shift+O）打开已有会话。文件为 JSON，不复制原始数据。当前只支持 `format = "DataInspectorSession"`、`version = 22`；旧版本及未来版本明确拒绝读取，不执行迁移。已有旧文件保持原样。
 
 ## 保存内容与校验
 
@@ -39,4 +39,4 @@ camera 保存方位角、俯仰角、缩放与屏幕平移；rotation 为空时�
 
 模板独立格式 v5：顶层仅包含 `format = "DataInspectorViewTemplate"`、`version = 5`、`signals`、`view`。`signals` 只保存被视图引用的来源编号、文件名提示、表/原始信号名称、显示样式及枚举定义；`view` 仅保存布局、子图和 X 范围。不保存来源完整路径、偏移、对象定义或绝对游标位置，航迹对象关联转换为直接来源绑定。仅接受 v5，旧 v1/v2/v3/v4 模板会拒绝读取。结构和全部引用严格校验，失败不改变当前视图；文件上限 16 MiB，使用 QSaveFile 原子保存。
 
-会话 v21 的处理规则必填 autoWordBits（布尔）及 byteOrder（little/big）。每个输出除了 id/name/series，还必填 startBit/bitCount/signedField/expression。位提取和公式允许 1–32 输出，bitCount=0 或 expression 为空时继承规则的公共标量缺省值；界面输出列表保存显式参数。有效字宽是来源派生缓存，恢复后重新计算；模板仍为 v5，不包含处理规则定义。
+会话 v22 的处理规则必填 autoWordBits（布尔）及 byteOrder（little/big）。每个输出除了 id/name/series，还必填 startBit/bitCount/signedField/expression/inputs。inputs 为合并输出的独立输入组，其他操作保存空数组。位提取和公式允许 1–32 输出，bitCount=0 或 expression 为空时继承规则的公共标量缺省值；界面输出列表保存显式参数。有效字宽是来源派生缓存，恢复后重新计算；模板仍为 v5，不包含处理规则定义。

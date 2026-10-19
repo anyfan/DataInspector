@@ -755,6 +755,7 @@ ApplicationWindow {
             appController: window.appController
             objectEditor: objectManager
             processingEditor: processingManager
+            trajectoryEditor: trajectoryProperties
             propertiesEditor: propertiesPane
             panelColor: window.panelColor
             borderColor: window.borderColor
@@ -815,6 +816,8 @@ ApplicationWindow {
                         plotIndex: index
                         visible: window.imageCaptureAll || !window.subplotMaximized || index === window.appController.activePlotIndex
                         controller: window.appController
+                        trajectoryEditor: trajectoryProperties
+                        onTrajectoryConfigurationRequested: propertiesPane.close()
                         onEditObjectRequested: objectId => { if (objectId.length > 0) objectManager.selectedId = objectId; objectManager.open() }
                         sharedAxisLeft: plotPanel.sharedAxisLeft
                         onMeasuredAxisLeftChanged: plotPanel.updateSharedAxisLeft()
@@ -885,6 +888,7 @@ ApplicationWindow {
         }
         SignalPropertiesPane {
             id: propertiesPane
+            onVisibleChanged: if (visible) trajectoryProperties.close()
             controller: window.appController
             darkTheme: window.darkTheme
             SplitView.preferredWidth: 320
@@ -893,5 +897,15 @@ ApplicationWindow {
             onChooseStateSource: plot => { window.signalTreeVisible=true; signalBrowser.statePickTarget=plot; signalBrowser.showSection(0) }
             onExtractBits: row => { signalBrowser.showSection(1); processingManager.startBitExtraction(row) }
         }
+        TrajectoryPropertiesPane {
+            id: trajectoryProperties
+            controller: window.appController
+            darkTheme: window.darkTheme
+            SplitView.preferredWidth: 320
+            SplitView.minimumWidth: 260
+            SplitView.maximumWidth: Math.max(260,window.width-560)
+            onEditObjectRequested: objectId => { if(objectId.length>0) objectManager.selectedId=objectId; objectManager.open() }
+        }
+
     }
 }

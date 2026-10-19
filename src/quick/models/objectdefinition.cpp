@@ -207,8 +207,17 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
                     || !std::isfinite(rule.counterTolerance) || rule.counterTolerance < 0 || rule.counterTolerance > 4294967296.0)
                     return fail(QStringLiteral("计数检测模式、步长、抽样间隔、回绕模数、频率或容差无效"));
             } else if (rule.operation == "merge") {
-                if (rule.inputs.size() < 2 || QSet<QString>(rule.inputs.begin(), rule.inputs.end()).size() != rule.inputs.size())
-                    return fail(QStringLiteral("时间合并需要至少两个不同输入"));
+                count=rule.outputs.size();
+                QSet<QString> all;
+                if(QSet<QString>(rule.inputs.begin(),rule.inputs.end()).size()!=rule.inputs.size()) return fail(QStringLiteral("合并规则输入重复"));
+                for(const auto &output:rule.outputs) {
+                    if(count>1 && output.inputs.isEmpty()) return fail(QStringLiteral("每条合并输出须独立配置输入"));
+                    const auto &group=mergeOutputInputs(rule,output);
+                    const QSet<QString> unique(group.begin(),group.end());
+                    if(group.size()<2 || group.size()>256 || unique.size()!=group.size()) return fail(QStringLiteral("每条时间合并输出需要 2–256 个不同输入"));
+                    for(const auto &id:group) { if(!rule.inputs.contains(id)) return fail(QStringLiteral("合并输出来源不在规则输入中")); all.insert(id); }
+                }
+                if(all!=QSet<QString>(rule.inputs.begin(),rule.inputs.end())) return fail(QStringLiteral("合并规则输入须与全部输出来源一致"));
             } else if (rule.operation == "magnitude") {
                 if (rule.inputs.size() != 3) return fail(QStringLiteral("三轴模长需要三个输入"));
             } else if (rule.operation == "expression") {
@@ -220,6 +229,7 @@ bool validateObjects(const QVector<DataObject> &objects, int signalCount, QStrin
             } else return fail(QStringLiteral("不支持的派生算子"));
             if (count<1 || count>32 || rule.outputs.size() != count) return fail(QStringLiteral("派生输出数量无效"));
             for (const auto &output : rule.outputs) {
+                if(rule.operation!="merge" && !output.inputs.isEmpty()) return fail(QStringLiteral("仅合并输出可定义独立输入"));
                 if (!identity(output.id) || !nameValid(output.name) || output.series < 0 || output.series >= signalCount
                     || outputSeries.contains(output.series)) return fail(QStringLiteral("派生输出身份无效"));
                 outputSeries.insert(output.series); available.insert(output.id);
@@ -235,7 +245,7 @@ namespace {
 QJsonObject calculationKey(const ObjectRule &rule)
 {
     QJsonArray outputs;
-    for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"series", output.series}, {"startBit",output.startBit},{"bitCount",output.bitCount},{"signedField",output.signedField},{"expression",output.expression}});
+    for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"series", output.series}, {"startBit",output.startBit},{"bitCount",output.bitCount},{"signedField",output.signedField},{"expression",output.expression},{"inputs",QJsonArray::fromStringList(output.inputs)}});
     return {{"operation", rule.operation}, {"expression", rule.expression},
         {"inputs", QJsonArray::fromStringList(rule.inputs)}, {"outputs", outputs},
         {"wordBits", rule.wordBits}, {"autoWordBits",rule.autoWordBits}, {"byteOrder",rule.byteOrder}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
@@ -319,17 +329,24 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
             QString error; qsizetype count = 0;
             for (const auto &id : rule.inputs) {
                 const auto source = bindings.value(id);
-                if (!source || source->sampleCount() == 0) error = QStringLiteral("缺少有效来源");
+                if ((!source || source->sampleCount() == 0) && rule.operation!="merge") error = QStringLiteral("缺少有效来源");
                 if (rule.operation == "merge" && source) count += source->sampleCount();
                 else if (inputs.isEmpty() && source) count = source->sampleCount();
                 if (rule.operation != "merge" && source && source->sampleCount() != count) error = QStringLiteral("输入样本数不同，要求相同时间基");
                 inputs.append(source);
             }
-            if (count > (512 * 1024 * 1024 - retainedValues) / (8 * qMax(1, int(rule.outputs.size())))) {
+            if(rule.operation=="merge") {
+                count=0;
+                for(const auto &output:rule.outputs) for(const auto &id:mergeOutputInputs(rule,output)) {
+                    const auto source=bindings.value(id); if(source) count+=source->sampleCount();
+                }
+            }
+            const int valueCopies=rule.operation=="merge" ? 1 : qMax(1,int(rule.outputs.size()));
+            if (count > (512 * 1024 * 1024 - retainedValues) / (8 * valueCopies)) {
                 error = QStringLiteral("派生结果超过 512 MiB 值缓存上限，请减少输出或数据规模");
                 result.budgetLimitedRules.insert(rule.id);
             }
-            if (error.isEmpty()) retainedValues += count * 8 * rule.outputs.size();
+            if (error.isEmpty()) retainedValues += count * 8 * valueCopies;
             QVector<Expression> expressions; QVector<int> roots;
             if(rule.operation == "expression") for(const auto &output : rule.outputs) {
                 Expression parser; const int root=parser.compile(outputExpression(rule,output),inputs.size());
@@ -367,24 +384,40 @@ ObjectEvaluation evaluateObjects(const QVector<DataObject> &objects, const PlotS
             }
             qsizetype invalid = 0;
             if (error.isEmpty() && rule.operation == "merge") {
-                const auto timeline = mergeTimelines.get(inputs, cancelled, &error);
-                if (cancelled.load()) return {};
-                if (timeline && error.isEmpty()) {
-                    auto &output = *outputs.first(); output.monotonicTime = true;
-                    output.time = timeline->time; output.values.fill(qQNaN(), output.time.size());
-                    for (qsizetype group = 0; group < output.time.size() && error.isEmpty(); ++group) {
-                        for (qsizetype i = timeline->starts[group]; i < timeline->starts[group + 1]; ++i) {
-                            if ((i & 4095) == 0 && cancelled.load()) return {};
-                            const auto &entry = timeline->order[i];
-                            const double value = inputs[entry.source]->pointAt(entry.index).y();
-                            double &previous = output.values[group];
-                            if (std::isfinite(previous) && std::isfinite(value) && previous != value) {
-                                error = QStringLiteral("同一时间戳存在不同值，无法合并：%1").arg(output.time[group], 0, 'g', 17); break;
+                QStringList mergeErrors;
+                for(int k=0;k<rule.outputs.size();++k) {
+                    QString mergeError;
+                    QVector<PlotSeriesDataPtr> groupInputs;
+                    for(const auto &id:mergeOutputInputs(rule,rule.outputs[k])) {
+                        const auto source=bindings.value(id); groupInputs.append(source);
+                        if(!source || source->sampleCount()==0) mergeError=QStringLiteral("缺少有效来源");
+                    }
+                    if(mergeError.isEmpty()) {
+                        const auto timeline = mergeTimelines.get(groupInputs, cancelled, &mergeError);
+                        if (cancelled.load()) return {};
+                        if (timeline && mergeError.isEmpty()) {
+                            auto &output = *outputs[k]; output.monotonicTime = true;
+                            output.time = timeline->time; output.values.fill(qQNaN(), output.time.size());
+                            for (qsizetype group = 0; group < output.time.size() && mergeError.isEmpty(); ++group) {
+                                for (qsizetype i = timeline->starts[group]; i < timeline->starts[group + 1]; ++i) {
+                                    if ((i & 4095) == 0 && cancelled.load()) return {};
+                                    const auto &entry = timeline->order[i];
+                                    const double value = groupInputs[entry.source]->pointAt(entry.index).y();
+                                    double &previous = output.values[group];
+                                    if (std::isfinite(previous) && std::isfinite(value) && previous != value) {
+                                        mergeError = QStringLiteral("同一时间戳存在不同值，无法合并：%1").arg(output.time[group], 0, 'g', 17); break;
+                                    }
+                                    if (std::isfinite(value)) previous = value;
+                                }
                             }
-                            if (std::isfinite(value)) previous = value;
                         }
                     }
+                    if(!mergeError.isEmpty()) {
+                        outputs[k]->time.clear(); outputs[k]->values.clear();
+                        mergeErrors.append(rule.outputs.size()>1 ? rule.outputs[k].name+": "+mergeError : mergeError);
+                    }
                 }
+                if(!mergeErrors.isEmpty()) result.errors.insert(rule.id,mergeErrors.join("\n"));
             }
             double samplePeriod = rule.samplePeriod;
             qsizetype duplicateSamples = 0;
@@ -581,7 +614,7 @@ QJsonArray objectsToJson(const QVector<DataObject> &objects)
         for (const auto &rule : object.rules) {
             QJsonArray inputs, outputs;
             for (const auto &input : rule.inputs) inputs.append(input);
-            for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"name", output.name}, {"series", output.series}, {"startBit",output.startBit},{"bitCount",output.bitCount},{"signedField",output.signedField},{"expression",output.expression}});
+            for (const auto &output : rule.outputs) outputs.append(QJsonObject{{"id", output.id}, {"name", output.name}, {"series", output.series}, {"startBit",output.startBit},{"bitCount",output.bitCount},{"signedField",output.signedField},{"expression",output.expression},{"inputs",QJsonArray::fromStringList(output.inputs)}});
             rules.append(QJsonObject{{"id", rule.id}, {"name", rule.name}, {"operation", rule.operation}, {"expression", rule.expression},
                 {"inputs", inputs}, {"outputs", outputs}, {"wordBits", rule.wordBits}, {"autoWordBits",rule.autoWordBits}, {"byteOrder",rule.byteOrder}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
                 {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}});
@@ -661,6 +694,8 @@ bool objectsFromJson(const QJsonValue &value, int signalCount, QVector<DataObjec
                 if (!string(o["id"], &output.id) || !string(o["name"], &output.name) || !integer(o["series"], &output.series)
                     || !integer(o["startBit"],&output.startBit) || !integer(o["bitCount"],&output.bitCount)
                     || !o["signedField"].isBool() || !string(o["expression"],&output.expression)) return fail();
+                if(!o["inputs"].isArray() || o["inputs"].toArray().size()>256) return fail();
+                for(const auto &entry:o["inputs"].toArray()) { QString input; if(!string(entry,&input) || input.isEmpty()) return fail(); output.inputs.append(input); }
                 output.signedField=o["signedField"].toBool();
                 rule.outputs.append(output);
             }

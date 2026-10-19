@@ -10,6 +10,7 @@
 #include "io/dataloadworker.h"
 #include <QQmlComponent>
 #include <QQmlEngine>
+#include <QQmlProperty>
 #include <QQmlExpression>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
@@ -88,7 +89,7 @@ private slots:
     void rotationGestureRejectsPreviousFrames();
     void viewAnglesDescribeAbsolutePose();
     void treeSelectionKeepsTimeBindings();
-    void defaultGeographicAxesUseSelectedSources();
+    void modeSwitchDoesNotInferCoordinates();
     void zeroFixOnlyExcludedFromFit();
     void wheelKeepsPointerAnchor();
     void highZoomKeepsAnchorAndAllowsPan();
@@ -616,68 +617,44 @@ void TrajectoryTest::treeSelectionKeepsTimeBindings()
 {
     QTemporaryDir dir; csv(dir.filePath("signals.csv"), "t,x,y,z,w\n0,0,1,2,3\n1,10,11,12,13\n");
     AppController c; QVERIFY(c.loadCsv(dir.filePath("signals.csv"))); QTRY_VERIFY(!c.loading());
-    c.setLayout(1, 2); c.selectSignal(3);
-    c.enterTrajectoryMode(1); QCOMPARE(c.activePlotIndex(), 1);
-    QVERIFY(c.trajectoryState(1)["geographic"].toBool());
-    QCOMPARE(c.signalModel()->checkedCount(), 0);
+    c.setLayout(1,2); c.selectSignal(3); c.enterTrajectoryMode(1);
     c.toggleSignal(0); c.selectSignal(1);
-    QVERIFY(c.trajectoryState(1)["planar"].toBool());
-    c.toggleSignal(2); c.selectSignal(3);
-    QCOMPARE(c.signalModel()->checkedCount(), 4); QCOMPARE(c.trajectorySignalOptions(1).size(), 5);
-    QCOMPARE(c.trajectoryState(1)["x"].toInt(), 0); QCOMPARE(c.trajectoryState(1)["z"].toInt(), 2);
-    QVERIFY(c.bindTrajectoryAxis(1, 0, 0)); QVERIFY(c.bindTrajectoryAxis(1, 1, 1));
-    QVERIFY(c.bindTrajectoryAxis(1, 2, 2)); QVERIFY(!c.trajectoryState(1)["planar"].toBool());
-    QVERIFY(c.bindTrajectoryAxis(1, 1, 3)); // replacing an axis keeps the old source available
-    QVERIFY(c.plotSignalEnabled(1, 1)); QCOMPARE(c.signalModel()->checkedCount(), 4);
-    QVERIFY(c.bindTrajectoryAxis(1, 0, 2)); // swap an already assigned source
-    QCOMPARE(c.trajectoryState(1)["x"].toInt(), 2); QCOMPARE(c.trajectoryState(1)["z"].toInt(), 0);
-    QVERIFY(c.bindTrajectoryAxis(1, 2, -1)); QVERIFY(c.plotSignalEnabled(1, 0));
-    c.toggleSignal(2); QCOMPARE(c.trajectoryState(1)["x"].toInt(), -1);
-    QCOMPARE(c.signalModel()->checkedCount(), 3); QVERIFY(!c.bindTrajectoryAxis(1, 0, 2));
-    QVERIFY(!c.bindTrajectoryAxis(1, 3, 0));
-    for (int row = 0; row < c.signalModel()->rowCount(); ++row) {
-        const auto index = c.signalModel()->index(row);
-        const int source = c.signalModel()->data(index, SignalModel::IndexRole).toInt();
-        if (source >= 0) QCOMPARE(c.signalModel()->data(index, SignalModel::CheckedRole).toBool(), source != 2);
+    QCOMPARE(c.trajectoryState(1)["x"].toInt(),-1);
+    QCOMPARE(c.signalModel()->checkedCount(),0);
+    const auto plane=c.addDataObject("aircraft"); QVERIFY(!plane.isEmpty());
+    const auto fields=c.dataObjects().last().toMap()["fields"].toList();
+    for(int axis=0;axis<3;++axis) {
+        const auto field=fields[axis].toMap();
+        QVERIFY(!c.bindObjectField(plane,field["id"].toString(),field["name"].toString(),field["role"].toString(),axis).isEmpty());
     }
-    const auto path = dir.filePath("pool.disession"); QVERIFY(c.saveSession(path));
+    QVERIFY(c.showObjectTrajectory(plane,1));
+    c.toggleSignal(0); c.selectSignal(3);
+    QCOMPARE(c.trajectoryState(1)["objectId"].toString(),plane);
+    QCOMPARE(c.trajectoryState(1)["x"].toInt(),0);
+    QCOMPARE(c.trajectoryState(1)["z"].toInt(),2);
+    QCOMPARE(c.signalModel()->checkedCount(),3);
+    c.moveLegendSignal(1,0,0); QVERIFY(!c.plotSignalEnabled(0,0));
+    c.moveLegendSignal(0,1,3); QVERIFY(!c.plotSignalEnabled(1,3));
+    c.removeLegendSignal(1,0); QCOMPARE(c.trajectoryState(1)["x"].toInt(),0);
+    QCOMPARE(c.trajectoryState(1)["objectId"].toString(),plane);
+    const auto path=dir.filePath("object.disession"); QVERIFY(c.saveSession(path));
     AppController restored; QVERIFY(restored.restoreSession(path)); QTRY_VERIFY(!restored.restoringSession());
-    QCOMPARE(restored.trajectorySignalOptions(1), c.trajectorySignalOptions(1));
-    QCOMPARE(restored.trajectoryState(1)["y"].toInt(), 3);
-    c.setActivePlot(0); QCOMPARE(c.signalModel()->checkedCount(), 1); QVERIFY(c.plotSignalEnabled(0, 3));
-    c.setActivePlot(1); QCOMPARE(c.signalModel()->checkedCount(), 3);
-    c.clearPlotSignals(1); QCOMPARE(c.signalModel()->checkedCount(), 0); QCOMPARE(c.trajectorySignalOptions(1).size(), 1);
-    QVERIFY(c.configureTrajectory(1, false, -1, -1, -1)); QCOMPARE(c.signalModel()->checkedCount(), 0);
-    c.setActivePlot(0); c.enterTrajectoryMode(0); QCOMPARE(c.signalModel()->checkedCount(), 1); // seed existing time sources
-    c.selectSignal(0); c.selectSignal(1); c.clearPlotSignals(0);
-    QVERIFY(c.configureTrajectory(0, false, -1, -1, -1));
-    QCOMPARE(c.signalModel()->checkedCount(), 1); QVERIFY(c.plotSignalEnabled(0, 3));
+    QCOMPARE(restored.trajectoryState(1)["objectId"].toString(),plane);
+    QVERIFY(c.configureTrajectory(1,false,0,1,2,true));
+    c.setActivePlot(0); QCOMPARE(c.signalModel()->checkedCount(),1); QVERIFY(c.plotSignalEnabled(0,3));
 }
-void TrajectoryTest::defaultGeographicAxesUseSelectedSources()
+void TrajectoryTest::modeSwitchDoesNotInferCoordinates()
 {
-    QTemporaryDir dir; csv(dir.filePath("selected.csv"), "t,latitude,longitude,height,other\n0,40,109,1000,1\n1,41,110,1010,2\n");
+    QTemporaryDir dir; csv(dir.filePath("selected.csv"), "t,latitude,longitude,height\n0,40,109,1000\n1,41,110,1010\n");
     AppController c; QVERIFY(c.loadCsv(dir.filePath("selected.csv"))); QTRY_VERIFY(!c.loading());
-    c.setLayout(1, 2); c.enterTrajectoryMode(0);
-    QVERIFY(c.trajectoryState(0)["geographic"].toBool());
-    c.selectSignal(1); c.selectSignal(0); c.selectSignal(2); c.selectSignal(3);
-    QCOMPARE(c.trajectoryState(0)["x"].toInt(), 1);
-    QCOMPARE(c.trajectoryState(0)["y"].toInt(), 0);
-    QCOMPARE(c.trajectoryState(0)["z"].toInt(), 2);
-    c.toggleSignal(0); QCOMPARE(c.trajectoryState(0)["y"].toInt(), -1);
-    c.toggleSignal(0); QCOMPARE(c.trajectoryState(0)["y"].toInt(), 0);
-    QVERIFY(c.bindTrajectoryAxis(0, 1, -1));
-    c.enterTrajectoryMode(0); QCOMPARE(c.trajectoryState(0)["y"].toInt(), -1);
-    QVERIFY(c.configureTrajectory(0, false, 1, -1, 2, false));
-    c.enterTrajectoryMode(0); QVERIFY(!c.trajectoryState(0)["geographic"].toBool());
-    QCOMPARE(c.trajectoryState(0)["x"].toInt(), 1);
-    c.setActivePlot(1); c.selectSignal(0); c.selectSignal(1); c.selectSignal(2);
-    c.enterTrajectoryMode(1); QVERIFY(c.trajectoryState(1)["geographic"].toBool());
-    QCOMPARE(c.trajectoryState(1)["x"].toInt(), 0);
-    QCOMPARE(c.trajectoryState(1)["y"].toInt(), 1);
-    QCOMPARE(c.trajectoryState(1)["z"].toInt(), 2);
-    c.clearPlotSignals(1); c.selectSignal(2);
-    QCOMPARE(c.trajectoryState(1)["x"].toInt(), 2);
-    QCOMPARE(c.trajectoryState(0)["x"].toInt(), 1);
+    c.selectSignal(0); c.selectSignal(1); c.selectSignal(2);
+    c.enterTrajectoryMode(0); QVERIFY(c.trajectoryState(0)["enabled"].toBool());
+    QCOMPARE(c.trajectoryState(0)["x"].toInt(),-1);
+    QCOMPARE(c.trajectoryState(0)["y"].toInt(),-1);
+    QCOMPARE(c.trajectoryState(0)["z"].toInt(),-1);
+    c.selectSignal(0); c.toggleSignal(1); QCOMPARE(c.signalModel()->checkedCount(),0);
+    QVERIFY(c.configureTrajectory(0,false,-1,-1,-1,true));
+    QCOMPARE(c.signalModel()->checkedCount(),3);
 }
 void TrajectoryTest::zeroFixOnlyExcludedFromFit()
 {
@@ -859,7 +836,7 @@ void TrajectoryTest::removalRemapsAxesAndPreservesMode()
     csv(dir.filePath("xyz.csv"), "t,X,Y,Z\n0,0,0,0\n1,1,2,3\n");
     AppController c; QCOMPARE(c.loadFiles(QVariantList{dir.filePath("one.csv"), dir.filePath("xyz.csv")}), 2);
     QTRY_VERIFY(!c.loading()); QVERIFY(c.configureTrajectory(0, true, 1, 2, 3));
-    c.selectSignal(0); QCOMPARE(c.trajectorySignalOptions(0).size(), 5);
+    c.selectSignal(0); QCOMPARE(c.trajectorySignalOptions(0).size(), 4);
     QVERIFY(c.removeFile("one.csv")); auto state = c.trajectoryState(0);
     QCOMPARE(state["x"].toInt(), 0); QCOMPARE(state["z"].toInt(), 2);
     QCOMPARE(c.trajectorySignalOptions(0).size(), 4);
@@ -948,29 +925,40 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QQuickWindow window; auto *quick = qobject_cast<QQuickItem *>(object.get());
     quick->setParentItem(window.contentItem()); quick->setWidth(640); quick->setHeight(480);
     window.resize(640, 480); window.show();
+    QQmlComponent paneComponent(&engine,compiled ? QUrl("qrc:/qt/qml/DataInspectorTrajectoryTest/TrajectoryPropertiesPane.qml") : QUrl::fromLocalFile(directory+"/TrajectoryPropertiesPane.qml"));
+    QTRY_VERIFY_WITH_TIMEOUT(paneComponent.status()!=QQmlComponent::Loading,5000);
+    auto *pane=paneComponent.createWithInitialProperties({{"controller",QVariant::fromValue(&c)},{"darkTheme",false},{"width",320},{"height",600}});
+    QVERIFY2(pane,qPrintable(paneComponent.errorString())); pane->setParent(object.get());
+    auto *paneItem=qobject_cast<QQuickItem *>(pane); QVERIFY(paneItem);
+    paneItem->setParentItem(window.contentItem()); paneItem->setX(640);
+    QVERIFY(QQmlProperty::write(object.get(),"trajectoryEditor",QVariant::fromValue(pane)));
     auto *menu = object->findChild<QObject *>("trajectoryModeMenuItem"); QVERIFY(menu);
     QVERIFY(QMetaObject::invokeMethod(menu, "triggered"));
-    auto *dialog = object->findChild<QObject *>("trajectoryAxesDialog"); QVERIFY(dialog);
-    QTRY_VERIFY(dialog->property("visible").toBool());
-    QVERIFY(!object->property("trajectoryMode").toBool());
+    auto *dialog = pane;
+    QVERIFY(!object->findChild<QObject *>("trajectoryAxesDialog"));
+    QTRY_VERIFY(object->property("trajectoryMode").toBool());
+    QVERIFY(!dialog->property("visible").toBool());
+    QVERIFY(c.trajectoryState(0)["objectId"].toString().isEmpty());
     QCOMPARE(c.signalModel()->checkedCount(), 0);
+    auto *axesButton = object->findChild<QObject *>("trajectoryConfigurationToggle"); QVERIFY(axesButton);
+    QVERIFY(QMetaObject::invokeMethod(axesButton,"clicked"));
+    QTRY_VERIFY(dialog->property("visible").toBool());
     const auto plane = c.addDataObject("aircraft"); QVERIFY(!plane.isEmpty());
     const auto planeFields = c.dataObjects().first().toMap()["fields"].toList();
     for (int i = 0; i < 3; ++i) {
         const auto field = planeFields[i].toMap();
         QVERIFY(!c.bindObjectField(plane, field["id"].toString(), field["name"].toString(), field["role"].toString(), i).isEmpty());
     }
-    auto *choice = object->findChild<QObject *>("trajectoryObjectChoice"); QVERIFY(choice); choice->setProperty("currentIndex", 0);
-    QTRY_VERIFY(dialog->property("height").toDouble() <= window.height());
-    QVERIFY(!object->findChild<QObject *>("trajectoryAxisX"));
-    auto *confirm = object->findChild<QObject *>("trajectoryConfirmButton"); QVERIFY(confirm);
-    QVERIFY(QMetaObject::invokeMethod(confirm, "clicked"));
-    QTRY_VERIFY(!dialog->property("visible").toBool());
+    auto *choice = pane->findChild<QObject *>("trajectoryObjectSelector"); QVERIFY(choice); choice->setProperty("currentIndex", 0);
+    QVERIFY(QMetaObject::invokeMethod(choice,"activated",Q_ARG(int,0)));
+    QVERIFY(!pane->findChild<QObject *>("trajectoryAxisX"));
+    QVERIFY(QMetaObject::invokeMethod(pane,"close"));
+    QVERIFY(!pane->property("visible").toBool());
     QTRY_VERIFY(object->property("trajectoryMode").toBool());
     QVERIFY(c.trajectoryState(0)["geographic"].toBool());
     QTRY_VERIFY(object->findChild<TrajectoryItem *>("trajectoryItem"));
     auto *item = object->findChild<TrajectoryItem *>("trajectoryItem");
-    auto *axesButton = object->findChild<QObject *>("trajectoryAxesButton"); QVERIFY(axesButton);
+
     QTRY_VERIFY_WITH_TIMEOUT(!item->pending(), 5000); QVERIFY(item->error().isEmpty());
     QVERIFY(item->height() >= 480 - 80); QVERIFY(item->width() >= 640 - 12);
     // Deliver real window events through QML, rather than invoking the C++ handlers directly.
@@ -1086,7 +1074,7 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     const double collapsedHeight = item->height();
     QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier,
         configurationToggle->mapToScene(QPointF(configurationToggle->width() / 2, configurationToggle->height() / 2)).toPoint());
-    QTRY_VERIFY(configurationRow->isVisible()); QTRY_VERIFY(item->height() < collapsedHeight);
+    QTRY_VERIFY(configurationRow->isVisible()); QCOMPARE(item->height(),collapsedHeight);
     auto *objectSelector = object->findChild<QObject *>("trajectoryObjectSelector"); QVERIFY(objectSelector);
     QCOMPARE(objectSelector->property("currentText").toString(), QStringLiteral("飞机 1"));
     QVERIFY(c.renameDataObject(plane, "Flight A"));
@@ -1123,16 +1111,15 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
         QVERIFY(!c.bindObjectField(wing, field["id"].toString(), field["name"].toString(), field["role"].toString(), 3 + i).isEmpty());
     }
     QVERIFY(c.showObjectTrajectory(wing, 0)); QCOMPARE(c.trajectoryState(0)["active"].toInt(), 1);
-    auto *propertiesButton = object->findChild<QObject *>("trajectoryProperties"); QVERIFY(propertiesButton);
+    auto *propertiesButton = object->findChild<QObject *>("trajectoryConfigurationToggle"); QVERIFY(propertiesButton);
     QVERIFY(QMetaObject::invokeMethod(propertiesButton, "clicked"));
-    auto *properties = object->findChild<QObject *>("trajectoryPropertiesDialog"); QVERIFY(properties);
+    auto *properties = pane;
+    QVERIFY(!object->findChild<QObject *>("trajectoryPropertiesDialog"));
     QTRY_VERIFY(properties->property("visible").toBool());
     auto *name = object->findChild<QObject *>("trajectoryName"); QVERIFY(name); name->setProperty("text", "Wing UI");
     QVERIFY(!object->findChild<QObject *>("trajectoryAttitudeMode"));
-    auto *form = object->findChild<QQuickItem *>("trajectoryPropertiesForm"); QVERIFY(form);
-    auto *flick = object->findChild<QQuickItem *>("trajectoryPropertiesFlick"); QVERIFY(flick);
-    QTRY_VERIFY(form->width() <= flick->width()); QTRY_VERIFY(form->implicitHeight() > 0);
-    QVERIFY(QMetaObject::invokeMethod(properties, "accepted")); QVERIFY(QMetaObject::invokeMethod(properties, "close"));
+    QVERIFY(QMetaObject::invokeMethod(properties,"apply"));
+    QVERIFY(QMetaObject::invokeMethod(properties,"close"));
     QCOMPARE(c.trajectoryState(0)["name"].toString(), QString("Wing UI"));
     QCOMPARE(c.trajectoryState(0)["attitudeMode"].toInt(), 1);
     QTRY_VERIFY(!item->pending()); QVERIFY(item->error().isEmpty());
@@ -1144,18 +1131,30 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     if (QGuiApplication::platformName() != "offscreen") {
         QTest::qWait(100); QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-multi-attitude-ui.png")));
     }
+    QVERIFY(QMetaObject::invokeMethod(axesButton,"clicked"));
     auto *selector = object->findChild<QObject *>("trajectorySelector"); QVERIFY(selector);
     selector->setProperty("currentIndex", 0); QVERIFY(QMetaObject::invokeMethod(selector, "activated", Q_ARG(int, 0)));
     QCOMPARE(c.trajectoryState(0)["active"].toInt(), 0);
     auto *visibility = object->findChild<QObject *>("trajectoryVisible"); QVERIFY(visibility);
-    visibility->setProperty("checked", false); QVERIFY(QMetaObject::invokeMethod(visibility, "clicked")); QTRY_VERIFY(!item->pending());
+    visibility->setProperty("checked", false); QVERIFY(QMetaObject::invokeMethod(pane, "apply")); QTRY_VERIFY(!item->pending());
     QCOMPARE(item->markers().size() >= 2, true);
     auto *remove = object->findChild<QObject *>("trajectoryRemove"); QVERIFY(remove);
     QVERIFY(QMetaObject::invokeMethod(remove, "clicked")); QTRY_VERIFY(!item->pending());
     QCOMPARE(c.trajectoryState(0)["tracks"].toList().size(), 1);
     QCOMPARE(c.trajectoryState(0)["name"].toString(), QString("Wing UI"));
-    QVERIFY(c.configureTrajectory(0, false, 0, 1, 2, true));
+    auto *trajectoryView=object->findChild<QQuickItem *>("trajectoryView"); QVERIFY(trajectoryView);
+    QVERIFY(!trajectoryView->findChild<QObject *>("trajectory2DButton"));
+    auto *viewMenu=trajectoryView->findChild<QObject *>("switchViewMenu"); QVERIFY(viewMenu);
+    QCOMPARE(viewMenu->property("count").toInt(),3);
+    auto *states=viewMenu->findChild<QObject *>("switchToStateTimeline"); QVERIFY(states);
+    QVERIFY(QMetaObject::invokeMethod(states,"triggered"));
     QTRY_VERIFY(!object->property("trajectoryMode").toBool());
+    QTRY_VERIFY(object->property("stateMode").toBool());
+    auto *plotMenu=object->findChild<QObject *>("plotContextMenu"); QVERIFY(plotMenu);
+    auto *curveAction=plotMenu->findChild<QObject *>("curveModeMenuItem"); QVERIFY(curveAction);
+    QVERIFY(QMetaObject::invokeMethod(curveAction,"triggered"));
+    QTRY_VERIFY(!object->property("stateMode").toBool());
+    QVERIFY(!c.trajectoryState(0)["enabled"].toBool());
     c.selectSignal(0);
     quick->setProperty("graphCursorMode", 2);
     QVERIFY(QMetaObject::invokeMethod(quick, "openCursorEditor", Q_ARG(QVariant, 1)));
@@ -1334,10 +1333,12 @@ void TrajectoryTest::multiControllerSessionRemapAndExport()
     AppController c; PlotItem time; TrajectoryItem item; item.setWidth(800); item.setHeight(600);
     c.attachPlot(&time, 0); c.attachTrajectory(&item, 0);
     QCOMPARE(c.loadFiles(QVariantList{left, right}), 2); QTRY_VERIFY(!c.loading()); c.enterTrajectoryMode(0);
-    for (int i = 0; i < 6; ++i) c.selectSignal(i);
+    QVERIFY(c.configureTrajectory(0,true,3,4,5,true));
+    QVERIFY(c.configureTrajectory(0,true,0,1,2,true));
     QVERIFY(c.configureAttitude(0, 1, 3, 4, 5, -1, false, 0, false, false));
     QVERIFY(c.styleTrajectory(0, "Leader", Qt::magenta, 4, true)); QVERIFY(c.addTrajectory(0));
-    for (int i = 6; i < 12; ++i) c.selectSignal(i);
+    QVERIFY(c.configureTrajectory(0,true,9,10,11,true));
+    QVERIFY(c.configureTrajectory(0,true,6,7,8,true));
     QCOMPARE(c.trajectoryState(0)["x"].toInt(), 6); QCOMPARE(c.trajectoryState(0)["z"].toInt(), 8);
     QVERIFY(c.configureAttitude(0, 1, 9, 10, 11, -1, false, 0, false, false));
     QVERIFY(c.styleTrajectory(0, "Wing", Qt::cyan, 3, true));

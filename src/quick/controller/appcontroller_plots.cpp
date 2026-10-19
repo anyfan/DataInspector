@@ -83,7 +83,7 @@ void AppController::selectSignal(int row)
         refreshPlot(active); notifyPlotBindingsChanged(); return;
     }
     if (m_trajectories.value(m_signals->activePlot()).enabled) {
-        setTrajectorySignal(m_signals->activePlot(), row, true); return;
+        setStatus(QStringLiteral("航迹来源请在飞机对象中配置")); return;
     }
     if (row >= 0) m_signals->setChecked(row, true);
     const int plotIndex = m_signals->activePlot();
@@ -110,7 +110,7 @@ void AppController::toggleSignal(int row)
         refreshPlot(plotIndex, false); notifyPlotBindingsChanged(); return;
     }
     if (m_trajectories.value(plotIndex).enabled) {
-        setTrajectorySignal(plotIndex, row, !plotSignalEnabled(plotIndex, row)); return;
+        setStatus(QStringLiteral("航迹来源请在飞机对象中配置")); return;
     }
     m_signals->setPlotChecked(plotIndex, row, !m_signals->plotRows(plotIndex).contains(row));
     refreshPlot(plotIndex);
@@ -265,11 +265,11 @@ void AppController::moveLegendSignal(int fromPlot, int toPlot, int row)
     if (sessionInteractionBlocked()) return;
     if (fromPlot == toPlot || toPlot < 0 || toPlot >= m_plotRows * m_plotColumns
         || !plotSignalEnabled(fromPlot, row)) return;
-    if (m_trajectories.value(toPlot).enabled) {
-        if (!setTrajectorySignal(toPlot, row, true)) return;
-    } else m_signals->setPlotChecked(toPlot, row, true);
-    if (m_trajectories.value(fromPlot).enabled) setTrajectorySignal(fromPlot, row, false);
-    else m_signals->setPlotChecked(fromPlot, row, false);
+    if (m_trajectories.value(toPlot).enabled || m_trajectories.value(fromPlot).enabled) {
+        setStatus(QStringLiteral("航迹来源请在飞机对象中配置")); return;
+    }
+    m_signals->setPlotChecked(toPlot,row,true);
+    m_signals->setPlotChecked(fromPlot,row,false);
     refreshPlot(fromPlot);
     refreshPlot(toPlot, true);
     setActivePlot(toPlot);
@@ -279,7 +279,7 @@ void AppController::moveLegendSignal(int fromPlot, int toPlot, int row)
 void AppController::removeLegendSignal(int plotIndex, int row)
 {
     if (sessionInteractionBlocked()) return;
-    if (m_trajectories.value(plotIndex).enabled) { setTrajectorySignal(plotIndex, row, false); return; }
+    if (m_trajectories.value(plotIndex).enabled) { setStatus(QStringLiteral("航迹来源请在飞机对象中配置")); return; }
     m_signals->setPlotChecked(plotIndex, row, false);
     refreshPlot(plotIndex);
     notifyPlotBindingsChanged();

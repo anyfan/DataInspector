@@ -173,20 +173,12 @@ Pane {
                 TimeOffsetFields { Layout.fillWidth: true }
 
                 Label { text: "曲线样式"; font.bold: true }
-                Flow {
-                    Layout.fillWidth: true; spacing: 4
-                    Repeater {
-                        model: editor.controller.presetColors
-                        delegate: Rectangle {
-                            required property color modelData
-                            width: 22; height: 20; color: modelData; radius: 2
-                            border.width: editor.lineColor === modelData ? 3 : 1
-                            border.color: editor.palette.text
-                            TapHandler { onTapped: editor.lineColor=parent.modelData }
-                        }
-                    }
+                ColorEditor {
+                    Layout.fillWidth: true
+                    presets: editor.controller.presetColors
+                    text: String(editor.lineColor)
+                    onEdited: value => { if(valid) editor.lineColor=value }
                 }
-                TextField { text: String(editor.lineColor); Layout.fillWidth: true; placeholderText: "颜色 #RRGGBB"; onEditingFinished: { if (/^#[0-9a-fA-F]{6}$/.test(text)) editor.lineColor=text } }
                 RowLayout {
                     Label { text: "线宽" }
                     SpinBox { id: lineWidth; from: 1; to: 20; editable: true; Layout.fillWidth: true }

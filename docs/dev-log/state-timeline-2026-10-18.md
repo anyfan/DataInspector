@@ -43,3 +43,17 @@
 - 状态图左侧固定留白由 76 缩至 60 逻辑像素，读数靠近图标左对齐；保留共享轴留白、行高和 X 轴对齐。
 - Debug 构建及 qmllint 通过；appcontroller_test/session_test 全套 2/2 通过（11.80 秒），新增文件名 .DAT 与搜索 AT 冲突、分组名命中、大小写和清空恢复回归测试。Windows D3D11 状态图测试通过（7.44 秒），已检查 state-timeline-spacing-gpu.png。
 - 原 Release exe 被用户打开的进程占用，未关闭该窗口；通过既有 DATAINSPECTOR_BIN_DIR 参数在 bin-review 完成 Release 构建和 qmllint，再恢复默认 bin 配置。新 exe 复制到 bin/DataInspector-preview.exe，可复用原部署依赖运行；原 DataInspector.exe 仍为正在使用的版本。
+
+
+## 2026-10-19：切换入口与状态接缝
+
+切换状态时间轴的菜单动作仅改变视图模式，不发出状态行配置请求；需要时点击“状态行…”再打开右栏。普通接缝的深色竖条来自原先的像素内变化判断：单次边界也生成紫色密集标记。现要求同一屏幕桶内至少两次切换才标记，单次变化按相邻状态色衔接。
+
+Debug/Release DataInspector 和两者 qmllint 通过；session_test 全套通过（6.70 秒）。Windows D3D11 的 stateTimelineQmlConfiguration 和 mixedStateAndCurveLayout 通过（12.288 秒），新增菜单切换不打开属性栏断言及非整数像素边界仅包含相邻两种状态色的像素断言，已查看 state-joins-gpu.png。原 Release 程序被占用，未关闭用户窗口，改用 bin-review 构建后恢复默认 bin 配置；新副本为 bin/DataInspector-state-joins.exe。未做用户真实数据的手动验收。
+
+
+## 2026-10-19：统一视图切换
+
+新增共用 ViewModeMenu，曲线／状态图和航迹图右键均以一级“切换视图”提供曲线视图、航迹视图、状态时间图，并标记当前模式。删除状态顶部“曲线视图”和航迹顶部“时间图”按钮。航迹入口直接调用 enterTrajectoryMode，允许无对象进入；对象选择仍可从图内配置打开。返回曲线同时关闭航迹与状态模式，保留原绑定。
+
+Debug/Release DataInspector 与两者 qmllint 通过；session_test、trajectory_test 2/2 通过（26.70 秒）。新增断言覆盖三项子菜单、状态与曲线互切、航迹直接进入不打开对象选择、无对象身份、后续主动打开对象配置，以及航迹→状态→曲线切换；航迹源码及编译 QML 均通过。测试切回曲线时显式使用当前图的 plotContextMenu，避免误触 Loader 尚待销毁的旧航迹菜单。未做用户真实数据手动验收。Release 在 bin-review 输出后恢复默认 bin 配置，可运行副本为 bin/DataInspector-view-menu.exe。

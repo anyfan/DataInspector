@@ -28,6 +28,7 @@ private slots:
     void multipleOutputEditingAndPersistence();
     void multipleOutputEditorQml();
     void mergeSamples();
+    void multipleMergeOutputs();
     void identifyPacketLoss();
     void packetLoss();
     void packetLossCounters();
@@ -189,7 +190,7 @@ void ObjectDataTest::multipleOutputEditingAndPersistence()
 void ObjectDataTest::multipleOutputEditorQml()
 {
     qmlRegisterTypesAndRevisions<PlotItemQmlRegistration,StateTimelineItemQmlRegistration,TrajectoryItemQmlRegistration,AppControllerQmlRegistration,SignalModelQmlRegistration>("DataInspector",1);
-    QTemporaryDir directory; const auto path=directory.filePath("ui.csv"); QFile source(path); QVERIFY(source.open(QIODevice::WriteOnly)); source.write("time,Word\n0,5\n1,6\n"); source.close();
+    QTemporaryDir directory; const auto path=directory.filePath("ui.csv"); QFile source(path); QVERIFY(source.open(QIODevice::WriteOnly)); source.write("time,Word,Other\n0,5,5\n1,6,6\n"); source.close();
     AppController controller; QVERIFY(controller.loadCsv(path)); QTRY_VERIFY(!controller.loading()); const auto owner=controller.createDataObject("UI","processing");
     QQmlEngine engine; QStringList warnings;
     connect(&engine,&QQmlEngine::warnings,&engine,[&](const QList<QQmlError>&errors){for(const auto &e:errors) warnings.append(e.toString());});
@@ -216,6 +217,23 @@ void ObjectDataTest::multipleOutputEditorQml()
     if(!capture.isEmpty()) {
         QVERIFY(js("editRule(selected.rules[1])")); QTest::qWait(150); QVERIFY(window.grabWindow().save(capture));
     }
+    QVERIFY(js("editRule(null)")); root->findChild<QObject*>("objectRuleOperation")->setProperty("currentIndex",4);
+    QVERIFY(js("ruleDialog.mergeInputs=['raw:0','raw:1']; addOutput(); ruleDialog.mergeInputs=['raw:1','raw:0']; selectMergeOutput(0)"));
+    QCOMPARE(editor->property("mergeInputs").toList(),(QVariantList{"raw:0","raw:1"}));
+    QVERIFY(js("selectMergeOutput(1)"));
+    QCOMPARE(editor->property("mergeInputs").toList(),(QVariantList{"raw:1","raw:0"}));
+    QVERIFY(QMetaObject::invokeMethod(editor,"submit")); QTRY_VERIFY(!controller.deriving());
+    const auto mergedRules=controller.processingConfigurations()[0].toMap()["rules"].toList();
+    QCOMPARE(mergedRules.size(),3);
+    QCOMPARE(mergedRules[2].toMap()["outputs"].toList().size(),2);
+    QVERIFY(js("editRule(selected.rules[2]); selectMergeOutput(0)"));
+    QCOMPARE(editor->property("mergeInputs").toList(),(QVariantList{"raw:0","raw:1"}));
+    QVERIFY(js("selectMergeOutput(1)"));
+    QCOMPARE(editor->property("mergeInputs").toList(),(QVariantList{"raw:1","raw:0"}));
+    const auto mergeCapture=qEnvironmentVariable("DI_MERGE_OUTPUT_CAPTURE_PATH");
+    if(!mergeCapture.isEmpty()) { QTest::qWait(150); QVERIFY(window.grabWindow().save(mergeCapture)); }
+    const auto listCapture=qEnvironmentVariable("DI_PROCESSING_CAPTURE_PATH");
+    if(!listCapture.isEmpty()) { QVERIFY(js("ruleDialog.close()")); QTest::qWait(150); QVERIFY(window.grabWindow().save(listCapture)); }
     QCOMPARE(warnings,QStringList{});
 }
 
@@ -729,6 +747,64 @@ void ObjectDataTest::mergeSamples()
     QVERIFY(loadedRule["error"].toString().isEmpty());
     QCOMPARE(loadedRule["operation"].toString(), QString("merge"));
     QCOMPARE(loadedRule["outputs"].toList().first().toMap()["preview"].toString(), QString("0 / 10 / 20 / 30"));
+}
+
+void ObjectDataTest::multipleMergeOutputs()
+{
+    PlotSeriesStore store;
+    store.replaceSeries({{0,{0,2},{0,20}}, {1,{1,2},{10,20}},
+                         {2,{4,6},{40,60}}, {3,{5,6},{50,60}}});
+    DataObject object{"multi", "multi", {{"a","A","scalar",0},{"b","B","scalar",1},
+        {"c","C","scalar",2},{"d","D","scalar",3}}, {}};
+    ObjectRule rule; rule.id="merge"; rule.name="merge"; rule.operation="merge";
+    rule.inputs={"a","b","c","d"};
+    ObjectOutput first{"one","one",4}; first.inputs={"a","b"};
+    ObjectOutput second{"two","two",5}; second.inputs={"c","d"};
+    rule.outputs={first,second}; object.rules={rule};
+    QString error; QVERIFY2(validateObjects({object},6,&error),qPrintable(error));
+    QVector<DataObject> restored;
+    QVERIFY2(objectsFromJson(objectsToJson({object}),6,&restored,&error),qPrintable(error));
+    QCOMPARE(restored[0].rules[0].outputs[1].inputs,second.inputs);
+    std::atomic_bool cancel{false}; auto snapshot=store.snapshot({0,1,2,3});
+    auto result=evaluateObjects(restored,snapshot,cancel);
+    QVERIFY(result.errors.isEmpty()); QCOMPARE(result.series.size(),2);
+    QCOMPARE(result.series[0]->time,QVector<double>({0,1,2}));
+    QCOMPARE(result.series[0]->values,QVector<double>({0,10,20}));
+    QCOMPARE(result.series[1]->time,QVector<double>({4,5,6}));
+    QCOMPARE(result.series[1]->values,QVector<double>({40,50,60}));
+    auto conflicting=std::make_shared<PlotSeriesData>(*snapshot.series[3]);
+    conflicting->values[1]=99; snapshot.series[3]=conflicting;
+    result=evaluateObjects(restored,snapshot,cancel);
+    QVERIFY(result.errors.value("merge").contains("two"));
+    QCOMPARE(result.series[0]->values,QVector<double>({0,10,20}));
+    QVERIFY(result.series[1]->values.isEmpty());
+    object.rules[0].outputs[1].inputs={"c","c"}; QVERIFY(!validateObjects({object},6,&error));
+    cancel=true; QVERIFY(evaluateObjects(restored,snapshot,cancel).series.isEmpty());
+
+    QTemporaryDir dir; QVERIFY(dir.isValid());
+    QFile file(dir.filePath("groups.csv")); QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("time,A,B,C,D\n0,1,1,10,10\n1,2,2,20,20\n"); file.close();
+    AppController controller; QVERIFY(controller.loadCsv(file.fileName()));
+    QTRY_VERIFY(!controller.loading() && !controller.deriving());
+    const auto owner=controller.createDataObject("groups","processing");
+    const auto id=controller.addObjectRule(owner,{{"name","groups"},{"operation","merge"},
+        {"outputs",QVariantList{QVariantMap{{"name","AB"},{"inputs",QVariantList{"raw:0","raw:1"}}},
+            QVariantMap{{"name","CD"},{"inputs",QVariantList{"raw:2","raw:3"}}}}}});
+    QVERIFY(!id.isEmpty()); QTRY_VERIFY(!controller.deriving());
+    auto savedRule=controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap();
+    QCOMPARE(savedRule["outputs"].toList().size(),2);
+    QCOMPARE(savedRule["outputs"].toList()[1].toMap()["preview"].toString(),QString("10 / 20"));
+    const auto copy=controller.duplicateDataObject(owner); QVERIFY(!copy.isEmpty());
+    QTRY_VERIFY(!controller.deriving());
+    const auto path=dir.filePath("multi.disession"); QVERIFY(controller.saveSession(path));
+    AppController loaded; QVERIFY(loaded.restoreSession(path)); QTRY_VERIFY(!loaded.loading() && !loaded.deriving());
+    QCOMPARE(loaded.dataObjects().size(),2);
+    for(const auto &entry:loaded.dataObjects()) {
+        const auto r=entry.toMap()["rules"].toList()[0].toMap();
+        QVERIFY2(r["error"].toString().isEmpty(),qPrintable(r["error"].toString()));
+        QCOMPARE(r["outputs"].toList()[0].toMap()["preview"].toString(),QString("1 / 2"));
+        QCOMPARE(r["outputs"].toList()[1].toMap()["preview"].toString(),QString("10 / 20"));
+    }
 }
 
 void ObjectDataTest::dependencyPlanPreservesIndependentBranches()
@@ -1342,6 +1418,13 @@ void ObjectDataTest::objectManagerQml()
             item->mapToScene(QPointF(item->width() / 2, item->height() / 2)).toPoint());
     };
     QVERIFY(controller.removeTrajectory(0, 0)); // Remove the earlier unlinked Cartesian trajectory fixture.
+    const auto beforeStyle=controller.trajectoryState(0);
+    auto *styleBrowser=root->findChild<QObject *>("signalBrowser"); QVERIFY(styleBrowser);
+    QVERIFY(QMetaObject::invokeMethod(styleBrowser,"editObjectTrajectory",Q_ARG(QString,id)));
+    auto *objectStylePane=root->findChild<QObject *>("trajectoryPropertiesPane"); QVERIFY(objectStylePane);
+    QTRY_VERIFY(objectStylePane->property("visible").toBool());
+    QCOMPARE(controller.trajectoryState(0),beforeStyle); // Opening style must not create or show a track.
+    QVERIFY(QMetaObject::invokeMethod(objectStylePane,"close"));
     QTRY_VERIFY(trajectoryCheck->width() > 0);
     clickItem(trajectoryCheck);
     QTRY_COMPARE(controller.trajectoryState(0)["objectId"].toString(), id);
@@ -1350,12 +1433,18 @@ void ObjectDataTest::objectManagerQml()
     QQuickItem *trajectoryLine = nullptr;
     QTRY_VERIFY((trajectoryLine = visualItem("objectTrajectoryStyleButton")) && trajectoryLine->isVisible());
     clickItem(trajectoryLine);
-    auto *styleDialog = root->findChild<QObject *>("objectTrajectoryStyleDialog"); QVERIFY(styleDialog);
-    QTRY_VERIFY(styleDialog->property("visible").toBool());
-    styleDialog->setProperty("lineColor", QColor("#d95319"));
-    root->findChild<QObject *>("objectTrajectoryWidth")->setProperty("value", 5);
-    QVERIFY(QMetaObject::invokeMethod(styleDialog, "submit"));
-    QVERIFY(!styleDialog->property("visible").toBool());
+    QVERIFY(!root->findChild<QObject *>("objectTrajectoryStyleDialog"));
+    auto *stylePane=root->findChild<QObject *>("trajectoryPropertiesPane"); QVERIFY(stylePane);
+    QTRY_VERIFY(stylePane->property("visible").toBool());
+    QCOMPARE(stylePane->property("styleObjectId").toString(),id);
+    const auto beforeInvalidStyle=controller.trajectoryState(0);
+    stylePane->findChild<QObject *>("trajectoryColor")->setProperty("text","invalid");
+    QVERIFY(QMetaObject::invokeMethod(stylePane,"apply"));
+    QCOMPARE(controller.trajectoryState(0),beforeInvalidStyle);
+    stylePane->findChild<QObject *>("trajectoryColor")->setProperty("text","#d95319");
+    stylePane->findChild<QObject *>("trajectoryWidth")->setProperty("value",5);
+    QVERIFY(QMetaObject::invokeMethod(stylePane,"apply"));
+    QVERIFY(stylePane->property("visible").toBool());
     QCOMPARE(controller.trajectoryState(0)["color"].value<QColor>(), QColor("#d95319"));
     QCOMPARE(controller.trajectoryState(0)["width"].toDouble(), 5.0);
     clickItem(trajectoryCheck); QTRY_VERIFY(!controller.trajectoryState(0)["visible"].toBool());
@@ -1634,14 +1723,15 @@ void ObjectDataTest::ruleInputsQml()
     auto drag = [&](const QString &sourceName, const QString &slot, bool cancel = false) {
         QTest::qWait(30); // Let newly added merge rows finish their layout before the next gesture.
         auto *source = findItem("signalTreeName", sourceName);
-        auto *target = findItem(slot == "merge" ? "ruleMergeDropArea" : "ruleInputSlot_" + slot);
+        const auto actualSlot=slot.startsWith("merge") ? "output:0:"+slot : slot;
+        auto *target = findItem(actualSlot.endsWith(":merge") ? "ruleMergeDropArea_"+actualSlot.split(':')[1] : "ruleInputSlot_" + actualSlot);
         if (!source || !target) return false;
         const auto from = source->mapToScene(QPointF(20, source->height() / 2)).toPoint();
         const auto to = target->mapToScene(QPointF(25, target->height() / 2)).toPoint();
         QTest::mousePress(window, Qt::LeftButton, Qt::NoModifier, from);
         QTest::mouseMove(window, from + QPoint(12, 0), 20);
         QTest::mouseMove(window, to, 20);
-        const bool hit = processor->property("dropRuleInput").toString() == slot;
+        const bool hit = processor->property("dropRuleInput").toString() == actualSlot;
         if (!hit) qWarning() << "Drag target not hit" << operation->property("currentIndex") << sourceName << slot << from << to << processor->property("dropRuleInput");
         if (cancel) QTest::keyClick(window, Qt::Key_Escape);
         QTest::mouseRelease(window, Qt::LeftButton, Qt::NoModifier, to);
@@ -1730,7 +1820,7 @@ void ObjectDataTest::ruleInputsQml()
     // Merge adds without duplicates; a drop onto a numbered input replaces that entry.
     QVERIFY(start(5)); QVERIFY(drag("A", "merge")); QVERIFY(drag("A", "merge"));
     QCOMPARE(editor->property("mergeInputs").toList().size(), 1);
-    auto *remainingMerge = findItem("ruleInputSlot_merge:0"); QVERIFY(remainingMerge);
+    auto *remainingMerge = findItem("ruleInputSlot_output:0:merge:0"); QVERIFY(remainingMerge);
     QQuickItem *removeInput = nullptr;
     for (auto *item : remainingMerge->findChildren<QQuickItem *>())
         if (item->property("text").toString() == QStringLiteral("移除")) { removeInput = item; break; }
@@ -1746,6 +1836,12 @@ void ObjectDataTest::ruleInputsQml()
     QCOMPARE(editor->property("mergeInputs").toList().size(), 1);
     QVERIFY(QMetaObject::invokeMethod(editor, "submit")); QCOMPARE(rules().size(), 3);
     QVERIFY(editor->property("errorText").toString().contains(QStringLiteral("两个输入")));
+    QVERIFY(QMetaObject::invokeMethod(processor,"addOutput"));
+    QVERIFY(drag("B","output:1:merge"));
+    QVERIFY(drag("C","output:1:merge"));
+    QCOMPARE(editor->property("mergeInputs").toList(),(QVariantList{"raw:1","raw:2"}));
+    QVERIFY(QMetaObject::invokeMethod(processor,"selectMergeOutput",Q_ARG(int,0)));
+    QCOMPARE(editor->property("mergeInputs").toList(),(QVariantList{"raw:2"}));
     QVERIFY(QMetaObject::invokeMethod(editor, "close"));
     for (int row = 0; row < controller.signalCount(); ++row) QVERIFY(!controller.plotSignalEnabled(0, row));
     // New rules receive an unused default name; changing type never overwrites edits.

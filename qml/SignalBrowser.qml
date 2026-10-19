@@ -4,7 +4,6 @@ import QtQuick.Controls
 import QtQuick.Controls.Basic as Basic
 import QtQuick.Layouts
 import QtQuick.Shapes
-import QtQuick.Dialogs as Dialogs
 import DataInspector
 Rectangle {
     id: signalBrowser
@@ -29,6 +28,7 @@ Rectangle {
         const state = signalBrowser.appController.trajectoryState(signalBrowser.appController.activePlotIndex)
         return state.enabled ? signalBrowser.appController.dataObjects.find(object => object.id === state.objectId) || null : null
     }
+    property TrajectoryPropertiesPane trajectoryEditor
     property SignalPropertiesPane propertiesEditor
     property int statePickTarget: -1
     function editSignalProperties(row) { statePickTarget=-1; objectEditor.close(); processingEditor.close(); signalBrowser.propertiesEditor.editSignal(row) }
@@ -72,15 +72,8 @@ Rectangle {
         return true
     }
     function editObjectTrajectory(id: string): void {
-        const state = objectTrajectoryState
-        const track = state.tracks.find(value => value.objectId === id)
-        objectStyle.objectId = id
-        objectStyle.plotIndex = appController.activePlotIndex
-        objectStyle.lineColor = track ? track.color : "#0072bd"
-        objectStyle.trackVisible = track ? track.visible : true
-        objectStyle.errorText = ""
-        objectTrackWidth.value = track ? track.width : 2
-        objectStyle.open()
+        propertiesEditor.close(); objectEditor.close(); processingEditor.close()
+        trajectoryEditor.editObject(id,appController.activePlotIndex)
     }
     function editObject(id: string): void {
         objectEditor.selectedId = id
@@ -162,48 +155,6 @@ Rectangle {
     }
 
 
-    Dialog {
-        id: objectStyle
-        objectName: "objectTrajectoryStyleDialog"
-        parent: Overlay.overlay
-        anchors.centerIn: parent
-        width: 340
-        modal: true
-        title: "飞机航迹样式"
-        property string objectId: ""
-        property int plotIndex: -1
-        property color lineColor: "#0072bd"
-        property bool trackVisible: true
-        property string errorText: ""
-        function submit(): void {
-            if (signalBrowser.objectEditor.blocked || signalBrowser.appController.imageExporting) return
-            if (signalBrowser.applyObjectTrajectory(objectId, plotIndex, lineColor, objectTrackWidth.value, trackVisible)) close()
-            else errorText = signalBrowser.appController.status
-        }
-        contentItem: ColumnLayout {
-            RowLayout {
-                Label { text: "颜色" }
-                Button {
-                    objectName: "objectTrajectoryColorButton"
-                    text: String(objectStyle.lineColor)
-                    onClicked: { objectTrackColor.selectedColor = objectStyle.lineColor; objectTrackColor.open() }
-                    background: Rectangle { color: objectStyle.lineColor; radius: 3 }
-                }
-                Label { text: "线宽" }
-                SpinBox { id: objectTrackWidth; objectName: "objectTrajectoryWidth"; from: 1; to: 12 }
-            }
-            Label { text: objectStyle.errorText; visible: text.length > 0; Layout.fillWidth: true; wrapMode: Text.WordWrap }
-        }
-        footer: DialogButtonBox {
-            Button { text: "确定"; enabled: !signalBrowser.objectEditor.blocked && !signalBrowser.appController.imageExporting; onClicked: objectStyle.submit() }
-            Button { text: "取消"; onClicked: objectStyle.close() }
-        }
-    }
-    Dialogs.ColorDialog {
-        id: objectTrackColor
-        title: "航迹颜色"
-        onAccepted: objectStyle.lineColor = selectedColor
-    }
     SplitView.preferredWidth: 280
     SplitView.minimumWidth: 180
     SplitView.maximumWidth: Math.max(180, signalBrowser.hostWidth - 320)

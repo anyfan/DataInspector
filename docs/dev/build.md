@@ -1,5 +1,11 @@
 # 构建
 
+`ColorEditor.qml` 纳入 `DI_QML_FILES`，信号属性及航迹右侧栏共用预设颜色和颜色输入控件。
+
+`TrajectoryPropertiesPane.qml` 纳入 `DI_QML_FILES`，在 Main 右侧 SplitView 编辑航迹配置。
+
+`ViewModeMenu.qml` 纳入 `DI_QML_FILES`，由曲线／状态图和航迹图共用右键视图切换入口。
+
 状态时间轴的 `statetimeline.*` 纳入 `DI_RENDER_SOURCES`，`statetimelineitem.*` 纳入 `DI_PLOTITEM_SOURCES`，`appcontroller_states.cpp` 纳入 `DI_CONTROLLER_SOURCES`，`SignalPropertiesPane.qml` 纳入 `DI_QML_FILES`。类型注册继续集中在 `qmltypes.h`，无新增第三方依赖。
 
 ## CLI 自动化

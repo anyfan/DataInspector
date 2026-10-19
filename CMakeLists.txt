@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DataInspector VERSION 0.4.0 LANGUAGES CXX)
+project(DataInspector VERSION 0.5.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -165,6 +165,9 @@ set(DI_ICON_FILES
 )
 
 set(DI_QML_FILES
+    qml/ColorEditor.qml
+    qml/TrajectoryPropertiesPane.qml
+    qml/ViewModeMenu.qml
     qml/SignalPropertiesPane.qml
     qml/SignalBrowser.qml
     qml/SessionDialogs.qml

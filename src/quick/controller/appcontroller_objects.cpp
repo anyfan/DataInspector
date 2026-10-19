@@ -13,6 +13,12 @@ QString newId() { return QUuid::createUuid().toString(QUuid::WithoutBraces); }
 QString packetLossOutputName(const ObjectRule &rule);
 bool configureRuleOutputs(ObjectRule &rule, const QVariantMap &config, int &nextSeries, const ObjectRule *previous, QString &error)
 {
+    const auto finishMerge=[&] {
+        if(rule.operation!="merge") { for(auto &output:rule.outputs) output.inputs.clear(); return; }
+        if(rule.outputs.size()==1 && (!config.contains("outputs") || rule.outputs[0].inputs.isEmpty())) rule.outputs[0].inputs=rule.inputs;
+        rule.inputs.clear();
+        for(const auto &output:rule.outputs) for(const auto &input:output.inputs) if(!rule.inputs.contains(input)) rule.inputs.append(input);
+    };
     if(!config.contains("outputs")) {
         if(previous) {
             rule.outputs=previous->outputs;
@@ -22,10 +28,10 @@ bool configureRuleOutputs(ObjectRule &rule, const QVariantMap &config, int &next
             const int count=rule.operation=="bits" ? rule.bitCount : 1;
             for(int k=0;k<count;++k) rule.outputs.append({newId(),names.value(k,rule.operation=="bits" ? rule.name+".bit"+QString::number(rule.startBit+k) : rule.operation=="packetloss" ? packetLossOutputName(rule) : rule.name),nextSeries++});
         }
-        return true;
+        finishMerge(); return true;
     }
     const auto specs=config.value("outputs").toList();
-    if((rule.operation!="bitfield" && rule.operation!="expression") || specs.isEmpty() || specs.size()>32) { error=QStringLiteral("位提取／公式须有 1–32 条输出"); return false; }
+    if((rule.operation!="bitfield" && rule.operation!="expression" && rule.operation!="merge") || specs.isEmpty() || specs.size()>32) { error=QStringLiteral("位提取／公式／合并须有 1–32 条输出"); return false; }
     QSet<QString> used;
     rule.outputs.clear();
     for(int k=0;k<specs.size();++k) {
@@ -40,6 +46,8 @@ bool configureRuleOutputs(ObjectRule &rule, const QVariantMap &config, int &next
         output.name=spec.value("name").toString().trimmed();
         if(output.name.isEmpty()) output.name=specs.size()==1 ? rule.name : rule.name+QStringLiteral(".输出%1").arg(k+1);
         output.expression=spec.value("expression").toString();
+        output.inputs.clear();
+        if(rule.operation=="merge") for(const auto &input:spec.value("inputs").toList()) output.inputs.append(input.toString());
         auto integer=[&](const QString &key,int fallback,int &target) {
             bool ok=false; const double value=spec.value(key,fallback).toDouble(&ok);
             if(!ok || !std::isfinite(value) || std::floor(value)!=value || value<0 || value>32) return false;
@@ -49,7 +57,7 @@ bool configureRuleOutputs(ObjectRule &rule, const QVariantMap &config, int &next
         output.signedField=spec.value("signedField",false).toBool();
         rule.outputs.append(output);
     }
-    return true;
+    finishMerge(); return true;
 }
 QSet<int> outputRows(const QVector<DataObject> &objects)
 {
@@ -134,7 +142,9 @@ QVariantList AppController::processingRuleInputs(const QString &id, const QStrin
 
 bool AppController::normalizeProcessingInputs(DataObject &definition, ObjectRule &rule) const
 {
+    QHash<QString,QString> normalized;
     for (auto &input : rule.inputs) {
+        const auto original=input;
         if (!input.startsWith("raw:")) continue;
         bool ok = false;
         const int row = input.mid(4).toInt(&ok);
@@ -145,8 +155,9 @@ bool AppController::normalizeProcessingInputs(DataObject &definition, ObjectRule
             id = newId();
             definition.fields.append({id, signalName(row).left(256), QStringLiteral("scalar"), row});
         }
-        input = id;
+        input = id; normalized.insert(original,id);
     }
+    for(auto &output:rule.outputs) for(auto &input:output.inputs) input=normalized.value(input,input);
     return true;
 }
 
@@ -337,8 +348,10 @@ QVariantMap AppController::configurationToVariant(const DataObject &object, bool
                 const auto sample = snapshot.series.first()->pointAt(i);
                 preview.append(std::isfinite(sample.y()) ? QString::number(sample.y(), 'g', 8) : QStringLiteral("缺失"));
             }
+            QVariantList groupInputs;
+            if(rule.operation=="merge") for(const auto &input:mergeOutputInputs(rule,output)) groupInputs.append(inputIds.value(input,input));
             outputs.append(QVariantMap{{"id", output.id}, {"name", signalName(output.series)}, {"series", output.series},
-                {"checked", plotSignalEnabled(activePlotIndex(), output.series)}, {"preview", preview.join(" / ")},
+                {"checked", plotSignalEnabled(activePlotIndex(), output.series)}, {"preview", preview.join(" / ")}, {"inputs",groupInputs},
                 {"startBit",rule.operation=="bits" ? rule.startBit+outputPosition : outputStartBit(rule,output)},{"bitCount",rule.operation=="bits" ? 1 : outputBitCount(rule,output)},{"signedField",rule.operation=="bits" ? false : outputSignedField(rule,output)},{"expression",outputExpression(rule,output)}});
             ++outputPosition;
             inputNames.insert(output.id, signalName(output.series));
@@ -515,7 +528,6 @@ bool AppController::editObjectRule(const QString &objectId, const QString &ruleI
         found = true; rule.name = config.value("name").toString().trimmed(); rule.operation = config.value("operation").toString();
         rule.expression = config.value("expression").toString(); rule.inputs.clear();
         for (const auto &v : config.value("inputs").toList()) rule.inputs.append(v.toString());
-        if (!normalizeProcessingInputs(object, rule)) { setStatus(QStringLiteral("请选择有效的原始信号来源")); return false; }
         bool ok = true;
         auto readInt = [&](const QString &key, int fallback, int *out) {
             bool converted = true; const double value = config.value(key, fallback).toDouble(&converted);
@@ -531,6 +543,7 @@ bool AppController::editObjectRule(const QString &objectId, const QString &ruleI
         if (!ok || !factorOk || !biasOk || !periodOk || !readCounterConfig(config, rule)) { setStatus(QStringLiteral("派生参数必须为合法数值")); return false; }
         QString why;
         if(!configureRuleOutputs(rule,config,nextSeries,&previous,why)) { setStatus(why); return false; }
+        if (!normalizeProcessingInputs(object, rule)) { setStatus(QStringLiteral("请选择有效的原始信号来源")); return false; }
         QSet<QString> retained;
         for(const auto &output:rule.outputs) retained.insert(output.id);
         for(const auto &output:previous.outputs) if(!retained.contains(output.id)) {
@@ -627,14 +640,16 @@ QString AppController::duplicateDataObject(const QString &id)
         for (const auto &input : rule.inputs) inputs.append(mapping.value(input));
         for (const auto &output : rule.outputs) {
             names.append(signalName(output.series));
+            QVariantList group;
+            if(rule.operation=="merge") for(const auto &input:mergeOutputInputs(rule,output)) group.append(mapping.value(input));
             outputs.append(QVariantMap{{"name", signalName(output.series)},
-                {"startBit", outputStartBit(rule, output)}, {"bitCount", outputBitCount(rule, output)},
+                {"inputs",group}, {"startBit", outputStartBit(rule, output)}, {"bitCount", outputBitCount(rule, output)},
                 {"signedField", outputSignedField(rule, output)}, {"expression", outputExpression(rule, output)}});
         }
         QVariantMap config {{"name", rule.name}, {"operation", rule.operation}, {"inputs", inputs},
             {"expression", rule.expression}, {"wordBits", rule.wordBits}, {"autoWordBits",rule.autoWordBits},{"byteOrder",rule.byteOrder}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
             {"signedField", rule.signedField}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance}, {"outputNames", names}};
-        if (rule.operation == "bitfield" || rule.operation == "expression") config.insert("outputs", outputs);
+        if (rule.operation == "bitfield" || rule.operation == "expression" || rule.operation == "merge") config.insert("outputs", outputs);
         const QString created = addObjectRule(target, config);
         if (created.isEmpty()) {
             removeDataObject(target);

@@ -68,7 +68,10 @@ void StateTimelineItem::start() {
                 const double a = job->minimum + span * (double(pixel) / pixels), b = job->minimum + span * (double(pixel + 1) / pixels);
                 auto next = std::upper_bound(lane.runs.cbegin(), lane.runs.cend(), a, [](double t, const StateRun &run) { return t < run.start; });
                 const auto *run = StateTimeline::at(lane, (a + b) / 2);
-                const bool mixed = next != lane.runs.cend() && next->start < b && next != lane.runs.cbegin();
+                // One boundary is an ordinary color join, not a compressed pulse.
+                // Mark only multiple transitions inside the same screen bucket.
+                const bool mixed = next != lane.runs.cend() && next != lane.runs.cbegin()
+                    && next+1 != lane.runs.cend() && (next+1)->start < b;
                 if (!run && !mixed) continue;
                 const QColor color = mixed ? QColor(pixel % 2 ? "#d6a0e8" : "#684180") : (!run->known && pixel % 4 < 2 ? QColor("#93a0ad") : StateTimeline::color(lane.config, *run));
                 const QRectF rect(double(pixel) / pixels * job->size.width(), row * rowHeight + HeaderHeight + 3, job->size.width() / pixels + .05, rowHeight - HeaderHeight - 6);

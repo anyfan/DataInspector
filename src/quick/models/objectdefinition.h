@@ -19,6 +19,7 @@ struct ObjectOutput {
     int startBit = 0, bitCount = 0; // zero inherits the rule's scalar defaults
     bool signedField = false;
     QString expression;
+    QStringList inputs; // Independent source group for merge outputs.
 };
 struct ObjectRule {
     QString id, name, operation = QStringLiteral("scale"), expression;
@@ -35,6 +36,7 @@ struct ObjectRule {
     double rateWindowSeconds = 1;
     QVector<ObjectOutput> outputs;
 };
+inline const QStringList &mergeOutputInputs(const ObjectRule &rule, const ObjectOutput &output) { return output.inputs.isEmpty() ? rule.inputs : output.inputs; }
 inline int outputStartBit(const ObjectRule &rule, const ObjectOutput &output) { return output.bitCount ? output.startBit : rule.startBit; }
 inline int outputBitCount(const ObjectRule &rule, const ObjectOutput &output) { return output.bitCount ? output.bitCount : rule.bitCount; }
 inline bool outputSignedField(const ObjectRule &rule, const ObjectOutput &output) { return output.bitCount ? output.signedField : rule.signedField; }

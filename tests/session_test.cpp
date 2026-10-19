@@ -899,7 +899,24 @@ void SessionTest::stateTimelineQmlConfiguration()
             const auto sample=item->mapToScene(QPointF(px,5));
             QCOMPARE(duringDrag.pixelColor(qRound(sample.x()*duringDrag.devicePixelRatio()),qRound(sample.y()*duringDrag.devicePixelRatio())),QColor("#2563b0"));
         }
+        // Off-grid ordinary joins must contain only the two adjacent state colors.
+        plot->setCursorMode(PlotItem::NoCursor);
+        plot->setXRange(.013,4.013);
+        QTRY_VERIFY_WITH_TIMEOUT(!item->pending(),5000);
+        stateWindow.requestUpdate(); QTest::qWait(100);
+        const auto joins=stateWindow.grabWindow(); QVERIFY(!joins.isNull());
+        const QColor colors[]{QColor("#687887"),QColor("#2563b0"),QColor("#278451"),QColor("#bc3545")};
+        for(int edge=1;edge<=3;++edge) {
+            const double x=(edge-plot->xMinimum())/(plot->xMaximum()-plot->xMinimum())*item->width();
+            const auto point=item->mapToScene(QPointF(x,item->headerHeight()+5));
+            for(int dx=-2;dx<=2;++dx) {
+                const auto color=joins.pixelColor(qRound(point.x()*joins.devicePixelRatio())+dx,
+                                                  qRound(point.y()*joins.devicePixelRatio()));
+                QVERIFY2(color==colors[edge-1] || color==colors[edge],qPrintable(color.name()));
+            }
+        }
         plot->setXRange(initialMinimum,initialMaximum);
+        plot->setCursorMode(PlotItem::SingleCursor);
         QTRY_VERIFY_WITH_TIMEOUT(!item->pending(),5000);
     }
     // A replacement source/config must invalidate an in-flight frame.
@@ -970,6 +987,22 @@ void SessionTest::mixedStateAndCurveLayout()
     };
     QTRY_VERIFY(plotOwner(0) && plotOwner(1));
     auto *state = plotOwner(0), *curve = plotOwner(1);
+    auto *closedProperties=root->findChild<QQuickItem *>("signalPropertiesPane"); QVERIFY(closedProperties);
+    QVERIFY(!closedProperties->isVisible());
+    controller.setStateTimelineEnabled(0,false);
+    auto *switchAction=state->findChild<QObject *>("switchToStateTimeline"); QVERIFY(switchAction);
+    QVERIFY(QMetaObject::invokeMethod(switchAction,"triggered"));
+    QTRY_VERIFY(state->property("stateMode").toBool());
+    QVERIFY(!closedProperties->isVisible());
+    auto *viewMenu=state->findChild<QObject *>("switchViewMenu"); QVERIFY(viewMenu);
+    QCOMPARE(viewMenu->property("title").toString(),QStringLiteral("切换视图"));
+    QCOMPARE(viewMenu->property("count").toInt(),3);
+    auto *curveAction=viewMenu->findChild<QObject *>("curveModeMenuItem"); QVERIFY(curveAction);
+    QVERIFY(QMetaObject::invokeMethod(curveAction,"triggered"));
+    QTRY_VERIFY(!state->property("stateMode").toBool());
+    QVERIFY(QMetaObject::invokeMethod(switchAction,"triggered"));
+    QTRY_VERIFY(state->property("stateMode").toBool());
+
     QTRY_VERIFY(qAbs(state->height()-curve->height())<=1);
     QCOMPARE(state->property("measuredAxisLeft").toDouble(),60.);
     QVERIFY(curve->property("axisLeft").toDouble() < 80);
@@ -1052,6 +1085,35 @@ void SessionTest::mixedStateAndCurveLayout()
         window->requestUpdate(); QTest::qWait(250);
         QVERIFY(window->grabWindow().save(capture));
     }
+    controller.enterTrajectoryMode(1);
+    auto *trajectoryPane=root->findChild<QQuickItem *>("trajectoryPropertiesPane"); QVERIFY(trajectoryPane);
+    QVERIFY(!trajectoryPane->isVisible());
+    QObject *configurationButton=nullptr;
+    QTRY_VERIFY((configurationButton=plotOwner(1)->findChild<QObject *>("trajectoryConfigurationToggle")));
+    QVERIFY(QMetaObject::invokeMethod(configurationButton,"clicked"));
+    QTRY_VERIFY(trajectoryPane->isVisible()); QVERIFY(!properties->isVisible());
+    QTRY_VERIFY(trajectoryPane->mapToScene(QPointF()).x() >= plotOwner(1)->mapToScene(QPointF(plotOwner(1)->width(),0)).x()-1);
+    QVERIFY(trajectoryPane->width()>=260); QVERIFY(browser->isVisible());
+    QVERIFY(!trajectoryPane->findChild<QObject *>("trajectoryAxisX"));
+    QVERIFY(!trajectoryPane->findChild<QObject *>("trajectoryAxisY"));
+    const auto plane=controller.addDataObject("aircraft"); QVERIFY(!plane.isEmpty());
+    const auto fields=controller.dataObjects().last().toMap()["fields"].toList();
+    for(int axis=0;axis<2;++axis) {
+        const auto field=fields[axis].toMap();
+        QVERIFY(!controller.bindObjectField(plane,field["id"].toString(),field["name"].toString(),field["role"].toString(),axis).isEmpty());
+    }
+    auto *objects=trajectoryPane->findChild<QObject *>("trajectoryObjectSelector"); QVERIFY(objects);
+    objects->setProperty("currentIndex",0);
+    QVERIFY(QMetaObject::invokeMethod(objects,"activated",Q_ARG(int,0)));
+    QCOMPARE(controller.trajectoryState(1)["x"].toInt(),0);
+    QCOMPARE(controller.trajectoryState(1)["y"].toInt(),1);
+    QCOMPARE(controller.trajectoryState(1)["objectId"].toString(),plane);
+    trajectoryPane->findChild<QObject *>("trajectoryName")->setProperty("text",QStringLiteral("对象航迹"));
+    QVERIFY(QMetaObject::invokeMethod(trajectoryPane,"apply"));
+    QCOMPARE(controller.trajectoryState(1)["objectId"].toString(),plane);
+    QCOMPARE(controller.trajectoryState(1)["name"].toString(),QStringLiteral("对象航迹"));
+    const auto trajectoryCapture=qEnvironmentVariable("DI_TRAJECTORY_SIDEBAR_CAPTURE_PATH");
+    if(!trajectoryCapture.isEmpty()) { window->requestUpdate(); QTest::qWait(200); QVERIFY(window->grabWindow().save(trajectoryCapture)); }
     QVERIFY2(warnings.isEmpty(),qPrintable(warnings.join('\n')));
 }
 

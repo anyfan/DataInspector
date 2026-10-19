@@ -90,15 +90,6 @@ void AppController::enterTrajectoryMode(int index)
     if (!state.enabled && state.signalIds.isEmpty()
         && std::all_of(state.activeEntry().axes.cbegin(), state.activeEntry().axes.cend(), [](int id) { return id < 0; }))
         state.activeEntry().geographic = true;
-    if (state.signalIds.isEmpty()) {
-        state.signalIds = m_signals->plotRows(index);
-        for (int row : state.signalIds) {
-            if (std::find(state.activeEntry().axes.cbegin(), state.activeEntry().axes.cend(), row) != state.activeEntry().axes.cend()) continue;
-            const auto empty = std::find(state.activeEntry().axes.begin(), state.activeEntry().axes.end(), -1);
-            if (empty == state.activeEntry().axes.end()) break;
-            *empty = row;
-        }
-    }
     if (configureTrajectory(index, true, state.activeEntry().axes[0], state.activeEntry().axes[1], state.activeEntry().axes[2], state.activeEntry().geographic))
         setActivePlot(index);
 }

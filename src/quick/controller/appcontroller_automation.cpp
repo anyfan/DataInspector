@@ -24,9 +24,10 @@ QVariantMap AppController::mergePlan(const QVariantMap &policy) const
     QHash<QString, QVariantMap> existing;
     for (const auto &object : m_objects) {
         QHash<QString, int> fields; for (const auto &field : object.fields) fields[field.id] = field.series;
-        for (const auto &rule : object.rules) if (rule.operation == "merge") {
-            QVector<int> rows; for (const auto &input : rule.inputs) if (fields.contains(input)) rows.append(fields[input]);
-            if (rows.size() == rule.inputs.size()) existing[mergeKey(rows)] = {{"object", object.id}, {"rule", rule.id}, {"error", m_objectErrors.value(rule.id)}};
+        for (const auto &rule : object.rules) if (rule.operation == "merge") for (const auto &output : rule.outputs) {
+            const auto &inputs = mergeOutputInputs(rule, output);
+            QVector<int> rows; for (const auto &input : inputs) if (fields.contains(input)) rows.append(fields[input]);
+            if (rows.size() == inputs.size()) existing[mergeKey(rows)] = {{"object", object.id}, {"rule", rule.id}, {"error", m_objectErrors.value(rule.id)}};
         }
     }
     for (int row = 0; row < signalCount(); ++row) {
