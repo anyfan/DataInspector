@@ -1,5 +1,9 @@
 # 构建
 
+`PlotPropertiesPane.qml` 纳入 `DI_QML_FILES`，提供曲线子图坐标范围与归一化属性右栏。
+
+`SignalPenPreview.qml` 纳入 `DI_QML_FILES`，信号树与处理输出共用 Scene Graph 线条样式预览及点击入口。
+
 `ColorEditor.qml` 纳入 `DI_QML_FILES`，信号属性及航迹右侧栏共用预设颜色和颜色输入控件。
 
 `TrajectoryPropertiesPane.qml` 纳入 `DI_QML_FILES`，在 Main 右侧 SplitView 编辑航迹配置。

@@ -37,6 +37,8 @@ private slots:
     void cursorReadoutsFollowVisibleXRange();
     void cursorsInitializeFromSelectedPlot();
     void viewUndoRestoresSharedAndLocalRanges();
+    void subplotPropertiesQml_data();
+    void subplotPropertiesQml();
     void curveClicksSelectWithoutPanning();
     void normalizeYKeepsRawCursorValues();
     void cursorKeyboardStepsAcrossRawSamples();
@@ -232,6 +234,182 @@ void AppControllerTest::exportCompressionOptionReachesWriter()
     QCOMPARE(stored.tables.first().values, compressed.tables.first().values);
     QVERIFY(QFileInfo(storedOutput).size()
             > QFileInfo(compressedOutput).size() * 2);
+}
+
+void AppControllerTest::subplotPropertiesQml_data()
+{
+    QTest::addColumn<QUrl>("mainUrl");
+    QTest::newRow("source") << QUrl::fromLocalFile(QDir(QFileInfo(QString::fromUtf8(__FILE__)).absolutePath()).filePath("../qml/Main.qml"));
+    QTest::newRow("resource") << QUrl("qrc:/qt/qml/DataInspector/Main.qml");
+}
+
+void AppControllerTest::subplotPropertiesQml()
+{
+    QFETCH(QUrl, mainUrl);
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration, AppControllerQmlRegistration, SignalModelQmlRegistration,
+        StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
+    AppController controller; controller.setLayout(1, 2);
+    QQmlEngine engine; QStringList warnings;
+    connect(&engine, &QQmlEngine::warnings, &engine, [&](const QList<QQmlError> &errors) {
+        for (const auto &error : errors) warnings.append(error.toString());
+    });
+    QQmlComponent component(&engine, mainUrl); QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"visible", false}, {"appController", QVariant::fromValue(&controller)}}));
+    QVERIFY2(root, qPrintable(component.errorString()));
+    QObject *menu = nullptr;
+    QQuickItem *plotOwner = nullptr;
+    QList<QQuickItem *> pending{qobject_cast<QQuickWindow *>(root.get())->contentItem()};
+    while (!pending.isEmpty() && !menu) {
+        auto *item = pending.takeLast(); pending.append(item->childItems());
+        if (item->property("renderer").isValid()) {
+            menu = item->findChild<QObject *>("plotPropertiesMenuItem");
+            if (menu) plotOwner = item;
+        }
+    }
+    QVERIFY(menu);
+    QVERIFY(!plotOwner->findChild<QObject *>("curveSettingsMenu"));
+    auto *renderer = qobject_cast<PlotItem *>(plotOwner->property("renderer").value<QObject *>()); QVERIFY(renderer);
+    renderer->setXRange(10.25, 20.75); renderer->setYRange(-2.25, 3.75);
+    auto *pane = root->findChild<QObject *>("plotPropertiesPane"); QVERIFY(pane);
+    QVERIFY(QMetaObject::invokeMethod(menu, "triggered"));
+    QVERIFY(pane->property("visible").toBool());
+    QVERIFY(root->findChild<QObject *>("plotGrid")->property("visible").toBool());
+    const int index = pane->property("plotIndex").toInt();
+    QCOMPARE(controller.activePlotIndex(), index);
+    const auto before = controller.plotAxisProperties(index);
+    const auto peerBefore = controller.plotAxisProperties(1-index);
+    QVERIFY(!before.isEmpty()); QVERIFY(!peerBefore.isEmpty());
+    const auto field = [&](const char *name) { return pane->findChild<QObject *>(name); };
+    QVERIFY(field("plotXMinimum"));
+    QCOMPARE(field("plotXMinimum")->property("text").toString().toDouble(), before["xMinimum"].toDouble());
+    QCOMPARE(field("plotXMinimum")->property("text").toString().toDouble(), 10.25);
+    QCOMPARE(field("plotXMaximum")->property("text").toString().toDouble(), 20.75);
+    QCOMPARE(field("plotYMinimum")->property("text").toString().toDouble(), -2.25);
+    QCOMPARE(field("plotYMaximum")->property("text").toString().toDouble(), 3.75);
+    field("plotXMinimum")->setProperty("text", "-2.5e1");
+    field("plotXMaximum")->setProperty("text", "75");
+    field("plotYMinimum")->setProperty("text", "-5");
+    field("plotYMaximum")->setProperty("text", "15");
+    QCOMPARE(controller.plotAxisProperties(index), before); // Drafts do not alter the view.
+    QVERIFY(QMetaObject::invokeMethod(pane, "apply"));
+    const auto applied = controller.plotAxisProperties(index);
+    QCOMPARE(applied["xMinimum"].toDouble(), -25.0); QCOMPARE(applied["xMaximum"].toDouble(), 75.0);
+    QCOMPARE(applied["yMinimum"].toDouble(), -5.0); QCOMPARE(applied["yMaximum"].toDouble(), 15.0);
+    QCOMPARE(controller.plotAxisProperties(1-index)["xMinimum"].toDouble(), -25.0);
+    QCOMPARE(controller.plotAxisProperties(1-index)["yMinimum"], peerBefore["yMinimum"]);
+    QVERIFY(controller.canUndoView()); controller.undoView();
+    QCOMPARE(controller.plotAxisProperties(index), before);
+    QCOMPARE(controller.plotAxisProperties(1-index), peerBefore); // One undo restores both axes.
+    for (const QString &invalid : {QString(""), QString("NaN"), QString("1,000"), QString("1e999"), QString("75")}) {
+        field("plotXMaximum")->setProperty("text", "75");
+        field("plotXMinimum")->setProperty("text", invalid);
+        QVERIFY(QMetaObject::invokeMethod(pane, "apply"));
+        QCOMPARE(controller.plotAxisProperties(index), before);
+        QVERIFY(!pane->property("errorText").toString().isEmpty());
+    }
+    auto invalid = before; invalid["xMinimum"] = -30; invalid["yMaximum"] = invalid["yMinimum"];
+    QVERIFY(!controller.configurePlotAxes(index, invalid)); QCOMPARE(controller.plotAxisProperties(index), before);
+    invalid = before; invalid["xMinimum"] = -1e308; invalid["xMaximum"] = 1e308;
+    QVERIFY(!controller.configurePlotAxes(index, invalid)); QCOMPARE(controller.plotAxisProperties(index), before);
+    QVERIFY(QMetaObject::invokeMethod(pane, "refresh"));
+    field("plotNormalizeY")->setProperty("checked", true);
+    field("plotYMinimum")->setProperty("text", "0"); field("plotYMaximum")->setProperty("text", "1");
+    QVERIFY(QMetaObject::invokeMethod(pane, "apply"));
+    QVERIFY(controller.plotAxisProperties(index)["normalizeY"].toBool());
+    QVERIFY(!controller.plotAxisProperties(1-index)["normalizeY"].toBool());
+    controller.undoView(); QCOMPARE(controller.plotAxisProperties(index), before);
+    QVERIFY(QMetaObject::invokeMethod(pane, "refresh"));
+    QVERIFY(field("plotBlendOverlaps")->property("checked").toBool());
+    field("plotBlendOverlaps")->setProperty("checked", false);
+    QCOMPARE(controller.plotAxisProperties(index), before);
+    QVERIFY(QMetaObject::invokeMethod(pane, "apply"));
+    QVERIFY(!controller.plotAxisProperties(index)["blendOverlaps"].toBool());
+    QVERIFY(controller.plotAxisProperties(1-index)["blendOverlaps"].toBool());
+    controller.undoView(); QCOMPARE(controller.plotAxisProperties(index), before);
+    root->findChild<QObject *>("signalPropertiesPane")->setProperty("visible", true);
+    QVERIFY(!pane->property("visible").toBool());
+    renderer->setXRange(31, 39); renderer->setYRange(-9, -3);
+    QVERIFY(QMetaObject::invokeMethod(pane, "editPlot", Q_ARG(int, index)));
+    QCOMPARE(field("plotXMinimum")->property("text").toString().toDouble(), 31.0);
+    QCOMPARE(field("plotYMaximum")->property("text").toString().toDouble(), -3.0);
+    renderer->setXRange(40, 48); renderer->setYRange(-12, -4);
+    QTest::qWait(300);
+    QCOMPARE(field("plotXMinimum")->property("text").toString().toDouble(), 31.0);
+    renderer->setXRange(41, 49);
+    QTest::qWait(300); // A new change restarts the quiet period.
+    QCOMPARE(field("plotXMinimum")->property("text").toString().toDouble(), 31.0);
+    QTRY_COMPARE_WITH_TIMEOUT(field("plotXMinimum")->property("text").toString().toDouble(), 41.0, 2000);
+    QTRY_COMPARE_WITH_TIMEOUT(field("plotYMaximum")->property("text").toString().toDouble(), -4.0, 2000);
+    field("plotXMinimum")->setProperty("text", "41.25");
+    QVERIFY(QMetaObject::invokeMethod(field("plotXMinimum"), "textEdited"));
+    renderer->setXRange(42, 50); renderer->setYRange(-16, -6);
+    QTRY_COMPARE_WITH_TIMEOUT(field("plotXMaximum")->property("text").toString().toDouble(), 50.0, 2000);
+    QCOMPARE(field("plotXMinimum")->property("text").toString(), QString("41.25"));
+    controller.setLayout(2, 2);
+    QVERIFY(pane->property("visible").toBool());
+    QCOMPARE(pane->property("plotIndex").toInt(), index);
+    QCOMPARE(field("plotXMinimum")->property("text").toString(), QString("41.25"));
+    controller.setActivePlot(1-index);
+    QTRY_COMPARE(pane->property("plotIndex").toInt(), 1-index);
+    QCOMPARE(field("plotYMinimum")->property("text").toString().toDouble(), controller.plotAxisProperties(1-index)["yMinimum"].toDouble());
+    controller.setStateTimelineEnabled(index, true);
+    controller.setActivePlot(index);
+    auto *stateProperties = root->findChild<QObject *>("signalPropertiesPane"); QVERIFY(stateProperties);
+    QTRY_VERIFY(stateProperties->property("visible").toBool());
+    QCOMPARE(stateProperties->property("mode").toString(), QString("states"));
+    QCOMPARE(stateProperties->property("plotIndex").toInt(), index);
+    QVERIFY(!pane->property("visible").toBool());
+    auto *browser = root->findChild<QObject *>("signalBrowser"); QVERIFY(browser);
+    browser->setProperty("statePickTarget", index);
+    controller.setActivePlot(1-index);
+    QTRY_VERIFY(pane->property("visible").toBool());
+    QCOMPARE(pane->property("plotIndex").toInt(), 1-index);
+    QVERIFY(!stateProperties->property("visible").toBool());
+    QCOMPARE(browser->property("statePickTarget").toInt(), -1);
+    controller.enterTrajectoryMode(index);
+    controller.setActivePlot(index);
+    auto *trajectoryProperties = root->findChild<QObject *>("trajectoryPropertiesPane"); QVERIFY(trajectoryProperties);
+    QTRY_VERIFY(trajectoryProperties->property("visible").toBool());
+    QCOMPARE(trajectoryProperties->property("plotIndex").toInt(), index);
+    QVERIFY(!pane->property("visible").toBool());
+    controller.setActivePlot(1-index);
+    QTRY_VERIFY(pane->property("visible").toBool());
+    QVERIFY(!trajectoryProperties->property("visible").toBool());
+    QVERIFY(controller.configureTrajectory(index, false, -1, -1, -1, false));
+    controller.setStateTimelineEnabled(index, false);
+    // Removing the edited subplot keeps the pane open on the surviving active plot.
+    QVERIFY(QMetaObject::invokeMethod(pane, "editPlot", Q_ARG(int, 3)));
+    controller.setLayout(1, 1);
+    QVERIFY(pane->property("visible").toBool());
+    QTRY_COMPARE(pane->property("plotIndex").toInt(), 0);
+    QTRY_VERIFY(pane->property("targetAvailable").toBool());
+    QTRY_COMPARE(field("plotXMinimum")->property("text").toString().toDouble(), controller.plotAxisProperties(0)["xMinimum"].toDouble());
+    QVERIFY(!controller.configurePlotAxes(3, before));
+    QTemporaryDir appendedFiles; QVERIFY(appendedFiles.isValid()); int appendedNumber = 0;
+    const auto appendFile = [&] {
+        const auto path = appendedFiles.filePath(QString("append-%1.csv").arg(++appendedNumber));
+        writeCsvFile(path, "time,A\n0,1\n1,2\n");
+        return controller.loadCsv(path);
+    };
+    QVERIFY(appendFile()); QTRY_VERIFY(!controller.loading());
+    QVERIFY(pane->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "editSignalPen", Q_ARG(QVariant, QVariant(0))));
+    auto *signalName = stateProperties->findChild<QObject *>("signalPropertyName"); QVERIFY(signalName);
+    signalName->setProperty("text", "pending name");
+    QVERIFY(appendFile()); QTRY_VERIFY(!controller.loading());
+    QVERIFY(stateProperties->property("visible").toBool());
+    QCOMPARE(stateProperties->property("sourceRow").toInt(), 0);
+    QCOMPARE(signalName->property("text").toString(), QString("pending name"));
+    controller.setStateTimelineEnabled(0, true);
+    QVERIFY(QMetaObject::invokeMethod(stateProperties, "showStates", Q_ARG(QVariant, QVariant(0))));
+    QVERIFY(appendFile()); QTRY_VERIFY(!controller.loading());
+    QVERIFY(stateProperties->property("visible").toBool());
+    QCOMPARE(stateProperties->property("mode").toString(), QString("states"));
+    controller.enterTrajectoryMode(0);
+    QTRY_VERIFY(trajectoryProperties->property("visible").toBool());
+    QVERIFY(appendFile()); QTRY_VERIFY(!controller.loading());
+    QVERIFY(trajectoryProperties->property("visible").toBool());
+    QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
 }
 
 void AppControllerTest::viewUndoRestoresSharedAndLocalRanges()
@@ -1553,9 +1731,30 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     targetItem->setProperty("sharedAxisLeft", sharedLeft);
     QCOMPARE(item->property("axisLeft"), targetItem->property("axisLeft"));
     QCOMPARE(item->property("axisTop"), targetItem->property("axisTop"));
-    QVERIFY(QMetaObject::invokeMethod(object.get(), "formatYTick", Q_RETURN_ARG(QVariant, formatted),
-                                     Q_ARG(QVariant, 12000.0)));
-    QCOMPARE(formatted.toString(), "1.20e+4");
+    for (const auto &sample : {qMakePair(0.0, "0"), qMakePair(2000.0, "2000"),
+                               qMakePair(2500.0, "2500"), qMakePair(10000.0, "10000"),
+                               qMakePair(12000.0, "12000"), qMakePair(-12000.0, "-12000"),
+                               qMakePair(999999.0, "999999"), qMakePair(0.001, "0.001"),
+                               qMakePair(1e6, "1.00e+6"), qMakePair(1e-4, "1.00e-4")}) {
+        QVERIFY(QMetaObject::invokeMethod(object.get(), "formatYTick", Q_RETURN_ARG(QVariant, formatted),
+                                         Q_ARG(QVariant, sample.first)));
+        QCOMPARE(formatted.toString(), QString::fromLatin1(sample.second));
+    }
+    for (const auto &range : {qMakePair(0.0, 10000.0), qMakePair(1000.0, 3000.0),
+                              qMakePair(-10000.0, 0.0)}) {
+        plot->setYRange(range.first, range.second);
+        QSet<QString> labels;
+        for (const auto &tick : plot->yTicks()) {
+            QVERIFY(QMetaObject::invokeMethod(item, "yTickLabel", Q_RETURN_ARG(QVariant, formatted),
+                                             Q_ARG(QVariant, tick)));
+            const auto label = formatted.toString();
+            QVERIFY(!label.contains('e'));
+            QVERIFY(!labels.contains(label));
+            QVERIFY(std::abs(label.toDouble() - tick.toMap().value("value").toDouble())
+                    <= (range.second - range.first) * 1e-3);
+            labels.insert(label);
+        }
+    }
     plot->setXRange(0.0, 10.0);
     plot->setYRange(-20.0, 20.0);
     QVERIFY(QMetaObject::invokeMethod(object.get(), "applyAxisSelection",
@@ -1589,6 +1788,9 @@ void AppControllerTest::quickPlotLoadsWithLegendAndCursors()
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
     targetItem->setParentItem(nullptr);
     for (const auto &range : {qMakePair(4294967294.95, 4294967295.05),
+                              qMakePair(-27.28442023, -27.28442012),
+                              qMakePair(27.28442012, 27.28442023),
+                              qMakePair(12000.001, 12000.009),
                               qMakePair(4.28e9, 4.31e9),
                               qMakePair(-4294967295.05, -4294967294.95),
                               qMakePair(1e20, 1e20 + 1e6),

@@ -49,6 +49,8 @@ DataInspector 使用 Qt 6.8 Qt Quick Scene Graph。本文描述当前职责与�
 
 `QuickPlot` 负责轴、图例及游标编辑。游标只吸附原始样本；T1/T2 精确编辑分别定位，ΔT 固定 T1 调整 T2。成对步进按第一条游标相邻原始样本时间差同步移动，保持间隔；控制器同步各子图。交互规则见[视图操作](../user-guide/view-operations.md)。
 
+三种视图共用“属性…”入口语义，分别路由至曲线 PlotPropertiesPane、航迹 TrajectoryPropertiesPane、SignalPropertiesPane 的状态行模式。曲线范围经 configurePlotAxes 集中验证后提交；beginViewChange/endViewChange 将归一化及 X/Y 修改合并为一次历史记录，复用既有 X 联动、会话缓存与不可变渲染快照。属性侧栏互斥显示，不新增持久格式。
+
 ## 航迹
 
 `SessionTrajectory` 的 tracks 列表是唯一状态来源，active 只选择列表项；不维护活动副本。`appcontroller_trajectory.cpp` 将飞机对象字段解析为位置及姿态来源，统一管理相机、候选与时间联动。UI 来源编辑通过对象页面完成；直接来源 API 仍服务视图模板及内核测试。
@@ -75,7 +77,7 @@ DataInspector 使用 Qt 6.8 Qt Quick Scene Graph。本文描述当前职责与�
 
 位提取和公式规则允许 1–32 条输出，ObjectOutput 保存每行的起始位、位数、符号或表达式；规则公共标量参数仍作为 API 缺省值。输出列表编辑按 ID 保留既有系列，新输出追加；删除输出前检查下游引用，全部验证成功后统一发布和重映射。后台扫描自动字宽，按有效值及所需位范围取最小 8/16/32；默认小端，大端先按有效字宽交换字节。每个公式单独编译并生成阶梯标记，输入时间基仍严格相同。所有输出一起计入既有 512 MiB 值预算与取消检查，缓存键包含每行定义、端序及自动字宽设置。
 
-`ViewModeMenu` 由 QuickPlot 与 TrajectoryPlot 共用，右键“切换视图”包含曲线、航迹、状态三个模式。航迹入口直接调用 enterTrajectoryMode，不弹出对象选择；对象绑定通过右键“航迹配置…”触发。返回曲线同时关闭航迹及状态模式，保留已有配置与时间曲线绑定。
+`ViewModeMenu` 由 QuickPlot 与 TrajectoryPlot 共用，右键“切换视图”包含曲线、航迹、状态三个模式。航迹入口直接调用 enterTrajectoryMode，不弹出对象选择；对象绑定通过右键“属性…”触发。返回曲线同时关闭航迹及状态模式，保留已有配置与时间曲线绑定。
 
 `TrajectoryPropertiesPane` 位于 Main SplitView 最右侧，与信号属性互斥显示。QuickPlot 通过显式 trajectoryEditor 引用打开同一侧栏，图面只发送配置入口请求；坐标来源、对象选择、航迹管理与样式统一内嵌，取消原顶部展开区及对象／样式 Dialog。位置、坐标系与姿态只通过飞机对象配置；右栏应用仅修改显示样式。进入航迹视图不自动推断坐标，图中信号选择／拖动不修改航迹来源。
 

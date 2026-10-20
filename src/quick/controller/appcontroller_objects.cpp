@@ -609,6 +609,26 @@ bool AppController::removeObjectRule(const QString &objectId, const QString &rul
     }
     return false;
 }
+bool AppController::dataObjectRemovalNeedsConfirmation(const QString &id) const
+{
+    for (const auto &object : m_objects) if (object.id == id) {
+        if (!object.rules.isEmpty()) return true;
+        for (const auto &state : m_trajectories) for (const auto &track : state.entries())
+            if (track.objectId == id) return true;
+        DataObject defaults;
+        if (object.type == "aircraft") ensureAircraftFields(defaults);
+        if (object.geographic != defaults.geographic || !(object.attitude == defaults.attitude)
+            || object.fields.size() != defaults.fields.size()) return true;
+        for (qsizetype i = 0; i < object.fields.size(); ++i) {
+            const auto &field = object.fields[i];
+            const auto &preset = defaults.fields[i];
+            if (field.series >= 0 || field.role != preset.role || field.name != preset.name) return true;
+        }
+        return false;
+    }
+    return false;
+}
+
 bool AppController::removeDataObject(const QString &id)
 {
     if (m_loading || m_exporting || sessionInteractionBlocked()) return false;

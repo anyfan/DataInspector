@@ -17,6 +17,7 @@ Pane {
     property string errorText: ""
     property var drafts: ({})
     property var appliedDraft: null
+    property bool appendedSources: false
     property var lanes: []
     property color lineColor: "#0072bd"
     property int colorRow: -1
@@ -97,7 +98,11 @@ Pane {
     }
     Connections {
         target: editor.controller
-        function onCurrentFileChanged() { editor.visible=false; editor.drafts=({}); editor.sourceRow=-1 }
+        function onFileAppendCommitted() { editor.appendedSources = true }
+        function onCurrentFileChanged() {
+            if (editor.appendedSources) { editor.appendedSources = false; editor.refreshStates(); return }
+            editor.visible=false; editor.drafts=({}); editor.sourceRow=-1
+        }
         function onPlotBindingsChanged() { editor.refreshStates() }
     }
     component TimeOffsetFields: ColumnLayout {
@@ -120,7 +125,7 @@ Pane {
         RowLayout {
             Layout.fillWidth: true
             ToolButton { text: "‹"; visible: editor.mode === "signal" && editor.backPlot >= 0; onClicked: editor.showStates(editor.backPlot) }
-            Label { text: editor.mode === "states" ? "状态行 · 子图 " + (editor.plotIndex+1) : editor.mode === "offset" ? "时间偏移" : "信号属性"; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
+            Label { text: editor.mode === "states" ? "状态属性 · 子图 " + (editor.plotIndex+1) : editor.mode === "offset" ? "时间偏移" : "信号属性"; font.bold: true; Layout.fillWidth: true; elide: Text.ElideRight }
             ToolButton { text: "×"; onClicked: editor.close() }
         }
         ScrollView {

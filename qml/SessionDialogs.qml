@@ -10,6 +10,7 @@ Item {
     required property AppController appController
     required property real hostWidth
     required property real hostHeight
+    property bool darkTheme: false
     signal closeRequested()
     signal attentionRequested()
     property string pendingUnsavedAction: ""
@@ -184,7 +185,8 @@ Item {
                     height: 72
                     spacing: 2
                     Label { text: templateMatchRow.modelData.label + " · " + templateMatchRow.modelData.hint; Layout.fillWidth: true; elide: Text.ElideMiddle }
-                    ComboBox {
+                    ThemedComboBox {
+                        darkTheme: sessionDialogs.darkTheme
                         objectName: "viewTemplateMatch" + templateMatchRow.modelData.id
                         Layout.fillWidth: true
                         model: viewTemplateDialog.preview.options

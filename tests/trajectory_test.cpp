@@ -941,6 +941,7 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QVERIFY(c.trajectoryState(0)["objectId"].toString().isEmpty());
     QCOMPARE(c.signalModel()->checkedCount(), 0);
     auto *axesButton = object->findChild<QObject *>("trajectoryConfigurationMenuItem"); QVERIFY(axesButton);
+    QCOMPARE(axesButton->property("text").toString(), QStringLiteral("属性…"));
     QVERIFY(QMetaObject::invokeMethod(axesButton,"triggered"));
     QTRY_VERIFY(dialog->property("visible").toBool());
     const auto plane = c.addDataObject("aircraft"); QVERIFY(!plane.isEmpty());

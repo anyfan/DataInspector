@@ -106,6 +106,7 @@ public:
     Q_INVOKABLE bool configureDataObjectAircraft(const QString &id, const QVariantMap &config);
     Q_INVOKABLE bool renameDataObject(const QString &id, const QString &name);
     Q_INVOKABLE bool removeDataObject(const QString &id);
+    Q_INVOKABLE bool dataObjectRemovalNeedsConfirmation(const QString &id) const;
     Q_INVOKABLE QString bindObjectField(const QString &objectId, const QString &fieldId,
                                        const QString &name, const QString &role, int series);
     Q_INVOKABLE bool removeObjectField(const QString &objectId, const QString &fieldId);
@@ -254,6 +255,8 @@ public:
     Q_INVOKABLE void clearPlotSignals(int plotIndex);
     Q_INVOKABLE void clearAllPlotSignals();
     Q_INVOKABLE void fitPlotY(int plotIndex);
+    Q_INVOKABLE QVariantMap plotAxisProperties(int index) const;
+    Q_INVOKABLE bool configurePlotAxes(int index, const QVariantMap &config);
 
     // Drops every loaded file and signal. Use clearAllPlotSignals() to keep data.
     Q_INVOKABLE void clear();
@@ -274,6 +277,7 @@ signals:
     void sessionRestoreFinished(bool success, const QString &message);
     void statusChanged();
     void currentFileChanged();
+    void fileAppendCommitted();
     void loadingChanged();
     void loadingProgressChanged();
     void exportingChanged();
@@ -281,6 +285,7 @@ signals:
     void imageExportFinished(bool success, const QString &message);
     void layoutChanged();
     void plotBindingsChanged();
+    void plotAxisPropertiesChanged(int index);
     void activePlotChanged();
     void soloPlotChanged();
 protected:
@@ -318,6 +323,7 @@ private:
         QPointer<PlotItem> plot;
         double minimum, maximum;
         bool normalized;
+        int blendMode;
     };
     struct ViewState {
         double xMinimum, xMaximum;

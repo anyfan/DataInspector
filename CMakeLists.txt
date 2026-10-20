@@ -173,7 +173,9 @@ set(DI_QML_FILES
     qml/TrajectoryPropertiesPane.qml
     qml/ViewModeMenu.qml
     qml/SignalPropertiesPane.qml
+    qml/PlotPropertiesPane.qml
     qml/SignalBrowser.qml
+    qml/SignalPenPreview.qml
     qml/SessionDialogs.qml
     qml/AboutDialog.qml
     qml/AutomationDialog.qml

@@ -3,7 +3,6 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Basic as Basic
 import QtQuick.Layouts
-import QtQuick.Shapes
 import DataInspector
 Rectangle {
     id: signalBrowser
@@ -31,7 +30,7 @@ Rectangle {
     property TrajectoryPropertiesPane trajectoryEditor
     property SignalPropertiesPane propertiesEditor
     property int statePickTarget: -1
-    function editSignalProperties(row) { statePickTarget=-1; objectEditor.close(); processingEditor.close(); signalBrowser.propertiesEditor.editSignal(row) }
+    function editSignalProperties(row) { statePickTarget=-1; signalBrowser.propertiesEditor.editSignal(row) }
     function editStateRows(plot) { statePickTarget=-1; objectEditor.close(); processingEditor.close(); signalBrowser.propertiesEditor.showStates(plot) }
     function followSignalProperties(row) {
         if (propertiesEditor && propertiesEditor.visible && propertiesEditor.mode !== "states"
@@ -646,13 +645,13 @@ Rectangle {
                                 signalList.currentIndex = signalDelegate.index
                                 if (signalDelegate.groupNode)
                                     signalList.toggleGroup(signalDelegate.groupName, signalDelegate.index)
+                                else if (mapToItem(penPreview, mouse.x, mouse.y).x >= 0)
+                                    signalBrowser.editSignalRequested(signalDelegate.signalIndex)
                                 else if (signalBrowser.statePickTarget >= 0) signalBrowser.addPickedState(signalDelegate.signalIndex)
                                 else if (signalBrowser.processingEditor.choosingRuleSource)
                                     signalBrowser.processingEditor.selectRuleSource(signalDelegate.signalIndex)
                                 else if (signalBrowser.propertiesEditor && signalBrowser.propertiesEditor.visible && signalBrowser.propertiesEditor.mode !== "states")
                                     signalBrowser.followSignalProperties(signalDelegate.signalIndex)
-                                else if (mapToItem(penPreview, mouse.x, mouse.y).x >= 0)
-                                    signalBrowser.editSignalRequested(signalDelegate.signalIndex)
                             }
                         }
                     }
@@ -668,46 +667,19 @@ Rectangle {
                         ToolTip.visible: hovered && !signalBrowser.signalTreeDragging
                         ToolTip.text: "移除文件"
                     }
-                    // Scene-graph stroke instead of a Canvas: no per-row
-                    // FBO/threaded repaint, so flicking stays smooth and
-                    // rows never flash blank while a paint is pending.
-                    Item {
+                    SignalPenPreview {
                         id: penPreview
+                        objectName: "signalTreePenPreview"
+                        readonly property int sourceRow: signalDelegate.signalIndex
                         visible: !signalDelegate.groupNode
                         Layout.preferredWidth: 42
                         Layout.preferredHeight: 24
-                        Shape {
-                            anchors.fill: parent
-                            ShapePath {
-                                strokeColor: signalDelegate.signalColor
-                                strokeWidth: signalDelegate.signalWidth
-                                fillColor: "transparent"
-                                capStyle: ShapePath.FlatCap
-                                strokeStyle: signalDelegate.signalLineStyle >= 2 && signalDelegate.signalLineStyle <= 5
-                                             ? ShapePath.DashLine : ShapePath.SolidLine
-                                // Dash lengths are in units of strokeWidth.
-                                dashPattern: {
-                                    const w = Math.max(1, signalDelegate.signalWidth)
-                                    switch (signalDelegate.signalLineStyle) {
-                                    case 2: return [8 / w, 4 / w]
-                                    case 3: return [2 / w, 4 / w]
-                                    case 4: return [8 / w, 4 / w, 2 / w, 4 / w]
-                                    case 5: return [8 / w, 4 / w, 2 / w, 4 / w, 2 / w, 4 / w]
-                                    default: return [4, 2]
-                                    }
-                                }
-                                startX: 3; startY: penPreview.height / 2
-                                PathLine { x: penPreview.width - 3; y: penPreview.height / 2 }
-                            }
-                        }
-                        MouseArea {
-                            anchors.fill: parent
-                            acceptedButtons: Qt.LeftButton
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                signalList.currentIndex = signalDelegate.index
-                                signalBrowser.editSignalRequested(signalDelegate.signalIndex)
-                            }
+                        lineColor: signalDelegate.signalColor
+                        lineWidth: signalDelegate.signalWidth
+                        lineStyle: signalDelegate.signalLineStyle
+                        onClicked: {
+                            signalList.currentIndex = signalDelegate.index
+                            signalBrowser.editSignalRequested(signalDelegate.signalIndex)
                         }
                     }
                 }

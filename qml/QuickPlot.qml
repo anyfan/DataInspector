@@ -22,6 +22,7 @@ Rectangle {
     property int selectedStateRow: 0
     signal stateConfigurationRequested(int plot)
     signal signalPropertiesRequested(int row)
+    signal plotPropertiesRequested(int plot)
     function configureStateSource(source) {
         if (controller.addStateSignal(root.plotIndex,source)) signalPropertiesRequested(source)
     }
@@ -45,9 +46,6 @@ Rectangle {
     onPlotIndexChanged: refreshTrajectoryMode()
     onControllerChanged: refreshTrajectoryMode()
     property bool darkTheme: false
-    // Place smaller-amplitude curves in front, keeping original colours.
-    // Disabling this restores plain "last drawn wins".
-    property bool blendOverlaps: true
     property color axisColor: darkTheme ? "#8f9aa7" : "#59636e"
     property color gridColor: darkTheme ? "#53606d" : "#c9d1d9"
     property color textColor: darkTheme ? "#d7dee7" : "#303942"
@@ -104,15 +102,15 @@ Rectangle {
         return 16
     }
     function yTickLabel(tick) {
+        if (tick.value === 0) return "0"
         if (root.compactYTicksDistinct) return root.formatYTick(tick.value)
         return Number(tick.value).toExponential(root.yScientificPrecision).replace(/e([+-])0+/, "e$1")
     }
     function formatYTick(value) {
         if (value === 0) return "0"
-        const compact = root.formatCompact(value, 4)
-        if (Math.abs(value) >= 1000 || Math.abs(value) < 0.001 || compact.length > 7)
+        if (Math.abs(value) >= 1000000 || Math.abs(value) < 0.001)
             return Number(value).toExponential(2).replace(/e([+-])0+/, "e$1")
-        return compact
+        return root.formatCompact(value, 6)
     }
     property bool legendDragging: false
     property bool axisSelecting: false
@@ -555,8 +553,7 @@ Rectangle {
             anchors.fill: parent
             lineWidth: root.graphLineWidth
             cursorMode: root.graphCursorMode
-            blendMode: root.blendOverlaps ? PlotItem.AmplitudeLayers
-                                          : PlotItem.OpaqueBlend
+            blendMode: PlotItem.AmplitudeLayers
             z: 1
             Component.onCompleted: root.controller.attachPlot(plotItem, root.plotIndex)
             Component.onDestruction: root.controller.detachPlot(plotItem, root.plotIndex)
@@ -909,7 +906,7 @@ Rectangle {
         visible: root.stateMode && ((stateItem.pending && !stateItem.hasFrame) || stateItem.error.length > 0 || stateItem.rowNames.length === 0)
         x: axisRect.x + 8; y: axisRect.y + 8; width: Math.max(1, axisRect.width - 16); z: 5
         color: root.textColor; wrapMode: Text.WordWrap
-        text: stateItem.pending && !stateItem.hasFrame ? "正在准备状态区间…" : stateItem.error.length > 0 ? stateItem.error : "右键选择“状态行…”，再从信号树添加来源"
+        text: stateItem.pending && !stateItem.hasFrame ? "正在准备状态区间…" : stateItem.error.length > 0 ? stateItem.error : "右键选择“属性…”，再从信号树添加来源"
     }
     Loader {
         anchors.fill: parent
@@ -933,20 +930,12 @@ Rectangle {
     PlotMenu {
         id: plotContextMenu
         objectName: "plotContextMenu"
-        delegate: PlotMenuItem { available: subMenu !== curveSettingsMenu || !root.stateMode }
         ViewModeMenu {
             controller: root.controller
             plotIndex: root.plotIndex
             currentMode: root.trajectoryMode ? "trajectory" : root.stateMode ? "states" : "curve"
         }
         PlotMenuSeparator { }
-        PlotMenuItem {
-            objectName: "stateConfigurationMenuItem"
-            text: "状态行…"
-            available: root.stateMode
-            enabled: available
-            onTriggered: root.stateConfigurationRequested(root.plotIndex)
-        }
         PlotMenuItem {
             objectName: "previousStateChangeMenuItem"
             text: "上次变化"
@@ -976,25 +965,21 @@ Rectangle {
             icon.source: "qrc:/icons/clear.svg"
             onTriggered: root.controller.clearPlotSignals(root.plotIndex)
         }
-        PlotMenuSeparator { available: !root.stateMode }
-        PlotMenu {
-            id: curveSettingsMenu
-            objectName: "curveSettingsMenu"
-            title: "设置"
-            enabled: !root.stateMode
+        PlotMenuSeparator { }
+        PlotMenuItem {
+            objectName: "plotPropertiesMenuItem"
+            text: "属性…"
             icon.source: "qrc:/icons/settings.svg"
-            PlotMenuItem {
-                text: "归一化 Y 轴 (Normalize y-axis)"
-                checkable: true
-                checked: plotItem.normalizeY
-                onTriggered: plotItem.normalizeY = !plotItem.normalizeY
-            }
-            PlotMenuItem {
-                text: "小幅值曲线优先置顶（保留原色）"
-                checkable: true
-                checked: root.blendOverlaps
-                onTriggered: root.blendOverlaps = !root.blendOverlaps
-            }
+            available: !root.stateMode && !root.trajectoryMode
+            onTriggered: root.plotPropertiesRequested(root.plotIndex)
+        }
+        PlotMenuItem {
+            objectName: "stateConfigurationMenuItem"
+            text: "属性…"
+            icon.source: "qrc:/icons/settings.svg"
+            available: root.stateMode
+            enabled: available
+            onTriggered: root.stateConfigurationRequested(root.plotIndex)
         }
     }
     MouseArea {

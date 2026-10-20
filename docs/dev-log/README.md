@@ -14,6 +14,13 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [子图属性与范围编辑](subplot-properties-2026-10-20.md) | 统一属性入口、活动子图联动、范围防抖与草稿、加载文件保留页面 |
+| [处理输出线条预览](processing-output-pen-2026-10-20.md) | 信号树共用短线、属性侧栏与单击／拖拽分发 |
+| [输出名称预填](output-name-prefill-2026-10-20.md) | 自动名称、自定义名称保留及位范围行布局 |
+| [空配置删除确认](empty-configuration-delete-2026-10-20.md) | 按实际内容确认、相邻项选择及输出身份保留 |
+| [新增规则自动创建配置](add-rule-auto-configuration-2026-10-20.md) | 空处理页直接开始规则草稿 |
+| [下拉选择框辨识度](combo-visibility-2026-10-20.md) | 统一边框、主题反馈与 Scene Graph 箭头 |
+| [Y 轴数值显示](y-axis-number-format-2026-10-20.md) | 常用数值与窄范围科学计数法精度 |
 | [子图菜单、状态短脉冲与运行中 CLI](subplot-menus-state-pulse-runtime-cli-2026-10-20.md) | 菜单样式与隐藏项布局、跨桶短脉冲保留、当前窗口 CLI 开关及验证边界 |
 | [航迹配置右侧栏](trajectory-right-pane-2026-10-19.md) | 航迹管理、可选对象、手动坐标来源及样式统一侧栏 |
 | [位提取与公式多输出](multiple-processing-outputs-2026-10-19.md) | 多位段、多个公式、自动字宽、小端默认、输出身份维护与会话 v21 |

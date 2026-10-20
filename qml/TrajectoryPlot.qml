@@ -37,7 +37,7 @@ Rectangle {
         target: root.controller
         function onPlotBindingsChanged() { root.refreshBindings() }
     }
-    readonly property string selectionHint: "右键选择“航迹配置…”选择飞机对象；坐标与姿态来源在对象中配置。"
+    readonly property string selectionHint: "右键选择“属性…”选择飞机对象；坐标与姿态来源在对象中配置。"
     readonly property string sourceDescription: {
         const state = root.configuration
         const labels = state.geographic ? ["纬度", "经度", "高度"] : ["X", "Y", "Z"]
@@ -225,7 +225,6 @@ Rectangle {
             currentMode: "trajectory"
         }
         PlotMenuSeparator { }
-        PlotMenuItem { objectName: "trajectoryConfigurationMenuItem"; text: "航迹配置…"; onTriggered: root.editAxesRequested() }
         PlotMenuItem { text: "适应轨迹"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: trajectory.fitView() }
         PlotMenu {
             id: trajectoryViews
@@ -237,5 +236,7 @@ Rectangle {
             PlotMenuItem { text: "正视 YZ"; onTriggered: trajectory.presetView(2) }
             PlotMenuItem { text: "侧视 XZ"; onTriggered: trajectory.presetView(3) }
         }
+        PlotMenuSeparator { }
+        PlotMenuItem { objectName: "trajectoryConfigurationMenuItem"; text: "属性…"; icon.source: "qrc:/icons/settings.svg"; onTriggered: root.editAxesRequested() }
     }
 }

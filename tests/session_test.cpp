@@ -1159,6 +1159,7 @@ void SessionTest::mixedStateAndCurveLayout()
         window->requestUpdate(); QTest::qWait(200); QVERIFY(window->grabWindow().save(sidebarCapture));
     }
     auto *stateConfiguration=plotOwner(0)->findChild<QObject *>("stateConfigurationMenuItem"); QVERIFY(stateConfiguration);
+    QCOMPARE(stateConfiguration->property("text").toString(), QStringLiteral("属性…"));
     auto *stateMenu=plotOwner(0)->findChild<QObject *>("plotContextMenu"); QVERIFY(stateMenu);
     const auto verifyMenuLayout=[](QObject *menu) {
         qreal bottom=0;

@@ -66,7 +66,7 @@ Pane {
     }
     contentItem: ColumnLayout {
         RowLayout {
-            Label { text: (editor.styleObjectId.length>0 ? "航迹样式" : "航迹配置") + " · 子图 " + (editor.plotIndex+1); font.bold: true; Layout.fillWidth: true }
+            Label { text: (editor.styleObjectId.length>0 ? "航迹样式" : "航迹属性") + " · 子图 " + (editor.plotIndex+1); font.bold: true; Layout.fillWidth: true }
             ToolButton { text: "×"; onClicked: editor.close() }
         }
         ScrollView {

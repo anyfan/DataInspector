@@ -264,6 +264,7 @@ ApplicationWindow {
 
     SessionDialogs {
         id: sessionDialogs
+        darkTheme: window.darkTheme
         anchors.fill: parent
         appController: window.appController
         hostWidth: window.width
@@ -391,6 +392,8 @@ ApplicationWindow {
     Shortcut { sequence: "Ctrl+Alt+Shift+Y"; onActivated: window.appController.fitPlots(false, true, true) }
     Connections {
         target: window.appController
+        function onActivePlotChanged() { window.followSubplotProperties() }
+        function onPlotBindingsChanged() { window.followSubplotProperties() }
         function onLayoutChanged() { window.cancelSignalTreeDrag(); window.subplotMaximized = false }
         function onImageExportFinished(success, message) {
             window.imageCaptureAll = false
@@ -412,6 +415,25 @@ ApplicationWindow {
     }
 
     property bool subplotMaximized: false
+    function followSubplotProperties(): void {
+        const showingPlotProperties = plotProperties.visible
+            || (trajectoryProperties.visible && trajectoryProperties.styleObjectId.length === 0)
+            || (propertiesPane.visible && propertiesPane.mode === "states")
+        if (!showingPlotProperties) return
+        const index = appController.activePlotIndex
+        if (appController.trajectoryState(index).enabled) {
+            if (!trajectoryProperties.visible || trajectoryProperties.plotIndex !== index) {
+                signalBrowser.statePickTarget = -1
+                trajectoryProperties.editPlot(index)
+            }
+        } else if (appController.stateTimelineState(index).enabled) {
+            if (!propertiesPane.visible || propertiesPane.mode !== "states" || propertiesPane.plotIndex !== index)
+                signalBrowser.editStateRows(index)
+        } else if (!plotProperties.visible || plotProperties.plotIndex !== index) {
+            signalBrowser.statePickTarget = -1
+            plotProperties.editPlot(index)
+        }
+    }
     // Mirror the maximize state into the controller so X/Y fitting only
     // considers the subplot the user can actually see.
     onSubplotMaximizedChanged: window.appController.setSoloPlot(
@@ -797,6 +819,7 @@ ApplicationWindow {
             }
             ObjectManager {
                 id: processingManager
+                onEditSignalRequested: row => window.editSignalPen(row)
                 objectName: "processingManager"
                 processingMode: true
                 anchors.fill: parent
@@ -832,6 +855,7 @@ ApplicationWindow {
                         Component.onDestruction: Qt.callLater(plotPanel.updateSharedAxisLeft)
                         onStateConfigurationRequested: plot => signalBrowser.editStateRows(plot)
                         onSignalPropertiesRequested: row => window.editSignalPen(row)
+                        onPlotPropertiesRequested: plot => plotProperties.editPlot(plot)
                         graphLineWidth: 2
                         graphCursorMode: window.selectedCursorMode
                         graphZoomMode: window.activeZoomMode
@@ -894,7 +918,7 @@ ApplicationWindow {
         }
         SignalPropertiesPane {
             id: propertiesPane
-            onVisibleChanged: if (visible) trajectoryProperties.close()
+            onVisibleChanged: if (visible) { trajectoryProperties.close(); plotProperties.close() }
             controller: window.appController
             darkTheme: window.darkTheme
             SplitView.preferredWidth: 320
@@ -905,12 +929,22 @@ ApplicationWindow {
         }
         TrajectoryPropertiesPane {
             id: trajectoryProperties
+            onVisibleChanged: if (visible) { propertiesPane.close(); plotProperties.close() }
             controller: window.appController
             darkTheme: window.darkTheme
             SplitView.preferredWidth: 320
             SplitView.minimumWidth: 260
             SplitView.maximumWidth: Math.max(260,window.width-560)
             onEditObjectRequested: objectId => { if(objectId.length>0) objectManager.selectedId=objectId; objectManager.open() }
+        }
+        PlotPropertiesPane {
+            id: plotProperties
+            controller: window.appController
+            darkTheme: window.darkTheme
+            onVisibleChanged: if (visible) { propertiesPane.close(); trajectoryProperties.close() }
+            SplitView.preferredWidth: 320
+            SplitView.minimumWidth: 260
+            SplitView.maximumWidth: Math.max(260, window.width - 560)
         }
 
     }

@@ -14,6 +14,53 @@ void AppController::beginViewChange()
     if (m_viewChangeDepth++ == 0) m_viewChangeRecorded = false;
 }
 
+QVariantMap AppController::plotAxisProperties(int index) const
+{
+    if (index < 0 || index >= m_plotRows * m_plotColumns || index >= m_plots.size() || !m_plots[index]
+        || m_trajectories.value(index).enabled || m_plotViews.value(index).states.enabled) return {};
+    const auto *plot = m_plots[index].data();
+    return {{"xMinimum", plot->xMinimum()}, {"xMaximum", plot->xMaximum()},
+        {"yMinimum", plot->yMinimum()}, {"yMaximum", plot->yMaximum()}, {"normalizeY", plot->normalizeY()},
+        {"blendOverlaps", plot->blendMode() == PlotItem::AmplitudeLayers}};
+}
+
+bool AppController::configurePlotAxes(int index, const QVariantMap &config)
+{
+    if (m_loading || m_exporting || sessionInteractionBlocked() || plotAxisProperties(index).isEmpty()) return false;
+    double bounds[4];
+    const QStringList keys{"xMinimum", "xMaximum", "yMinimum", "yMaximum"};
+    for (int i = 0; i < keys.size(); ++i) {
+        bool ok = false;
+        const auto value = config.value(keys[i]);
+        bounds[i] = value.toDouble(&ok);
+        if (!ok || value.metaType().id() == QMetaType::Bool || !qIsFinite(bounds[i])) {
+            setStatus(QStringLiteral("坐标范围必须为有限数值")); return false;
+        }
+    }
+    if (bounds[1] <= bounds[0] || bounds[3] <= bounds[2]
+        || !qIsFinite(bounds[1] - bounds[0]) || !qIsFinite(bounds[3] - bounds[2])) {
+        setStatus(QStringLiteral("坐标最大值必须大于最小值，且跨度不能溢出")); return false;
+    }
+    if (config.value("normalizeY").metaType().id() != QMetaType::Bool) {
+        setStatus(QStringLiteral("归一化设置无效")); return false;
+    }
+    if (config.contains("blendOverlaps") && config["blendOverlaps"].metaType().id() != QMetaType::Bool) {
+        setStatus(QStringLiteral("曲线置顶设置无效")); return false;
+    }
+    auto *plot = m_plots[index].data();
+    const int blendMode = config.contains("blendOverlaps")
+        ? (config["blendOverlaps"].toBool() ? PlotItem::AmplitudeLayers : PlotItem::OpaqueBlend) : plot->blendMode();
+    beginViewChange();
+    if (plot->blendMode() != blendMode) recordViewChange();
+    plot->setNormalizeY(config["normalizeY"].toBool());
+    plot->setXRange(bounds[0], bounds[1]);
+    plot->setYRange(bounds[2], bounds[3]);
+    plot->setBlendMode(blendMode);
+    endViewChange();
+    setStatus(QStringLiteral("已应用子图坐标范围"));
+    return true;
+}
+
 void AppController::endViewChange()
 {
     if (m_viewChangeDepth > 0) --m_viewChangeDepth;
@@ -28,7 +75,7 @@ void AppController::recordViewChange()
     for (auto it = m_trajectories.cbegin(); it != m_trajectories.cend(); ++it)
         if (it->enabled) state.cameras.insert(it.key(), it->camera);
     for (const auto &plot : m_plots)
-        if (plot) state.ranges.append({plot, plot->yMinimum(), plot->yMaximum(), plot->normalizeY()});
+        if (plot) state.ranges.append({plot, plot->yMinimum(), plot->yMaximum(), plot->normalizeY(), plot->blendMode()});
     if (state.ranges.isEmpty()) return;
     if (m_viewHistory.size() >= 100) m_viewHistory.removeFirst();
     m_viewHistory.append(state);
@@ -55,6 +102,7 @@ void AppController::undoView()
         if (range.plot && m_plots.contains(range.plot)) {
             range.plot->setNormalizeY(range.normalized);
             range.plot->setYRange(range.minimum, range.maximum);
+            range.plot->setBlendMode(range.blendMode);
         }
     for (auto it = state.cameras.cbegin(); it != state.cameras.cend(); ++it) {
         m_trajectories[it.key()].camera = it.value();
@@ -389,8 +437,9 @@ void AppController::attachPlot(QObject *plot, int index)
     connect(item, &PlotItem::viewInteractionStarted, this, &AppController::beginViewChange);
     connect(item, &PlotItem::viewInteractionFinished, this, &AppController::endViewChange);
     connect(item, &PlotItem::rangeChanged, this,
-            [this, item](double xmin, double xmax, double, double) {
+            [this, item, index](double xmin, double xmax, double, double) {
                 cachePlotView(item);
+                emit plotAxisPropertiesChanged(index);
                 if (m_syncingRanges || sessionInteractionBlocked()) return;
                 applySharedXRange(xmin, xmax, item);
             });
@@ -405,7 +454,10 @@ void AppController::attachPlot(QObject *plot, int index)
         m_syncingCursors = false;
         syncTrajectoryCursors();
     });
-    connect(item, &PlotItem::normalizeYChanged, this, [this, item]() { cachePlotView(item); });
+    connect(item, &PlotItem::normalizeYChanged, this, [this, item, index]() {
+        cachePlotView(item); emit plotAxisPropertiesChanged(index);
+    });
+    connect(item, &PlotItem::blendModeChanged, this, [this, index]() { emit plotAxisPropertiesChanged(index); });
     connect(item, &PlotItem::lineWidthChanged, this, [this, item]() { cachePlotView(item); });
     refreshPlot(index, !view.has_value());
     if (m_haveCursorState) {
@@ -416,6 +468,7 @@ void AppController::attachPlot(QObject *plot, int index)
     }
     if (view) applyPlotView(item, *view);
     cachePlotView(item);
+    emit plotAxisPropertiesChanged(index);
 }
 
 void AppController::detachPlot(QObject *plot, int index)

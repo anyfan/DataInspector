@@ -65,6 +65,7 @@ Pane {
     background: Rectangle { color: manager.palette.window; border.width: manager.dropHighlighted ? 2 : 0; border.color: manager.palette.highlight }
     signal sourcesRequested()
     signal sourceRequested(int row)
+    signal editSignalRequested(int row)
     function activateRuleInput(slot: string): void {
         if(slot.startsWith("output:")) selectMergeOutput(Number(slot.split(":")[1]))
         selectedRuleInput = slot
@@ -85,7 +86,22 @@ Pane {
         const id = appController.duplicateDataObject(selectedId)
         if (id.length > 0) { selectedId = id; errorText = "" } else errorText = appController.status
     }
-    function deleteObject(): void { if (!blocked && selected) deleteObjectDialog.open() }
+    function removeObject(id: string): void {
+        if (blocked) return
+        const index = objects.findIndex(object => object.id === id)
+        const wasSelected = selectedId === id
+        if (appController.removeDataObject(id)) {
+            if (wasSelected) selectedId = objects.length > 0 ? objects[Math.min(index, objects.length - 1)].id : ""
+            errorText = ""
+        } else errorText = appController.status
+    }
+    function deleteObject(): void {
+        if (blocked || !selected) return
+        if (appController.dataObjectRemovalNeedsConfirmation(selectedId)) {
+            deleteObjectDialog.objectId = selectedId
+            deleteObjectDialog.open()
+        } else removeObject(selectedId)
+    }
     function open(): void { visible = true; if (!selected && objects.length > 0) selectedId = objects[0].id }
     function close(): void { visible = false; pendingSource = -1 }
     property string selectedId: ""
@@ -261,8 +277,13 @@ Pane {
         contentItem: ColumnLayout {
             RowLayout {
                 Label { text: String(outputEntry.index+1) }
-                TextField { text: outputEntry.name; placeholderText: "输出名称（留空自动）"; Layout.fillWidth: true; maximumLength: 256; onTextEdited: outputRows.setProperty(outputEntry.index,"name",text) }
-                Button { text: "×"; enabled: outputRows.count>1; onClicked: { outputRows.remove(outputEntry.index); if(ruleDialog.operation === "merge") manager.selectMergeOutput(Math.min(ruleDialog.mergeOutputIndex,outputRows.count-1)) } }
+                TextField {
+                    objectName: "ruleOutputName" + outputEntry.index
+                    text: outputEntry.name; placeholderText: "输出名称"; Layout.fillWidth: true; maximumLength: 256
+                    onTextEdited: { outputRows.setProperty(outputEntry.index,"automaticName",false); outputRows.setProperty(outputEntry.index,"name",text) }
+                    onEditingFinished: manager.fillOutputNames()
+                }
+                Button { text: "×"; enabled: outputRows.count>1; onClicked: manager.removeRuleOutput(outputEntry.index) }
             }
             ColumnLayout {
                 visible: ruleDialog.operation === "merge"
@@ -298,8 +319,8 @@ Pane {
                 SpinBox { from: 0; to: 31; value: outputEntry.fromBit; editable: true; onValueModified: outputRows.setProperty(outputEntry.index,"fromBit",value) }
                 Label { text: "位数" }
                 SpinBox { from: 1; to: 32-outputEntry.fromBit; value: outputEntry.widthBit; editable: true; onValueModified: outputRows.setProperty(outputEntry.index,"widthBit",value) }
+                CheckBox { text: "按二补码有符号解释"; checked: outputEntry.signedValue; onToggled: outputRows.setProperty(outputEntry.index,"signedValue",checked) }
             }
-            CheckBox { visible: ruleDialog.operation === "bitfield"; text: "按二补码有符号解释"; checked: outputEntry.signedValue; onToggled: outputRows.setProperty(outputEntry.index,"signedValue",checked) }
             Label { text: "表达式"; visible: ruleDialog.operation === "expression" }
             TextArea {
                 id: formulaEditor
@@ -386,8 +407,12 @@ Pane {
     }
     Component.onCompleted: syncFieldRows()
     onVisibleFieldsChanged: {
+        let previousIndex = -1
+        for (let i = 0; i < fieldRows.count; ++i)
+            if (fieldRows.get(i).fieldData.id === selectedFieldId) { previousIndex = i; break }
         syncFieldRows()
-        if (selectedFieldId.length > 0 && !visibleFields.some(field => field.id === selectedFieldId)) selectedFieldId = ""
+        if (selectedFieldId.length > 0 && !visibleFields.some(field => field.id === selectedFieldId))
+            selectedFieldId = visibleFields.length > 0 ? visibleFields[Math.min(Math.max(0, previousIndex), visibleFields.length - 1)].id : ""
     }
     readonly property var selected: {
         for (let i = 0; i < objects.length; ++i) if (objects[i].id === selectedId) return objects[i]
@@ -426,6 +451,12 @@ Pane {
         editRule(null)
         selectRuleSource(row)
     }
+    function addRule(): void {
+        if (blocked || !processingMode) return
+        if (!selected && objects.length > 0) selectedId = objects[0].id
+        if (!selected) createObject()
+        if (selected) editRule(null)
+    }
     function revealOutput(row: int): void {
         for (let i = 0; i < objects.length; ++i) for (let j = 0; j < objects[i].rules.length; ++j) {
             const outputs = objects[i].rules[j].outputs
@@ -434,8 +465,32 @@ Pane {
         open()
     }
     ListModel { id: outputRows; objectName: "processingOutputRows" }
+    function fillOutputNames(): void {
+        if (ruleDialog.initializing) return
+        const used = new Set()
+        for (let i = 0; i < outputRows.count; ++i) {
+            const output = outputRows.get(i)
+            if (!output.automaticName && output.name.trim().length > 0) used.add(output.name.trim())
+        }
+        const base = ruleName.text.trim() || nextRuleName()
+        for (let i = 0; i < outputRows.count; ++i) {
+            const output = outputRows.get(i)
+            if (!output.automaticName && output.name.trim().length > 0) continue
+            let number = outputRows.count === 1 ? 0 : i + 1
+            let suffix = number === 0 ? "" : ".输出" + number
+            let name = base.slice(0, 256 - suffix.length) + suffix
+            while (used.has(name)) {
+                suffix = ".输出" + (++number)
+                name = base.slice(0, 256 - suffix.length) + suffix
+            }
+            used.add(name)
+            outputRows.setProperty(i, "name", name)
+            outputRows.setProperty(i, "automaticName", true)
+        }
+    }
     function addOutput(): void {
-        outputRows.append({outputId:"",name:"",fromBit:0,widthBit:1,signedValue:false,formula:"x",mergeSources:"[]"})
+        outputRows.append({outputId:"",name:"",automaticName:true,fromBit:0,widthBit:1,signedValue:false,formula:"x",mergeSources:"[]"})
+        fillOutputNames()
         if(ruleDialog.operation === "merge" && !ruleDialog.initializing) selectMergeOutput(outputRows.count-1)
     }
     function selectMergeOutput(index: int): void {
@@ -443,6 +498,14 @@ Pane {
         ruleDialog.mergeOutputIndex=index
         ruleDialog.mergeInputs=JSON.parse(outputRows.get(index).mergeSources || "[]")
         selectedRuleInput="merge"
+    }
+    function removeRuleOutput(index: int): void {
+        if (blocked || outputRows.count <= 1 || index < 0 || index >= outputRows.count) return
+        const active = ruleDialog.mergeOutputIndex
+        outputRows.remove(index)
+        fillOutputNames()
+        if (ruleDialog.operation === "merge")
+            selectMergeOutput(index < active ? active - 1 : Math.min(active, outputRows.count - 1))
     }
     function saveMergeInputs(): void {
         if(ruleDialog.operation === "merge" && !ruleDialog.initializing && ruleDialog.mergeOutputIndex>=0 && ruleDialog.mergeOutputIndex<outputRows.count)
@@ -459,7 +522,7 @@ Pane {
         if (rule) for (let i = 0; i < operationCombo.model.length; ++i) if (operationCombo.model[i].id === (rule.operation === "bits" ? "bitfield" : rule.operation)) operationCombo.currentIndex = i
         outputRows.clear()
         if(rule && (rule.operation === "bitfield" || rule.operation === "bits" || rule.operation === "expression" || rule.operation === "merge"))
-            for(const output of rule.outputs) outputRows.append({outputId:output.id,name:output.name,fromBit:output.startBit,widthBit:output.bitCount,signedValue:output.signedField,formula:output.expression.length>0 ? output.expression : "x",mergeSources:JSON.stringify(output.inputs || [])})
+            for(const output of rule.outputs) outputRows.append({outputId:output.id,name:output.name,automaticName:false,fromBit:output.startBit,widthBit:output.bitCount,signedValue:output.signedField,formula:output.expression.length>0 ? output.expression : "x",mergeSources:JSON.stringify(output.inputs || [])})
         else addOutput()
         automaticWord.checked=rule ? rule.autoWordBits : true
         byteOrder.currentIndex=rule && rule.byteOrder === "big" ? 1 : 0
@@ -480,6 +543,7 @@ Pane {
         ruleDialog.mergeOutputIndex=0
         if(ruleDialog.operation === "merge") ruleDialog.mergeInputs=JSON.parse(outputRows.get(0).mergeSources || "[]")
         ruleDialog.initializing = false
+        fillOutputNames()
         if (samplePeriod.text.length === 0) ruleDialog.estimatePeriod()
         ruleDialog.errorText = ""; ruleDialog.open()
     }
@@ -543,8 +607,8 @@ Pane {
             ColumnLayout {
                 Layout.fillWidth: true; Layout.minimumWidth: 0; Layout.fillHeight: true
                 RowLayout {
-                    Label { text: manager.selected ? manager.selected.name : manager.processingMode ? "先新建或选择处理配置" : "先新建或选择一个对象"; font.bold: true; Layout.fillWidth: true }
-                    Button { text: "+ 新增规则"; objectName: "addObjectRuleButton"; visible: manager.processingMode; implicitHeight: 30; enabled: !!manager.selected && manager.appController.signalCount>0 && !manager.blocked; onClicked: manager.editRule(null) }
+                    Label { text: manager.selected ? manager.selected.name : manager.processingMode ? "点击新增规则开始配置" : "先新建或选择一个对象"; font.bold: true; Layout.fillWidth: true }
+                    Button { text: "+ 新增规则"; objectName: "addObjectRuleButton"; visible: manager.processingMode; implicitHeight: 30; enabled: !manager.blocked; onClicked: manager.addRule() }
 
                     ObjectCombo {
                         objectName: "objectTypeSelector"
@@ -699,6 +763,16 @@ Pane {
                                                     ToolTip.visible: outputHover.hovered
                                                     ToolTip.text: text
                                                 }
+                                                SignalPenPreview {
+                                                    objectName: "processingOutputPenPreview"
+                                                    readonly property int sourceRow: outputRow.modelData.series
+                                                    readonly property int revision: manager.appController.plotStateRevision
+                                                    lineColor: { const changed = revision; return manager.appController.signalColor(sourceRow) }
+                                                    lineWidth: { const changed = revision; return manager.appController.signalWidth(sourceRow) }
+                                                    lineStyle: { const changed = revision; return manager.appController.signalStyle(sourceRow) }
+                                                    enabled: !manager.blocked
+                                                    onClicked: manager.editSignalRequested(sourceRow)
+                                                }
                                                 ToolButton { text: "预览"; implicitHeight: 28; HoverHandler { id: previewHover } ToolTip.visible: previewHover.hovered; ToolTip.text: outputRow.modelData.preview || "暂无有效采样" }
                                                 ToolButton { text: "改名"; implicitHeight: 28; enabled: !manager.blocked; onClicked: { outputNameDialog.series=outputRow.modelData.series; outputNameField.text=outputRow.modelData.name; outputNameDialog.open() } }
                                             }
@@ -817,7 +891,7 @@ Pane {
             id: ruleContent
             width: ruleScroll.availableWidth
             Label { text: "规则 / 输出名称" }
-            TextField { id: ruleName; objectName: "objectRuleName"; Layout.fillWidth: true; Layout.minimumWidth: 0; maximumLength: 256 }
+            TextField { id: ruleName; objectName: "objectRuleName"; Layout.fillWidth: true; Layout.minimumWidth: 0; maximumLength: 256; onTextEdited: manager.fillOutputNames() }
             ObjectCombo {
                 id: operationCombo; objectName: "objectRuleOperation"; textRole: "name"; valueRole: "id"; Layout.fillWidth: true
                 model: [{id: "bitfield", name: "位提取（bit／位段）"}, {id: "scale", name: "比例与偏置换算"}, {id: "magnitude", name: "三轴模长"}, {id: "expression", name: "自定义公式"}, {id: "merge", name: "按时间合并同源信号"}, {id: "packetloss", name: "丢包检测"}]
@@ -910,7 +984,7 @@ Pane {
                         : "仅生成从记录起点累计的丢包百分比：丢失帧 /（丢失帧 + 收到帧）×100%，不是每秒丢包数。"
                     Layout.fillWidth: true; wrapMode: Text.WordWrap
                 }
-                ComboBox {
+                ObjectCombo {
                     id: lossMode; objectName: "objectRuleLossMode"; Layout.fillWidth: true
                     model: ["X 采样时间", "Y 计数：逐帧", "Y 计数：固定间隔抽样", "Y 计数：按时间与频率"]
                     onActivated: ruleDialog.estimatePeriod()
@@ -926,7 +1000,7 @@ Pane {
                     Label { text: "允许误差（帧）"; visible: lossMode.currentIndex === 3 }
                     TextField { id: counterTolerance; objectName: "objectRuleCounterTolerance"; visible: lossMode.currentIndex === 3; text: "0"; Layout.fillWidth: true; maximumLength: 32 }
                     Label { text: "回绕范围" }
-                    ComboBox {
+                    ObjectCombo {
                         Layout.fillWidth: true
                         model: ["不回绕", "8 位：0～255", "16 位：0～65535", "32 位：0～4294967295", "自定义模数"]
                         currentIndex: [0, 256, 65536, 4294967296].indexOf(Number(counterModulus.text)) >= 0 ? [0, 256, 65536, 4294967296].indexOf(Number(counterModulus.text)) : 4
@@ -981,6 +1055,7 @@ Pane {
         }
         }
         function submit(): void {
+            manager.fillOutputNames()
             if (sourcesChanged) {
                 errorText = "数据来源已变更，请重新打开规则并确认输入信号"
                 return
@@ -1027,11 +1102,13 @@ Pane {
     }
     Dialog {
         id: deleteObjectDialog
+        objectName: "deleteObjectDialog"
+        property string objectId: ""
         palette: manager.palette
         title: manager.processingMode ? "删除处理配置" : "删除对象"
         anchors.centerIn: parent; modal: true; width: 380; standardButtons: Dialog.Ok | Dialog.Cancel
         Label { width: parent.width; text: manager.processingMode ? "删除此处理配置及其全部规则、结果和绘图引用。原始信号与对象保留。" : "删除此对象及其航迹关联。独立处理配置和原始信号保留。"; wrapMode: Text.WordWrap }
-        onAccepted: { manager.appController.removeDataObject(manager.selectedId); manager.selectedId = "" }
+        onAccepted: manager.removeObject(objectId)
     }
     Dialog {
         id: deleteRuleDialog

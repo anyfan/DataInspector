@@ -44,6 +44,8 @@ private slots:
     void linkedTrajectoriesAndRuleEdits();
     void staircaseKeepsPulse();
     void objectManagerQml();
+    void deletionConfirmationQml_data();
+    void deletionConfirmationQml();
     void ruleInputsQml_data();
     void ruleInputsQml();
     void ruleEditorLargeSignalNavigation();
@@ -202,6 +204,29 @@ void ObjectDataTest::multipleOutputEditorQml()
     QVERIFY(QTest::qWaitForWindowExposed(&window));
     auto js=[&](const QString &code) { QQmlExpression expression(QQmlEngine::contextForObject(root.get()),root.get(),code); expression.evaluate(); if(expression.hasError()) qWarning()<<expression.error(); return !expression.hasError(); };
     QVERIFY(js("open(); editRule(null)")); QVERIFY(QMetaObject::invokeMethod(root.get(),"selectRuleSource",Q_ARG(int,0)));
+    auto outputName = [&](int index) -> QQuickItem * {
+        QList<QQuickItem *> pending{window.contentItem()};
+        while (!pending.isEmpty()) {
+            auto *item = pending.takeLast(); pending.append(item->childItems());
+            if (item->objectName() == "ruleOutputName" + QString::number(index)) return item;
+        }
+        return nullptr;
+    };
+    QQuickItem *firstName = nullptr; QTRY_VERIFY((firstName = outputName(0)));
+    auto *ruleTitle = root->findChild<QObject *>("objectRuleName"); QVERIFY(ruleTitle);
+    QCOMPARE(firstName->property("text").toString(), ruleTitle->property("text").toString());
+    QVERIFY(js("addOutput()"));
+    QQuickItem *secondName = nullptr; QTRY_VERIFY((secondName = outputName(1)));
+    QCOMPARE(firstName->property("text").toString(), ruleTitle->property("text").toString() + QStringLiteral(".输出1"));
+    QCOMPARE(secondName->property("text").toString(), ruleTitle->property("text").toString() + QStringLiteral(".输出2"));
+    firstName->setProperty("text", "custom"); QVERIFY(QMetaObject::invokeMethod(firstName, "textEdited"));
+    ruleTitle->setProperty("text", "renamed"); QVERIFY(QMetaObject::invokeMethod(ruleTitle, "textEdited"));
+    QCOMPARE(firstName->property("text").toString(), QString("custom"));
+    QCOMPARE(secondName->property("text").toString(), QStringLiteral("renamed.输出2"));
+    secondName->setProperty("text", "  "); QVERIFY(QMetaObject::invokeMethod(secondName, "textEdited"));
+    QVERIFY(QMetaObject::invokeMethod(secondName, "editingFinished"));
+    QCOMPARE(secondName->property("text").toString(), QStringLiteral("renamed.输出2"));
+    QVERIFY(js("editRule(null)")); QVERIFY(QMetaObject::invokeMethod(root.get(),"selectRuleSource",Q_ARG(int,0)));
     QVERIFY(root->findChild<QObject*>("automaticWordBits")->property("checked").toBool());
     QCOMPARE(root->findChild<QObject*>("bitByteOrder")->property("currentIndex").toInt(),0);
     QVERIFY(js("outputRows.setProperty(0,'widthBit',4); addOutput(); outputRows.setProperty(1,'fromBit',1)"));
@@ -232,6 +257,12 @@ void ObjectDataTest::multipleOutputEditorQml()
     QCOMPARE(editor->property("mergeInputs").toList(),(QVariantList{"raw:1","raw:0"}));
     const auto mergeCapture=qEnvironmentVariable("DI_MERGE_OUTPUT_CAPTURE_PATH");
     if(!mergeCapture.isEmpty()) { QTest::qWait(150); QVERIFY(window.grabWindow().save(mergeCapture)); }
+    QVERIFY(js("selectMergeOutput(0); addOutput(); ruleDialog.mergeInputs=['raw:0','raw:1']; selectMergeOutput(1); removeRuleOutput(0)"));
+    QCOMPARE(editor->property("mergeOutputIndex").toInt(),0);
+    QCOMPARE(editor->property("mergeInputs").toList(),(QVariantList{"raw:1","raw:0"}));
+    QVERIFY(js("removeRuleOutput(0)"));
+    QCOMPARE(editor->property("mergeOutputIndex").toInt(),0);
+    QCOMPARE(editor->property("mergeInputs").toList(),(QVariantList{"raw:0","raw:1"}));
     const auto listCapture=qEnvironmentVariable("DI_PROCESSING_CAPTURE_PATH");
     if(!listCapture.isEmpty()) { QVERIFY(js("ruleDialog.close()")); QTest::qWait(150); QVERIFY(window.grabWindow().save(listCapture)); }
     QCOMPARE(warnings,QStringList{});
@@ -1328,12 +1359,61 @@ void ObjectDataTest::objectManagerQml()
     QVERIFY(QMetaObject::invokeMethod(processor->findChild<QObject *>("objectRuleDialog"), "submit"));
     QTRY_VERIFY(!controller.deriving()); QCOMPARE(controller.signalCount(), 10);
     QCOMPARE(controller.signalEnums(2).size(),2);
+    QQuickItem *outputPen = nullptr;
+    QTRY_VERIFY((outputPen = visualItem("processingOutputPenPreview")));
+    const int penRow = outputPen->property("sourceRow").toInt();
+    QCOMPARE(outputPen->property("lineColor").value<QColor>(), controller.signalColor(penRow));
+    controller.setSignalPen(penRow, QColor("#a315c8"), 4, Qt::DashDotLine);
+    QTRY_COMPARE(outputPen->property("lineColor").value<QColor>(), QColor("#a315c8"));
+    QCOMPARE(outputPen->property("lineWidth").toDouble(), 4.0);
+    QCOMPARE(outputPen->property("lineStyle").toInt(), int(Qt::DashDotLine));
+    QSignalSpy penRequest(processor, SIGNAL(editSignalRequested(int)));
+    const int sectionBeforePen = tabs->property("currentIndex").toInt();
+    QCoreApplication::processEvents();
+    QTest::mouseClick(quickWindow, Qt::LeftButton, Qt::NoModifier,
+        outputPen->mapToScene(QPointF(outputPen->width()/2, outputPen->height()/2)).toPoint());
+    QCOMPARE(penRequest.count(), 1);
+    QCOMPARE(penRequest.first().first().toInt(), penRow);
+    auto *signalProperties = root->findChild<QObject *>("signalPropertiesPane"); QVERIFY(signalProperties);
+    QVERIFY(signalProperties->property("visible").toBool());
+    QCOMPARE(signalProperties->property("sourceRow").toInt(), penRow);
+    QVERIFY(processor->property("visible").toBool());
+    QCOMPARE(processor->property("selectedId").toString(), processing);
+    QVERIFY(!root->findChild<QObject *>("plotGrid")->property("visible").toBool());
+    QCOMPARE(tabs->property("currentIndex").toInt(), sectionBeforePen);
+    // The tree's style entry must also retain the processing workspace.
+    QVERIFY(QMetaObject::invokeMethod(root.get(), "editSignalPen", Q_ARG(QVariant, QVariant(penRow + 1))));
+    QCOMPARE(signalProperties->property("sourceRow").toInt(), penRow + 1);
+    QVERIFY(processor->property("visible").toBool());
+    QVERIFY(!root->findChild<QObject *>("plotGrid")->property("visible").toBool());
+    signalProperties->setProperty("visible", false);
+    QVERIFY(processor->property("visible").toBool());
     // Editing can select any raw signal, not only sources previously used by the configuration.
     QQmlExpression editFirstRule(QQmlEngine::contextForObject(processor), processor, "editRule(selected.rules[0])");
     editFirstRule.evaluate(); QVERIFY(!editFirstRule.hasError());
     auto *inputSelector = processor->findChild<QObject *>("objectRuleDialog"); QVERIFY(inputSelector);
     QCOMPARE(inputSelector->property("inputOptions").toList().size(), 2);
     QCOMPARE(inputSelector->property("inputXId").toString(), QString("raw:0"));
+    QQuickItem *treePen = nullptr;
+    auto findTreePen = [&] {
+        QList<QQuickItem *> pending{quickWindow->contentItem()};
+        while (!pending.isEmpty()) {
+            auto *item = pending.takeLast(); pending.append(item->childItems());
+            if (item->objectName() == "signalTreePenPreview" && item->property("sourceRow").toInt() == 1 && item->isVisible()) {
+                treePen = item; return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY(findTreePen());
+    QTest::mouseClick(quickWindow, Qt::LeftButton, Qt::NoModifier,
+        treePen->mapToScene(QPointF(treePen->width()/2, treePen->height()/2)).toPoint());
+    QVERIFY(signalProperties->property("visible").toBool());
+    QCOMPARE(signalProperties->property("sourceRow").toInt(), 1);
+    QVERIFY(processor->property("visible").toBool());
+    QVERIFY(inputSelector->property("editing").toBool());
+    QCOMPARE(inputSelector->property("inputXId").toString(), QString("raw:0"));
+    signalProperties->setProperty("visible", false);
     QVERIFY(QMetaObject::invokeMethod(processor, "selectRuleSource", Q_ARG(int, 2)));
     QCOMPARE(inputSelector->property("inputXId").toString(), QString("raw:0"));
     QVERIFY(!processor->findChild<QObject *>("objectRuleDialog")->property("errorText").toString().isEmpty());
@@ -1676,6 +1756,120 @@ void ObjectDataTest::objectManagerQml()
     QVERIFY(!processor->property("visible").toBool());
     QCoreApplication::processEvents(); QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
 }
+void ObjectDataTest::deletionConfirmationQml_data()
+{
+    ruleInputsQml_data();
+}
+void ObjectDataTest::deletionConfirmationQml()
+{
+    QFETCH(QUrl, mainUrl);
+    qmlRegisterTypesAndRevisions<PlotItemQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<AppControllerQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<SignalModelQmlRegistration>("DataInspector", 1);
+    qmlRegisterTypesAndRevisions<StateTimelineItemQmlRegistration, TrajectoryItemQmlRegistration>("DataInspector", 1);
+    QTemporaryDir dir; QFile file(dir.filePath("delete.csv")); QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("time,A\n0,1\n1,2\n"); file.close();
+    AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+    QQmlEngine engine;
+    QQmlComponent component(&engine, mainUrl); QVERIFY2(component.isReady(), qPrintable(component.errorString()));
+    std::unique_ptr<QObject> root(component.createWithInitialProperties({{"appController", QVariant::fromValue(&controller)}}));
+    QVERIFY2(root != nullptr, qPrintable(component.errorString()));
+    auto *manager = root->findChild<QObject *>("objectManager"); QVERIFY(manager);
+    auto *processor = root->findChild<QObject *>("processingManager"); QVERIFY(processor);
+    auto *confirmation = processor->findChild<QObject *>("deleteObjectDialog"); QVERIFY(confirmation);
+    auto *objectConfirmation = manager->findChild<QObject *>("deleteObjectDialog"); QVERIFY(objectConfirmation);
+    for (const auto &type : {QString("processing"), QString("general"), QString("aircraft")}) {
+        const auto id = controller.addDataObject(type); QVERIFY(!id.isEmpty());
+        auto *editor = type == "processing" ? processor : manager;
+        QVERIFY(!controller.dataObjectRemovalNeedsConfirmation(id));
+        editor->setProperty("selectedId", id);
+        QVERIFY(QMetaObject::invokeMethod(editor, "deleteObject"));
+        QCOMPARE(controller.dataObjects().size(), 0);
+        QVERIFY(!confirmation->property("visible").toBool());
+        QVERIFY(!objectConfirmation->property("visible").toBool());
+    }
+    for (const auto &type : {QString("processing"), QString("general"), QString("aircraft")}) {
+        QStringList ids;
+        for (int i = 0; i < 4; ++i) ids.append(controller.addDataObject(type));
+        auto *editor = type == "processing" ? processor : manager;
+        editor->setProperty("selectedId", ids[1]);
+        QVERIFY(QMetaObject::invokeMethod(editor, "deleteObject"));
+        QCOMPARE(editor->property("selectedId").toString(), ids[2]); // Next row.
+        editor->setProperty("selectedId", ids[3]);
+        QVERIFY(QMetaObject::invokeMethod(editor, "deleteObject"));
+        QCOMPARE(editor->property("selectedId").toString(), ids[2]); // Last remaining row.
+        editor->setProperty("selectedId", ids[0]);
+        QVERIFY(QMetaObject::invokeMethod(editor, "deleteObject"));
+        QCOMPARE(editor->property("selectedId").toString(), ids[2]); // First row.
+        QVERIFY(QMetaObject::invokeMethod(editor, "deleteObject"));
+        QCOMPARE(editor->property("selectedId").toString(), QString());
+    }
+    auto *addRule = processor->findChild<QObject *>("addObjectRuleButton"); QVERIFY(addRule);
+    QVERIFY(addRule->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(addRule, "clicked"));
+    QCOMPARE(controller.processingConfigurations().size(), 1);
+    const auto automatic = controller.processingConfigurations().first().toMap()["id"].toString();
+    QCOMPARE(processor->property("selectedId").toString(), automatic);
+    auto *ruleEditor = processor->findChild<QObject *>("objectRuleDialog"); QVERIFY(ruleEditor);
+    QVERIFY(ruleEditor->property("editing").toBool());
+    QCOMPARE(controller.processingConfigurations().first().toMap()["rules"].toList().size(), 0);
+    QVERIFY(QMetaObject::invokeMethod(ruleEditor, "close"));
+    processor->setProperty("selectedId", QString());
+    QVERIFY(QMetaObject::invokeMethod(addRule, "clicked"));
+    QCOMPARE(controller.processingConfigurations().size(), 1);
+    QCOMPARE(processor->property("selectedId").toString(), automatic);
+    QVERIFY(ruleEditor->property("editing").toBool());
+    QVERIFY(QMetaObject::invokeMethod(ruleEditor, "close"));
+    QVERIFY(QMetaObject::invokeMethod(processor, "deleteObject"));
+    QCOMPARE(controller.processingConfigurations().size(), 0);
+    const auto configured = controller.addDataObject("processing");
+    QVERIFY(!controller.addObjectRule(configured, {{"name", "invalid samples"}, {"operation", "expression"},
+        {"expression", "sqrt(-1)"}, {"inputs", QVariantList{"raw:0"}}}).isEmpty());
+    QTRY_VERIFY(!controller.deriving());
+    QVERIFY(controller.dataObjectRemovalNeedsConfirmation(configured));
+    processor->setProperty("selectedId", configured);
+    QVERIFY(QMetaObject::invokeMethod(processor, "deleteObject"));
+    QVERIFY(confirmation->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(confirmation, "reject"));
+    QCOMPARE(controller.processingConfigurations().size(), 1);
+    QVERIFY(QMetaObject::invokeMethod(processor, "deleteObject"));
+    const auto other = controller.addDataObject("processing");
+    processor->setProperty("selectedId", other);
+    QVERIFY(QMetaObject::invokeMethod(confirmation, "accept"));
+    QCOMPARE(controller.processingConfigurations().size(), 1);
+    QCOMPARE(controller.processingConfigurations().first().toMap()["id"].toString(), other);
+    QCOMPARE(processor->property("selectedId").toString(), other);
+    const auto plane = controller.addDataObject("aircraft");
+    const auto field = controller.objectConfigurations().first().toMap()["fields"].toList().first().toMap();
+    QVERIFY(!controller.bindObjectField(plane, field["id"].toString(), field["name"].toString(), field["role"].toString(), 0).isEmpty());
+    QVERIFY(controller.dataObjectRemovalNeedsConfirmation(plane));
+    manager->setProperty("selectedId", plane);
+    QVERIFY(QMetaObject::invokeMethod(manager, "deleteObject"));
+    QVERIFY(objectConfirmation->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(objectConfirmation, "reject"));
+    QVERIFY(!controller.bindObjectField(plane, field["id"].toString(), field["name"].toString(), field["role"].toString(), -1).isEmpty());
+    QVERIFY(!controller.dataObjectRemovalNeedsConfirmation(plane));
+    QVERIFY(controller.configureDataObjectAircraft(plane, {{"geographic", false}, {"attitudeMode", 0},
+        {"radians", false}, {"order", 0}, {"scalarLast", false}, {"navigationToBody", false}}));
+    QVERIFY(controller.dataObjectRemovalNeedsConfirmation(plane));
+    const auto general = controller.addDataObject("general");
+    QVERIFY(!controller.bindObjectField(general, {}, "custom", "scalar", -1).isEmpty());
+    QVERIFY(controller.dataObjectRemovalNeedsConfirmation(general));
+    manager->setProperty("selectedId", general);
+    QStringList fields;
+    for (int i = 0; i < 3; ++i) fields.append(controller.addDataObjectField(general));
+    manager->setProperty("selectedFieldId", fields[1]);
+    QVERIFY(controller.removeObjectField(general, fields[1]));
+    QCOMPARE(manager->property("selectedFieldId").toString(), fields[2]);
+    QVERIFY(controller.removeObjectField(general, fields[2]));
+    QCOMPARE(manager->property("selectedFieldId").toString(), fields[0]);
+    const auto custom = controller.objectConfigurations().last().toMap()["fields"].toList().first().toMap()["id"].toString();
+    QVERIFY(controller.removeObjectField(general, custom));
+    QCOMPARE(manager->property("selectedFieldId").toString(), fields[0]);
+    QVERIFY(controller.removeObjectField(general, fields[0]));
+    QCOMPARE(manager->property("selectedFieldId").toString(), QString());
+}
+
 void ObjectDataTest::ruleInputsQml_data()
 {
     QTest::addColumn<QUrl>("mainUrl");

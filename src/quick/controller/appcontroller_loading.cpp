@@ -410,6 +410,9 @@ void AppController::appendLoadedTables(const QString &path, const QVector<Loaded
     notifyPlotBindingsChanged();
     m_loadedPaths.insert(path);
     m_loadedFileNames.append(fileName);
+    // The following currentFileChanged notification only appends sources;
+    // existing signal row identities and editor drafts remain valid.
+    emit fileAppendCommitted();
     updateCurrentFileLabel();
 
     if (initializeSharedXRange) {
