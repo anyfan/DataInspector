@@ -37,7 +37,7 @@ Rectangle {
         target: root.controller
         function onPlotBindingsChanged() { root.refreshBindings() }
     }
-    readonly property string selectionHint: "点击“配置”选择飞机对象；坐标与姿态来源在对象中配置。"
+    readonly property string selectionHint: "右键选择“航迹配置…”选择飞机对象；坐标与姿态来源在对象中配置。"
     readonly property string sourceDescription: {
         const state = root.configuration
         const labels = state.geographic ? ["纬度", "经度", "高度"] : ["X", "Y", "Z"]
@@ -182,9 +182,6 @@ Rectangle {
         anchors.top: parent.top; anchors.left: parent.left; anchors.right: parent.right
         anchors.margins: 3; height: 24
         Label { text: root.configuration.name; color: root.textColor; elide: Text.ElideRight; Layout.fillWidth: true }
-        ToolButton { objectName: "trajectoryConfigurationToggle"; text: "配置"; implicitHeight: 24; onClicked: root.editAxesRequested() }
-        ToolButton { text: "视角"; visible: !root.planarMode; implicitHeight: 24; onClicked: viewMenu.popup() }
-        ToolButton { text: "适应"; implicitHeight: 24; onClicked: trajectory.fitView() }
     }
     Label {
         anchors.bottom: parent.bottom
@@ -218,25 +215,27 @@ Rectangle {
         enabled: root.visible && trajectoryInput.containsMouse
         onActivated: { root.controller.setActivePlot(root.plotIndex); trajectory.fitView() }
     }
-    Menu {
-        id: viewMenu
-        MenuItem { text: "俯视 XY"; onTriggered: trajectory.presetView(1) }
-        MenuItem { text: "正视 YZ"; onTriggered: trajectory.presetView(2) }
-        MenuItem { text: "侧视 XZ"; onTriggered: trajectory.presetView(3) }
-        MenuItem { text: "复位"; onTriggered: trajectory.presetView(0) }
-    }
-    Menu {
+    PlotMenu {
         id: contextMenu
+        objectName: "trajectoryContextMenu"
+        delegate: PlotMenuItem { available: subMenu !== trajectoryViews || !root.planarMode }
         ViewModeMenu {
             controller: root.controller
             plotIndex: root.plotIndex
             currentMode: "trajectory"
         }
-        MenuItem { text: "航迹配置…"; onTriggered: root.editAxesRequested() }
-        MenuItem { text: "适应轨迹"; onTriggered: trajectory.fitView() }
-        MenuItem { text: "等轴测视角"; visible: !root.planarMode; onTriggered: trajectory.presetView(0) }
-        MenuItem { text: "俯视 XY"; visible: !root.planarMode; onTriggered: trajectory.presetView(1) }
-        MenuItem { text: "正视 YZ"; visible: !root.planarMode; onTriggered: trajectory.presetView(2) }
-        MenuItem { text: "侧视 XZ"; visible: !root.planarMode; onTriggered: trajectory.presetView(3) }
+        PlotMenuSeparator { }
+        PlotMenuItem { objectName: "trajectoryConfigurationMenuItem"; text: "航迹配置…"; onTriggered: root.editAxesRequested() }
+        PlotMenuItem { text: "适应轨迹"; icon.source: "qrc:/icons/arrows_up_down.svg"; onTriggered: trajectory.fitView() }
+        PlotMenu {
+            id: trajectoryViews
+            objectName: "trajectoryViewMenu"
+            title: "视角"
+            enabled: !root.planarMode
+            PlotMenuItem { text: "等轴测视角（复位）"; onTriggered: trajectory.presetView(0) }
+            PlotMenuItem { text: "俯视 XY"; onTriggered: trajectory.presetView(1) }
+            PlotMenuItem { text: "正视 YZ"; onTriggered: trajectory.presetView(2) }
+            PlotMenuItem { text: "侧视 XZ"; onTriggered: trajectory.presetView(3) }
+        }
     }
 }

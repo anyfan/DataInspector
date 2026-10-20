@@ -940,8 +940,8 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QVERIFY(!dialog->property("visible").toBool());
     QVERIFY(c.trajectoryState(0)["objectId"].toString().isEmpty());
     QCOMPARE(c.signalModel()->checkedCount(), 0);
-    auto *axesButton = object->findChild<QObject *>("trajectoryConfigurationToggle"); QVERIFY(axesButton);
-    QVERIFY(QMetaObject::invokeMethod(axesButton,"clicked"));
+    auto *axesButton = object->findChild<QObject *>("trajectoryConfigurationMenuItem"); QVERIFY(axesButton);
+    QVERIFY(QMetaObject::invokeMethod(axesButton,"triggered"));
     QTRY_VERIFY(dialog->property("visible").toBool());
     const auto plane = c.addDataObject("aircraft"); QVERIFY(!plane.isEmpty());
     const auto planeFields = c.dataObjects().first().toMap()["fields"].toList();
@@ -1068,10 +1068,18 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     QVERIFY(std::abs(item->camera().panX - (.25 - 1.15 * (.25 - beforeWheel.panX))) < 1e-6);
     QVERIFY(std::abs(item->camera().panY - (-.25 - 1.15 * (-.25 - beforeWheel.panY))) < 1e-6);
     QTRY_VERIFY(!item->pending());
-    auto *configurationToggle = object->findChild<QQuickItem *>("trajectoryConfigurationToggle");
+    auto *configurationToggle = object->findChild<QQuickItem *>("trajectoryConfigurationMenuItem");
     auto *configurationRow = object->findChild<QQuickItem *>("trajectoryConfigurationRow");
     QVERIFY(configurationToggle && configurationRow); QVERIFY(!configurationRow->isVisible());
     const double collapsedHeight = item->height();
+    QTest::mouseClick(&window, Qt::RightButton, Qt::NoModifier, item->mapToScene(QPointF(item->width()/2, item->height()/2)).toPoint());
+    auto *contextMenu = object->findChild<QObject *>("trajectoryContextMenu"); QVERIFY(contextMenu);
+    QTRY_VERIFY(contextMenu->property("visible").toBool());
+    QTRY_VERIFY(configurationToggle->isVisible());
+    const auto menuCapture=qEnvironmentVariable("DI_SUBPLOT_MENU_CAPTURE_DIR");
+    if(!menuCapture.isEmpty()) {
+        QTest::qWait(100); QVERIFY(window.grabWindow().save(QDir(menuCapture).filePath(compiled ? "trajectory-menu-compiled.png" : "trajectory-menu.png")));
+    }
     QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier,
         configurationToggle->mapToScene(QPointF(configurationToggle->width() / 2, configurationToggle->height() / 2)).toPoint());
     QTRY_VERIFY(configurationRow->isVisible()); QCOMPARE(item->height(),collapsedHeight);
@@ -1111,8 +1119,8 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
         QVERIFY(!c.bindObjectField(wing, field["id"].toString(), field["name"].toString(), field["role"].toString(), 3 + i).isEmpty());
     }
     QVERIFY(c.showObjectTrajectory(wing, 0)); QCOMPARE(c.trajectoryState(0)["active"].toInt(), 1);
-    auto *propertiesButton = object->findChild<QObject *>("trajectoryConfigurationToggle"); QVERIFY(propertiesButton);
-    QVERIFY(QMetaObject::invokeMethod(propertiesButton, "clicked"));
+    auto *propertiesButton = object->findChild<QObject *>("trajectoryConfigurationMenuItem"); QVERIFY(propertiesButton);
+    QVERIFY(QMetaObject::invokeMethod(propertiesButton, "triggered"));
     auto *properties = pane;
     QVERIFY(!object->findChild<QObject *>("trajectoryPropertiesDialog"));
     QTRY_VERIFY(properties->property("visible").toBool());
@@ -1131,7 +1139,7 @@ void TrajectoryTest::qmlModeSwitchAndSignalDialog()
     if (QGuiApplication::platformName() != "offscreen") {
         QTest::qWait(100); QVERIFY(window.grabWindow().save(QDir(QCoreApplication::applicationDirPath()).filePath("trajectory-multi-attitude-ui.png")));
     }
-    QVERIFY(QMetaObject::invokeMethod(axesButton,"clicked"));
+    QVERIFY(QMetaObject::invokeMethod(axesButton,"triggered"));
     auto *selector = object->findChild<QObject *>("trajectorySelector"); QVERIFY(selector);
     selector->setProperty("currentIndex", 0); QVERIFY(QMetaObject::invokeMethod(selector, "activated", Q_ARG(int, 0)));
     QCOMPARE(c.trajectoryState(0)["active"].toInt(), 0);

@@ -3007,6 +3007,40 @@ void AppControllerTest::aboutPageShowsBuildInfoAndReleaseNotes()
     QVERIFY(QGuiApplication::clipboard()->text().contains(info.value("buildTime").toString()));
     QVERIFY(QMetaObject::invokeMethod(aboutDialog, "close"));
     QTRY_VERIFY(!aboutDialog->property("visible").toBool());
+    auto *automationMenu=object->findChild<QObject *>("automationMenuItem");
+    auto *automationDialog=object->findChild<QObject *>("automationDialog");
+    auto *automationToggle=object->findChild<QObject *>("automationToggleButton");
+    auto *connectionPath=object->findChild<QObject *>("automationConnectionPath");
+    QVERIFY(automationMenu && automationDialog && automationToggle && connectionPath);
+    QVERIFY(!controller.automationEnabled());
+    QVERIFY(QMetaObject::invokeMethod(automationMenu,"triggered"));
+    QTRY_VERIFY(automationDialog->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(automationToggle,"clicked"));
+    QVERIFY2(controller.automationEnabled(),qPrintable(controller.automationError()));
+    const auto connection=controller.automationConnectionFile();
+    QVERIFY(QFileInfo(connection).isAbsolute()); QVERIFY(QFile::exists(connection));
+    QTRY_COMPARE(connectionPath->property("text").toString(),connection);
+    controller.copyAutomationConnectionFile();
+    QCOMPARE(QGuiApplication::clipboard()->text(),connection);
+    controller.copyAutomationCommand();
+    QVERIFY(QGuiApplication::clipboard()->text().contains("--connection"));
+    QVERIFY(QGuiApplication::clipboard()->text().contains(" status"));
+    QVERIFY(QMetaObject::invokeMethod(automationDialog,"close"));
+    QVERIFY(controller.automationEnabled());
+    QVERIFY(QMetaObject::invokeMethod(automationMenu,"triggered"));
+    const auto capture=qEnvironmentVariable("DI_AUTOMATION_DIALOG_CAPTURE_PATH");
+    if(!capture.isEmpty()) {
+        auto *window=qobject_cast<QQuickWindow *>(object.get()); QVERIFY(window);
+        window->show(); QVERIFY(QTest::qWaitForWindowExposed(window));
+        window->requestUpdate(); QTest::qWait(100); QVERIFY(window->grabWindow().save(capture));
+    }
+    QVERIFY(QMetaObject::invokeMethod(automationToggle,"clicked"));
+    QVERIFY(!controller.automationEnabled()); QVERIFY(!QFile::exists(connection));
+    QVERIFY(QMetaObject::invokeMethod(automationToggle,"clicked"));
+    QVERIFY(controller.automationEnabled());
+    QVERIFY(controller.automationConnectionFile()!=connection);
+    controller.disableAutomation();
+    QVERIFY(QMetaObject::invokeMethod(automationDialog,"close"));
 
     QVERIFY2(warnings.isEmpty(), qPrintable(warnings.join('\n')));
 }

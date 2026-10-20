@@ -15,6 +15,8 @@
 #include <QSignalSpy>
 #include <QScopeGuard>
 #include <QQuickWindow>
+#include <QSGGeometryNode>
+#include <QSGRendererInterface>
 #include <QTemporaryDir>
 #include <QtTest>
 #include <limits>
@@ -25,6 +27,7 @@ class SessionTest final : public QObject
 private slots:
     void stateTimelineIntervalsAndMissingValues();
     void stateTimelineViewChangesKeepFrame();
+    void stateTimelineSubpixelPulseSurvivesAlignment();
     void stateTimelinePersistenceAndSourceRemoval();
     void stateTimelineQmlConfiguration();
     void signalEnumsInlineEditorAndSharedViews();
@@ -744,6 +747,86 @@ void SessionTest::stateTimelineViewChangesKeepFrame()
     QCOMPARE(item.rowNames(),QStringList{"replacement"}); QVERIFY(item.hasFrame());
 }
 
+void SessionTest::stateTimelineSubpixelPulseSurvivesAlignment()
+{
+    class InspectableTimeline : public StateTimelineItem {
+    public:
+        using StateTimelineItem::updatePaintNode;
+    };
+    PlotSeriesInput input; input.id=0;
+    input.time={9590,9594.99,9595.01,9600}; input.values={192,0,192,192};
+    PlotSeriesStore store; store.replaceSeries({input});
+    StateLane lane; lane.source=0; lane.name="short pulse";
+    InspectableTimeline item; item.setWidth(100); item.setHeight(40);
+    item.setMinimum(9590); item.setMaximum(9600);
+    item.setSources({true,{lane}},store.snapshot({0}));
+    const auto colorWidth=[&](const QColor &color) {
+        std::unique_ptr<QSGNode> node(item.updatePaintNode(nullptr,nullptr));
+        auto *geometryNode=dynamic_cast<QSGGeometryNode *>(node.get());
+        if(!geometryNode) return 0.;
+        auto *geometry=geometryNode->geometry();
+        const auto *vertices=geometry->vertexDataAsColoredPoint2D();
+        double width=0;
+        for(int i=0;i<geometry->vertexCount();i+=6) {
+            const auto &v=vertices[i];
+            if(v.r!=color.red() || v.g!=color.green() || v.b!=color.blue()) continue;
+            float left=v.x,right=v.x;
+            for(int j=1;j<6;++j) { left=qMin(left,vertices[i+j].x); right=qMax(right,vertices[i+j].x); }
+            width+=right-left;
+        }
+        return width;
+    };
+    // Both values are undefined and share one color, as in the reported case.
+    // Move the pulse through bucket interiors, boundaries and midpoint ties.
+    for(double span : {10.,8.,5.}) for(double shift : {0.,.01,.025,.049,.05,.075,.099}) {
+        item.setMinimum(9595-span/2+shift); item.setMaximum(9595+span/2+shift);
+        QTRY_VERIFY_WITH_TIMEOUT(!item.pending(),5000);
+        QVERIFY2(colorWidth(QColor("#684180"))+colorWidth(QColor("#d6a0e8"))>=.9,
+                 qPrintable(QString("Lost pulse: span=%1 shift=%2").arg(span).arg(shift)));
+    }
+    // When resolved, use the real enum color rather than a compression marker.
+    lane.values={{0,{"pulse",QColor("#00ff00")}},{192,{"baseline",QColor("#a66d22")}}};
+    item.setSources({true,{lane}},store.snapshot({0}));
+    item.setMinimum(9594.9); item.setMaximum(9595.1);
+    QTRY_VERIFY_WITH_TIMEOUT(!item.pending(),5000);
+    QVERIFY(colorWidth(QColor("#00ff00"))>=9.9);
+    QCOMPARE(colorWidth(QColor("#684180"))+colorWidth(QColor("#d6a0e8")),0.);
+    // A single step remains an ordinary color boundary at every alignment.
+    input.time={9590,9595,9600}; input.values={192,0,0}; store.replaceSeries({input});
+    item.setSources({true,{lane}},store.snapshot({0}));
+    for(double shift : {0.,.025,.05,.075}) {
+        item.setMinimum(9590+shift); item.setMaximum(9600+shift);
+        QTRY_VERIFY_WITH_TIMEOUT(!item.pending(),5000);
+        QCOMPARE(colorWidth(QColor("#684180"))+colorWidth(QColor("#d6a0e8")),0.);
+        QVERIFY(colorWidth(QColor("#00ff00"))>40);
+    }
+    const auto capture=qEnvironmentVariable("DI_STATE_PULSE_CAPTURE_DIR");
+    if(!capture.isEmpty()) {
+        QQuickWindow window; window.resize(400,80); window.setColor(Qt::white);
+        StateTimelineItem raster; raster.setParentItem(window.contentItem());
+        raster.setSize(QSizeF(400,80));
+        input.time={9590,9594.99,9595.01,9600}; input.values={192,0,192,192};
+        store.replaceSeries({input}); lane.values.clear();
+        raster.setSources({true,{lane}},store.snapshot({0}));
+        window.show(); QVERIFY(QTest::qWaitForWindowExposed(&window));
+        QVERIFY(window.rendererInterface()->graphicsApi()!=QSGRendererInterface::Software);
+        int index=0;
+        for(double shift : {0.,.0025,.005,.0075}) {
+            raster.setMinimum(9590+shift); raster.setMaximum(9600+shift);
+            QTRY_VERIFY_WITH_TIMEOUT(!raster.pending(),5000);
+            window.requestUpdate(); QTest::qWait(100);
+            const auto image=window.grabWindow(); QVERIFY(!image.isNull());
+            int marked=0;
+            for(int y=0;y<image.height();++y) for(int x=0;x<image.width();++x) {
+                const auto pixel=image.pixelColor(x,y);
+                if(pixel==QColor("#684180") || pixel==QColor("#d6a0e8")) ++marked;
+            }
+            QVERIFY(marked>=10);
+            QVERIFY(image.save(QDir(capture).filePath(QString("pulse-%1.png").arg(index++))));
+        }
+    }
+}
+
 void SessionTest::stateTimelinePersistenceAndSourceRemoval()
 {
     QTemporaryDir dir;
@@ -868,8 +951,13 @@ void SessionTest::stateTimelineQmlConfiguration()
     QVERIFY(hoverPlot->property("hoveredStateDetails").toString().isEmpty());
     controller.setCursorMode(1);
     auto *plot = root->findChild<PlotItem *>(); QVERIFY(plot); plot->setCursorPosition(0);
-    QVERIFY(QMetaObject::invokeMethod(root.get(), "jumpState", Q_ARG(QVariant,1)));
+    auto *nextChange=root->findChild<QObject *>("nextStateChangeMenuItem"); QVERIFY(nextChange);
+    auto *stateMenu=root->findChild<QObject *>("plotContextMenu"); QVERIFY(stateMenu);
+    QVERIFY(QMetaObject::invokeMethod(stateMenu,"open"));
+    QTRY_VERIFY(nextChange->property("enabled").toBool());
+    QVERIFY(QMetaObject::invokeMethod(nextChange, "triggered"));
     QCOMPARE(plot->cursorX1(), 1.);
+    QVERIFY(QMetaObject::invokeMethod(stateMenu,"close"));
     QTRY_COMPARE(root->property("stateCursorValues").toStringList(),QStringList{"2"});
     plot->editCursorTime(2.,1);
     QTRY_COMPARE(root->property("stateCursorValues").toStringList(),QStringList{"1"});
@@ -1070,7 +1158,42 @@ void SessionTest::mixedStateAndCurveLayout()
     if(!sidebarCapture.isEmpty()) {
         window->requestUpdate(); QTest::qWait(200); QVERIFY(window->grabWindow().save(sidebarCapture));
     }
-    QVERIFY(QMetaObject::invokeMethod(browser,"editStateRows",Q_ARG(QVariant,0)));
+    auto *stateConfiguration=plotOwner(0)->findChild<QObject *>("stateConfigurationMenuItem"); QVERIFY(stateConfiguration);
+    auto *stateMenu=plotOwner(0)->findChild<QObject *>("plotContextMenu"); QVERIFY(stateMenu);
+    const auto verifyMenuLayout=[](QObject *menu) {
+        qreal bottom=0;
+        for(int i=0;i<menu->property("count").toInt();++i) {
+            QQuickItem *entry=nullptr;
+            QVERIFY(QMetaObject::invokeMethod(menu,"itemAt",Q_RETURN_ARG(QQuickItem *,entry),Q_ARG(int,i)));
+            QVERIFY(entry);
+            if(!entry->isVisible()) { QCOMPARE(entry->height(),0.); continue; }
+            QTRY_VERIFY(qAbs(entry->y()-bottom)<=menu->property("spacing").toDouble()+1);
+            bottom=entry->y()+entry->height();
+        }
+        auto *content=qvariant_cast<QQuickItem *>(menu->property("contentItem")); QVERIFY(content);
+        QTRY_VERIFY(qAbs(content->property("contentHeight").toDouble()-bottom)<=1);
+    };
+    QVERIFY(QMetaObject::invokeMethod(stateMenu,"open"));
+    QTRY_VERIFY(stateConfiguration->property("visible").toBool());
+    auto *fitY=plotOwner(0)->findChild<QObject *>("fitPlotYMenuItem"); QVERIFY(fitY);
+    QVERIFY(!fitY->property("visible").toBool());
+    verifyMenuLayout(stateMenu);
+    const auto menuCapture=qEnvironmentVariable("DI_SUBPLOT_MENU_CAPTURE_DIR");
+    if(!menuCapture.isEmpty()) {
+        QTest::qWait(100); QVERIFY(window->grabWindow().save(QDir(menuCapture).filePath("state-menu.png")));
+    }
+    auto *curveFitY=plotOwner(1)->findChild<QObject *>("fitPlotYMenuItem"); QVERIFY(curveFitY);
+    auto *curveMenu=plotOwner(1)->findChild<QObject *>("plotContextMenu"); QVERIFY(curveMenu);
+    QVERIFY(QMetaObject::invokeMethod(curveMenu,"open"));
+    QTRY_VERIFY(curveFitY->property("visible").toBool());
+    verifyMenuLayout(curveMenu);
+    if(!menuCapture.isEmpty()) {
+        QTest::qWait(100); QVERIFY(window->grabWindow().save(QDir(menuCapture).filePath("curve-menu.png")));
+    }
+    QVERIFY(!plotOwner(1)->findChild<QObject *>("stateConfigurationMenuItem")->property("visible").toBool());
+    QVERIFY(QMetaObject::invokeMethod(curveMenu,"close"));
+    QVERIFY(QMetaObject::invokeMethod(stateMenu,"close"));
+    QVERIFY(QMetaObject::invokeMethod(stateConfiguration,"triggered"));
     QCOMPARE(properties->property("mode").toString(),QString("states"));
     QVERIFY(QMetaObject::invokeMethod(properties,"chooseStateSource",Q_ARG(int,0)));
     QCOMPARE(browser->property("statePickTarget").toInt(),0);
@@ -1089,8 +1212,8 @@ void SessionTest::mixedStateAndCurveLayout()
     auto *trajectoryPane=root->findChild<QQuickItem *>("trajectoryPropertiesPane"); QVERIFY(trajectoryPane);
     QVERIFY(!trajectoryPane->isVisible());
     QObject *configurationButton=nullptr;
-    QTRY_VERIFY((configurationButton=plotOwner(1)->findChild<QObject *>("trajectoryConfigurationToggle")));
-    QVERIFY(QMetaObject::invokeMethod(configurationButton,"clicked"));
+    QTRY_VERIFY((configurationButton=plotOwner(1)->findChild<QObject *>("trajectoryConfigurationMenuItem")));
+    QVERIFY(QMetaObject::invokeMethod(configurationButton,"triggered"));
     QTRY_VERIFY(trajectoryPane->isVisible()); QVERIFY(!properties->isVisible());
     QTRY_VERIFY(trajectoryPane->mapToScene(QPointF()).x() >= plotOwner(1)->mapToScene(QPointF(plotOwner(1)->width(),0)).x()-1);
     QVERIFY(trajectoryPane->width()>=260); QVERIFY(browser->isVisible());

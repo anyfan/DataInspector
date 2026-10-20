@@ -859,9 +859,8 @@ Rectangle {
         id: stateLegend
         objectName: "stateTimelineLegend"
         visible: root.stateMode
-        readonly property bool besideToolbar: root.width-stateToolbar.width-35 >= 200
-        x: besideToolbar ? stateToolbar.x+stateToolbar.width+8 : 28
-        y: besideToolbar ? 2 : stateToolbar.y+stateToolbar.height+3
+        x: 28
+        y: 2
         width: Math.max(1,root.width-x-8)
         spacing: 4
         z: 6
@@ -905,19 +904,12 @@ Rectangle {
         policy: ScrollBar.AlwaysOn
         onSizeChanged: position = Math.max(0,Math.min(position,1-size))
     }
-    Row {
-        id: stateToolbar
-        visible: root.stateMode; x: 25; y: 2; spacing: 3; z: 6
-        Button { text: "状态行…"; height: 30; onClicked: root.stateConfigurationRequested(root.plotIndex) }
-        Button { text: "上次变化"; height: 30; enabled: stateItem.hasFrame; onClicked: root.jumpState(-1) }
-        Button { text: "下次变化"; height: 30; enabled: stateItem.hasFrame; onClicked: root.jumpState(1) }
-    }
     Label {
         objectName: "stateTimelineStatusMessage"
         visible: root.stateMode && ((stateItem.pending && !stateItem.hasFrame) || stateItem.error.length > 0 || stateItem.rowNames.length === 0)
         x: axisRect.x + 8; y: axisRect.y + 8; width: Math.max(1, axisRect.width - 16); z: 5
         color: root.textColor; wrapMode: Text.WordWrap
-        text: stateItem.pending && !stateItem.hasFrame ? "正在准备状态区间…" : stateItem.error.length > 0 ? stateItem.error : "点击‘状态行…’，再从信号树添加来源"
+        text: stateItem.pending && !stateItem.hasFrame ? "正在准备状态区间…" : stateItem.error.length > 0 ? stateItem.error : "右键选择“状态行…”，再从信号树添加来源"
     }
     Loader {
         anchors.fill: parent
@@ -938,36 +930,66 @@ Rectangle {
             }
         }
     }
-    Menu {
+    PlotMenu {
         id: plotContextMenu
         objectName: "plotContextMenu"
+        delegate: PlotMenuItem { available: subMenu !== curveSettingsMenu || !root.stateMode }
         ViewModeMenu {
             controller: root.controller
             plotIndex: root.plotIndex
             currentMode: root.trajectoryMode ? "trajectory" : root.stateMode ? "states" : "curve"
         }
-        MenuSeparator { }
-        MenuItem {
+        PlotMenuSeparator { }
+        PlotMenuItem {
+            objectName: "stateConfigurationMenuItem"
+            text: "状态行…"
+            available: root.stateMode
+            enabled: available
+            onTriggered: root.stateConfigurationRequested(root.plotIndex)
+        }
+        PlotMenuItem {
+            objectName: "previousStateChangeMenuItem"
+            text: "上次变化"
+            available: root.stateMode
+            enabled: available && stateItem.hasFrame
+            onTriggered: root.jumpState(-1)
+        }
+        PlotMenuItem {
+            objectName: "nextStateChangeMenuItem"
+            text: "下次变化"
+            available: root.stateMode
+            enabled: available && stateItem.hasFrame
+            onTriggered: root.jumpState(1)
+        }
+        PlotMenuItem {
+            objectName: "fitPlotYMenuItem"
             text: "自适应当前 Y 轴"
+            available: !root.stateMode
+            enabled: available
             icon.source: "qrc:/icons/arrows_up_down.svg"
             onTriggered: root.controller.fitPlotY(root.plotIndex)
         }
-        MenuItem {
+        PlotMenuItem {
             text: "清除当前子图所有信号"
+            available: !root.stateMode
+            enabled: available
             icon.source: "qrc:/icons/clear.svg"
             onTriggered: root.controller.clearPlotSignals(root.plotIndex)
         }
-        MenuSeparator { }
-        Menu {
+        PlotMenuSeparator { available: !root.stateMode }
+        PlotMenu {
+            id: curveSettingsMenu
+            objectName: "curveSettingsMenu"
             title: "设置"
+            enabled: !root.stateMode
             icon.source: "qrc:/icons/settings.svg"
-            MenuItem {
+            PlotMenuItem {
                 text: "归一化 Y 轴 (Normalize y-axis)"
                 checkable: true
                 checked: plotItem.normalizeY
                 onTriggered: plotItem.normalizeY = !plotItem.normalizeY
             }
-            MenuItem {
+            PlotMenuItem {
                 text: "小幅值曲线优先置顶（保留原色）"
                 checkable: true
                 checked: root.blendOverlaps

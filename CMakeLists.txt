@@ -105,6 +105,7 @@ set(DI_CONTROLLER_SOURCES
     ${DI_QUICK_DIR}/automation/automationtasks.cpp
     ${DI_QUICK_DIR}/automation/automationcommands.cpp
     ${DI_QUICK_DIR}/controller/appcontroller_about.cpp
+    ${DI_QUICK_DIR}/controller/appcontroller_cli.cpp
     ${DI_QUICK_DIR}/qmltypes.h
     ${DI_QUICK_DIR}/state/sessiondocument.cpp
     ${DI_QUICK_DIR}/state/sessiondocument.h
@@ -165,6 +166,9 @@ set(DI_ICON_FILES
 )
 
 set(DI_QML_FILES
+    qml/PlotMenu.qml
+    qml/PlotMenuItem.qml
+    qml/PlotMenuSeparator.qml
     qml/ColorEditor.qml
     qml/TrajectoryPropertiesPane.qml
     qml/ViewModeMenu.qml
@@ -172,6 +176,7 @@ set(DI_QML_FILES
     qml/SignalBrowser.qml
     qml/SessionDialogs.qml
     qml/AboutDialog.qml
+    qml/AutomationDialog.qml
     qml/ObjectManager.qml
     qml/ThemedComboBox.qml
     qml/Main.qml
@@ -314,6 +319,10 @@ set_target_properties(DataInspector PROPERTIES
     WIN32_EXECUTABLE TRUE
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/${DATAINSPECTOR_BIN_DIR}"
 )
+add_custom_command(TARGET DataInspector POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/tools/datainspector_cli.py" "$<TARGET_FILE_DIR:DataInspector>/datainspector_cli.py"
+    VERBATIM)
 
 # ---------------------------------------------------------------------------
 # Tests

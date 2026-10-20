@@ -14,6 +14,7 @@
 
 | 文档 | 主题 |
 | --- | --- |
+| [子图菜单、状态短脉冲与运行中 CLI](subplot-menus-state-pulse-runtime-cli-2026-10-20.md) | 菜单样式与隐藏项布局、跨桶短脉冲保留、当前窗口 CLI 开关及验证边界 |
 | [航迹配置右侧栏](trajectory-right-pane-2026-10-19.md) | 航迹管理、可选对象、手动坐标来源及样式统一侧栏 |
 | [位提取与公式多输出](multiple-processing-outputs-2026-10-19.md) | 多位段、多个公式、自动字宽、小端默认、输出身份维护与会话 v21 |
 | [位提取与信号枚举编辑](signal-enums-and-bit-extraction-2026-10-19.md) | 合并位提取入口、侧栏信号属性、信号级枚举、会话 v20／模板 v5 |

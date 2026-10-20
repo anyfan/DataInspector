@@ -1,6 +1,6 @@
 # 自动化 CLI 架构
 
-`tools/datainspector_cli.py` 使用 Python 标准库，通过一次连接一个请求的换行 JSON 协议访问 `automation/automationserver.*`。这不是 HTTP 或 MCP。服务在 Main 窗口创建后按 `--automation-file` 显式开启，绑定本机随机端口，以 QSaveFile 发布带令牌的连接描述文件。
+`tools/datainspector_cli.py` 使用 Python 标准库，通过一次连接一个请求的换行 JSON 协议访问 `automation/automationserver.*`。这不是 HTTP 或 MCP。服务由 AppController 持有，在 Main 窗口创建后按 `--automation-file` 显式开启，也可由“设置 → CLI 自动化…”在运行中开启／关闭，绑定本机随机端口，以 QSaveFile 发布带令牌的连接描述文件。
 
 服务仅允许显式命令，校验参数类型、范围和未知字段，不使用 QObject 反射执行外部方法。设置在 GUI 线程调用现有 AppController，会话格式不变。startupfiles 跳过自动化参数值，防止连接 JSON 被误识别为会话。
 
@@ -12,7 +12,7 @@ AppController::automationSnapshot 只在 GUI 线程捕获 Store 不可变序列�
 
 外部 generation 由服务实例/会话恢复的 UUID epoch 与 Store generation 组合。恢复安装新 Store，其 counter 可与旧 Store 重复，因此不能仅暴露 counter。版本不匹配时拒绝，防止旧 ID 指向另一来源；调用者仍需核对新列举的来源。
 
-协议 v1 请求为 `{"token":"...","command":"status","params":{}}` 加换行，响应为 `{"ok":true,"result":...}` 或 `{"ok":false,"error":{"code":"...","message":"..."}}` 加换行，随后断开。限制见[用户文档](../user-guide/automation-cli.md)。令牌不出现在 CLI stdout，连接文件及存放目录是本机信任边界。服务无远程监听、无自动发现。
+协议 v1 请求为 `{"token":"...","command":"status","params":{}}` 加换行，响应为 `{"ok":true,"result":...}` 或 `{"ok":false,"error":{"code":"...","message":"..."}}` 加换行，随后断开。限制见[用户文档](../user-guide/automation-cli.md)。令牌不出现在 CLI stdout，连接文件及存放目录是本机信任边界。服务无远程监听、无自动发现。运行中开启在当前用户临时目录 DataInspector/automation 下生成 UUID 连接文件；关闭销毁服务、断开 socket，取消服务工作池分析并清理自己的连接文件，已提交到控制器的加载／导出等操作不回滚。重新开启创建新服务、令牌和 epoch；开关不持久化，启动参数与 GUI 共用同一实例。
 
 automation_test 覆盖真实 socket、原始样本/统计、设置/恢复、认证、版本失效、参数及帧大小。可选 Python 的 automation_cli_test 启动实际应用，在 offscreen/software 后端调用真实 CLI，不连接用户现有窗口。
 

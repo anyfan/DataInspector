@@ -65,7 +65,7 @@ automation_cli_test 另验证 clear 删除全部对象/数据；merge_signals �
 - `session_test`：当前 v22 往返；全部旧版本/非法版本拒绝；失败保留、原子保存、重定位、修改状态、退出确认；独立 v5 模板匹配/撤销/严格引用校验，拒绝旧 v1/v2/v3/v4。
 - `objectdata_test`：独立处理与对象生命周期隔离、增量依赖/取消/预算、来源移除闭包及图例清理；规则参数严格校验；X/Y 丢包三指标、窗口边界/回绕/歧义、单输出及双输出拒绝；规则 Pane 的真实鼠标绑定、草稿与大信号树导航。
 - `trajectory_test`：多航迹、公共原点/缓存、位置/姿态时间基、相机与操纵环、来源重映射和当前格式往返；源码及编译 QML 两种加载方式。
-- `automation_test` / `automation_cli_test`：协议和任务状态、幂等/取消、飞机映射、合并冲突的整批拒绝、逻辑导出、实际程序与标准库 CLI 集成。
+- `automation_test` / `automation_cli_test`：协议和任务状态、幂等/取消、飞机映射、合并冲突的整批拒绝、逻辑导出、实际程序与标准库 CLI 集成。运行中 CLI 回归还检查关闭后拒绝旧连接、清理连接文件、重启更新令牌／generation，并保留对象和会话修改状态；`appcontroller_test` 验证设置菜单打开 CLI 对话框、运行中开关、复制路径／命令及关闭对话框保留服务。`DI_AUTOMATION_DIALOG_CAPTURE_PATH` 可保存 Windows 窗口截图。
 - `appcontroller_test` / `signalselection_test`：游标原始吸附/同步、实际跨图拖拽、树展开/搜索/定位与来源隔离。
 
 具体断言以 `tests/` 内测试函数为准。新增行为更新对应套件，不将每次开发记录追加为现行测试规范。`DI_OBJECT_UI_CAPTURE_DIR` 可输出对象页面离屏截图。
@@ -80,6 +80,8 @@ $env:DI_STATE_GPU_CAPTURE_PATH = "$PWD/build_qt6-debug/state-timeline-gpu.png"
 ```
 
 截图路径变量启用像素断言；检查日志确认实际硬件适配器。默认 CTest 不设置该变量，不将离屏 QML 行为检查当作 GPU 验证。
+
+`session_test::stateTimelineSubpixelPulseSurvivesAlignment` 检查短脉冲在不同缩放／像素对齐下的压缩标记、放大后的枚举颜色及普通阶跃不误标。设置 `DI_STATE_PULSE_CAPTURE_DIR` 为已有目录并使用 Windows 硬件后端运行该用例，会额外断言四组对齐位置的紫色像素并保存截图；不设置时只验证生成的几何。
 
 ## GPU 与真实数据
 

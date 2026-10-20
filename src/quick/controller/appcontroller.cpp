@@ -2,6 +2,7 @@
 // Loading/export live in appcontroller_loading.cpp; subplot coordination in
 // appcontroller_plots.cpp.
 #include "appcontroller.h"
+#include "automation/automationserver.h"
 #include "items/plotitem.h"
 #include "io/dataloadworker.h"
 #include "io/dataexportworker.h"
@@ -95,6 +96,7 @@ AppController::AppController(QObject *parent)
 
 AppController::~AppController()
 {
+    m_automationServer.reset();
     cancelObjectEvaluation();
     if (m_loadThread) { m_loadThread->requestInterruption(); m_loadThread->quit(); m_loadThread->wait(); }
     if (m_exporter) m_exporter->requestCancel();

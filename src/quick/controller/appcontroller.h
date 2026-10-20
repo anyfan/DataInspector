@@ -21,6 +21,7 @@ class DataLoadWorker;
 class PlotItem;
 class TrajectoryItem;
 class QThread;
+class AutomationServer;
 
 // GUI-thread session controller: owns the signal model, the shared series
 // store, the loader/exporter worker threads and coordinates every subplot.
@@ -35,6 +36,10 @@ class AppController : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QVariantMap aboutInfo READ aboutInfo CONSTANT)
+    Q_PROPERTY(bool automationEnabled READ automationEnabled NOTIFY automationStateChanged)
+    Q_PROPERTY(QString automationConnectionFile READ automationConnectionFile NOTIFY automationStateChanged)
+    Q_PROPERTY(QString automationCommand READ automationCommand NOTIFY automationStateChanged)
+    Q_PROPERTY(QString automationError READ automationError NOTIFY automationStateChanged)
     Q_PROPERTY(QString releaseNotes READ releaseNotes CONSTANT)
     Q_PROPERTY(QVariantList presetColors READ presetColors CONSTANT)
     Q_PROPERTY(SignalModel *signalModel READ signalModel CONSTANT)
@@ -68,6 +73,15 @@ public:
     Q_ENUM(ExportScope)
     explicit AppController(QObject *parent = nullptr);
     ~AppController() override;
+    bool automationEnabled() const { return bool(m_automationServer); }
+    QString automationConnectionFile() const { return m_automationConnectionFile; }
+    QString automationError() const { return m_automationError; }
+    QString automationCommand() const;
+    bool startAutomation(const QString &connectionFile, QString *error);
+    Q_INVOKABLE bool enableAutomation();
+    Q_INVOKABLE void disableAutomation();
+    Q_INVOKABLE void copyAutomationConnectionFile() const;
+    Q_INVOKABLE void copyAutomationCommand() const;
     static const QVector<QColor> &signalPalette();
     QVariantList presetColors() const;
     QVariantMap aboutInfo() const;
@@ -244,6 +258,7 @@ public:
     // Drops every loaded file and signal. Use clearAllPlotSignals() to keep data.
     Q_INVOKABLE void clear();
 signals:
+    void automationStateChanged();
     void loadBatchFinished(bool success, const QString &message);
     void dataExportFinished(bool success, bool cancelled, const QString &message);
     void objectEvaluationAborted();
@@ -271,6 +286,8 @@ signals:
 protected:
     bool eventFilter(QObject *watched, QEvent *event) override;
 private:
+    std::unique_ptr<AutomationServer> m_automationServer;
+    QString m_automationConnectionFile, m_automationError;
     static QString localSessionPath(const QVariant &value);
     struct ObjectJob;
     QVector<DataObject> m_objects;

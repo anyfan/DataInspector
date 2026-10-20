@@ -33,6 +33,53 @@ class AutomationTest final : public QObject
         return QJsonDocument::fromJson(file.readAll()).object();
     }
 private slots:
+    void runtimeEnableDisableAndRestart()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const auto path=dir.filePath("connection.json");
+        QJsonObject first;
+        {
+            AppController controller;
+            QVERIFY(!controller.automationEnabled());
+            QVERIFY(controller.automationConnectionFile().isEmpty());
+            QVERIFY(controller.automationCommand().isEmpty());
+            const auto object=controller.addDataObject("aircraft"); QVERIFY(!object.isEmpty());
+            const auto objects=controller.dataObjects();
+            const bool modified=controller.sessionModified();
+            QString error;
+            QVERIFY(!controller.startAutomation("relative.json",&error));
+            QVERIFY(!controller.automationError().isEmpty());
+            QVERIFY(!controller.automationEnabled());
+            QVERIFY(controller.startAutomation(path,&error));
+            QVERIFY(controller.automationEnabled());
+            QVERIFY(controller.automationError().isEmpty());
+            first=descriptor(path);
+            QVERIFY(call(first,"status")["ok"].toBool());
+            const auto generation=call(first,"signals").value("result").toObject().value("generation");
+            QVERIFY(controller.enableAutomation()); // Enabling twice preserves the same endpoint.
+            QCOMPARE(descriptor(path),first);
+            QCOMPARE(controller.dataObjects(),objects);
+            QCOMPARE(controller.sessionModified(),modified);
+            QVERIFY(controller.automationCommand().contains("--connection"));
+            controller.disableAutomation();
+            QVERIFY(!controller.automationEnabled());
+            QVERIFY(!QFile::exists(path));
+            QVERIFY(controller.automationConnectionFile().isEmpty());
+            QTcpSocket oldSocket; oldSocket.connectToHost("127.0.0.1",quint16(first["port"].toInt()));
+            QVERIFY(!oldSocket.waitForConnected(500));
+            QVERIFY(controller.startAutomation(path,&error));
+            const auto second=descriptor(path);
+            QVERIFY(second["token"]!=first["token"]);
+            auto stale=second; stale["token"]=first["token"];
+            QCOMPARE(call(stale,"status")["error"].toObject()["code"].toString(),QString("unauthorized"));
+            QVERIFY(call(second,"status")["ok"].toBool());
+            QVERIFY(call(second,"signals")["result"].toObject()["generation"]!=generation);
+            QCOMPARE(controller.dataObjects(),objects);
+            QCOMPARE(controller.sessionModified(),modified);
+        }
+        QVERIFY(!QFile::exists(path));
+    }
+
     void optInAuthAndValidation()
     {
         QTemporaryDir dir;

@@ -39,6 +39,11 @@ ApplicationWindow {
         appController: window.appController
     }
     property alias pendingUnsavedAction: sessionDialogs.pendingUnsavedAction
+    AutomationDialog {
+        id: automationDialog
+        parent: Overlay.overlay
+        appController: window.appController
+    }
     onClosing: close => {
         window.cancelSignalTreeDrag()
         if (!allowClose && !sessionDialogs.requestClose()) close.accepted = false
@@ -735,6 +740,7 @@ ApplicationWindow {
                     MenuItem { text: "清除所有信号"; icon.source: "qrc:/icons/clear.svg"; onTriggered: window.appController.clearAllPlotSignals() }
                     MenuSeparator { }
                     MenuItem { objectName: "aboutMenuItem"; text: "关于"; onTriggered: aboutDialog.open() }
+                    MenuItem { objectName: "automationMenuItem"; text: "CLI 自动化…"; onTriggered: automationDialog.open() }
                 }
             }
         }

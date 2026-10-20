@@ -8,7 +8,6 @@
 #include <QTextStream>
 #include <QQuickWindow>
 #include "controller/appcontroller.h"
-#include "automation/automationserver.h"
 
 static int writeStartupError(QQmlApplicationEngine &engine,
                              const QStringList &qmlErrors,
@@ -50,7 +49,6 @@ int main(int argc, char *argv[])
         automationFile = arguments[++i];
     }
     AppController controller;
-    AutomationServer automation(&controller);
     app.setApplicationVersion(controller.aboutInfo().value(QStringLiteral("version")).toString());
     QQmlApplicationEngine engine;
     engine.addImportPath(QCoreApplication::applicationDirPath() + QStringLiteral("/qml"));
@@ -97,7 +95,7 @@ int main(int argc, char *argv[])
         });
         if (!automationFile.isEmpty()) {
             QString error;
-            if (!automation.start(automationFile, &error)) {
+            if (!controller.startAutomation(automationFile, &error)) {
                 qCritical().noquote() << "Automation startup failed:" << error;
                 app.exit(2);
                 return;

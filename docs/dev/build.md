@@ -4,11 +4,15 @@
 
 `TrajectoryPropertiesPane.qml` 纳入 `DI_QML_FILES`，在 Main 右侧 SplitView 编辑航迹配置。
 
+`PlotMenu.qml`、`PlotMenuItem.qml`、`PlotMenuSeparator.qml` 纳入 `DI_QML_FILES`，统一子图主菜单、子菜单和分隔线的 Fusion 样式；不可用菜单项同时隐藏并将高度设为零，避免 ListView 留白。
+
 `ViewModeMenu.qml` 纳入 `DI_QML_FILES`，由曲线／状态图和航迹图共用右键视图切换入口。
 
 状态时间轴的 `statetimeline.*` 纳入 `DI_RENDER_SOURCES`，`statetimelineitem.*` 纳入 `DI_PLOTITEM_SOURCES`，`appcontroller_states.cpp` 纳入 `DI_CONTROLLER_SOURCES`，`SignalPropertiesPane.qml` 纳入 `DI_QML_FILES`。类型注册继续集中在 `qmltypes.h`，无新增第三方依赖。
 
 ## CLI 自动化
+
+`appcontroller_cli.cpp` 纳入 `DI_CONTROLLER_SOURCES`，负责运行中 CLI 开关及连接信息；`AutomationDialog.qml` 纳入 `DI_QML_FILES`。构建后将 `datainspector_cli.py` 复制到 exe 同目录，供复制调用命令使用。
 
 自动化服务 `automation/automationserver.*` 纳入 DI_CONTROLLER_SOURCES，di_app_core 新增 Qt6::Network 依赖。Qt SDK 需含 Network 模块，部署脚本随 Qt DLL 一起复制，并将 `datainspector_cli.py` 放在 exe 旁；CLI 用户另需 Python 3.9+ 标准库。没有新增第三方库。使用与协议见[CLI 文档](../user-guide/automation-cli.md)。
 
