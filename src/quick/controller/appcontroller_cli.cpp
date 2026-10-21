@@ -58,8 +58,8 @@ QString AppController::automationCommand() const
         path = QDir::toNativeSeparators(path);
         return QLatin1Char('\'') + path.replace(QLatin1Char('\''), QStringLiteral("''")) + QLatin1Char('\'');
     };
-    return QStringLiteral("python %1 --connection %2 status")
-        .arg(quote(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("datainspector_cli.py"))),
+    return QStringLiteral("& %1 --connection %2 status --ascii")
+        .arg(quote(QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("datainspector_cli.ps1"))),
              quote(m_automationConnectionFile));
 }
 

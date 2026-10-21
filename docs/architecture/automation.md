@@ -4,6 +4,8 @@
 
 服务仅允许显式命令，校验参数类型、范围和未知字段，不使用 QObject 反射执行外部方法。设置在 GUI 线程调用现有 AppController，会话格式不变。startupfiles 跳过自动化参数值，防止连接 JSON 被误识别为会话。
 
+线协议维持 v1，命令 API 修订为 3。commandcatalog 统一生成 capabilities（版本、完整命令描述/schema 的 SHA256 指纹、命令名和限额）；help 的 result 数组保持原形，响应外层另附 cli 元数据，status 和连接描述文件也提供 cli。CLI 只有在显式指定 --expect-api-version/--expect-catalog-hash 时才预检，检查在同一总时限内；不匹配或旧服务缺少能力查询时不发送目标命令。默认请求不增加预检往返。--ascii 仅影响客户端输出的 JSON 字符转义，线协议和保存文本仍为 UTF-8。
+
 对象/飞机命令调用现有 createDataObject、configureDataObjectAircraft、bindObjectField 和 showObjectTrajectory；先查询稳定字段 ID，绑定保留名称与用途，不按文件名或信号名特殊适配。trajectoryRenderState 只在 GUI 线程读取已附着 TrajectoryItem 的准备状态、错误、原点，不读取 SG 节点。setTrajectoryView 复用现有视角/自适应。captureAutomationWindow 将窗口 contentItem 交给原有 exportPlotImage，沿用等待可见航迹准备、Qt grabToImage、后台 PNG 原子写入链。
 
 clear 复用 AppController::clear。merge_signals 接收明确的来源组，AppController::mergeSignals 在局部副本中构建所有对象/字段/merge 规则，统一 validateObjects 后提交，避免逐字段 API 反复启动/取消计算。超限或无效分组在提交前返回；计算继续走已有规则依赖与后台预算链。对象按字段上限分配，不按信号名或文件名特判。originalName 由 SignalModel 提供，外部调用者负责判定同源和单位。
@@ -17,6 +19,18 @@ AppController::automationSnapshot 只在 GUI 线程捕获 Store 不可变序列�
 automation_test 覆盖真实 socket、原始样本/统计、设置/恢复、认证、版本失效、参数及帧大小。可选 Python 的 automation_cli_test 启动实际应用，在 offscreen/software 后端调用真实 CLI，不连接用户现有窗口。
 
 ## 任务、配置与检查计划
+
+API 3 的规则结果增加 inputSources（直接字段/输出身份与当前编号）、rawInputSignals（直接原始输入）和 sourceSignals（沿前序输出展开的原始依赖）。rules 可用 generation/sourceSignal 过滤处理链，沿用稳定字段/输出 UUID，不从显示名推断原始来源。配置序列化时一次构建来源索引和依赖集合，供 GUI 摘要及 CLI 共用。
+
+规则状态以 m_objectEvaluationStates 或明确诊断为依据，不以全局 deriving 决定所有规则状态。derive 任务在控制器发布后逐条检查目标规则终态，成功返回 completed=true、evaluationState 和规则/输出来源，未发布或目标消失不能成功。会话恢复在发出 sessionRestoreFinished 前调度处理求值，使恢复任务能正确转入 restore_derive 监视。
+
+view_template_save/preview/apply/undo 复用工作区视图模板接口，与飞机字段映射模板命令分开。apply 使用 derive 任务监视，仅检查本次导入规则；没有规则时同步完成。模板应用/撤销安装新的 Store 快照时发出 templateWorkspaceChanged，服务轮换 epoch，避免撤销后 Store 计数回退使旧 generation 再次有效。
+
+signal_enums 查询控制器共享枚举；set_signal_enums 复用 setSignalEnums，signal_properties 合并当前属性与显式字段后复用 configureSignalProperties，先验证整份草稿再提交。命令由 commandcatalog 定义严格 schema，沿用 generation、任务及幂等检查。枚举按需单信号查询，不在 signals 分页重复展开；持久化继续使用当前会话与模板格式。
+
+set_signal_enums_batch 以 generation 和 1–256 个唯一编号锁定当前来源，控制器先解析全部表到局部映射，再整体替换共享枚举表，仅刷新一遍状态子图并发送一次绑定通知；任何非法项不修改配置或会话脏状态。单项接口委托同一实现。响应回传规范后的枚举及 name/originalName，省去逐个读取；signal_enums_batch 提供独立批量查询。64 KiB 请求上限保持不变，分批不构成跨批事务。位段工作流复用 rule_create(bitfield) 的有序输出定义，待真实求值完成后将发现的输出 series 交给批量枚举接口；不把组合状态字自动当整值分类。
+
+常用编辑命令覆盖对象/处理组生命周期、字段、规则创建与删除、航迹样式及选择、状态行、视图模式、曲线轴、恢复原名和范围偏移。rule_create 与 rule_update 共用 config schema 及 derive 任务监视，返回新规则 ID 并检查其实际求值错误。trajectory_style 使用稳定 track ID 定位，完整校验后临时选择并恢复活动项；不将数组位置作为外部身份。file_remove 将原始快照 sourceFile 映射到控制器文件分组键后卸载；scope_offset 从原始信号推导表/文件分组。所有入口仍显式白名单，不开放任意 QObject 调用。
 
 commandcatalog.* 是命令发现及参数校验的共同来源；automationtasks.cpp 负责任务生命周期、进度、取消、请求指纹与去重，automationcommands.cpp 承载批量配置、模板、合并计划和逻辑导出入口。请求可附 requestId，SHA256 指纹由命令与规范 JSON 参数生成。去重缓存仅内存保存，最多 512 项；只淘汰未带幂等键的终态任务，无法淘汰时拒绝新增。任务 ID 不等同工作区版本，不能跨服务启动复用。
 

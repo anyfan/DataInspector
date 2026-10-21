@@ -191,15 +191,17 @@ void AppController::refreshLogicalSignalView()
     m_signals->setVisibleSources(visible);
 }
 
-QVariantMap AppController::ruleResults(const QString &search, const QString &state, int offset, int limit) const
+QVariantMap AppController::ruleResults(const QString &search, const QString &state, int offset, int limit, int sourceSignal) const
 {
     QVariantList rows; int succeeded = 0, failed = 0, pending = 0, total = 0;
     for (const auto &object : dataObjects()) for (const auto &value : object.toMap().value("rules").toList()) {
-        auto rule = value.toMap(); bool hasValues = false;
+        auto rule = value.toMap();
+        if (sourceSignal >= 0 && !rule.value("sourceSignals").toList().contains(sourceSignal)) continue;
+        bool hasValues = false;
         for (const auto &output : rule.value("outputs").toList()) { const auto snap = automationSnapshot({output.toMap().value("series").toInt()}); hasValues |= !snap.series.isEmpty() && snap.series.first()->sampleCount() > 0; }
         const bool warning = hasValues && !rule.value("error").toString().isEmpty();
         rule["warning"] = warning;
-        QString phase = deriving() ? "pending" : rule.value("error").toString().isEmpty() || warning ? "succeeded" : "failed";
+        const auto phase = rule.value("state").toString();
         if (phase == "pending") ++pending; else if (phase == "failed") ++failed; else ++succeeded;
         if ((!search.isEmpty() && !rule.value("name").toString().contains(search, Qt::CaseInsensitive)) || (!state.isEmpty() && phase != state)) continue;
         if (total >= offset && rows.size() < limit) { rule["state"] = phase; rule["object"] = object.toMap().value("id"); rows.append(rule); }

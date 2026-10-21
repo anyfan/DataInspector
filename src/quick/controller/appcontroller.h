@@ -152,7 +152,7 @@ public:
     Q_INVOKABLE void setLogicalSignalView(bool enabled);
     Q_PROPERTY(bool logicalSignalView READ logicalSignalView NOTIFY plotBindingsChanged)
     bool logicalSignalView() const { return m_logicalSignalView; }
-    QVariantMap ruleResults(const QString &search = {}, const QString &state = {}, int offset = 0, int limit = 100) const;
+    QVariantMap ruleResults(const QString &search = {}, const QString &state = {}, int offset = 0, int limit = 100, int sourceSignal = -1) const;
     QVariantMap objectEvaluationProgress() const;
     bool exportLogical(const QString &directory, const QString &format);
     void cancelAutomation(const QString &kind);
@@ -190,6 +190,7 @@ public:
     Q_INVOKABLE bool configureSignalProperties(int row, const QVariantMap &properties);
     Q_INVOKABLE QVariantList signalEnums(int row) const;
     Q_INVOKABLE bool setSignalEnums(int row, const QVariantList &values);
+    bool setSignalEnumsBatch(const QVariantList &updates);
     Q_INVOKABLE bool addStateSignal(int plot, int row);
     Q_INVOKABLE QVariantMap stateTimelineState(int index) const;
     Q_INVOKABLE bool configureStateLane(int index, int lane, const QVariantMap &config);
@@ -274,6 +275,7 @@ signals:
     void sessionModifiedChanged();
     void sessionError(const QString &message);
     void sessionRestored(int cursorMode);
+    void templateWorkspaceChanged();
     void sessionRestoreFinished(bool success, const QString &message);
     void statusChanged();
     void currentFileChanged();
@@ -340,7 +342,16 @@ private:
     SessionPlot capturePlotView(PlotItem *plot) const;
     SessionDocument captureSession(const QString &path) const;
     void applyTemplateState(const SessionDocument &state);
+    void installTemplateWorkspace(const SessionDocument &state, const std::shared_ptr<PlotSeriesStore> &store, const QStringList &groups);
+    void finishTemplateEvaluation();
+    void clearTemplateUndo();
     std::optional<SessionDocument> m_templateUndo;
+    std::shared_ptr<PlotSeriesStore> m_templateUndoData;
+    QStringList m_templateUndoGroups;
+    QHash<QString, ObjectRuleState> m_templateUndoEvaluationStates;
+    QHash<QString, QString> m_templateUndoErrors;
+    bool m_templateFitPending = false;
+    QJsonArray m_templateAppliedObjects;
     std::weak_ptr<PlotSeriesStore> m_templateUndoStore;
     quint64 m_templateUndoGeneration = 0;
     QHash<int, bool> m_trajectoryConfigurationExpanded;

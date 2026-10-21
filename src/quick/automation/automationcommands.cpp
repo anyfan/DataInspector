@@ -2,6 +2,7 @@
 #include "commandcatalog.h"
 #include "controller/appcontroller.h"
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QPointer>
@@ -20,8 +21,151 @@ bool AutomationServer::dispatchExtended(QTcpSocket *socket, const QString &comma
     auto *c = m_controller;
     const auto jobId = socket->property("jobId").toString();
     if (p.contains("plot") && m_jobs.contains(jobId)) m_jobs[jobId].data["plot"] = p.value("plot");
+    if (p.contains("generation") && p.value("generation").toString() != generation()) {
+        reply(socket, fail("stale_generation", "Data changed; discover current sources and definitions again")); return true;
+    }
+    if (p.contains("plot") && (p.value("plot").toInt() < 0 || p.value("plot").toInt() >= c->plotRows() * c->plotColumns())) {
+        reply(socket, fail("invalid_params", "Plot is outside the current layout")); return true;
+    }
+    const auto respond = [&](bool accepted) { reply(socket, accepted ? ok() : fail("rejected", "Operation rejected; verify identities, dependencies and parameters")); };
+    const auto objectId = p.value("object").toString();
+    if (command == "signal_enums_batch" || command == "set_signal_enums_batch") {
+        QVector<int> rows; QSet<int> seen;
+        const auto entries = p.value(command == "signal_enums_batch" ? "signals" : "updates").toArray();
+        for (const auto &entry : entries) {
+            const int row = (command == "signal_enums_batch" ? entry : entry.toObject()["signal"]).toInt();
+            if (row >= c->signalCount() || seen.contains(row)) { reply(socket, fail("invalid_params", "Each signal must exist and appear only once; batch was not changed")); return true; }
+            seen.insert(row); rows.append(row);
+        }
+        if (command == "set_signal_enums_batch" && !c->setSignalEnumsBatch(entries.toVariantList())) {
+            reply(socket, fail("rejected", c->status())); return true;
+        }
+        QJsonArray values;
+        for (int row : rows) values.append(QJsonObject{{"signal", row}, {"name", c->signalName(row)}, {"originalName", c->originalSignalName(row)}, {"enums", QJsonArray::fromVariantList(c->signalEnums(row))}});
+        QJsonObject result{{"generation", generation()}, {"signals", values}};
+        if (command == "set_signal_enums_batch") result["updated"] = rows.size();
+        reply(socket, ok(result)); return true;
+    }
+    if (command == "view_template_save") { respond(c->saveViewTemplate(p.value("path").toString())); return true; }
+    if (command == "view_template_preview") {
+        const auto result = c->previewViewTemplate(p.value("path").toString());
+        reply(socket, result.value("error").toString().isEmpty() ? ok(QJsonObject::fromVariantMap(result)) : fail("invalid_template", result.value("error").toString())); return true;
+    }
+    if (command == "view_template_apply") {
+        QSet<QString> previous;
+        for (const auto &value : c->dataObjects()) previous.insert(value.toMap().value("id").toString());
+        if (!c->applyViewTemplate(p.value("path").toString(), p.value("mapping").toObject().toVariantMap(), p.value("fixedRanges").toBool())) {
+            reply(socket, fail("rejected", c->status())); return true;
+        }
+        QJsonArray outputs;
+        for (const auto &value : c->dataObjects()) {
+            const auto object = value.toMap(); if (previous.contains(object.value("id").toString())) continue;
+            for (const auto &rule : object.value("rules").toList()) outputs.append(QJsonObject{{"rule", rule.toMap().value("id").toString()}});
+        }
+        if (outputs.isEmpty()) m_jobs[jobId].watch.clear();
+        reply(socket, ok(QJsonObject{{"accepted", true}, {"completed", outputs.isEmpty()}, {"outputs", outputs}})); return true;
+    }
+    if (command == "view_template_undo") { respond(c->undoViewTemplate()); return true; }
+    if (command == "object_rename") { respond(c->renameDataObject(objectId, p.value("name").toString())); return true; }
+    if (command == "object_remove") { respond(c->removeDataObject(objectId)); return true; }
+    if (command == "object_duplicate" || command == "object_field_add") {
+        const auto id = command == "object_duplicate" ? c->duplicateDataObject(objectId) : c->addDataObjectField(objectId);
+        reply(socket, id.isEmpty() ? fail("rejected", "Object/group or field creation rejected") : ok(QJsonObject{{command == "object_duplicate" ? "object" : "field", id}})); return true;
+    }
+    if (command == "object_field_rename") { respond(c->renameDataObjectField(objectId, p.value("field").toString(), p.value("name").toString())); return true; }
+    if (command == "object_field_remove") { respond(c->removeObjectField(objectId, p.value("field").toString())); return true; }
+    if (command == "rule_inputs") {
+        bool found = false;
+        for (const auto &value : c->dataObjects()) {
+            const auto object = value.toMap();
+            if (object.value("id").toString() != objectId || object.value("type").toString() != "processing") continue;
+            found = !p.contains("beforeRule");
+            for (const auto &rule : object.value("rules").toList()) found |= rule.toMap().value("id").toString() == p.value("beforeRule").toString();
+        }
+        reply(socket, found ? ok(QJsonObject{{"generation", generation()}, {"inputs", QJsonArray::fromVariantList(c->processingRuleInputs(objectId, p.value("beforeRule").toString()))}})
+            : fail("rejected", "Unknown processing group or rule")); return true;
+    }
+    if (command == "rule_create") {
+        const auto id = c->addObjectRule(objectId, p.value("config").toObject().toVariantMap());
+        reply(socket, id.isEmpty() ? fail("rejected", "Rule creation rejected; verify processing group, inputs and configuration")
+            : ok(QJsonObject{{"accepted", true}, {"completed", false}, {"outputs", QJsonArray{QJsonObject{{"rule", id}}}}})); return true;
+    }
+    if (command == "rule_remove") { respond(c->removeObjectRule(objectId, p.value("rule").toString())); return true; }
+    if (command == "rename_reset") { respond(c->resetSignalName(p.value("signal").toInt())); return true; }
+    if (command == "scope_offset") {
+        const auto scopeName = p.value("scope").toString();
+        const int scope = scopeName == "signal" ? 0 : scopeName == "table" ? 1 : 2;
+        const int row = p.value("signal").toInt();
+        if (row >= c->signalCount() || c->isDerivedSignal(row)) { reply(socket, fail("invalid_params", "A valid raw signal is required to identify the scope")); return true; }
+        const auto sourceGroup = c->signalModel()->groupAt(row);
+        const auto group = p.contains("group") ? p.value("group").toString() : scope == 2 ? sourceGroup.section('/', 0, 0) : sourceGroup;
+        respond(p.value("add").toBool() ? c->addTimeOffset(scope, row, group, p.value("seconds").toDouble())
+            : c->setTimeOffset(scope, row, group, p.value("seconds").toDouble())); return true;
+    }
+    if (command == "file_remove") {
+        QVector<int> rows;
+        for (int row = 0; row < c->signalCount(); ++row) if (!c->isDerivedSignal(row)) rows.append(row);
+        const auto snapshot = c->automationSnapshot(rows); QString fileGroup;
+        for (const auto &series : snapshot.series) if (QFileInfo(series->sourceFile) == QFileInfo(p.value("path").toString())) {
+            fileGroup = c->signalModel()->groupAt(series->id).section('/', 0, 0); break;
+        }
+        respond(!fileGroup.isEmpty() && c->removeFile(fileGroup)); return true;
+    }
+    const int plot = p.value("plot").toInt();
+    if (command == "trajectory_style" || command == "trajectory_select" || command == "trajectory_remove") {
+        const auto tracks = c->trajectoryState(plot).value("tracks").toList();
+        int track = -1;
+        for (int i = 0; i < tracks.size(); ++i) if (tracks[i].toMap().value("id").toString() == p.value("track").toString()) track = i;
+        if (track < 0) { reply(socket, fail("rejected", "Unknown track ID; read trajectory_status again")); return true; }
+        if (command == "trajectory_remove") { respond(c->removeTrajectory(plot, track)); return true; }
+        if (command == "trajectory_select") { respond(c->selectTrajectory(plot, track)); return true; }
+        auto style = tracks[track].toMap();
+        for (const auto &key : {"name", "color", "width", "visible"}) if (p.contains(key)) style[key] = p.value(key).toVariant();
+        const auto name = style.value("name").toString(); const QColor color(style.value("color").toString());
+        if (name.trimmed().isEmpty() || name.size() > 256 || name.contains(QChar::Null) || !color.isValid()) {
+            reply(socket, fail("invalid_params", "Invalid track name or color")); return true;
+        }
+        const int previous = c->trajectoryState(plot).value("active").toInt();
+        if (!c->selectTrajectory(plot, track)) { respond(false); return true; }
+        const bool applied = c->styleTrajectory(plot, name, color, style.value("width").toDouble(), style.value("visible").toBool());
+        if (previous != track) c->selectTrajectory(plot, previous);
+        respond(applied); return true;
+    }
+    if (command == "state_status") { reply(socket, ok(QJsonObject::fromVariantMap(c->stateTimelineState(plot)))); return true; }
+    if (command == "state_lane") {
+        respond(c->configureStateLane(plot, p.value("lane").toInt(), {{"source", p.value("signal").toInt()}, {"name", p.value("name").toString()}, {"visible", p.value("visible").toBool()}})); return true;
+    }
+    if (command == "state_lane_remove") { respond(c->removeStateLane(plot, p.value("lane").toInt())); return true; }
+    if (command == "state_lane_move") {
+        if (p.value("direction").toInt() == 0) { reply(socket, fail("invalid_params", "direction must be -1 or 1")); return true; }
+        respond(c->moveStateLane(plot, p.value("lane").toInt(), p.value("direction").toInt())); return true;
+    }
+    if (command == "view_mode") {
+        const auto mode = p.value("mode").toString();
+        if (mode == "trajectory") c->enterTrajectoryMode(plot);
+        else if (mode == "state") c->setStateTimelineEnabled(plot, true);
+        else {
+            const auto state = c->trajectoryState(plot);
+            if (!c->configureTrajectory(plot, false, state.value("x").toInt(), state.value("y").toInt(), state.value("z").toInt(), state.value("geographic").toBool())) { respond(false); return true; }
+            c->setStateTimelineEnabled(plot, false);
+        }
+        reply(socket, ok()); return true;
+    }
+    if (command == "plot_axes" || command == "plot_axes_set") {
+        auto axes = c->plotAxisProperties(plot);
+        if (axes.isEmpty()) { reply(socket, fail("rejected", "An attached curve plot is required")); return true; }
+        if (command == "plot_axes") { reply(socket, ok(QJsonObject::fromVariantMap(axes))); return true; }
+        for (auto it = p.begin(); it != p.end(); ++it) if (it.key() != "plot") axes[it.key()] = it.value().toVariant();
+        respond(c->configurePlotAxes(plot, axes)); return true;
+    }
+    if (command == "plot_clear") { c->clearPlotSignals(plot); reply(socket, ok()); return true; }
     if (command == "rules") {
-        reply(socket, ok(QJsonObject::fromVariantMap(c->ruleResults(p.value("search").toString(), p.value("state").toString(), p.value("offset").toInt(), p.value("limit").toInt(100))))); return true;
+        const int source = p.value("sourceSignal").toInt(-1);
+        if (p.contains("sourceSignal") && (!p.contains("generation") || source >= c->signalCount() || c->isDerivedSignal(source))) {
+            reply(socket, fail("invalid_params", "sourceSignal requires current generation and an existing raw signal")); return true;
+        }
+        auto result = QJsonObject::fromVariantMap(c->ruleResults(p.value("search").toString(), p.value("state").toString(), p.value("offset").toInt(), p.value("limit").toInt(100), source));
+        result["generation"] = generation(); reply(socket, ok(result)); return true;
     }
     if (command == "rules_retry") { c->retryObjectRules(); reply(socket, ok(QJsonObject{{"accepted", true}, {"completed", false}})); return true; }
     if (command == "rule_update") {

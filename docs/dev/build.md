@@ -18,6 +18,10 @@
 
 `appcontroller_cli.cpp` 纳入 `DI_CONTROLLER_SOURCES`，负责运行中 CLI 开关及连接信息；`AutomationDialog.qml` 纳入 `DI_QML_FILES`。构建后将 `datainspector_cli.py` 复制到 exe 同目录，供复制调用命令使用。
 
+DataInspector 的 LINK_DEPENDS 包含 CLI Python 脚本；只修改脚本也会触发重新链接及 POST_BUILD 复制，避免 exe 旁保留旧版包装脚本。协议/API 兼容信息以所连接的进程为准，更新磁盘文件后仍需重新启动旧进程。
+
+datainspector_cli.ps1 同样作为 LINK_DEPENDS 和 POST_BUILD 复制项，部署脚本随 Python CLI 一起分发。此入口按探测结果或显式指定路径选择解释器，设置窗口复制它的 PowerShell 调用命令；不捆绑或安装 Python。
+
 自动化服务 `automation/automationserver.*` 纳入 DI_CONTROLLER_SOURCES，di_app_core 新增 Qt6::Network 依赖。Qt SDK 需含 Network 模块，部署脚本随 Qt DLL 一起复制，并将 `datainspector_cli.py` 放在 exe 旁；CLI 用户另需 Python 3.9+ 标准库。没有新增第三方库。使用与协议见[CLI 文档](../user-guide/automation-cli.md)。
 
 BUILD_TESTING 开启时构建 automation_test；发现 Python3 3.9+ 时另注册 automation_cli_test，启动实际 DataInspector，运行离屏软件后端的 CLI 端到端检查。

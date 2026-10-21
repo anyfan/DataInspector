@@ -25,6 +25,7 @@ SessionPlot AppController::capturePlotView(PlotItem *plot) const
     if (plot) {
         state.yMinimum = plot->yMinimum(); state.yMaximum = plot->yMaximum();
         state.normalizeY = plot->normalizeY(); state.lineWidth = plot->lineWidth();
+        state.blendOverlaps = plot->blendMode() == PlotItem::AmplitudeLayers;
     }
     return state;
 }
@@ -42,6 +43,7 @@ void AppController::applyPlotView(PlotItem *plot, const SessionPlot &view)
     QScopedValueRollback<bool> ranges(m_syncingRanges, true);
     QScopedValueRollback<bool> cursors(m_syncingCursors, true);
     plot->setNormalizeY(view.normalizeY);
+    if (view.blendOverlaps) plot->setBlendMode(*view.blendOverlaps ? PlotItem::AmplitudeLayers : PlotItem::OpaqueBlend);
     plot->setLineWidth(view.lineWidth);
     plot->setXRange(m_sharedXMinimum, m_sharedXMaximum);
     plot->setYRange(view.yMinimum, view.yMaximum);
@@ -202,6 +204,7 @@ void AppController::completeSessionRestore(bool success, const QString &message)
     emit loadingChanged(); emit restoringSessionChanged();
     setStatus(message);
     if (!success) emit sessionError(message);
+    if (success) scheduleObjectEvaluation();
     emit sessionRestoreFinished(success, message);
 }
 
@@ -277,6 +280,7 @@ void AppController::finishSessionRestore()
     store->replaceSeries(inputs);
 
     // Commit only after every source and stable signal identity has been validated.
+    clearTemplateUndo();
     clearViewHistory();
     m_applyingSession = true;
     m_initialSignalFitDone = true; // Preserve the restored shared time range.
@@ -329,5 +333,4 @@ void AppController::finishSessionRestore()
     m_sessionPath = m_pendingSessionPath; emit sessionPathChanged();
     completeSessionRestore(true, QStringLiteral("已恢复会话：%1（%2 个文件，%3 个信号）")
                            .arg(QFileInfo(m_sessionPath).fileName()).arg(m_loadedFileNames.size()).arg(signalCount()));
-    scheduleObjectEvaluation();
 }

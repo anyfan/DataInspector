@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(DataInspector VERSION 0.5.0 LANGUAGES CXX)
+project(DataInspector VERSION 0.6.0 LANGUAGES CXX)
 
 include(CTest)
 
@@ -324,7 +324,11 @@ set_target_properties(DataInspector PROPERTIES
 add_custom_command(TARGET DataInspector POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/tools/datainspector_cli.py" "$<TARGET_FILE_DIR:DataInspector>/datainspector_cli.py"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/tools/datainspector_cli.ps1" "$<TARGET_FILE_DIR:DataInspector>/datainspector_cli.ps1"
     VERBATIM)
+set_property(TARGET DataInspector APPEND PROPERTY LINK_DEPENDS "${CMAKE_SOURCE_DIR}/tools/datainspector_cli.py")
+set_property(TARGET DataInspector APPEND PROPERTY LINK_DEPENDS "${CMAKE_SOURCE_DIR}/tools/datainspector_cli.ps1")
 
 # ---------------------------------------------------------------------------
 # Tests

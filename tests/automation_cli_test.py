@@ -1,12 +1,17 @@
 """Real executable + CLI integration, without local datasets or an installed package."""
 import json
+import contextlib
+import importlib.util
+import io
 import os
+import shutil
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
 import time
 import zipfile
+from unittest.mock import patch
 
 
 def main():
@@ -32,8 +37,11 @@ def main():
                         raise RuntimeError("Application did not start: " + (root / "app.log").read_text(encoding="utf-8", errors="replace"))
                     time.sleep(0.05)
 
-                def call(command, params=None, ok=True, use_file=False, request_id=None, wait=False, full=False):
+                def call(command, params=None, ok=True, use_file=False, request_id=None, wait=False, full=False, ascii_output=False, extra_flags=()):
                     args = [sys.executable, str(cli), "--connection", str(connection), "--timeout", "15", command]
+                    args.extend(extra_flags)
+                    if ascii_output:
+                        args.append("--ascii")
                     if request_id is not None:
                         args.extend(["--request-id", request_id])
                     if wait:
@@ -47,6 +55,8 @@ def main():
                         else:
                             args.extend(["--params", payload])
                     proc = subprocess.run(args, env=env, capture_output=True, encoding="utf-8", timeout=20)
+                    if ascii_output:
+                        proc.stdout.encode("ascii")  # Every output byte must survive legacy Windows code pages.
                     result = json.loads(proc.stdout)
                     assert proc.returncode == (0 if ok else 1), (proc.returncode, proc.stdout, proc.stderr)
                     assert result["ok"] == ok, result
@@ -54,10 +64,48 @@ def main():
 
                 status = call("wait")
                 assert status["signalCount"] == 1, status
+                if os.name == "nt":
+                    launcher = cli.with_suffix(".ps1")
+                    assert launcher.exists(), launcher
+                    shell = shutil.which("pwsh") or "powershell.exe"
+                    launched = subprocess.run([shell, "-NoProfile", "-File", str(launcher), "--connection", str(connection), "status", "--ascii"],
+                        capture_output=True, encoding="utf-8", timeout=30)
+                    assert launched.returncode == 0 and not launched.stderr.strip(), (launched.returncode, launched.stdout, launched.stderr)
+                    assert json.loads(launched.stdout)["result"]["signalCount"] == 1
                 assert len(call("help")) >= 10
                 catalog = call("help")
                 assert all(isinstance(c["inputSchema"], dict) and isinstance(c["outputSchema"], dict) for c in catalog)
                 schemas = {c["command"]: c for c in catalog}
+                capabilities = call("capabilities")
+                assert capabilities["protocolVersion"] == 1 and capabilities["apiVersion"] == 3
+                assert len(capabilities["catalogHash"]) == 64 and set(capabilities["commands"]) == set(schemas)
+                assert call("help", full=True)["cli"] == capabilities
+                assert call("status")["cli"] == capabilities
+                assert json.loads(connection.read_text(encoding="utf-8"))["cli"] == capabilities
+                call("status", extra_flags=["--expect-api-version", "3", "--expect-catalog-hash", capabilities["catalogHash"]])
+                before_mismatch = call("signals")["total"]
+                assert call("clear", extra_flags=["--expect-api-version", "999"], ok=False)["code"] == "version_mismatch"
+                assert call("clear", extra_flags=["--expect-catalog-hash", "0" * 64], ok=False, ascii_output=True)["code"] == "version_mismatch"
+                assert call("signals")["total"] == before_mismatch
+                unknown = call("not_a_command", ok=False)
+                assert unknown["code"] == "unknown_command" and "help" in unknown["message"]
+                incompatible = root / "incompatible.json"
+                descriptor = json.loads(connection.read_text(encoding="utf-8")); descriptor["protocol"] = 99
+                incompatible.write_text(json.dumps(descriptor), encoding="utf-8")
+                assert call("clear", extra_flags=["--connection", str(incompatible)], ok=False)["code"] == "protocol_mismatch"
+                # Older servers lack capabilities; opt-in version checks must stop before the mutation.
+                spec = importlib.util.spec_from_file_location("cli_under_test", cli)
+                client = importlib.util.module_from_spec(spec)
+                with patch.object(sys, "dont_write_bytecode", True):
+                    spec.loader.exec_module(client)
+                for server_error, expected in [("unknown_command", "version_mismatch"), ("unauthorized", "unauthorized")]:
+                    output = io.StringIO()
+                    with patch.object(sys, "argv", [str(cli), "--connection", str(connection), "clear", "--expect-api-version", "3", "--ascii"]), \
+                         patch.object(client, "request", return_value={"ok": False, "error": {"code": server_error}}) as sent, \
+                         contextlib.redirect_stdout(output):
+                        assert client.main() == 1
+                    assert json.loads(output.getvalue())["error"]["code"] == expected
+                    assert sent.call_count == 1 and sent.call_args.args[1] == "capabilities"
                 assert "sample" in schemas["nearest"]["outputSchema"]["properties"]
                 assert "ready" in schemas["merge_preview"]["taskResultSchema"]["properties"]
                 assert "attitudeVisible" in schemas["aircraft_setup"]["taskResultSchema"]["properties"]
@@ -73,6 +121,52 @@ def main():
                 call("plot_signal", dict(params, plot=1, enabled=True))
                 call("rename", dict(params, name="测试名称"), use_file=True)
                 assert call("signals")["signals"][0]["name"] == "测试名称"
+                params["generation"] = call("signals")["generation"]
+                enums = [{"value": 0, "text": "关闭", "color": "#ff687887"},
+                         {"value": 1, "text": "开启", "color": "#ff278451"}]
+                assert call("signal_enums", params)["enums"] == []
+                call("set_signal_enums", dict(params, enums=enums), use_file=True, request_id="set-enums")
+                assert call("set_signal_enums", dict(params, enums=enums), request_id="set-enums", full=True)["replayed"]
+                params["generation"] = call("signals")["generation"]
+                assert call("signal_enums", params)["enums"] == enums
+                call("set_signal_enums", dict(params, enums=[enums[0], enums[0]]), ok=False)
+                call("set_signal_enums", dict(params, enums=[dict(enums[0], color="invalid")]), ok=False)
+                call("set_signal_enums", dict(params, enums=[dict(enums[0], value=0.5)]), ok=False)
+                call("set_signal_enums", dict(params, enums=[dict(enums[0], extra=True)]), ok=False)
+                call("signal_properties", dict(params, name="不应提交", enums=[enums[0], enums[0]]), ok=False)
+                assert call("signals")["signals"][0]["name"] == "测试名称"
+                assert call("signal_enums", params)["enums"] == enums
+                call("set_signal_enums", dict(params, enums=[]))
+                assert call("signal_enums", params)["enums"] == []
+                call("signal_properties", dict(params, enums=enums, width=4), use_file=True)
+                params["generation"] = call("signals")["generation"]
+                assert call("signal_enums", params)["enums"] == enums
+                assert call("signals")["signals"][0]["width"] == 4
+                # Apply and verify 98 enum tables in one request, including Chinese through ASCII JSON.
+                bulk_file = root / "批量.csv"
+                bulk_file.write_text("time," + ",".join(f"枚举{i}" for i in range(98)) + "\n0," + ",".join("0" for _ in range(98)) + "\n", encoding="utf-8")
+                old_generation = params["generation"]
+                call("load", {"path": str(bulk_file)}, wait=True)
+                bulk_generation = call("signals")["generation"]
+                updates = [{"signal": i + 1, "enums": enums} for i in range(98)]
+                bulk_params = {"generation": bulk_generation, "updates": updates}
+                assert call("set_signal_enums_batch", dict(bulk_params, generation=old_generation), ok=False)["code"] == "stale_generation"
+                applied = call("set_signal_enums_batch", bulk_params, use_file=True, request_id="bulk-98", ascii_output=True)
+                assert applied["updated"] == 98 and len(applied["signals"]) == 98
+                for i, signal in enumerate(applied["signals"]):
+                    assert signal["originalName"] == f"枚举{i}" and signal["enums"] == enums, signal
+                assert call("set_signal_enums_batch", bulk_params, use_file=True, request_id="bulk-98", full=True)["replayed"]
+                invalid = [{"signal": 1, "enums": []}] + updates[1:-1] + [{"signal": 98, "enums": [dict(enums[0], color="invalid")]}]
+                call("set_signal_enums_batch", dict(bulk_params, updates=invalid), use_file=True, ok=False, ascii_output=True)
+                call("set_signal_enums_batch", dict(bulk_params, updates=[updates[0], updates[0]]), ok=False)
+                call("set_signal_enums_batch", dict(bulk_params, updates=[updates[0], {"signal": 999999, "enums": []}]), ok=False)
+                checked = call("signal_enums_batch", {"generation": bulk_generation, "signals": list(range(1, 99))}, ascii_output=True)
+                assert checked["signals"] == applied["signals"]  # Invalid final entry did not commit the first one.
+                call("signal_enums_batch", {"generation": bulk_generation, "signals": [1, 1]}, ok=False)
+                cleared = call("set_signal_enums_batch", dict(bulk_params, updates=[{"signal": i, "enums": []} for i in range(1, 99)]), use_file=True)
+                assert all(s["enums"] == [] for s in cleared["signals"])
+                call("file_remove", {"generation": bulk_generation, "path": str(bulk_file)})
+                params["generation"] = call("signals")["generation"]
                 session = root / "保存.disession"
                 call("save_session", {"path": str(session)}, use_file=True)
                 call("restore_session", {"path": str(session)}, use_file=True)
@@ -80,8 +174,128 @@ def main():
                 assert status["rows"] == 2 and status["columns"] == 1, status
                 assert status["plots"][1]["signals"] == [0], status
                 params["generation"] = call("signals")["generation"]
+                assert call("signal_enums", params)["enums"] == enums
                 assert call("nearest", dict(params, time=0.8))["sample"] == [1, 3]
                 assert call("samples", dict(params, limit=2))["nextOffset"] == 2
+                # Full processing workflow: create group, create/edit/remove rules, preserve references.
+                group = call("object_create", {"name": "处理组", "type": "processing"})["object"]
+                call("object_rename", {"object": group, "name": "处理组更新"})
+                assert next(o for o in call("objects") if o["id"] == group)["name"] == "处理组更新"
+                generation = call("signals")["generation"]
+                assert call("rule_inputs", {"generation": generation, "object": group})["inputs"]
+                scale = {"name": "放大", "operation": "scale", "inputs": ["raw:0"], "factor": 2}
+                created = call("rule_create", {"generation": generation, "object": group, "config": scale}, wait=True)
+                assert created["completed"] and created["evaluationState"] == "succeeded", created
+                assert created["rules"][0]["rawInputSignals"] == [0] and created["rules"][0]["sourceSignals"] == [0]
+                assert created["rules"][0]["inputSources"][0]["rawId"] == "raw:0"
+                rule = created["outputs"][0]["rule"]
+                definition = next(o for o in call("objects") if o["id"] == group)
+                output = definition["rules"][0]["outputs"][0]
+                generation = call("signals")["generation"]
+                assert call("samples", {"generation": generation, "signal": output["series"]})["samples"] == [[0, 2], [1, 6], [2, 10]]
+                downstream = call("rule_create", {"generation": generation, "object": group,
+                    "config": dict(scale, name="下游", inputs=[output["id"]])}, wait=True)["outputs"][0]["rule"]
+                generation = call("signals")["generation"]
+                call("rule_remove", {"generation": generation, "object": group, "rule": rule}, ok=False)
+                by_source = call("rules", {"generation": generation, "sourceSignal": 0})
+                assert by_source["total"] == 2 and all(r["sourceSignals"] == [0] for r in by_source["rules"]), by_source
+                downstream_rule = next(r for r in by_source["rules"] if r["id"] == downstream)
+                assert downstream_rule["rawInputSignals"] == [] and downstream_rule["inputSources"][0]["kind"] == "output"
+                call("rules", {"sourceSignal": 0}, ok=False)
+                assert len(next(o for o in call("objects") if o["id"] == group)["rules"]) == 2
+                view_path = root / "完整视图.diview"
+                call("view_template_save", {"path": str(view_path)}, use_file=True)
+                saved_view = json.loads(view_path.read_text(encoding="utf-8"))
+                assert saved_view["version"] == 6 and len(saved_view["processing"]) == 1
+                preview = call("view_template_preview", {"path": str(view_path)})
+                assert len(preview["rows"]) == 1 and preview["ruleCount"] == 2 and preview["outputCount"] == 2, preview
+                before_import = call("signals")
+                import_params = {"generation": before_import["generation"], "path": str(view_path),
+                    "mapping": {str(row["id"]): row["match"] for row in preview["rows"]}}
+                call("view_template_apply", dict(import_params, mapping={}), ok=False)
+                assert len(call("objects")) == 1
+                imported = call("view_template_apply", import_params, wait=True, request_id="import-view")
+                assert imported["checkedRules"] == 2 and len(call("objects")) == 2, imported
+                assert call("view_template_apply", import_params, request_id="import-view", full=True)["replayed"]
+                assert call("samples", {"generation": before_import["generation"], "signal": 0}, ok=False)["code"] == "stale_generation"
+                call("view_template_undo")
+                after_undo = call("signals")
+                assert after_undo["total"] == before_import["total"] and len(call("objects")) == 1
+                assert after_undo["generation"] != before_import["generation"]
+                generation = after_undo["generation"]
+                computed_session = root / "computed.disession"
+                call("save_session", {"path": str(computed_session)})
+                restored_task = call("restore_session", {"path": str(computed_session)}, wait=True)
+                assert restored_task["completed"] and restored_task["checkedRules"] == 2, restored_task
+                assert not call("status")["deriving"]
+                generation = call("signals")["generation"]
+                copy = call("object_duplicate", {"generation": generation, "object": group})["object"]
+                call("wait")
+                generation = call("signals")["generation"]
+                call("object_remove", {"generation": generation, "object": copy})
+                call("wait")
+                generation = call("signals")["generation"]
+                call("rule_remove", {"generation": generation, "object": group, "rule": downstream})
+                call("wait")
+                generation = call("signals")["generation"]
+                call("rule_remove", {"generation": generation, "object": group, "rule": rule})
+                call("wait")
+                generation = call("signals")["generation"]
+                call("object_remove", {"generation": generation, "object": group})
+                call("wait")
+                general = call("object_create", {"name": "字段测试", "type": "general"})["object"]
+                field = call("object_field_add", {"object": general})["field"]
+                call("object_field_rename", {"object": general, "field": field, "name": "字段更新"})
+                call("object_field_remove", {"object": general, "field": field})
+                call("wait")
+                call("object_remove", {"generation": call("signals")["generation"], "object": general})
+                call("wait")
+                bit_group = call("object_create", {"name": "位段", "type": "processing"})["object"]
+                bit_rule = call("rule_create", {"generation": call("signals")["generation"], "object": bit_group,
+                    "config": {"name": "位段提取", "operation": "bitfield", "inputs": ["raw:0"], "autoWordBits": True, "byteOrder": "little",
+                        "outputs": [{"name": "标志位", "startBit": 0, "bitCount": 1, "signedField": False},
+                                    {"name": "分类位段", "startBit": 1, "bitCount": 2, "signedField": False}]}}, wait=True)["outputs"][0]["rule"]
+                bit_outputs = next(o for o in call("objects") if o["id"] == bit_group)["rules"][0]["outputs"]
+                assert len(bit_outputs) == 2
+                bit_generation = call("signals")["generation"]
+                assert call("samples", {"generation": bit_generation, "signal": bit_outputs[0]["series"]})["samples"] == [[0, 1], [1, 1], [2, 1]]
+                assert call("samples", {"generation": bit_generation, "signal": bit_outputs[1]["series"]})["samples"] == [[0, 0], [1, 1], [2, 2]]
+                bit_enums = call("set_signal_enums_batch", {"generation": bit_generation, "updates": [
+                    {"signal": bit_outputs[0]["series"], "enums": enums}, {"signal": bit_outputs[1]["series"], "enums": enums + [{"value": 2, "text": "维护", "color": "#ff123456"}]}]})
+                assert bit_enums["updated"] == 2 and len(bit_enums["signals"][1]["enums"]) == 3
+                call("object_remove", {"generation": bit_generation, "object": bit_group})
+                call("wait")
+                generation = call("signals")["generation"]
+                call("rename_reset", {"generation": generation, "signal": 0})
+                assert call("signals")["signals"][0]["name"] == "signal"
+                call("scope_offset", {"generation": call("signals")["generation"], "signal": 0, "scope": "file", "seconds": 2})
+                assert call("signals")["signals"][0]["timeOffset"] == 2
+                call("scope_offset", {"generation": call("signals")["generation"], "signal": 0, "scope": "signal", "seconds": -2, "add": True})
+                assert call("signals")["signals"][0]["timeOffset"] == 0
+                axes = call("plot_axes", {"plot": 1})
+                call("plot_axes_set", {"plot": 1, "yMinimum": -10, "yMaximum": 20})
+                assert call("plot_axes", {"plot": 1})["yMaximum"] == 20
+                call("plot_axes_set", {"plot": 1, "yMinimum": 30, "yMaximum": 20}, ok=False)
+                assert call("plot_axes", {"plot": 1})["yMinimum"] == -10
+                generation = call("signals")["generation"]
+                lane = {"generation": generation, "plot": 1, "lane": -1, "signal": 0, "name": "状态", "visible": True}
+                call("state_lane", lane)
+                call("state_lane", dict(lane, name="状态二"))
+                assert len(call("state_status", {"plot": 1})["lanes"]) == 2
+                call("state_lane_move", {"plot": 1, "lane": 1, "direction": -1})
+                assert call("state_status", {"plot": 1})["lanes"][0]["name"] == "状态二"
+                call("state_lane_move", {"plot": 1, "lane": 0, "direction": 0}, ok=False)
+                call("state_lane_remove", {"plot": 1, "lane": 1})
+                call("view_mode", {"plot": 1, "mode": "curve"})
+                assert not call("state_status", {"plot": 1})["enabled"]
+                call("plot_clear", {"plot": 1})
+                assert call("status")["plots"][1]["signals"] == []
+                call("plot_axes", {"plot": 63}, ok=False)
+                unload = root / "unload.csv"
+                unload.write_text("time,temp\n0,1\n1,2\n", encoding="utf-8")
+                call("load", {"path": str(unload)}, wait=True)
+                call("file_remove", {"generation": call("signals")["generation"], "path": str(unload)})
+                assert unload.exists() and call("signals")["total"] == 1
                 position = root / "position.csv"
                 position.write_text("time,lat,lon,height\n0,30,110,100\n1,30.001,110.001,120\n2,30.002,110.002,110\n", encoding="utf-8")
                 call("load", {"path": str(position)}, use_file=True)
@@ -114,6 +328,19 @@ def main():
                     assert time.monotonic() < deadline, trajectory
                     time.sleep(0.05)
                 assert trajectory["objectId"] == aircraft and trajectory["geographic"] and not trajectory["planar"], trajectory
+                track = trajectory["tracks"][trajectory["active"]]["id"]
+                call("trajectory_style", {"plot": 0, "track": track, "color": "#ff123456", "width": 4, "name": "试验航迹"})
+                styled = call("trajectory_status", {"plot": 0})
+                assert styled["name"] == "试验航迹" and styled["width"] == 4 and styled["color"].lower().endswith("123456"), styled
+                call("trajectory_style", {"plot": 0, "track": track, "color": "bad-color", "name": "不应提交"}, ok=False)
+                assert call("trajectory_status", {"plot": 0})["name"] == "试验航迹"
+                call("trajectory_select", {"plot": 0, "track": track})
+                call("trajectory_remove", {"plot": 0, "track": "missing"}, ok=False)
+                call("object_trajectory", {"object": aircraft, "plot": 1}, wait=True)
+                other = call("trajectory_status", {"plot": 1})
+                call("trajectory_remove", {"plot": 1, "track": other["tracks"][other["active"]]["id"]})
+                assert any(o["id"] == aircraft for o in call("objects"))
+                call("view_mode", {"plot": 1, "mode": "curve"})
                 call("trajectory_view", {"plot": 0, "preset": 0})
                 template = dict(version=1, config={k: v for k, v in config.items() if k != "object"}, roles={
                     "latitude": {"aliases": ["lat"], "unit": "deg"}, "longitude": {"aliases": ["lon"], "unit": "deg"},

@@ -37,7 +37,7 @@ void AutomationServer::dispatch(QTcpSocket *socket, const QJsonObject &request)
     for (auto it = request.begin(); it != request.end(); ++it) if (!QStringList{"token", "command", "params", "requestId"}.contains(it.key())) { send(socket, fail("invalid_params", "Unknown request field")); return; }
     const auto name = request.value("command").toString();
     const auto spec = commandSpec(name);
-    if (spec.isEmpty()) { send(socket, fail("unknown_command", "Use help to discover commands")); return; }
+    if (spec.isEmpty()) { auto response = fail("unknown_command", "Use help on this connection to discover commands; a running older instance keeps its original command set"); response["cli"] = automationCapabilities(); send(socket, response); return; }
     const auto paramsValue = request.contains("params") ? request.value("params") : QJsonValue(QJsonObject{});
     const auto error = validateCommandValue(paramsValue, spec.value("inputSchema").toObject());
     if (!error.isEmpty()) { send(socket, fail("invalid_params", error)); return; }
@@ -85,7 +85,7 @@ void AutomationServer::dispatch(QTcpSocket *socket, const QJsonObject &request)
         const auto jobId = QUuid::createUuid().toString(QUuid::Id128); Job job;
         if (name == "load" || name == "restore_session") job.watch = name;
         else if (name == "capture_window" || name == "export_logical") job.watch = "export";
-        else if (name == "merge_signals" || name == "merge_execute" || name == "rules_retry" || name == "rule_update") job.watch = "derive";
+        else if (name == "merge_signals" || name == "merge_execute" || name == "rules_retry" || name == "rule_update" || name == "rule_create" || name == "view_template_apply") job.watch = "derive";
         else if (name == "object_trajectory" || name == "trajectory_view") job.watch = "render";
         else if (name == "aircraft_setup" || name == "mapping_apply") job.watch = "setup";
         else if (name == "merge_preview") job.watch = "preview";
@@ -117,17 +117,24 @@ void AutomationServer::pollJobs()
         }
         QSet<QString> tracked;
         for (const auto &v : job.result.value("outputs").toArray()) tracked.insert(v.toObject().value("rule").toString());
-        QJsonArray errors, warnings; int checked = 0;
+        QJsonArray errors, warnings, rules; int checked = 0; bool pending = false;
         for (const auto &o : m_controller->dataObjects()) for (const auto &r : o.toMap().value("rules").toList()) {
             const auto rule = r.toMap(); if (!tracked.isEmpty() && !tracked.contains(rule.value("id").toString())) continue;
-            ++checked; if (!rule.value("error").toString().isEmpty()) {
+            ++checked; pending |= rule.value("state").toString() == "pending";
+            if (rules.size() < 256) rules.append(QJsonObject::fromVariantMap(rule));
+            if (!rule.value("error").toString().isEmpty()) {
                 bool hasValues = false;
                 for (const auto &output : rule.value("outputs").toList()) { const auto snap = m_controller->automationSnapshot({output.toMap().value("series").toInt()}); hasValues |= !snap.series.isEmpty() && snap.series.first()->sampleCount() > 0; }
                 (hasValues ? warnings : errors).append(QJsonObject::fromVariantMap(rule));
             }
         }
+        if (pending) return;
+        const bool missing = !tracked.isEmpty() && checked != tracked.size();
         auto result = job.result; result["errors"] = errors; result["warnings"] = warnings; result["checkedRules"] = checked;
-        completeJob(id, result, errors.isEmpty() ? QString() : QStringLiteral("One or more rules failed; inspect task.result.errors"));
+        result["completed"] = !missing; result["generation"] = generation(); result["rules"] = rules; result["rulesTruncated"] = checked > rules.size();
+        result["evaluationState"] = missing || !errors.isEmpty() ? "failed" : "succeeded";
+        completeJob(id, result, missing ? QStringLiteral("A tracked rule disappeared before evaluation completed")
+            : errors.isEmpty() ? QString() : QStringLiteral("One or more rules failed; inspect task.result.errors"));
     } else if (job.watch == "render") {
         const int plot = job.data.value("plot").toInt();
         auto state = QJsonObject::fromVariantMap(m_controller->trajectoryRenderState(plot));

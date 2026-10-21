@@ -325,20 +325,28 @@ QVariantMap AppController::configurationToVariant(const DataObject &object, bool
 {
     QVariantList fields, rules, inputs;
     QHash<QString, QString> inputNames, inputIds;
+    QHash<QString, QVariantMap> inputSources;
+    QHash<QString, QSet<int>> rawSources;
     for (const auto &field : object.fields) {
         const QVariantMap item{{"id", field.id}, {"name", field.name}, {"role", field.role},
             {"fixed", object.type == "aircraft" && aircraftFieldRoles().contains(field.role)},
             {"series", field.series}, {"source", field.series < 0 ? QStringLiteral("未绑定") : m_signals->groupAt(field.series) + " / " + signalName(field.series)}};
         inputNames.insert(field.id, field.name);
         inputIds.insert(field.id, processing && field.series >= 0 ? "raw:" + QString::number(field.series) : field.id);
+        inputSources.insert(field.id, {{"id", field.id}, {"kind", "raw"}, {"signal", field.series},
+            {"rawId", field.series >= 0 ? "raw:" + QString::number(field.series) : QString()}});
+        if (field.series >= 0) rawSources[field.id].insert(field.series);
         fields.append(item); if (!processing) inputs.append(QVariantMap{{"id", field.id}, {"name", field.name}});
     }
     for (const auto &rule : object.rules) {
         QVariantList outputs; QStringList sources; bool hasSamples = false; int outputPosition=0;
-        QStringList ids;
+        QStringList ids; QVariantList resolvedInputs, directRaw; QSet<int> provenance;
         for (const auto &id : rule.inputs) {
             if (inputNames.contains(id)) sources.append(inputNames.value(id));
             ids.append(inputIds.value(id, id));
+            resolvedInputs.append(inputSources.value(id)); provenance.unite(rawSources.value(id));
+            const auto source = inputSources.value(id);
+            if (source.value("kind").toString() == "raw" && source.value("signal").toInt() >= 0) directRaw.append(source.value("signal"));
         }
         for (const auto &output : rule.outputs) {
             QStringList preview;
@@ -355,15 +363,24 @@ QVariantMap AppController::configurationToVariant(const DataObject &object, bool
                 {"startBit",rule.operation=="bits" ? rule.startBit+outputPosition : outputStartBit(rule,output)},{"bitCount",rule.operation=="bits" ? 1 : outputBitCount(rule,output)},{"signedField",rule.operation=="bits" ? false : outputSignedField(rule,output)},{"expression",outputExpression(rule,output)}});
             ++outputPosition;
             inputNames.insert(output.id, signalName(output.series));
+            inputSources.insert(output.id, {{"id", output.id}, {"kind", "output"}, {"signal", output.series}, {"rawId", QString()}});
+            QSet<int> outputProvenance;
+            const auto &dependencies = rule.operation == "merge" ? mergeOutputInputs(rule, output) : rule.inputs;
+            for (const auto &input : dependencies) outputProvenance.unite(rawSources.value(input));
+            rawSources.insert(output.id, outputProvenance);
             if (!processing) inputs.append(QVariantMap{{"id", output.id}, {"name", signalName(output.series)}});
         }
+        auto sourceRows = provenance.values(); std::sort(sourceRows.begin(), sourceRows.end()); QVariantList sourceSignals;
+        for (int row : sourceRows) sourceSignals.append(row);
+        const bool evaluated = m_objectEvaluationStates.contains(rule.id) || m_objectErrors.contains(rule.id);
         rules.append(QVariantMap{{"id", rule.id}, {"name", rule.name}, {"operation", rule.operation},
+            {"inputSources", resolvedInputs}, {"rawInputSignals", directRaw}, {"sourceSignals", sourceSignals},
             {"duplicateSamples", m_objectEvaluationStates.value(rule.id).duplicateSamples}, {"effectiveSamplePeriod", m_objectEvaluationStates.value(rule.id).samplePeriod}, {"inputIds", ids},
             {"sources", sources.join("、")}, {"expression", rule.expression}, {"factor", rule.factor}, {"bias", rule.bias}, {"samplePeriod", rule.samplePeriod}, {"rateMode", rule.rateMode}, {"rateWindowSeconds", rule.rateWindowSeconds}, {"lossMode", rule.lossMode}, {"counterStep", rule.counterStep}, {"expectedStride", rule.expectedStride}, {"counterModulus", rule.counterModulus}, {"counterRate", rule.counterRate}, {"counterTolerance", rule.counterTolerance},
             {"wordBits", rule.wordBits}, {"autoWordBits",rule.autoWordBits},{"byteOrder",rule.byteOrder},{"effectiveWordBits",m_objectEvaluationStates.value(rule.id).effectiveWordBits}, {"startBit", rule.startBit}, {"bitCount", rule.bitCount},
             {"signedField", rule.signedField}, {"outputs", outputs}, {"error", m_objectErrors.value(rule.id)},
             {"warning", hasSamples && !m_objectErrors.value(rule.id).isEmpty()},
-            {"state", deriving() ? "pending" : !hasSamples && !m_objectErrors.value(rule.id).isEmpty() ? "failed" : "succeeded"}});
+            {"state", !evaluated ? "pending" : !hasSamples && !m_objectErrors.value(rule.id).isEmpty() ? "failed" : "succeeded"}});
     }
     return QVariantMap{{"id", object.id}, {"name", object.name}, {"type", object.type}, {"fields", fields}, {"rules", rules}, {"inputs", processing ? QVariantList{} : inputs},
             {"geographic", object.geographic}, {"attitudeMode", object.attitude.mode}, {"radians", object.attitude.radians}, {"order", object.attitude.order},

@@ -48,6 +48,12 @@ AppController::AppController(QObject *parent)
     connect(this, &AppController::soloPlotChanged, this, &AppController::markSessionModified);
     connect(this, &AppController::plotBindingsChanged, this, &AppController::markSessionModified);
     connect(this, &AppController::objectsChanged, this, &AppController::refreshLogicalSignalView);
+    connect(this, &AppController::objectsChanged, this, [this] {
+        // Check definitions only when they change, never on every cursor/view update.
+        if (m_templateUndo && objectsToJson(m_objects) != m_templateAppliedObjects) {
+            clearTemplateUndo(); emit plotBindingsChanged();
+        }
+    });
     connect(this, &AppController::currentFileChanged, this, &AppController::refreshLogicalSignalView);
     QCoreApplication::instance()->installEventFilter(this);
     m_signals->setPlotCount(1);
@@ -133,7 +139,7 @@ void AppController::clear()
                             : QStringLiteral("数据正在导出，完成后再清空"));
         return;
     }
-    clearViewHistory();
+    clearTemplateUndo(); clearViewHistory();
     cancelObjectEvaluation(); m_objects.clear(); m_objectErrors.clear(); m_objectEvaluationStates.clear(); emit objectsChanged();
     m_seriesStore->clear();
     for (auto &view : m_plotViews) view.states = {};

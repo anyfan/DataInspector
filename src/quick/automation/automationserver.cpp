@@ -110,6 +110,7 @@ AutomationServer::AutomationServer(AppController *controller, QObject *parent)
 {
     m_workers.setMaxThreadCount(1);
     m_epoch = QUuid::createUuid().toString(QUuid::Id128);
+    connect(controller, &AppController::templateWorkspaceChanged, this, [this] { m_epoch = QUuid::createUuid().toString(QUuid::Id128); });
     connect(controller, &AppController::sessionRestoreFinished, this, [this](bool success, const QString &) {
         // Restoring installs a new Store whose counter may equal the old one.
         if (success) m_epoch = QUuid::createUuid().toString(QUuid::Id128);
@@ -159,7 +160,7 @@ bool AutomationServer::start(const QString &connectionFile, QString *error)
     m_token = QUuid::createUuid().toString(QUuid::Id128) + QUuid::createUuid().toString(QUuid::Id128);
     QSaveFile file(connectionFile);
     const QByteArray bytes = QJsonDocument(QJsonObject{{"protocol", 1}, {"host", "127.0.0.1"},
-        {"port", m_server.serverPort()}, {"token", m_token}, {"pid", double(QCoreApplication::applicationPid())}}).toJson();
+        {"port", m_server.serverPort()}, {"token", m_token}, {"pid", double(QCoreApplication::applicationPid())}, {"cli", automationCapabilities()}}).toJson();
     if (!file.open(QIODevice::WriteOnly) || !file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
         || file.write(bytes) != bytes.size() || !file.commit()) {
         *error = file.errorString(); m_server.close(); return false;
@@ -176,6 +177,9 @@ void AutomationServer::reply(QTcpSocket *socket, const QJsonObject &response)
         auto &job = m_jobs[id];
         job.result = response.value("result").toObject();
         if (job.watch.isEmpty() && m_controller->deriving()) { job.watch = "derive"; m_activeJob = id; job.data["cancelable"] = true; }
+        if (response.value("ok").toBool() && (job.watch == "derive" || job.watch == "restore_derive")) {
+            job.result["completed"] = false; job.result["evaluationState"] = "pending"; output["result"] = job.result;
+        }
         if (!response.value("ok").toBool()) completeJob(id, {}, response.value("error").toObject().value("message").toString());
         else if (job.watch.isEmpty() || job.watch == "analysis") completeJob(id, job.result);
         output["task"] = jobValue(id); job.initial = output;
@@ -230,7 +234,8 @@ void AutomationServer::dispatchOperation(QTcpSocket *socket, const QJsonObject &
         auto *c = m_controller;
         const auto generation = m_epoch + ':' + QString::number(c->automationSnapshot().generation);
         if (dispatchExtended(socket, command, p)) return;
-        if (command == "help") { keys(p, {}); reply(socket, success(catalog())); return; }
+        if (command == "help") { keys(p, {}); auto response = success(catalog()); response["cli"] = automationCapabilities(); reply(socket, response); return; }
+        if (command == "capabilities") { reply(socket, success(automationCapabilities())); return; }
         if (command == "status") {
             keys(p, {});
             QJsonArray plots;
@@ -242,7 +247,7 @@ void AutomationServer::dispatchOperation(QTcpSocket *socket, const QJsonObject &
                 plots.append(QJsonObject{{"plot", i}, {"signals", ids}, {"signalCount", rows.size()}, {"truncated", rows.size() > 1000}});
                 rendering |= c->trajectoryState(i).value("enabled").toBool() && c->trajectoryRenderState(i).value("pending").toBool();
             }
-            reply(socket, success(QJsonObject{{"generation", generation}, {"loading", c->loading()},
+            reply(socket, success(QJsonObject{{"cli", automationCapabilities()}, {"generation", generation}, {"loading", c->loading()},
                 {"restoring", c->restoringSession()}, {"deriving", c->deriving()}, {"exporting", c->exporting()},
                 {"analyzing", m_analyzing}, {"status", c->status()}, {"signalCount", c->signalCount()},
                 {"fileCount", c->loadedFileCount()}, {"rows", c->plotRows()}, {"columns", c->plotColumns()},
@@ -282,7 +287,7 @@ void AutomationServer::dispatchOperation(QTcpSocket *socket, const QJsonObject &
         if (command == "object_create") {
             keys(p, {"name", "type"});
             const auto name = textParam(p, "name"), type = textParam(p, "type");
-            require(type == "general" || type == "aircraft", "Invalid object type");
+            require(type == "general" || type == "aircraft" || type == "processing", "Invalid object type");
             const auto id = c->createDataObject(name, type);
             if (id.isEmpty()) { reply(socket, failure("rejected", "Object creation rejected")); return; }
             reply(socket, success(QJsonObject{{"object", id}})); return;
@@ -362,11 +367,14 @@ void AutomationServer::dispatchOperation(QTcpSocket *socket, const QJsonObject &
                 {"nextOffset", end < selected.size() ? QJsonValue(end) : QJsonValue(QJsonValue::Null)}})); return;
         }
         int row = -1;
-        if (QStringList{"samples", "statistics", "nearest", "plot_signal", "style", "rename", "offset"}.contains(command)) {
+        if (QStringList{"samples", "statistics", "nearest", "plot_signal", "style", "rename", "offset", "signal_enums", "set_signal_enums", "signal_properties"}.contains(command)) {
             if (textParam(p, "generation") != generation) {
                 reply(socket, failure("stale_generation", "Data changed; list signals again before using signal IDs")); return;
             }
             row = integer(p, "signal", 0, c->signalCount() - 1);
+        }
+        if (command == "signal_enums") {
+            reply(socket, success(QJsonObject{{"generation", generation}, {"signal", row}, {"enums", QJsonArray::fromVariantList(c->signalEnums(row))}})); return;
         }
         if (command == "samples" || command == "statistics" || command == "nearest") {
             if (command == "samples") {
@@ -414,6 +422,15 @@ void AutomationServer::dispatchOperation(QTcpSocket *socket, const QJsonObject &
             const int style = integer(p, "style", 1, 5);
             require(color.isValid() && width >= 1 && width <= 20, "Invalid color or width");
             c->setSignalPen(row, color, width, style);
+        } else if (command == "set_signal_enums") {
+            require(c->setSignalEnums(row, p.value("enums").toArray().toVariantList()), "Signal enums rejected: values must be unique safe integers, labels nonempty and colors valid");
+        } else if (command == "signal_properties") {
+            QVariantMap properties{{"name", c->signalName(row)}, {"color", c->signalColor(row).name(QColor::HexArgb)},
+                {"width", c->signalWidth(row)}, {"style", c->signalStyle(row)}, {"enums", c->signalEnums(row)}};
+            if (!c->isDerivedSignal(row)) properties["timeOffset"] = c->signalTimeOffset(row);
+            for (auto it = p.begin(); it != p.end(); ++it)
+                if (it.key() != "generation" && it.key() != "signal") properties[it.key()] = it.value().toVariant();
+            require(c->configureSignalProperties(row, properties), "Signal properties rejected; derived signal offsets follow inputs");
         } else if (command == "rename") {
             keys(p, {"generation", "signal", "name"});
             require(c->renameSignal(row, textParam(p, "name")), "Signal rename rejected");

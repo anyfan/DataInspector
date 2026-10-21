@@ -20,6 +20,7 @@ New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 Copy-Item $exe (Join-Path $OutputDir "DataInspector.exe") -Force
 Copy-Item (Join-Path $PSScriptRoot "datainspector_cli.py") $OutputDir -Force
+Copy-Item (Join-Path $PSScriptRoot "datainspector_cli.ps1") $OutputDir -Force
 Copy-Item (Join-Path $qtBin "Qt6*.dll") $OutputDir -Force
 foreach ($runtime in @("libc++.dll", "libunwind.dll")) {
     $runtimePath = Join-Path $qtBin $runtime

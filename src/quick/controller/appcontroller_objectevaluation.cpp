@@ -137,6 +137,7 @@ void AppController::pollObjectEvaluation()
     }
     const auto &result = job->result;
     QScopedValueRollback<bool> publishing(m_applyingSession, true);
+    const bool preserveTemplateUndo = canUndoViewTemplate();
     m_seriesStore->publishComputed(result.series);
     for (auto &object : m_objects) for (auto &rule : object.rules) {
         auto state = result.states.value(rule.id);
@@ -150,5 +151,10 @@ void AppController::pollObjectEvaluation()
     }
     for (auto it = result.errors.cbegin(); it != result.errors.cend(); ++it) m_objectErrors.insert(it.key(), it.value());
     refreshComputedPlots(result.series);
+    if (preserveTemplateUndo) {
+        finishTemplateEvaluation();
+        m_templateUndoGeneration = m_seriesStore->generation();
+        m_templateAppliedObjects = objectsToJson(m_objects);
+    }
     notifyPlotBindingsChanged(); emit objectsChanged();
 }

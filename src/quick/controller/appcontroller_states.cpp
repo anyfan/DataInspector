@@ -33,13 +33,30 @@ QVariantList AppController::signalEnums(int row) const
 }
 bool AppController::setSignalEnums(int row, const QVariantList &values)
 {
-    if (sessionInteractionBlocked() || m_loading || m_exporting || row < 0 || row >= signalCount()) return false;
-    SignalEnums parsed;
-    if (!signalEnumsFromJson(QJsonArray::fromVariantList(values), &parsed)) {
-        setStatus(QStringLiteral("枚举定义无效：数值须为唯一的安全整数，名称非空，颜色有效，最多 256 项")); return false;
+    return setSignalEnumsBatch({QVariantMap{{"signal", row}, {"enums", values}}});
+}
+bool AppController::setSignalEnumsBatch(const QVariantList &updates)
+{
+    if (sessionInteractionBlocked() || m_loading || m_exporting || updates.isEmpty() || updates.size() > 256) return false;
+    QHash<int, SignalEnums> parsedUpdates; QSet<int> seen; bool changed = false;
+    for (int index = 0; index < updates.size(); ++index) {
+        const auto entry = QJsonValue::fromVariant(updates[index]); const auto update = entry.toObject();
+        const auto value = update["signal"]; const double rowNumber = value.toDouble(-1);
+        SignalEnums parsed;
+        if (!entry.isObject() || update.keys() != QStringList{"enums", "signal"} || !value.isDouble()
+            || !std::isfinite(rowNumber) || std::floor(rowNumber) != rowNumber || rowNumber < 0 || rowNumber >= signalCount()
+            || seen.contains(int(rowNumber)) || !signalEnumsFromJson(update["enums"], &parsed)) {
+            setStatus(QStringLiteral("第 %1 项枚举无效：信号须存在且不重复，枚举值唯一、名称非空、颜色有效；本批未修改").arg(index + 1)); return false;
+        }
+        const int row = int(rowNumber); seen.insert(row);
+        changed |= m_signalEnums.value(row) != parsed;
+        parsedUpdates.insert(row, parsed);
     }
-    if (m_signalEnums.value(row) == parsed) return true;
-    if (parsed.isEmpty()) m_signalEnums.remove(row); else m_signalEnums.insert(row, parsed);
+    if (!changed) return true;
+    auto next = m_signalEnums;
+    for (auto it = parsedUpdates.cbegin(); it != parsedUpdates.cend(); ++it)
+        if (it->isEmpty()) next.remove(it.key()); else next.insert(it.key(), it.value());
+    m_signalEnums = std::move(next);
     markSessionModified();
     for (int i = 0; i < m_plotRows*m_plotColumns; ++i) refreshStateTimeline(i);
     notifyPlotBindingsChanged(); return true;

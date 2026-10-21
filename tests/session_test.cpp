@@ -43,6 +43,8 @@ private slots:
     void qmlRestoresToolbarAndPlotStates();
     void viewTemplatesMatchRemapAndUndo();
     void viewTemplateSchemaIsIndependent();
+    void viewTemplateImportsConfigurationsAndUndo();
+    void viewTemplateMigratesV5();
 };
 
 void SessionTest::trajectorySelectionKeepsSingleState()
@@ -617,6 +619,148 @@ void SessionTest::viewTemplatesMatchRemapAndUndo()
     QVERIFY(!writeViewTemplate(view, doc, &error));
     QVERIFY(original.open(QIODevice::ReadOnly)); QCOMPARE(original.readAll(), bytes);
 }
+void SessionTest::viewTemplateImportsConfigurationsAndUndo()
+{
+    QTemporaryDir dir;
+    const auto oldFile = dir.filePath("before.csv"), newFile = dir.filePath("after.csv");
+    const auto path = dir.filePath("complete.diview");
+    writeFile(oldFile, "time,A,B,Unused\n0,1,2,0\n1,3,4,0\n");
+    writeFile(newFile, "time,B,A,Unused\n100,20,10,0\n101,40,30,0\n");
+    AppController source; PlotItem sourcePlot;
+    source.attachPlot(&sourcePlot); QVERIFY(source.loadCsv(oldFile)); QTRY_VERIFY(!source.loading());
+    QVERIFY(source.setSignalEnums(0, {QVariantMap{{"value", 1}, {"text", "原始枚举"}, {"color", "blue"}}}));
+    const auto processing = source.createDataObject("计算", "processing"); QVERIFY(!processing.isEmpty());
+    QVERIFY(!source.addObjectRule(processing, {{"name", "双输出"}, {"operation", "expression"}, {"inputs", QVariantList{"raw:0"}},
+        {"outputs", QVariantList{QVariantMap{{"name", "二倍"}, {"expression", "x*2"}}, QVariantMap{{"name", "三倍"}, {"expression", "x*3"}}}}}).isEmpty());
+    QTRY_VERIFY(!source.deriving());
+    const auto firstOutputs = source.dataObjects()[0].toMap()["rules"].toList()[0].toMap()["outputs"].toList();
+    const auto inputId = firstOutputs[0].toMap()["id"].toString();
+    QVERIFY(!source.addObjectRule(processing, {{"name", "下游"}, {"operation", "scale"}, {"inputs", QVariantList{inputId}}, {"factor", 5}}).isEmpty());
+    QTRY_VERIFY(!source.deriving());
+    QCOMPARE(source.signalCount(), 6);
+    source.addSignalToPlot(0, 5);
+    sourcePlot.setBlendMode(PlotItem::AmplitudeLayers);
+    source.setSignalPen(5, QColor("magenta"), 4, Qt::DashLine);
+    QVERIFY(source.setSignalEnums(5, {QVariantMap{{"value", 100}, {"text", "生效"}, {"color", "green"}}}));
+    const auto aircraft = source.createDataObject("飞机", "aircraft");
+    QVERIFY(source.configureDataObjectAircraft(aircraft, {{"geographic", false}, {"attitudeMode", 0}, {"radians", false}, {"order", 0}, {"scalarLast", false}, {"navigationToBody", false}}));
+    for (const auto &entry : source.dataObjects()) if (entry.toMap()["id"].toString() == aircraft)
+        for (const auto &v : entry.toMap()["fields"].toList()) {
+            const auto field = v.toMap(); const auto role = field["role"].toString();
+            if (role == "x" || role == "y") QVERIFY(!source.bindObjectField(aircraft, field["id"].toString(), field["name"].toString(), role, role == "x" ? 0 : 1).isEmpty());
+        }
+    source.setLayout(2, 1);
+    QVERIFY(source.showObjectTrajectory(aircraft, 1));
+    QVERIFY(source.styleTrajectory(1, "航迹样式", QColor("cyan"), 5, true));
+    const auto unbound = source.createDataObject("未绑定对象", "general"); QVERIFY(!source.addDataObjectField(unbound).isEmpty());
+    QTRY_VERIFY(!source.deriving());
+    QVERIFY(source.saveViewTemplate(path));
+    ViewTemplateDocument document; QString error;
+    QVERIFY2(readViewTemplate(path, &document, &error), qPrintable(error));
+    QCOMPARE(document.objects.size(), 3);
+    QCOMPARE(document.series.size(), 5); // A/B and every output, excluding Unused.
+    QCOMPARE(templateRawSignals(document), (QSet<int>{0, 1}));
+    QCOMPARE(document.plots[1].trajectory.activeEntry().objectId, aircraft);
+    const auto bytes = QJsonDocument(viewTemplateToJson(document)).toJson();
+    QVERIFY(!bytes.contains(dir.path().toUtf8())); QVERIFY(!bytes.contains("timeOffset"));
+
+    AppController target; PlotItem targetPlot;
+    target.attachPlot(&targetPlot); QVERIFY(target.loadCsv(newFile)); QTRY_VERIFY(!target.loading());
+    const auto existing = target.createDataObject("现有配置", "processing");
+    QVERIFY(!target.addObjectRule(existing, {{"name", "已有"}, {"operation", "scale"}, {"inputs", QVariantList{"raw:0"}}, {"factor", 7}}).isEmpty());
+    QTRY_VERIFY(!target.deriving());
+    const auto beforeDefinitions = target.dataObjects();
+    const QVariantList previousEnums{QVariantMap{{"value", 9}, {"text", "之前"}, {"color", "#ffff0000"}}};
+    QVERIFY(target.setSignalEnums(1, previousEnums));
+    const auto beforeValues = target.automationSnapshot({3}).series[0]->values;
+    QVERIFY(target.setTimeOffset(0, 1, {}, 2)); QTRY_VERIFY(!target.deriving());
+    const auto preview = target.previewViewTemplate(path);
+    QCOMPARE(preview["rows"].toList().size(), 2);
+    QCOMPARE(preview["objectCount"].toInt(), 2); QCOMPARE(preview["processingCount"].toInt(), 1);
+    QCOMPARE(preview["outputCount"].toInt(), 3);
+    QVERIFY(!target.applyViewTemplate(path, {{"0", 3}, {"1", 0}})); // Existing derived result cannot be a raw input.
+    QCOMPARE(target.dataObjects(), beforeDefinitions);
+    QVERIFY(target.applyViewTemplate(path, {{"0", 1}, {"1", 0}}));
+    QTRY_VERIFY(!target.deriving());
+    QCOMPARE(target.signalCount(), 7); QCOMPARE(target.dataObjects().size(), 4);
+    QCOMPARE(target.signalTimeOffset(1), 2.0);
+    QCOMPARE(target.signalColor(6), QColor("magenta")); QCOMPARE(target.signalWidth(6), 4.0);
+    QCOMPARE(target.signalEnums(6).size(), 1);
+    QCOMPARE(targetPlot.blendMode(), PlotItem::AmplitudeLayers);
+    QCOMPARE(target.signalEnums(1)[0].toMap()["text"].toString(), QString("原始枚举"));
+    QCOMPARE(target.automationSnapshot({6}).series[0]->values, (QVector<double>{100, 300}));
+    QCOMPARE(target.automationSnapshot({6}).series[0]->pointAt(0).x(), 102.0);
+    const auto importedAircraft = target.trajectoryState(1)["objectId"].toString();
+    QVERIFY(!importedAircraft.isEmpty()); QVERIFY(importedAircraft != aircraft);
+    QCOMPARE(target.trajectoryState(1)["color"].value<QColor>(), QColor("cyan"));
+    bool bound = false;
+    for (const auto &entry : target.dataObjects()) if (entry.toMap()["id"].toString() == importedAircraft) bound = true;
+    QVERIFY(bound); QVERIFY(target.canUndoViewTemplate());
+    QVERIFY(targetPlot.xMinimum() < 100 && targetPlot.xMaximum() > 103);
+    const auto savedSession = dir.filePath("imported.disession");
+    QVERIFY(target.saveSession(savedSession));
+    SessionDocument session;
+    QVERIFY2(readSessionDocument(savedSession, &session, &error), qPrintable(error));
+    QCOMPARE(session.objects.size(), 4);
+    QVERIFY(target.undoViewTemplate());
+    QCOMPARE(target.signalCount(), 4); QCOMPARE(target.dataObjects(), beforeDefinitions);
+    QCOMPARE(targetPlot.blendMode(), PlotItem::OpaqueBlend);
+    QCOMPARE(target.automationSnapshot({3}).series[0]->values, beforeValues);
+    QCOMPARE(target.signalTimeOffset(1), 2.0);
+    QCOMPARE(target.signalEnums(1), previousEnums);
+    QVERIFY(!target.canUndoViewTemplate());
+    QVERIFY(target.applyViewTemplate(path, {{"0", 1}, {"1", 0}}, true));
+    QTRY_VERIFY(!target.deriving()); QVERIFY(target.canUndoViewTemplate());
+    QCOMPARE(targetPlot.xMinimum(), document.xMinimum);
+    QCOMPARE(targetPlot.xMaximum(), document.xMaximum);
+    QVERIFY(target.renameDataObject(existing, "已编辑"));
+    QVERIFY(!target.canUndoViewTemplate()); QVERIFY(!target.undoViewTemplate());
+
+    auto invalid = viewTemplateToJson(document);
+    auto definitions = invalid["processing"].toArray(); auto definition = definitions[0].toObject();
+    auto fields = definition["fields"].toArray(); auto field = fields[0].toObject(); field["series"] = 2; fields[0] = field;
+    definition["fields"] = fields; definitions[0] = definition; invalid["processing"] = definitions;
+    ViewTemplateDocument unchanged = document;
+    QVERIFY(!viewTemplateFromJson(invalid, &unchanged, &error)); // Source omitted from template.
+    QCOMPARE(viewTemplateToJson(unchanged), viewTemplateToJson(document));
+
+    AppController definitionsOnly;
+    QVERIFY(!definitionsOnly.createDataObject("空对象", "general").isEmpty());
+    const auto onlyPath = dir.filePath("definitions-only.diview");
+    QVERIFY(definitionsOnly.saveViewTemplate(onlyPath));
+    AppController emptyTarget;
+    QVERIFY(emptyTarget.applyViewTemplate(onlyPath, {}));
+    QCOMPARE(emptyTarget.signalCount(), 0); QCOMPARE(emptyTarget.dataObjects().size(), 1);
+    QVERIFY(emptyTarget.undoViewTemplate()); QVERIFY(emptyTarget.dataObjects().isEmpty());
+}
+
+void SessionTest::viewTemplateMigratesV5()
+{
+    auto session = documentFor("D:/private/old.csv");
+    session.series[0].enums.insert(1, {"迁移枚举", QColor("cyan")});
+    auto json = viewTemplateToJson(viewTemplateFromSession(session));
+    json["version"] = 5; json.remove("objects"); json.remove("processing");
+    auto rows = json["signals"].toArray();
+    for (int i = 0; i < rows.size(); ++i) { auto row = rows[i].toObject(); row.remove("processingId"); row.remove("outputId"); rows[i] = row; }
+    json["signals"] = rows;
+    auto configuration = json["view"].toObject(); auto plots = configuration["plots"].toArray();
+    for (int i = 0; i < plots.size(); ++i) { auto plot = plots[i].toObject(); plot.remove("blendOverlaps"); plots[i] = plot; }
+    configuration["plots"] = plots; json["view"] = configuration;
+    ViewTemplateDocument migrated; QString error;
+    QVERIFY2(viewTemplateFromJson(json, &migrated, &error), qPrintable(error));
+    QVERIFY(migrated.objects.isEmpty()); QCOMPARE(migrated.series.size(), 1);
+    QCOMPARE(migrated.series[0].enums, session.series[0].enums);
+    QVERIFY(migrated.plots[0].blendOverlaps.has_value()); QVERIFY(!*migrated.plots[0].blendOverlaps);
+    QTemporaryDir dir; const auto path = dir.filePath("v5.diview"); writeFile(path, QJsonDocument(json).toJson());
+    QVERIFY(readViewTemplate(path, &migrated, &error));
+    QFile file(path); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(QJsonDocument::fromJson(file.readAll()).object(), json); file.close();
+    QVERIFY(writeViewTemplate(path, migrated, &error));
+    QVERIFY(file.open(QIODevice::ReadOnly)); const auto updated = QJsonDocument::fromJson(file.readAll()).object();
+    QCOMPARE(updated["version"].toInt(), 6); QVERIFY(updated.contains("processing"));
+    auto invalid = json; invalid["processing"] = QJsonArray{};
+    QVERIFY(!viewTemplateFromJson(invalid, &migrated, &error)); // No extra fields smuggled into v5.
+}
+
 void SessionTest::viewTemplateSchemaIsIndependent()
 {
     auto session = documentFor("D:/private/flight/old.csv");

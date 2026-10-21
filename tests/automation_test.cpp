@@ -7,6 +7,9 @@
 #include <QJsonDocument>
 #include <QTcpSocket>
 #include <QTemporaryDir>
+#include <QSemaphore>
+#include <QThreadPool>
+#include <QScopeGuard>
 #include <QtTest>
 #include <cmath>
 
@@ -33,6 +36,87 @@ class AutomationTest final : public QObject
         return QJsonDocument::fromJson(file.readAll()).object();
     }
 private slots:
+    void provenanceFollowsIndividualMergeOutputs()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QFile file(dir.filePath("input.csv")); QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("time,A,B,C,D\n0,1,1,2,2\n1,3,3,4,4\n"); file.close();
+        AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+        const auto group = controller.createDataObject("merge", "processing");
+        const auto merged = controller.addObjectRule(group, {{"name", "merge"}, {"operation", "merge"},
+            {"inputs", QVariantList{"raw:0", "raw:1", "raw:2", "raw:3"}}, {"outputs", QVariantList{
+                QVariantMap{{"name", "first"}, {"inputs", QVariantList{"raw:0", "raw:1"}}},
+                QVariantMap{{"name", "second"}, {"inputs", QVariantList{"raw:2", "raw:3"}}}}}});
+        QVERIFY2(!merged.isEmpty(), qPrintable(controller.status())); QTRY_VERIFY(!controller.deriving());
+        const auto first = controller.dataObjects()[0].toMap()["rules"].toList()[0].toMap()["outputs"].toList()[0].toMap();
+        QVERIFY(!controller.addObjectRule(group, {{"name", "downstream"}, {"operation", "scale"},
+            {"inputs", QVariantList{first["id"]}}, {"factor", 2}}).isEmpty());
+        QTRY_VERIFY(!controller.deriving());
+        const auto rules = controller.dataObjects()[0].toMap()["rules"].toList();
+        QCOMPARE(rules[0].toMap()["sourceSignals"].toList(), (QVariantList{0, 1, 2, 3}));
+        QCOMPARE(rules[1].toMap()["sourceSignals"].toList(), (QVariantList{0, 1}));
+        QCOMPARE(controller.ruleResults({}, {}, 0, 100, 2)["total"].toInt(), 1);
+    }
+    void ruleTaskWaitsForPublishedResultAndResolvesSources()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        QFile file(dir.filePath("input.csv")); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,A,B\n0,1,2\n1,3,4\n"); file.close();
+        AppController controller; QVERIFY(controller.loadCsv(file.fileName())); QTRY_VERIFY(!controller.loading());
+        const auto group = controller.createDataObject("processing", "processing");
+        QVERIFY(!controller.addObjectRule(group, {{"name", "cached"}, {"operation", "scale"},
+            {"inputs", QVariantList{"raw:1"}}, {"factor", 3}}).isEmpty());
+        QTRY_VERIFY(!controller.deriving());
+        AutomationServer server(&controller); QString error;
+        const auto connectionPath = dir.filePath("connection.json"); QVERIFY(server.start(connectionPath, &error));
+        const auto connection = descriptor(connectionPath);
+        auto *pool = QThreadPool::globalInstance(); const int previousThreads = pool->maxThreadCount();
+        QSemaphore started, release; pool->setMaxThreadCount(1);
+        pool->start([&] { started.release(); release.acquire(); });
+        const auto cleanup = qScopeGuard([&] { release.release(); pool->waitForDone(); pool->setMaxThreadCount(previousThreads); });
+        QVERIFY(started.tryAcquire(1, 2000));
+        const QJsonValue generation = call(connection, "signals")["result"].toObject()["generation"];
+        const auto response = call(connection, "rule_create", {{"generation", generation}, {"object", group},
+            {"config", QJsonObject{{"name", "scale"}, {"operation", "scale"}, {"inputs", QJsonArray{"raw:0"}}, {"factor", 2}}}});
+        QVERIFY2(response["ok"].toBool(), QJsonDocument(response).toJson(QJsonDocument::Compact).constData());
+        const auto taskId = response["task"].toObject()["id"].toString();
+        QCOMPARE(response["task"].toObject()["state"].toString(), QString("running"));
+        QVERIFY(!response["result"].toObject()["completed"].toBool());
+        QTest::qWait(80);
+        QCOMPARE(call(connection, "job_status", {{"id", taskId}})["result"].toObject()["state"].toString(), QString("running"));
+        const auto listedRules = call(connection, "rules")["result"].toObject()["rules"].toArray();
+        QCOMPARE(listedRules[0].toObject()["state"].toString(), QString("succeeded"));
+        const auto pending = listedRules[1].toObject();
+        QCOMPARE(pending["state"].toString(), QString("pending"));
+        QCOMPARE(pending["rawInputSignals"].toArray(), QJsonArray{0});
+        QCOMPARE(pending["inputSources"].toArray()[0].toObject()["rawId"].toString(), QString("raw:0"));
+        release.release();
+        QJsonObject task;
+        QTRY_VERIFY_WITH_TIMEOUT((task = call(connection, "job_status", {{"id", taskId}})["result"].toObject())["state"] == "succeeded", 5000);
+        const auto result = task["result"].toObject();
+        QVERIFY(result["completed"].toBool()); QCOMPARE(result["evaluationState"].toString(), QString("succeeded"));
+        const auto rule = result["rules"].toArray()[0].toObject();
+        QCOMPARE(rule["state"].toString(), QString("succeeded"));
+        const int output = rule["outputs"].toArray()[0].toObject()["series"].toInt();
+        QCOMPARE(controller.automationSnapshot({output}).series[0]->values, (QVector<double>{2, 6}));
+    }
+    void enumBatchIsAtomicAndNotifiesOnce()
+    {
+        QTemporaryDir dir; QVERIFY(dir.isValid());
+        const auto path = dir.filePath("batch.csv");
+        QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("time,A,B\n0,0,1\n1,1,0\n"); file.close();
+        AppController controller; QVERIFY(controller.loadCsv(path)); QTRY_VERIFY(!controller.loading());
+        const QVariantList enums{QVariantMap{{"value", 0}, {"text", "关闭"}, {"color", "red"}}};
+        QSignalSpy changes(&controller, &AppController::plotBindingsChanged);
+        QVERIFY(controller.setSignalEnumsBatch({QVariantMap{{"signal", 0}, {"enums", enums}}, QVariantMap{{"signal", 1}, {"enums", enums}}}));
+        QCOMPARE(changes.size(), 1);
+        const auto before = controller.signalEnums(0);
+        QVERIFY(controller.saveSession(dir.filePath("before.disession"))); QVERIFY(!controller.sessionModified()); changes.clear();
+        const QVariantList invalid{QVariantMap{{"value", 0}, {"text", "错误"}, {"color", "not-a-color"}}};
+        QVERIFY(!controller.setSignalEnumsBatch({QVariantMap{{"signal", 0}, {"enums", QVariantList{}}}, QVariantMap{{"signal", 1}, {"enums", invalid}}}));
+        QCOMPARE(controller.signalEnums(0), before); QCOMPARE(changes.size(), 0); QVERIFY(!controller.sessionModified());
+        QVERIFY(!controller.setSignalEnumsBatch({QVariantMap{{"signal", 0}, {"enums", enums}}, QVariantMap{{"signal", 0}, {"enums", QVariantList{}}}}));
+        QCOMPARE(controller.signalEnums(0), before);
+    }
     void runtimeEnableDisableAndRestart()
     {
         QTemporaryDir dir; QVERIFY(dir.isValid());

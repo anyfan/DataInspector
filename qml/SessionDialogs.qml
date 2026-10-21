@@ -167,7 +167,10 @@ Item {
         }
         contentItem: ColumnLayout {
             Label {
-                text: "将替换为 " + viewTemplateDialog.preview.plotCount + " 个子图。请核对每项来源；缺失或重名信号需手动指定。"
+                text: "将替换为 " + viewTemplateDialog.preview.plotCount + " 个子图，并导入 "
+                    + Number(viewTemplateDialog.preview.objectCount || 0) + " 个对象、"
+                    + Number(viewTemplateDialog.preview.processingCount || 0) + " 个处理组、"
+                    + Number(viewTemplateDialog.preview.ruleCount || 0) + " 条规则。请核对原始来源；派生输出将自动重建。"
                 Layout.fillWidth: true
                 wrapMode: Text.WordWrap
             }
@@ -203,7 +206,7 @@ Item {
                 }
             }
             CheckBox { id: fixedTemplateRanges; objectName: "fixedTemplateRanges"; text: "使用模板中的固定坐标范围（默认适应新数据）" }
-            Label { text: "保留当前时间偏移；游标重新定位。应用后可从会话菜单撤销一次。"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
+            Label { text: "保留现有对象、处理组和原始信号时间偏移；导入配置使用新身份。应用后可从会话菜单撤销一次。"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
             Label { text: viewTemplateDialog.errorText; visible: text.length > 0; color: "#df4652"; Layout.fillWidth: true; wrapMode: Text.WordWrap }
         }
         footer: DialogButtonBox {

@@ -3,6 +3,7 @@
 #include <QJsonObject>
 #include <QSet>
 #include <QVector>
+#include <optional>
 #include "render/trajectorybuilder.h"
 #include "render/statetimeline.h"
 struct SessionCursor
@@ -45,6 +46,8 @@ struct SessionPlot
     QVector<int> seriesIds;
     double yMinimum = -1.0, yMaximum = 1.0, lineWidth = 2.0;
     bool normalizeY = false;
+    // Template/undo setting. Session v22 has no persisted field for this option.
+    std::optional<bool> blendOverlaps;
 };
 struct ViewConfiguration
 {

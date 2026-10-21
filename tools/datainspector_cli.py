@@ -11,9 +11,18 @@ from pathlib import Path
 MAX_RESPONSE = 4 * 1024 * 1024
 
 
+class ClientError(Exception):
+    def __init__(self, code, message):
+        super().__init__(message)
+        self.code = code
+
+
 def request(connection, command, params, timeout, request_id=None):
-    if connection.get("protocol") != 1 or connection.get("host") != "127.0.0.1":
-        raise ValueError("Unsupported connection descriptor")
+    if type(connection.get("protocol")) is not int or connection.get("protocol") != 1:
+        raise ClientError("protocol_mismatch", "Expected wire protocol 1; connection advertises "
+                          + repr(connection.get("protocol")) + ". Use a matching CLI and DataInspector instance.")
+    if connection.get("host") != "127.0.0.1":
+        raise ValueError("Unsupported connection host")
     port = connection.get("port")
     token = connection.get("token")
     if type(port) is not int or not 1 <= port <= 65535 or not isinstance(token, str) or not token:
@@ -22,7 +31,7 @@ def request(connection, command, params, timeout, request_id=None):
     if request_id is not None:
         message["requestId"] = request_id
     payload = json.dumps(message,
-                         ensure_ascii=False, allow_nan=False).encode("utf-8") + b"\n"
+                         ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8") + b"\n"
     if len(payload) > 65536:
         raise ValueError("Request exceeds 64 KiB")
     deadline = time.monotonic() + timeout
@@ -58,6 +67,9 @@ def main():
     parser.add_argument("command", help="help, status, signals, samples, statistics, nearest, layout, etc.; wait polls until idle")
     parser.add_argument("--request-id", help="Idempotency key; reuse with identical command and parameters when retrying")
     parser.add_argument("--wait", action="store_true", help="Wait for the returned task and report its actual success/failure")
+    parser.add_argument("--ascii", action="store_true", help="Escape non-ASCII text in JSON for encoding-independent shell pipelines")
+    parser.add_argument("--expect-api-version", type=int, help="Check server API revision before sending the command")
+    parser.add_argument("--expect-catalog-hash", help="Require the SHA256 command schema fingerprint discovered from help/capabilities")
     params = parser.add_mutually_exclusive_group()
     params.add_argument("--params", default="{}", help="JSON parameter object")
     params.add_argument("--params-file", type=Path, help="UTF-8 JSON file (avoids shell quoting)")
@@ -73,10 +85,34 @@ def main():
         values = json.loads(raw)
         if not isinstance(values, dict):
             raise ValueError("params must be a JSON object")
+        deadline = time.monotonic() + args.timeout
+        if args.expect_api_version is not None and args.expect_api_version < 1:
+            raise ValueError("expect-api-version must be positive")
+        if args.expect_catalog_hash is not None and (len(args.expect_catalog_hash) != 64
+                or any(c not in "0123456789abcdef" for c in args.expect_catalog_hash.lower())):
+            raise ValueError("expect-catalog-hash must be a SHA256 hex string")
+        if args.expect_api_version is not None or args.expect_catalog_hash is not None:
+            discovery = request(connection, "capabilities", {}, args.timeout)
+            if not discovery["ok"]:
+                error = discovery.get("error", {})
+                if error.get("code") == "unknown_command":
+                    raise ClientError("version_mismatch", "Server cannot report API capabilities. Read help on this connection; "
+                                      "restart the updated DataInspector or use a matching CLI. Command was not sent.")
+                raise ClientError(error.get("code", "capability_check_failed"), "Capability check failed: "
+                                  + error.get("message", "Unknown server error") + ". Command was not sent.")
+            capabilities = discovery["result"]
+            if not isinstance(capabilities, dict):
+                raise ValueError("Invalid capabilities response; command was not sent")
+            if capabilities.get("protocolVersion") != 1:
+                raise ClientError("protocol_mismatch", "Server capabilities do not advertise wire protocol 1. Command was not sent.")
+            if args.expect_api_version is not None and capabilities.get("apiVersion") != args.expect_api_version:
+                raise ClientError("version_mismatch", "Expected API " + str(args.expect_api_version) + ", server reports "
+                                  + str(capabilities.get("apiVersion")) + ". Read help for this connection. Command was not sent.")
+            if args.expect_catalog_hash is not None and capabilities.get("catalogHash") != args.expect_catalog_hash.lower():
+                raise ClientError("version_mismatch", "Command catalog differs from the expected SHA256. Read help for this connection. Command was not sent.")
         if args.command == "wait":
             if values and (set(values) != {"job"} or not isinstance(values["job"], str)):
                 raise ValueError("wait accepts only an optional job task ID")
-            deadline = time.monotonic() + args.timeout
             while True:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -99,8 +135,12 @@ def main():
                     break
                 time.sleep(min(0.1, max(0, deadline - time.monotonic())))
         else:
-            deadline = time.monotonic() + args.timeout
-            result = request(connection, args.command, values, args.timeout, args.request_id)
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Version check consumed the request deadline; command was not sent")
+            result = request(connection, args.command, values, remaining, args.request_id)
+            if not result["ok"] and result.get("error", {}).get("code") == "unknown_command":
+                result["error"]["message"] += "; read help on this connection, and restart DataInspector if this is an older running instance"
             if args.wait and result["ok"] and result.get("task"):
                 task = result["task"]
                 while task["state"] not in ("succeeded", "failed", "cancelled"):
@@ -119,11 +159,13 @@ def main():
                     result = {"ok": task["state"] == "succeeded", "task": task, "result": task.get("result", {})}
                     if not result["ok"]:
                         result["error"] = task.get("error", {"code": task["state"], "message": "Task did not succeed"})
+    except ClientError as error:
+        result = {"ok": False, "error": {"code": error.code, "message": str(error)}}
     except (OSError, ValueError, KeyError, TypeError) as error:
         result = {"ok": False, "error": {"code": "client_error", "message": str(error)}}
         if task is not None:
             result["task"] = task
-    print(json.dumps(result, ensure_ascii=False, allow_nan=False))
+    print(json.dumps(result, ensure_ascii=args.ascii, allow_nan=False))
     return 0 if result["ok"] else 1
 
 
